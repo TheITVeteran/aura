@@ -11,6 +11,18 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Require signing credentials
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID:           ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_DEVELOPER_ID"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -24,18 +36,6 @@ jobs:
           . .venv/bin/activate
           pip install -U pip
           pip install -r requirements/runtime.txt || pip install -r requirements.txt || true
-      - name: Require signing credentials
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_ID:           ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          test -n "$APPLE_DEVELOPER_ID"
-          test -n "$APPLE_ID"
-          test -n "$APPLE_PASSWORD"
-          test -n "$APPLE_TEAM_ID"
       - name: Build (unsigned)
         env:
           AURA_BUILD_PROFILE: release

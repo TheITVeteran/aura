@@ -15,6 +15,7 @@ dependencies = [
     "prometheus-client>=0.21.0",
     "prometheus-fastapi-instrumentator>=7.0.0",
     "psutil>=6.1.1",
+    "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "pyobjc-framework-Cocoa>=11.0",
     "py2app>=0.28.0",                    # macOS app bundle

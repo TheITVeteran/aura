@@ -264,9 +264,12 @@ class ContinuousExperienceStream:
     def append_frame(self, frame: ExperienceFrame) -> ExperienceFrame:
         previous = self.current_frame
         sequence = previous.sequence + 1 if previous else 1
-        scene_id = frame.scene_id or self._next_scene_id()
-        if previous and not frame.scene_id:
+        if frame.scene_id:
+            scene_id = frame.scene_id
+        elif previous:
             scene_id = self._scene_for(previous, frame)
+        else:
+            scene_id = self._next_scene_id()
         frame_id = frame.frame_id or f"exp_{int(frame.timestamp * 1000)}_{sequence}"
         committed = ExperienceFrame.from_dict({**frame.to_dict(), "frame_id": frame_id})
         committed = committed.with_hashes(
@@ -522,7 +525,8 @@ class ContinuousExperienceStream:
             payload = dict(envelope.get("payload") or {})
         except AtomicWriteError:
             try:
-                payload = json.loads(self.persist_path.read_text(encoding="utf-8"))
+                raw = json.loads(self.persist_path.read_text(encoding="utf-8"))
+                payload = raw if isinstance(raw, dict) else {}
             except (OSError, json.JSONDecodeError):
                 raise
         frames = [
