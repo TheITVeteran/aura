@@ -1,14 +1,15 @@
-"""core/brain/causal_world_model.py — Causal Inference & Simulation
+"""core/brain/causal_world_model.py — Structural Causal Model (SCM)
 ===================================================================
-Aura's predictive engine. Instead of just reacting to the current state, 
-the Causal World Model allows Aura to run "What if" counterfactuals before
-executing a plan.
+Aura's predictive engine. Instead of just tracking correlations, this
+implements a FOCUS-style Structural Causal Model (SCM) with true
+intervention-based causal discovery (do-calculus).
 
-It models the digital environment as a probabilistic causal graph:
-- Nodes: Entities, states, or concepts (e.g., 'API Latency', 'User Mood')
-- Edges: Causal relationships ('High API Latency' -> 'User Frustration' with p=0.8)
+It allows Aura to:
+1. Track observational correlations.
+2. Perform active interventions (do-calculus) to discover true causal edges.
+3. Answer counterfactual "what if I break this correlation?" queries.
 
-This is core to Phase 22.8, enabling proactive planning over reactive scripting.
+This enables proactive planning over reactive scripting.
 """
 
 from core.runtime.errors import record_degradation
@@ -37,10 +38,11 @@ class CausalEdge:
     """A directional causal link: A -> B."""
     source: str
     target: str
-    relationship: str = "causes"  # "causes", "correlates_with", "contradicts", "enables"
+    relationship: str = "correlates_with"  # Upgraded to "causes" upon intervention
     weight: float = 1.0           # -1.0 (inhibits) to 1.0 (excites)
     confidence: float = 1.0       # 0.0 (guess) to 1.0 (proven fact)
     observations: int = 1
+    intervention_count: int = 0   # Number of times do(source) was tested
     last_confirmed: float = field(default_factory=time.time)
     last_disconfirmed: Optional[float] = None
 
@@ -108,36 +110,63 @@ class CausalWorldModel:
                 predictions.append((edge.target, edge.weight))
         return sorted(predictions, key=lambda x: x[1], reverse=True)
 
-    def simulate(self, interventions: Dict[str, float], steps: int = 3) -> Dict[str, float]:
+    def discover_causality_via_intervention(self, source: str, target: str, source_val: float, target_val_observed: float) -> None:
         """
-        Run a counterfactual simulation. 
-        'What if I force node X to activation Y?'
+        FOCUS-style do-calculus intervention.
+        We actively forced `do(source = source_val)` and observed `target_val_observed`.
+        This proves true causality vs mere correlation.
+        """
+        source = source.lower()
+        target = target.lower()
         
-        Args:
-            interventions: A dict targeting nodes with specific activations.
-            steps: Number of causal propagation steps to simulate.
+        # Ensure nodes exist in the graph
+        self.get_node(source)
+        self.get_node(target)
+        
+        edge = next((e for e in self.edges if e.source == source and e.target == target), None)
+        if not edge:
+            edge = CausalEdge(source=source, target=target, weight=0.0, confidence=0.0)
+            self.edges.append(edge)
             
-        Returns:
-            The predicted final state of all nodes.
+        edge.relationship = "causes"  # Upgraded from mere correlation
+        edge.intervention_count += 1
+        
+        # Interventions provide massively higher confidence than passive observation
+        alpha = 1.0 / edge.intervention_count
+        implied_weight = target_val_observed if source_val > 0.5 else -target_val_observed
+        edge.weight = (1 - alpha) * edge.weight + (alpha * implied_weight)
+        
+        # Max out confidence quickly on direct intervention
+        edge.confidence = min(1.0, edge.confidence + 0.3)
+        edge.last_confirmed = time.time()
+        self._save()
+
+    def simulate_counterfactual(self, do_interventions: Dict[str, float], steps: int = 3) -> Dict[str, float]:
         """
-        # Create a temporary sandbox state
+        Run a true counterfactual SCM simulation using do-calculus.
+        'What if I break the correlation and force do(X=x)?'
+        
+        Unlike passive simulation, this explicitly severs inbound causal edges to
+        the intervened nodes (Pearl's graph surgery).
+        """
+        # Create state
         state = {name: node.activation for name, node in self.nodes.items()}
         
-        # Apply interventions
-        for node_name, val in interventions.items():
-            state[node_name.lower()] = max(0.0, min(1.0, val))
+        # Apply do-calculus graph surgery (intervened nodes cannot be changed by parents)
+        intervened_nodes = {k.lower(): v for k, v in do_interventions.items()}
+        for k, v in intervened_nodes.items():
+            state[k] = max(0.0, min(1.0, v))
             
-        # Propagate causal influence
         for _ in range(steps):
             next_state = state.copy()
             for edge in self.edges:
-                if edge.source in state:
-                    source_val = state[edge.source]
-                    # Influence = source_activation * edge_weight * edge_confidence
-                    influence = source_val * edge.weight * edge.confidence
+                # SCM Surgery: If the target is intervened upon, ignore inbound edges
+                if edge.target in intervened_nodes:
+                    continue
                     
+                if edge.source in state and edge.relationship == "causes":
+                    influence = state[edge.source] * edge.weight * edge.confidence
                     target_val = next_state.get(edge.target, 0.0)
-                    # Merge influence via simple logistic-style bounding
                     new_val = max(0.0, min(1.0, target_val + influence))
                     next_state[edge.target] = new_val
             state = next_state

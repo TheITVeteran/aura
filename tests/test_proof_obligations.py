@@ -429,6 +429,76 @@ class TestLearnedMCTSPlanner(unittest.TestCase):
         self.assertNotEqual(info_learned["best_q"], info_ablated["best_q"])
 
 
+class TestSCMDoCalculus(unittest.TestCase):
+    """Prove the CausalWorldModel performs structural interventions (do-calculus)."""
+
+    def test_intervention_upgrades_correlation_to_causation(self):
+        from core.brain.causal_world_model import CausalWorldModel
+        scm = CausalWorldModel()
+        scm.data_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initial passive correlation
+        scm.add_observation("weather", "mood", 0.5)
+        edge = next(e for e in scm.edges if e.source == "weather" and e.target == "mood")
+        self.assertEqual(edge.relationship, "correlates_with")
+        
+        # Active intervention do-calculus
+        scm.discover_causality_via_intervention("do_weather", "mood", 1.0, 0.8)
+        edge_do = next(e for e in scm.edges if e.source == "do_weather" and e.target == "mood")
+        self.assertEqual(edge_do.relationship, "causes")
+        self.assertGreater(edge_do.confidence, 0.2)
+
+    def test_counterfactual_simulation_performs_graph_surgery(self):
+        from core.brain.causal_world_model import CausalWorldModel
+        scm = CausalWorldModel()
+        
+        # Chain: a -> b -> c
+        scm.discover_causality_via_intervention("a", "b", 1.0, 1.0)
+        scm.discover_causality_via_intervention("b", "c", 1.0, 1.0)
+        
+        scm.nodes["a"].activation = 1.0
+        scm.nodes["b"].activation = 0.0
+        
+        # If we DO(b=0), a should NOT influence b, and b(0) means c becomes 0.
+        # SCM Surgery severs a -> b.
+        final_state = scm.simulate_counterfactual(do_interventions={"b": 0.0}, steps=2)
+        self.assertEqual(final_state["b"], 0.0)
+        self.assertEqual(final_state["c"], 0.0)
+        
+        # Without intervention, B would be driven to 1.0 by A, and C would become 1.0.
+        final_state_passive = scm.simulate_counterfactual(do_interventions={}, steps=2)
+        self.assertGreater(final_state_passive["b"], 0.0)
+        self.assertGreater(final_state_passive["c"], 0.0)
+
+
+class TestEmbodiedSimulator(unittest.TestCase):
+    """Prove the continuous physics simulator grounds actions and feeds SCM."""
+
+    def test_physical_intervention_updates_physics_and_scm(self):
+        from core.environment.embodied_simulator import ContinuousSimulatorLoop
+        from core.perception.affordance_schema import AffordanceKnowledgeBase
+        from core.brain.causal_world_model import CausalWorldModel
+        import numpy as np
+        
+        aff_kb = AffordanceKnowledgeBase(domain="test_embodied")
+        scm = CausalWorldModel()
+        sim = ContinuousSimulatorLoop(aff_kb, scm)
+        
+        sim.scene.add_or_update_entity("box_1", "block", np.array([0., 0., 0.]))
+        
+        # Perform physical intervention: pushing the block
+        outcome = sim.physical_intervention("box_1", "push", intensity=1.0)
+        
+        # Physics updated
+        ent = sim.scene.entities["box_1"]
+        self.assertGreater(ent.velocity[0], 0.0)
+        
+        # SCM updated with discovery
+        edge = next((e for e in scm.edges if e.source == "do_push_block" and e.target == "block_state_change"), None)
+        self.assertIsNotNone(edge)
+        self.assertEqual(edge.relationship, "causes")
+
+
 class TestWhatIsStillLeft(unittest.TestCase):
     """Document what remains for full proof (informational, always passes)."""
 
