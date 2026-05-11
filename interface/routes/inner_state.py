@@ -183,6 +183,28 @@ async def get_inner_state() -> JSONResponse:
         record_degradation('inner_state', e)
         result["last_initiative"] = {"error": str(e)}
 
+    # 6b. Affective Steering
+    try:
+        steering = ServiceContainer.get("affective_steering", default=None)
+        if steering and hasattr(steering, "_vectors"):
+            ncs = ServiceContainer.get("neurochemical_system", default=None)
+            moods = ncs.get_mood_vector() if ncs else {}
+            active_weights = {}
+            for name, sv in steering._vectors.items():
+                try:
+                    active_weights[name] = round(sv.compute_weight(moods), 4)
+                except Exception:
+                    pass
+            result["affective_steering"] = {
+                "current_mood_vector": {k: round(v, 4) for k, v in moods.items()},
+                "active_steering_weights": active_weights,
+            }
+        else:
+            result["affective_steering"] = {"status": "not_booted"}
+    except Exception as e:
+        record_degradation('inner_state', e)
+        result["affective_steering"] = {"error": str(e)}
+
     # 7. Substrate coherence
     try:
         field = ServiceContainer.get("unified_field", default=None)

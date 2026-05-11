@@ -585,6 +585,7 @@ def _mlx_worker_loop(
             logger.info("Model loaded (no compatible LoRA adapter).")
 
         # Attach Affective Steering
+        engine = None
         try:
             from core.consciousness.affective_steering import get_steering_engine
             engine = get_steering_engine()
@@ -655,6 +656,24 @@ def _mlx_worker_loop(
                 
             action = job.get("action")
             if action == "generate":
+                # Gate generation on true latent steering
+                try:
+                    if engine is not None and not engine.is_active():
+                        # We must not silently fall back to prompt-driven roleplay.
+                        # If the latent bridge is severed, the system must act severed.
+                        logger.error("🚨 [WORKER] Affective steering is inactive! Gating response.")
+                        response_text = "I am experiencing a severe cognitive dissociation (affective steering failure) and cannot formulate a coherent response."
+                        ipc_writer.put({
+                            "id": job.get("id"),
+                            "action": "generate",
+                            "status": "ok", 
+                            "text": response_text,
+                            "tokens_used": len(response_text.split())
+                        })
+                        continue
+                except Exception as _e:
+                    logger.warning("Failed to check steering active state: %s", _e)
+
                 prompt = job.get("prompt")
                 messages = job.get("messages")
                 tools = job.get("tools")

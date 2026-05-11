@@ -337,16 +337,26 @@ class SteeringVector:
             return mx.array(self.v, dtype=dtype)
         return self._v_mx
 
-    def compute_weight(self, substrate_x: np.ndarray) -> float:
+    def compute_weight(self, moods: Dict[str, float]) -> float:
         """
-        Map the substrate state to a scalar steering weight in [-1, 1].
-        This is the key coupling: substrate physics → affective direction strength.
+        Map the learned mood coefficient directly to a scalar steering weight.
         """
-        raw = float(substrate_x[self.substrate_idx]) if self.substrate_idx < len(substrate_x) else 0.0
+        # Map our vector keys to the adaptive_mood keys
+        key_map = {
+            "valence_positive": "valence",
+            "arousal": "arousal",
+            "curiosity": "motivation",
+            "frustration": "stress"
+        }
+        mood_key = key_map.get(self.key, "valence")
+        raw = float(moods.get(mood_key, 0.0))
+        
+        # Adaptive mood coefficients are typically in [-1, 1], so we can just use them
+        # as weights (optionally scaled or clipped if needed).
         if self.substrate_fn == "tanh":
             return float(np.tanh(raw))
         elif self.substrate_fn == "linear_half":
-            return float(np.clip((raw + 1.0) / 2.0, 0.0, 1.0) * 2.0 - 1.0)
+            return float(np.clip(raw, -1.0, 1.0))
         else:
             return float(np.tanh(raw))
 
@@ -709,12 +719,12 @@ class AffectiveSteeringHook:
         self._last_composite_np: Optional[np.ndarray] = None
         self._cached_substrate_hash: int = 0
 
-    def update_substrate(self, x: np.ndarray):
+    def update_substrate(self, moods: Dict[str, float]):
         """Called by SubstrateSyncThread at ~20Hz. [OPTIMIZED]"""
         import mlx.core as mx
         with self._substrate_lock:
-            # 1. Store substrate state
-            self._substrate_x = x.copy()
+            # 1. Store mood state for debugging
+            self._substrate_x = np.zeros(64, dtype=np.float32) # deprecated, kept for api compatibility
             
             # 2. PRE-COMPUTE COMPOSITE ON CPU/NP (Background Thread)
             # This moves the O(dims * d_model) work out of the inference hook.
@@ -722,7 +732,7 @@ class AffectiveSteeringHook:
             active = False
             
             for sv in self._vectors.values():
-                weight = sv.compute_weight(x)
+                weight = sv.compute_weight(moods)
                 if abs(weight) > 0.05:
                     target_composite_np += weight * sv.v
                     active = True
@@ -917,61 +927,43 @@ class SubstrateSyncThread:
         self._running = False
 
     def _loop(self):
-        substrate = None
         while self._running:
             try:
-                if self._shared_state is not None:
-                    # Read from multiprocessing.Array
-                    try:
-                        # Convert to numpy array without copying if possible,
-                        # but for 64 floats a copy is fast and safe.
-                        x = np.frombuffer(self._shared_state.get_obj(), dtype=np.float32).copy()
-                        for hook in self._hooks:
-                            hook.update_substrate(x)
-                    except Exception as e:
-                        record_degradation('affective_steering', e)
-                        logger.debug("Shared memory read failed: %s", e)
-                else:
-                    # Local mode: ServiceContainer lookup
-                    if substrate is None:
-                        try:
-                            from core.container import ServiceContainer
-                            substrate = ServiceContainer.get("conscious_substrate", default=None)
-                        except Exception as _e:
-                            record_degradation('affective_steering', _e)
-                            logger.debug('Ignored Exception in affective_steering.py: %s', _e)
+                moods = {}
+                try:
+                    from core.container import ServiceContainer
+                    ncs = ServiceContainer.get("neurochemical_system", default=None)
+                    if ncs is not None:
+                        moods = ncs.get_mood_vector()
+                except Exception as _e:
+                    record_degradation('affective_steering', _e)
+                    logger.debug('Ignored Exception in affective_steering.py: %s', _e)
 
-                    if substrate is not None:
-                        x = substrate.x.copy()
-                        x = np.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
-                        for hook in self._hooks:
-                            hook.update_substrate(x)
-                            try:
-                                hook.substrate_source = "live"  # type: ignore[attr-defined]
-                            except Exception:
-                                pass  # no-op: intentional
-                    else:
-                        # Evidence mode: DO NOT credit a neutral fallback as
-                        # live substrate. We mark the hook so tests can refuse
-                        # to interpret outputs as state-caused behavior, and
-                        # we raise in evidence mode to prevent silent drift.
+                if moods:
+                    for hook in self._hooks:
+                        hook.update_substrate(moods)
                         try:
-                            from core.evaluation.evidence_mode import require
-                            require(
-                                "substrate_sync",
-                                False,
-                                "no live substrate available; neutral fallback would leak",
-                            )
+                            hook.substrate_source = "live_mood"
                         except Exception:
-                            raise
-                        neutral = np.zeros(64, dtype=np.float32)
-                        neutral[5] = 0.7
-                        for hook in self._hooks:
-                            hook.update_substrate(neutral)
-                            try:
-                                hook.substrate_source = "neutral_fallback"  # type: ignore[attr-defined]
-                            except Exception:
-                                pass  # no-op: intentional
+                            pass
+                else:
+                    # Evidence mode
+                    try:
+                        from core.evaluation.evidence_mode import require
+                        require(
+                            "substrate_sync",
+                            False,
+                            "no live mood available; neutral fallback would leak",
+                        )
+                    except Exception:
+                        raise
+                    neutral_moods = {"valence": 0.0, "arousal": 0.0, "motivation": 0.0, "stress": 0.0}
+                    for hook in self._hooks:
+                        hook.update_substrate(neutral_moods)
+                        try:
+                            hook.substrate_source = "neutral_fallback"
+                        except Exception:
+                            pass
 
             except Exception as e:
                 record_degradation('affective_steering', e)
@@ -1147,6 +1139,10 @@ class AffectiveSteeringEngine:
         for hook in self._hooks:
             hook._alpha = alpha
         logger.info("⚙️  Steering alpha set to %.1f", alpha)
+
+    def is_active(self) -> bool:
+        """Returns True if steering vectors are attached and alpha > 0."""
+        return self._model_attached and self._alpha > 0.0 and len(self._hooks) > 0
 
     def set_active(self, active: bool):
         """Enable or disable all steering without removing hooks."""

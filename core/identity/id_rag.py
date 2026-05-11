@@ -19,6 +19,8 @@ import logging
 import re
 import sqlite3
 import time
+import threading
+import queue
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -120,6 +122,11 @@ class IdentityChronicle:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        
+        # Async writer thread for mark_accessed to avoid read-path blocking
+        self._access_queue = queue.Queue(maxsize=1000)
+        self._writer_thread = threading.Thread(target=self._async_writer_loop, daemon=True, name="IDRAGWriter")
+        self._writer_thread.start()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=5.0)
@@ -282,12 +289,41 @@ class IdentityChronicle:
         return max(item.score for item in retrieved)
 
     def _mark_accessed(self, fact_ids: list[str]) -> None:
-        now = time.time()
-        with self._connect() as conn:
-            conn.executemany(
-                "UPDATE identity_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-                [(now, fact_id) for fact_id in fact_ids],
-            )
+        try:
+            self._access_queue.put_nowait((time.time(), fact_ids))
+        except queue.Full:
+            pass # Backpressure: drop access marks if queue is full rather than blocking
+
+    def _async_writer_loop(self) -> None:
+        """Background thread to process mark_accessed requests."""
+        while True:
+            try:
+                batch = []
+                # Block for up to 1 second waiting for the first item
+                batch.append(self._access_queue.get(timeout=1.0))
+                # Drain the rest of the queue
+                while not self._access_queue.empty():
+                    try:
+                        batch.append(self._access_queue.get_nowait())
+                    except queue.Empty:
+                        break
+                
+                # Execute batch update
+                if batch:
+                    with self._connect() as conn:
+                        updates = []
+                        for now, fact_ids in batch:
+                            updates.extend([(now, fact_id) for fact_id in fact_ids])
+                        if updates:
+                            conn.executemany(
+                                "UPDATE identity_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                                updates,
+                            )
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.debug("ID-RAG async writer error: %s", e)
+                time.sleep(1.0)
 
     @staticmethod
     def _row_to_fact(row: sqlite3.Row) -> IdentityFact:

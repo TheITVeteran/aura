@@ -6,6 +6,8 @@ import logging
 import sqlite3
 import time
 import uuid
+import threading
+import queue
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -118,6 +120,9 @@ class VectorMemory:
                     "VectorMemory ONLINE — collection '%s' (%d vectors), persist=%s",
                     collection_name, self._collection.count(), persist_directory
                 )
+                self._upsert_queue = queue.Queue(maxsize=1000)
+                self._upsert_thread = threading.Thread(target=self._async_upsert_loop, daemon=True, name="ChromaUpsert")
+                self._upsert_thread.start()
             except Exception as e:
                 record_degradation('vector_memory', e)
                 logger.error("ChromaDB init failed, falling back to Sovereign Persistence: %s", e)
@@ -213,6 +218,32 @@ class VectorMemory:
     # Primary API
     # ------------------------------------------------------------------
 
+    def _async_upsert_loop(self) -> None:
+        """Background thread for ChromaDB upserts to avoid event loop blocking."""
+        while True:
+            try:
+                batch = []
+                batch.append(self._upsert_queue.get(timeout=1.0))
+                while not self._upsert_queue.empty() and len(batch) < 100:
+                    try:
+                        batch.append(self._upsert_queue.get_nowait())
+                    except queue.Empty:
+                        break
+                if batch:
+                    ids = [i[0] for i in batch]
+                    documents = [i[1] for i in batch]
+                    metadatas = [i[2] for i in batch]
+                    try:
+                        self._collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+                    except Exception as e:
+                        record_degradation('vector_memory', e)
+                        logger.error("Async Chroma upsert failed: %s", e)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.debug("Async Chroma writer error: %s", e)
+                time.sleep(1.0)
+
     def add_memory(
         self,
         content: str,
@@ -258,16 +289,15 @@ class VectorMemory:
         meta.setdefault("last_accessed", time.time())
 
         try:
-            self._collection.upsert(
-                ids=[doc_id],
-                documents=[content],
-                metadatas=[meta],
-            )
-            logger.debug("VectorMemory.add_memory: %s...", content[:60])
+            self._upsert_queue.put_nowait((doc_id, content, meta))
+            logger.debug("VectorMemory.add_memory (queued): %s...", content[:60])
             return True
+        except queue.Full:
+            logger.warning("VectorMemory upsert queue full, dropping memory: %s", doc_id)
+            return False
         except Exception as e:
             record_degradation('vector_memory', e)
-            logger.error("VectorMemory.add_memory failed: %s", e)
+            logger.error("VectorMemory.add_memory enqueue failed: %s", e)
             return False
 
     def search_similar(self, query: str, limit: int = 5, **kwargs) -> List[Dict]:

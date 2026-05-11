@@ -163,9 +163,15 @@ class ExperienceBuffer:
             }
             self._buffer.append(record)
 
-            # Persist immediately (survive crashes)
-            with open(self.db_path, 'a') as f:
-                f.write(json.dumps(record) + '\n')
+            # Persist immediately in background to prevent I/O blocking the hot path
+            def _write_record():
+                try:
+                    with open(self.db_path, 'a') as f:
+                        f.write(json.dumps(record) + '\n')
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=_write_record, daemon=True).start()
 
         logger.debug("📖 Recorded experience (quality=%.2f, source=%s)", quality_score, source)
         return True
@@ -415,13 +421,14 @@ class LoRATrainer:
         try:
             logger.info("🧬 Initiating genuine learning from %d examples", len(examples))
 
-            # Write data
-            train_path = self._write_training_data(examples)
+            def _prepare_and_train():
+                # Write data (I/O offloaded from hot path)
+                tp = self._write_training_data(examples)
+                # Run training
+                return self._run_training_subprocess(tp)
 
-            # Run training in thread (GPU compute, don't block loop)
-            success, output = await asyncio.to_thread(
-                self._run_training_subprocess, train_path
-            )
+            # Run training in thread (GPU compute + I/O, don't block loop)
+            success, output = await asyncio.to_thread(_prepare_and_train)
 
             if success:
                 self._last_train_time = time.time()
@@ -535,7 +542,8 @@ class LearningScheduler:
                 logger.info("✅ Will approved training run (Receipt: %s)", decision.receipt_id)
             except Exception as e:
                 record_degradation("genuine_learning_will", e)
-                logger.warning("⚠️ Proceeding with training despite Will exception: %s", e)
+                logger.warning("🚫 Will unavailable; blocking training run: %s", e)
+                return False
 
             # Train
             success = await self.trainer.train(examples)

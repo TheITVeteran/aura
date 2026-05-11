@@ -127,28 +127,26 @@ class ServiceContainer:
                     # Look for explicit status reporting
                     if hasattr(desc.instance, "get_status") and callable(desc.instance.get_status):
                         try:
-                            # We can't await async methods here securely without an event loop, 
-                            # so we'll just mark it active if we can't synchronously invoke.
                             import inspect
                             if inspect.iscoroutinefunction(desc.instance.get_status):
-                                statuses[name] = "active"
+                                statuses[name] = "async_status_unread"
                             else:
                                 st = desc.instance.get_status()
                                 statuses[name] = st.get("status", "active") if isinstance(st, dict) else str(st)
                         except Exception:
-                            statuses[name] = "active"
+                            statuses[name] = "status_error"
                     elif hasattr(desc.instance, "status") and callable(desc.instance.status):
                         try:
                             import inspect
                             if inspect.iscoroutinefunction(desc.instance.status):
-                                statuses[name] = "active"
+                                statuses[name] = "async_status_unread"
                             else:
                                 st = desc.instance.status()
                                 statuses[name] = st.get("status", "active") if isinstance(st, dict) else str(st)
                         except Exception:
-                            statuses[name] = "active"
+                            statuses[name] = "status_error"
                     else:
-                        statuses[name] = "active"
+                        statuses[name] = "active_unverified"
                 else:
                     if desc.required:
                         statuses[name] = "missing"

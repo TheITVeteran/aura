@@ -122,6 +122,7 @@ class GeneratedStrategy:
     newly_added_handlers: Set[str]
     improves_improver: bool
     source: str
+    generation_metadata: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -167,7 +168,7 @@ class PrimitiveInventionEngine:
         if not selected and missing:
             selected = {missing[0]}
         new_handlers = set(current_handlers) | selected
-        source = generate_solver_source(new_handlers, generation_id=generation_id)
+        source, metadata = generate_solver_source(new_handlers, generation_id=generation_id)
         hypothesis = (
             f"Add handlers for {', '.join(sorted(selected)) or 'no new handlers'} "
             f"because external hidden feedback shows low per-kind scores."
@@ -180,6 +181,7 @@ class PrimitiveInventionEngine:
             newly_added_handlers=selected,
             improves_improver=improves_improver,
             source=source,
+            generation_metadata=metadata,
         )
 
     def improver_score(self, *, generation_index: int, strategy: GeneratedStrategy, eval_result: CustodyEvalResult, artifact_complete: bool) -> float:
@@ -219,14 +221,51 @@ def solve_with_handlers(task: Task, handlers: Set[str]) -> Any:
 
 
 def solve_with_generated_code(task: Task, source: str) -> Any:
-    namespace: Dict[str, Any] = {}
+    wrapper = f"""
+import sys
+import json
+import math
+
+class MockTask:
+    def __init__(self, kind, metadata):
+        self.kind = kind
+        self.metadata = metadata
+
+{source}
+
+if __name__ == '__main__':
+    data = json.loads(sys.stdin.read())
+    t = MockTask(data['kind'], data['metadata'])
+    result = solve(t)
+    print(json.dumps({{"result": result}}))
+"""
+    import tempfile
+    import subprocess
+    import json
+    import os
     try:
-        # We execute the generated solver code, replacing the mock handler selection
-        exec(source, namespace)
-        if "solve" in namespace:
-            res = namespace["solve"](task)
-            if res is not None:
-                return res
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(wrapper)
+            tmp_path = f.name
+        
+        # Security: sandboxed subprocess execution of LLM-generated code
+        proc = subprocess.run(
+            ["python", tmp_path],
+            input=json.dumps({"kind": task.kind, "metadata": task.metadata}),
+            text=True,
+            capture_output=True,
+            timeout=1.0
+        )
+        os.unlink(tmp_path)
+        
+        if proc.returncode == 0 and proc.stdout:
+            try:
+                out_data = json.loads(proc.stdout)
+                res = out_data.get("result")
+                if res is not None:
+                    return res
+            except json.JSONDecodeError:
+                pass
     except Exception as exc:
         from core.runtime.errors import record_degradation
         record_degradation("rsi_solver_execution", exc)
@@ -239,7 +278,7 @@ def baseline_solver(task: Task) -> Any:
     return None
 
 
-def generate_solver_source(handlers: Set[str], *, generation_id: str) -> str:
+def generate_solver_source(handlers: Set[str], *, generation_id: str) -> Tuple[str, Dict[str, Any]]:
     handlers_literal = sorted(handlers)
     
     fallback_code = (
@@ -264,32 +303,50 @@ def generate_solver_source(handlers: Set[str], *, generation_id: str) -> str:
         "    return None\n"
     )
 
+    import hashlib
+    metadata = {
+        "router_presence": False,
+        "fallback_flag": True,
+        "parse_result": "fallback",
+        "sandbox_result": "untested",
+        "generated_source_hash": None,
+    }
+
     try:
         from core.brain.llm.code_generator import LLMCodeGenerator
         from core.container import ServiceContainer
-        # Only attempt LLM generation if a brain or router is available
-        if ServiceContainer.get("llm_router", default=None) or ServiceContainer.get("brain", default=None):
+        router = ServiceContainer.get("llm_router", default=None)
+        brain = ServiceContainer.get("brain", default=None)
+        if router or brain:
+            metadata["router_presence"] = True
             generator = LLMCodeGenerator(fallback_to_stub=False)
             prompt = (
                 f"Write a Python module that defines a `solve(task)` function to handle the following task kinds: {handlers_literal}.\n"
                 "The `task` object has `task.kind` (string) and `task.metadata` (dict).\n"
                 "If `task.kind` is not supported, return `None`.\n"
-                "The following kinds have specific math rules:\n"
-                "- 'gcd': `math.gcd(int(meta['a']), int(meta['b']))`\n"
-                "- 'mod': `pow(int(meta['a']), int(meta['b']), int(meta['m']))`\n"
-                "- 'compose': `int(meta['c']) * (int(meta['a']) * x + int(meta['b'])) + int(meta['d'])`\n"
-                "- 'sort': `sorted(list(meta['arr']))`\n"
-                "- 'palindrome': `str(meta['s']) == str(meta['s'])[::-1]`\n"
+                "Implement the algorithms based on the task kind name and common algorithmic problem definitions.\n"
+                "For example:\n"
+                "- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'.\n"
+                "- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\n"
+                "- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.\n"
+                "- 'sort': Return a sorted copy of the list in metadata 'arr'.\n"
+                "- 'palindrome': Check if the string in metadata 's' reads the same backward as forward.\n"
                 "Do NOT use external libraries other than math.\n"
             )
             code = generator.generate(prompt, context={"module_path": f"successor_solver_{generation_id}.py"})
             if code and "def solve(" in code:
-                return f'"""Generated successor solver for {generation_id}."""\n' + code
+                final_code = f'"""Generated successor solver for {generation_id}."""\n' + code
+                metadata["fallback_flag"] = False
+                metadata["parse_result"] = "success"
+                metadata["generated_source_hash"] = hashlib.sha256(final_code.encode("utf-8")).hexdigest()
+                return final_code, metadata
     except Exception as exc:
         from core.runtime.errors import record_degradation
         record_degradation("autonomous_rsi_generation", exc)
+        metadata["parse_result"] = str(exc)
 
-    return fallback_code
+    metadata["generated_source_hash"] = hashlib.sha256(fallback_code.encode("utf-8")).hexdigest()
+    return fallback_code, metadata
 
 
 @dataclass(frozen=True)
@@ -331,6 +388,7 @@ class GenerationFreezer:
             "promotion_certificate.json": json.dumps(promotion_record, indent=2, sort_keys=True, default=str),
             "rollback_target.json": json.dumps(rollback_target, indent=2, sort_keys=True, default=str),
             "config.json": json.dumps({"generation_id": strategy.generation_id, "handlers": sorted(strategy.handlers)}, indent=2, sort_keys=True),
+            "generation_metadata.json": json.dumps(strategy.generation_metadata, indent=2, sort_keys=True),
         }
         hashes: Dict[str, str] = {}
         for name, text in files.items():
@@ -411,14 +469,11 @@ class AblationCourt:
             else:
                 hidden = custodian.score(pack, lambda task: baseline_solver(task)).score
                 
-            artifact_bonus = 0.10 if name == "full_aura" and artifact_complete else 0.0
-            lineage_bonus = 0.08 if name == "full_aura" else 0.0
-            penalty = 0.12 if name == "aura_without_lineage_evaluator" else 0.0
-            scores[name] = round(max(0.0, min(1.0, hidden + artifact_bonus + lineage_bonus - penalty)), 6)
-        full = scores["full_aura"]
+            scores[name] = hidden
+            
         return AblationCourtResult(
             scores=scores,
-            full_wins=all(full > score for name, score in scores.items() if name != "full_aura"),
+            full_wins=all(scores.get("full_aura", 0.0) > score for name, score in scores.items() if name != "full_aura"),
         )
 
 

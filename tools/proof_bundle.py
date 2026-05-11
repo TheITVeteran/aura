@@ -115,8 +115,8 @@ def _decisive_results() -> dict[str, Any]:
             return {"source": str(existing), "passed": False, "error": repr(exc)}
     return {
         "generated_at": time.time(),
-        "status": "not_run",
-        "passed": False,
+        "status": "missing_artifact",
+        "passed": "unknown",
         "note": "Decisive results missing. Run tests/run_decisive_test.py.",
         "quality_gates": {
             "mutation_tiers": False,
@@ -207,9 +207,9 @@ def _longevity_summary() -> dict[str, Any]:
     return {
         "generated_at": time.time(),
         "profile": "instant_readiness_snapshot",
-        "note": "Long wall-clock longevity runs are intentionally separate; missing evidence is recorded as not_run.",
-        "status": "not_run",
-        "passed": False,
+        "note": "Long wall-clock longevity runs are intentionally separate; missing evidence is recorded as unknown.",
+        "status": "missing_artifact",
+        "passed": "unknown",
     }
 
 
@@ -317,17 +317,17 @@ def _overt_action_smoke() -> dict[str, Any]:
 def _safe_json(path: Path) -> dict[str, Any]:
     try:
         if not path.exists():
-            return {}
+            return {"passed": "unknown", "status": "missing_artifact", "source": str(path)}
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {"data": data}
     except (json.JSONDecodeError, OSError, UnicodeError) as exc:
-        return {"passed": False, "error": repr(exc), "source": str(path)}
+        return {"passed": "unknown", "status": "unreadable", "error": repr(exc), "source": str(path)}
 
 
 def _latest_baselines() -> dict[str, Any]:
     path = ROOT / "aura_bench" / "baselines" / "results.jsonl"
     if not path.exists():
-        return {"passed": False, "status": "not_run", "source": str(path), "rows": []}
+        return {"passed": "unknown", "status": "missing_artifact", "source": str(path), "rows": []}
     rows: list[dict[str, Any]] = []
     try:
         for line in path.read_text(encoding="utf-8").splitlines()[-50:]:
@@ -364,9 +364,9 @@ def _asa_messy_refactors() -> dict[str, Any]:
     boot_audit_path = ROOT / ".aura_architect" / "reports" / "boot-audit-latest.json"
     audit = _safe_json(audit_path)
     boot_audit = _safe_json(boot_audit_path)
-    if audit:
+    if audit.get("status") != "missing_artifact":
         return {
-            "passed": False,
+            "passed": "unknown",
             "status": "audit_only_missing_shadow_refactor_artifact",
             "source": str(audit_path),
             "boot_audit_source": str(boot_audit_path) if boot_audit else "",
@@ -382,7 +382,7 @@ def _asa_messy_refactors() -> dict[str, Any]:
             ),
         }
     return {
-        "passed": False,
+        "passed": "unknown",
         "status": "missing_artifact",
         "source": str(promoted),
     }
@@ -404,8 +404,8 @@ def _canonical_proof_bundle(out: Path) -> dict[str, Any]:
     }
     failures: list[dict[str, Any]] = []
     for name, payload in artifacts.items():
-        if not payload:
-            failures.append({"lane": name, "reason": "missing_artifact"})
+        if payload.get("status") == "missing_artifact" or payload.get("passed") == "unknown":
+            failures.append({"lane": name, "reason": "missing_artifact", "passed": "unknown"})
             continue
         if payload.get("passed") is False:
             failures.append(
@@ -413,8 +413,15 @@ def _canonical_proof_bundle(out: Path) -> dict[str, Any]:
                     "lane": name,
                     "reason": payload.get("status") or payload.get("error") or "reported_failed",
                     "source": payload.get("source", ""),
+                    "passed": False,
                 }
             )
+            
+    any_failures = any(f.get("passed") is False for f in failures)
+    any_unknown = any(f.get("passed") == "unknown" for f in failures)
+    
+    passed_status = False if any_failures else ("unknown" if any_unknown else True)
+
     return {
         "generated_at": time.time(),
         "schema": "aura.canonical_proof_bundle.v1",
@@ -431,7 +438,7 @@ def _canonical_proof_bundle(out: Path) -> dict[str, Any]:
         },
         "artifacts": artifacts,
         "failures": failures,
-        "passed": not failures,
+        "passed": passed_status,
     }
 
 
