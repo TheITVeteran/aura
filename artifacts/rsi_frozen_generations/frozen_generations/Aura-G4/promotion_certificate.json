@@ -1,0 +1,10 @@
+{
+  "after_score": 1.0,
+  "baseline_score": 0.811531,
+  "candidate_improved_over_baseline": true,
+  "fresh_hidden_pack": "sha256:5f7f3f246868e947c",
+  "generation_id": "Aura-G4",
+  "hidden_eval_score": 1.0,
+  "improver_score": 1.0,
+  "promoted": true
+}

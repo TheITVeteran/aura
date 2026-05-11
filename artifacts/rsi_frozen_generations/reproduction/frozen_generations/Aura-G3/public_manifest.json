@@ -1,0 +1,788 @@
+{
+  "answer_hashes": {
+    "0b00619975f6cc86aad43a33e4fd5aaf73b295a4f15d331b975092c682a0d0ad": "sha256:1444819706f5836935990c4e3d50df0457d32c537614482b9995664800a192a3",
+    "0c5736ea53dd021bbd27f3263552b4936ad9beee0da9a97928a7d7c5e3c96e7a": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "0ccd1d8e4366bbe20356c1731940df737edbb524e1ac7d8fa96967cd354ad20e": "sha256:92775ee53cb2230b7ab3714f06d7d9fbc4e054a78e9d8e901f284e69d0f052a7",
+    "0e0903c2387ff9e5855bc423f513dee5f5884c7bd2db561cc8c4816d5fd4e22b": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "134d7bfecc6c43bae8b4e3a152f289eff175b4fe28de4dac882d457bdf33d15d": "sha256:cc0df5596c1f0000d7ade3da08e0fe3c6c7fe7faf6057844989b9510c9be821b",
+    "191ee9872a1472a7ece02954facd8831c0fec0d24d52494e6f32730b48aad7cb": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "1c22c01fad3ef06e94ba29a909b1c2e1e5766ca5968575d5c40146a5dd84376e": "sha256:5493a2ec08982f416413a5445e38b8dd4d7de03e396d8ebae3fe9f36d805f92a",
+    "1f9b2554f2eac8d59f6f6975e4cc25a817307c85b819355c473eed16d692d43e": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "22cbc527138d3a16dd8f2448745013b53fbb13aa48da654e3b1f50293e86d78d": "sha256:5493a2ec08982f416413a5445e38b8dd4d7de03e396d8ebae3fe9f36d805f92a",
+    "24b79a476bef0f4321a266d59dbb7e3876f3f8a124ed9c5be7afee11c04d4d07": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "28b2bb55ca1b41ba5d08547f0f14e9158ddc817f52f75a9fc8a9a39ad0b2dbe1": "sha256:55219f98b6286e68bc9b04446ca8ea66eefc48cc7d391ddca9e90e9edfa4fcc0",
+    "2b68f28e6c4970e4a9d96f2b4e788a6f553717bdfa8f1e4e38682a9a4360dac7": "sha256:deb5bf599bfeb9423d66700f0f57faaef922e200404252dcfe3d112ec01389f5",
+    "2c3aafe9c23ed6760dc6915511c12dd10d5acdfbd13c649234e434728a6510df": "sha256:0d64a546647dfb5d7f65ca3ca9308fee297291bdcc48f2144fe9213e197c561c",
+    "311efeea9dc9bbfbfc7f069ef4ba81f6549a3df78ee5b0bf33d5f49a269a4058": "sha256:fd587f183d994ba3378de5ae411e85a51f64ec793ed87ecf8d8a0c2a129d2703",
+    "378418c8b7fd491ce711e8f1e5b887fb607e1a1547117a78f5f79eb84bd72d61": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "3866187d34d21fa6013c6f483126b942156867b6ccc22f7c45140907a91f5e5a": "sha256:65e78d0fac52014878746adb992390a623c6cfa51ae77fa6521e35c72f530522",
+    "3997f380eb7d62e4f3fe2f79c916571e1545b637190e013c1d84e2598f811fab": "sha256:0dff87de1bd52c31cb3f5b907cb27832991632fa7a74c2f41a2e5207fa528c13",
+    "414abaa8573fed2e8b4f78dd2b86ca67b9a987ea005328a32c7bdf82a1124fce": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "432a6719941db79b59f6ad65f918f5e8479a49fa13a38b8a797d1b59a3018ecd": "sha256:e2ca708da240b206ee4e8eade4d93805b6486ebfe2b8a8b7e1bed7c2106b0989",
+    "48adf01cad07d9eb161fb7f7765d1838a9459cf13dd6448ebc31699c9b496d5b": "sha256:ab690b5b7ea2f1d793fe3e64288edb2c6a2b4deb797a4ba41f5cf00c11837c90",
+    "5692cf9d0cbbf123400fd5529fd15d426e22aa32acbe4fb9ed4955a22905d2c0": "sha256:7bac4069fc7a0ee54e1e977fbaa5ef54aa5cbc6a45a9532471bc89de6452963d",
+    "58891ead15228e2ca236f7599c3f049fa82971973065cc54ef1fa65105b55fdb": "sha256:14009adfd2c50ad228311a20c831f624f1e9c9ae492dae4a6f281dd38bd127ed",
+    "5cd1ccdd1d9b94d5598357acc65b7c3bdaff72e8a37caf7ec200f2efd86f21b3": "sha256:1c30ee134a45e9aef5a1355f8a15b1e51864437e76967de182068525f17fced1",
+    "5e0c98c38020614aa4622d461b59a09d5372fd4601867c8f8181d42fe2ce5645": "sha256:5493a2ec08982f416413a5445e38b8dd4d7de03e396d8ebae3fe9f36d805f92a",
+    "630c984a19669614287113ba134340bbf38c96807cbbfea02a30bf91c29d7bed": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "67fceaa6215d7f23887d81a70d3e51c5f748a2926dfdfe1c97b7e2bd293076a7": "sha256:a15e754ff1ba380593fbdef24435cff46284d5b57a82498c73932011537a35c5",
+    "7538146d9351173e18190c278975127656c7195e6909ff3dc96c1a3e5b195d8f": "sha256:0fbc766982a82d5b7114f789dc073350080616c46bfbbd45a7b2eb27b5a2b233",
+    "8613b87281c8261f6e0a93ab1fbd1268b26ae496309ad676d35f6470dc0dadea": "sha256:2408c9380ae415533110aa1d35b3d76acc068901de892d9cf20c4fc7a79c66b5",
+    "8a1830c9fbe5dbb42b660ed6d0901a3e12718edda73164c61f7865661db893a7": "sha256:f420fda57cede64e00bd506c2c43da055611193a5ea23eb45512b775693a4e4a",
+    "9324832c66f61357f90c82932d5f19c879a69f89a02a8b5d7353354c38c87f3d": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "9632e6147735846c9ed03b826f4cf6af420e3799774bb68c5a2ee7e97ae1d29a": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "97a06101f59aeb5a98a18f1d2f7aa0708a14bc84a4e18d9b2dc9abad011b7bbb": "sha256:99d6fd12d10d43ff39a76c228de5f3618ac26b1726d89c952ddac6871358e62c",
+    "98778c50e852edd388b9a6b5892ea7d1e936ec168279eab9a8de01fc33fb0a4c": "sha256:2173b8bb108a03e80f8ddf081d1bed648d691993d3bcc5f384c57f4a2b287cd0",
+    "98e80982bab3f7b86c2fe214c57108fcea52ee81f5ccc2edcc1b88f24ff14312": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "9a5f14bae162bb476d881b209543cd595a0dec36b27295f4545737f8ec7de3a0": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "a0879dbc191fc6c45dd4138505abfbf860dcaf64d3f4fc452da83471729f4b86": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "a1ec08c2e875f5c630ad6dd021c9b9b9481495028f484a0eb2656c88c30d58b2": "sha256:46668b91603e7ee6e22218d091c1b01dee3b4c956751f972caec7a8527acd2a2",
+    "a21ba8312e26aed764514aea3270b9df0c7fe53448a170c751b60a3dc358c89a": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "aa92a42460d77ceec25f3de39180532081a629498e5542e44f436d5f070cf922": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "b2376f83c01831d034d0e17b26e973939e9430076c2a35e1c5eae7578665d7ab": "sha256:1dd00c576168cff859f71d7c69aa86dedaa928d3b90e549e0f98f3f88d2a967f",
+    "b6b9b6308fb8816672b4a7a62eed45414947f6798da8e93c6f1d745c3c3f834e": "sha256:d4550c8cad57347dd59aeebd77b0d4ec52e2c9e8c2f9415fe127df2b975d2d59",
+    "c46744321943d65977b1be7fb5c4183f778b0c5b06cc1895ed3388abdf01bb62": "sha256:c34fd60d2612bd3dc8f1414fcf9ffa3e37505e75fa1ef69e9c4ed09abf21bd20",
+    "ca6b2fb5e7172b66c96a92c033e7c6f09cb3cda75a4854b8acdc71169aebb751": "sha256:8a869c849a9d4a6f5c872bdcf036e16bb914b816d90b2e2458ec2e6a98c75a7a",
+    "cabb7c7936108fea7b88d427ef212b22f86ed55a5436c8eeb75a6e6bd8d9a5c2": "sha256:a01c9d90b9bb36984119057199bdbe7a63f72c765c04f6cf6cc4442c1ca6c2ee",
+    "cdb8ea5e01b680cb11a6249ce3a7472a60a0ec28a03e27c97c286ae746c982f0": "sha256:5f897ae5d9e90eda3333a100afd9524f792e508972a9390a4e5cb395566c0270",
+    "ce2bc23135e3fffc7b89ff6e0873146b7fbfcdd11c810464c75ca2371bd0a89e": "sha256:5f897ae5d9e90eda3333a100afd9524f792e508972a9390a4e5cb395566c0270",
+    "cf66a51b8145ddb19829bd39247352653a41b5c3b84956a2bc0e35392c27f3fa": "sha256:3ff00286766c382620af7ab94fd7c670c9dbc8be06008ec6d1cd68834a6a9e4f",
+    "d73db7f2045e1345c93daa952ce4c5e354427d6fba0a48e31185a2864f1b500d": "sha256:5493a2ec08982f416413a5445e38b8dd4d7de03e396d8ebae3fe9f36d805f92a",
+    "e3e1d344f68de55e17325a2ab2dd1852b6c22037d9786971f101fb75d0de8389": "sha256:4bebebd7bfe001cbe84b9816d6a33e44e0db4c75529a6674b4414f8fb9bb5a17",
+    "e721b26c328909d141702a4dfd02c781e8871e73ccfbbec5ff2e77dede450a18": "sha256:df13926b1dee84750bca431bce4f647ddd0bd9290e644ec2c25d76120630bde8",
+    "e818b3b1a32ed633d896f2cd85d9c3c4ce8872425e81885a5b16fc7d587b02c1": "sha256:566f7f695bd06d92b91235c94b046de5516fa2848ba7d9399398250348689f4d",
+    "e8399ffde768906c6b70c1948b4cdf8e8982fcf20cf5afbaa83b7b099a1771d3": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "ead69477036c6c84db2bc7b66ec4b212ebfe6d0a7bf9d0ed90f30cc0088f39e1": "sha256:4945cd32a7396d2cedb377e66545cc19d9f92197d7c61cc9780160270ef4872b",
+    "eca2b3f6b5d22bf0f6f6ff456a4f7078e28e959bb80b03543536a5772e417f43": "sha256:5493a2ec08982f416413a5445e38b8dd4d7de03e396d8ebae3fe9f36d805f92a",
+    "efd50ce4b6c32de011bc2edb659f249d2d2199a3627d1db121eb342818e83b85": "sha256:e1ab70abd8dd3502a7386b6aadf4912b7508657979cac0c9ccb53560d181585c",
+    "f5d9b123c5c9d7c1c66ce2baa8b0aca532da0b7dfca0a6c51582e6c408b6d5bd": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "fb17b20179c1b371483ab6f4d990926d97690b46ab3158007a684b3e81b45de7": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f",
+    "fbf480469eed1dc8bdc786e3477fa9cf44f9a40fb01c2a25676aa6d3ff60966e": "sha256:56a1695bea61c10c2d1d07db62e34c1b6c1d9961f554224aa92c19cd6c4ae67a",
+    "feed123ddc951360ae6aa52eeaf019258951f5db3cb12dc9999af3b3423518cf": "sha256:69ad4a1379baba82b2d8458c551546ebea7ebd71424fba0e4638626c4accddae",
+    "ffc8826bac91c77530e82a4d267ba67e6baa23a2d09643ee3b4bedd507fac2db": "sha256:4fdcaa460a9f2219a163d035088243507f42574f95f97d2eaca87d4c0a84f46f"
+  },
+  "answer_salt_hash": "sha256:cd70242424bcf66a0d5ae3eed0d0f5932c2b81252a1f3937f2a97d12d464bb7d",
+  "created_at": 1778467624.259593,
+  "pack_id": "sha256:e58627d1914b010b2",
+  "public_tasks": [
+    {
+      "id": "24b79a476bef0f4321a266d59dbb7e3876f3f8a124ed9c5be7afee11c04d4d07",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 0,
+        "s": "aczbzxcyx"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: aczbzxcyx"
+    },
+    {
+      "id": "5692cf9d0cbbf123400fd5529fd15d426e22aa32acbe4fb9ed4955a22905d2c0",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          34,
+          -34,
+          -78,
+          -81,
+          -71,
+          -28,
+          20,
+          -66,
+          38,
+          79,
+          -59,
+          64
+        ],
+        "idx": 1
+      },
+      "prompt": "Sort this list ascending: [34, -34, -78, -81, -71, -28, 20, -66, 38, 79, -59, 64]"
+    },
+    {
+      "id": "fbf480469eed1dc8bdc786e3477fa9cf44f9a40fb01c2a25676aa6d3ff60966e",
+      "kind": "gcd",
+      "metadata": {
+        "a": 361404,
+        "b": 227082,
+        "idx": 2
+      },
+      "prompt": "Return gcd(361404, 227082) as an integer."
+    },
+    {
+      "id": "1c22c01fad3ef06e94ba29a909b1c2e1e5766ca5968575d5c40146a5dd84376e",
+      "kind": "gcd",
+      "metadata": {
+        "a": 218578,
+        "b": 842628,
+        "idx": 3
+      },
+      "prompt": "Return gcd(218578, 842628) as an integer."
+    },
+    {
+      "id": "a1ec08c2e875f5c630ad6dd021c9b9b9481495028f484a0eb2656c88c30d58b2",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -14,
+          59,
+          16,
+          -95
+        ],
+        "idx": 4
+      },
+      "prompt": "Sort this list ascending: [-14, 59, 16, -95]"
+    },
+    {
+      "id": "8613b87281c8261f6e0a93ab1fbd1268b26ae496309ad676d35f6470dc0dadea",
+      "kind": "mod",
+      "metadata": {
+        "a": 4661,
+        "b": 291,
+        "idx": 5,
+        "m": 372
+      },
+      "prompt": "Return (4661 ** 291) mod 372."
+    },
+    {
+      "id": "b6b9b6308fb8816672b4a7a62eed45414947f6798da8e93c6f1d745c3c3f834e",
+      "kind": "mod",
+      "metadata": {
+        "a": 9128,
+        "b": 18,
+        "idx": 6,
+        "m": 23689
+      },
+      "prompt": "Return (9128 ** 18) mod 23689."
+    },
+    {
+      "id": "3997f380eb7d62e4f3fe2f79c916571e1545b637190e013c1d84e2598f811fab",
+      "kind": "mod",
+      "metadata": {
+        "a": 4064,
+        "b": 83,
+        "idx": 7,
+        "m": 44898
+      },
+      "prompt": "Return (4064 ** 83) mod 44898."
+    },
+    {
+      "id": "e3e1d344f68de55e17325a2ab2dd1852b6c22037d9786971f101fb75d0de8389",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": -6,
+        "c": -4,
+        "d": 5,
+        "idx": 8,
+        "x": 1
+      },
+      "prompt": "Let f(x)=1x+-6, g(x)=-4x+5. Return g(f(1)) as an integer."
+    },
+    {
+      "id": "2c3aafe9c23ed6760dc6915511c12dd10d5acdfbd13c649234e434728a6510df",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          59,
+          87,
+          49,
+          60,
+          56,
+          -23,
+          69,
+          19,
+          82,
+          -29,
+          27,
+          -95
+        ],
+        "idx": 9
+      },
+      "prompt": "Sort this list ascending: [59, 87, 49, 60, 56, -23, 69, 19, 82, -29, 27, -95]"
+    },
+    {
+      "id": "67fceaa6215d7f23887d81a70d3e51c5f748a2926dfdfe1c97b7e2bd293076a7",
+      "kind": "mod",
+      "metadata": {
+        "a": 5220,
+        "b": 476,
+        "idx": 10,
+        "m": 9894
+      },
+      "prompt": "Return (5220 ** 476) mod 9894."
+    },
+    {
+      "id": "7538146d9351173e18190c278975127656c7195e6909ff3dc96c1a3e5b195d8f",
+      "kind": "compose",
+      "metadata": {
+        "a": -3,
+        "b": 5,
+        "c": -4,
+        "d": -6,
+        "idx": 11,
+        "x": 12
+      },
+      "prompt": "Let f(x)=-3x+5, g(x)=-4x+-6. Return g(f(12)) as an integer."
+    },
+    {
+      "id": "134d7bfecc6c43bae8b4e3a152f289eff175b4fe28de4dac882d457bdf33d15d",
+      "kind": "mod",
+      "metadata": {
+        "a": 2976,
+        "b": 250,
+        "idx": 12,
+        "m": 41494
+      },
+      "prompt": "Return (2976 ** 250) mod 41494."
+    },
+    {
+      "id": "0b00619975f6cc86aad43a33e4fd5aaf73b295a4f15d331b975092c682a0d0ad",
+      "kind": "mod",
+      "metadata": {
+        "a": 6510,
+        "b": 280,
+        "idx": 13,
+        "m": 20778
+      },
+      "prompt": "Return (6510 ** 280) mod 20778."
+    },
+    {
+      "id": "22cbc527138d3a16dd8f2448745013b53fbb13aa48da654e3b1f50293e86d78d",
+      "kind": "gcd",
+      "metadata": {
+        "a": 499418,
+        "b": 201422,
+        "idx": 14
+      },
+      "prompt": "Return gcd(499418, 201422) as an integer."
+    },
+    {
+      "id": "feed123ddc951360ae6aa52eeaf019258951f5db3cb12dc9999af3b3423518cf",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 15,
+        "s": "zxc"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: zxc"
+    },
+    {
+      "id": "2b68f28e6c4970e4a9d96f2b4e788a6f553717bdfa8f1e4e38682a9a4360dac7",
+      "kind": "mod",
+      "metadata": {
+        "a": 6566,
+        "b": 271,
+        "idx": 16,
+        "m": 8457
+      },
+      "prompt": "Return (6566 ** 271) mod 8457."
+    },
+    {
+      "id": "9a5f14bae162bb476d881b209543cd595a0dec36b27295f4545737f8ec7de3a0",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 17,
+        "s": "xzaazacxxaby"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: xzaazacxxaby"
+    },
+    {
+      "id": "414abaa8573fed2e8b4f78dd2b86ca67b9a987ea005328a32c7bdf82a1124fce",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 18,
+        "s": "xcyabcybac"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: xcyabcybac"
+    },
+    {
+      "id": "1f9b2554f2eac8d59f6f6975e4cc25a817307c85b819355c473eed16d692d43e",
+      "kind": "gcd",
+      "metadata": {
+        "a": 218826,
+        "b": 753683,
+        "idx": 19
+      },
+      "prompt": "Return gcd(218826, 753683) as an integer."
+    },
+    {
+      "id": "0e0903c2387ff9e5855bc423f513dee5f5884c7bd2db561cc8c4816d5fd4e22b",
+      "kind": "gcd",
+      "metadata": {
+        "a": 238733,
+        "b": 891029,
+        "idx": 20
+      },
+      "prompt": "Return gcd(238733, 891029) as an integer."
+    },
+    {
+      "id": "0ccd1d8e4366bbe20356c1731940df737edbb524e1ac7d8fa96967cd354ad20e",
+      "kind": "mod",
+      "metadata": {
+        "a": 7532,
+        "b": 487,
+        "idx": 21,
+        "m": 42590
+      },
+      "prompt": "Return (7532 ** 487) mod 42590."
+    },
+    {
+      "id": "0c5736ea53dd021bbd27f3263552b4936ad9beee0da9a97928a7d7c5e3c96e7a",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 22,
+        "s": "yaxcyxaczzzb"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: yaxcyxaczzzb"
+    },
+    {
+      "id": "cabb7c7936108fea7b88d427ef212b22f86ed55a5436c8eeb75a6e6bd8d9a5c2",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -93,
+          94,
+          -9,
+          17,
+          -33,
+          -42,
+          49,
+          38,
+          41,
+          -15,
+          -76,
+          67
+        ],
+        "idx": 23
+      },
+      "prompt": "Sort this list ascending: [-93, 94, -9, 17, -33, -42, 49, 38, 41, -15, -76, 67]"
+    },
+    {
+      "id": "97a06101f59aeb5a98a18f1d2f7aa0708a14bc84a4e18d9b2dc9abad011b7bbb",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": 8,
+        "c": 1,
+        "d": 5,
+        "idx": 24,
+        "x": -19
+      },
+      "prompt": "Let f(x)=1x+8, g(x)=1x+5. Return g(f(-19)) as an integer."
+    },
+    {
+      "id": "d73db7f2045e1345c93daa952ce4c5e354427d6fba0a48e31185a2864f1b500d",
+      "kind": "gcd",
+      "metadata": {
+        "a": 236698,
+        "b": 96032,
+        "idx": 25
+      },
+      "prompt": "Return gcd(236698, 96032) as an integer."
+    },
+    {
+      "id": "ead69477036c6c84db2bc7b66ec4b212ebfe6d0a7bf9d0ed90f30cc0088f39e1",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -44,
+          80,
+          -12,
+          -21,
+          -59,
+          -3,
+          -15,
+          -18
+        ],
+        "idx": 26
+      },
+      "prompt": "Sort this list ascending: [-44, 80, -12, -21, -59, -3, -15, -18]"
+    },
+    {
+      "id": "98778c50e852edd388b9a6b5892ea7d1e936ec168279eab9a8de01fc33fb0a4c",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          70,
+          40,
+          10,
+          2,
+          -8,
+          92
+        ],
+        "idx": 27
+      },
+      "prompt": "Sort this list ascending: [70, 40, 10, 2, -8, 92]"
+    },
+    {
+      "id": "eca2b3f6b5d22bf0f6f6ff456a4f7078e28e959bb80b03543536a5772e417f43",
+      "kind": "gcd",
+      "metadata": {
+        "a": 812554,
+        "b": 655698,
+        "idx": 28
+      },
+      "prompt": "Return gcd(812554, 655698) as an integer."
+    },
+    {
+      "id": "5cd1ccdd1d9b94d5598357acc65b7c3bdaff72e8a37caf7ec200f2efd86f21b3",
+      "kind": "compose",
+      "metadata": {
+        "a": 2,
+        "b": 0,
+        "c": 2,
+        "d": -8,
+        "idx": 29,
+        "x": -9
+      },
+      "prompt": "Let f(x)=2x+0, g(x)=2x+-8. Return g(f(-9)) as an integer."
+    },
+    {
+      "id": "ce2bc23135e3fffc7b89ff6e0873146b7fbfcdd11c810464c75ca2371bd0a89e",
+      "kind": "gcd",
+      "metadata": {
+        "a": 419592,
+        "b": 78255,
+        "idx": 30
+      },
+      "prompt": "Return gcd(419592, 78255) as an integer."
+    },
+    {
+      "id": "a21ba8312e26aed764514aea3270b9df0c7fe53448a170c751b60a3dc358c89a",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 31,
+        "s": "bxycaycxbybz"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: bxycaycxbybz"
+    },
+    {
+      "id": "e818b3b1a32ed633d896f2cd85d9c3c4ce8872425e81885a5b16fc7d587b02c1",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          50,
+          -37,
+          -95,
+          -97
+        ],
+        "idx": 32
+      },
+      "prompt": "Sort this list ascending: [50, -37, -95, -97]"
+    },
+    {
+      "id": "a0879dbc191fc6c45dd4138505abfbf860dcaf64d3f4fc452da83471729f4b86",
+      "kind": "gcd",
+      "metadata": {
+        "a": 239143,
+        "b": 78063,
+        "idx": 33
+      },
+      "prompt": "Return gcd(239143, 78063) as an integer."
+    },
+    {
+      "id": "ffc8826bac91c77530e82a4d267ba67e6baa23a2d09643ee3b4bedd507fac2db",
+      "kind": "gcd",
+      "metadata": {
+        "a": 770178,
+        "b": 555679,
+        "idx": 34
+      },
+      "prompt": "Return gcd(770178, 555679) as an integer."
+    },
+    {
+      "id": "311efeea9dc9bbfbfc7f069ef4ba81f6549a3df78ee5b0bf33d5f49a269a4058",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          38,
+          -19,
+          -27,
+          -97,
+          22,
+          -74
+        ],
+        "idx": 35
+      },
+      "prompt": "Sort this list ascending: [38, -19, -27, -97, 22, -74]"
+    },
+    {
+      "id": "630c984a19669614287113ba134340bbf38c96807cbbfea02a30bf91c29d7bed",
+      "kind": "gcd",
+      "metadata": {
+        "a": 73112,
+        "b": 609399,
+        "idx": 36
+      },
+      "prompt": "Return gcd(73112, 609399) as an integer."
+    },
+    {
+      "id": "58891ead15228e2ca236f7599c3f049fa82971973065cc54ef1fa65105b55fdb",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 37,
+        "s": "yay"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: yay"
+    },
+    {
+      "id": "cdb8ea5e01b680cb11a6249ce3a7472a60a0ec28a03e27c97c286ae746c982f0",
+      "kind": "gcd",
+      "metadata": {
+        "a": 876582,
+        "b": 536595,
+        "idx": 38
+      },
+      "prompt": "Return gcd(876582, 536595) as an integer."
+    },
+    {
+      "id": "efd50ce4b6c32de011bc2edb659f249d2d2199a3627d1db121eb342818e83b85",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          60,
+          51,
+          -38,
+          2,
+          80,
+          -26,
+          14,
+          25
+        ],
+        "idx": 39
+      },
+      "prompt": "Sort this list ascending: [60, 51, -38, 2, 80, -26, 14, 25]"
+    },
+    {
+      "id": "cf66a51b8145ddb19829bd39247352653a41b5c3b84956a2bc0e35392c27f3fa",
+      "kind": "mod",
+      "metadata": {
+        "a": 8346,
+        "b": 217,
+        "idx": 40,
+        "m": 12645
+      },
+      "prompt": "Return (8346 ** 217) mod 12645."
+    },
+    {
+      "id": "fb17b20179c1b371483ab6f4d990926d97690b46ab3158007a684b3e81b45de7",
+      "kind": "gcd",
+      "metadata": {
+        "a": 523731,
+        "b": 473854,
+        "idx": 41
+      },
+      "prompt": "Return gcd(523731, 473854) as an integer."
+    },
+    {
+      "id": "b2376f83c01831d034d0e17b26e973939e9430076c2a35e1c5eae7578665d7ab",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          31,
+          -63,
+          26,
+          -93,
+          -1,
+          -36,
+          68
+        ],
+        "idx": 42
+      },
+      "prompt": "Sort this list ascending: [31, -63, 26, -93, -1, -36, 68]"
+    },
+    {
+      "id": "3866187d34d21fa6013c6f483126b942156867b6ccc22f7c45140907a91f5e5a",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -50,
+          -78,
+          -83,
+          26,
+          -100,
+          13,
+          -30
+        ],
+        "idx": 43
+      },
+      "prompt": "Sort this list ascending: [-50, -78, -83, 26, -100, 13, -30]"
+    },
+    {
+      "id": "e8399ffde768906c6b70c1948b4cdf8e8982fcf20cf5afbaa83b7b099a1771d3",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 44,
+        "s": "zxccaccbby"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: zxccaccbby"
+    },
+    {
+      "id": "48adf01cad07d9eb161fb7f7765d1838a9459cf13dd6448ebc31699c9b496d5b",
+      "kind": "gcd",
+      "metadata": {
+        "a": 875832,
+        "b": 148724,
+        "idx": 45
+      },
+      "prompt": "Return gcd(875832, 148724) as an integer."
+    },
+    {
+      "id": "191ee9872a1472a7ece02954facd8831c0fec0d24d52494e6f32730b48aad7cb",
+      "kind": "gcd",
+      "metadata": {
+        "a": 684551,
+        "b": 292112,
+        "idx": 46
+      },
+      "prompt": "Return gcd(684551, 292112) as an integer."
+    },
+    {
+      "id": "e721b26c328909d141702a4dfd02c781e8871e73ccfbbec5ff2e77dede450a18",
+      "kind": "gcd",
+      "metadata": {
+        "a": 83188,
+        "b": 878668,
+        "idx": 47
+      },
+      "prompt": "Return gcd(83188, 878668) as an integer."
+    },
+    {
+      "id": "432a6719941db79b59f6ad65f918f5e8479a49fa13a38b8a797d1b59a3018ecd",
+      "kind": "compose",
+      "metadata": {
+        "a": -2,
+        "b": 4,
+        "c": 1,
+        "d": -9,
+        "idx": 48,
+        "x": 7
+      },
+      "prompt": "Let f(x)=-2x+4, g(x)=1x+-9. Return g(f(7)) as an integer."
+    },
+    {
+      "id": "9324832c66f61357f90c82932d5f19c879a69f89a02a8b5d7353354c38c87f3d",
+      "kind": "gcd",
+      "metadata": {
+        "a": 275589,
+        "b": 655390,
+        "idx": 49
+      },
+      "prompt": "Return gcd(275589, 655390) as an integer."
+    },
+    {
+      "id": "378418c8b7fd491ce711e8f1e5b887fb607e1a1547117a78f5f79eb84bd72d61",
+      "kind": "gcd",
+      "metadata": {
+        "a": 868926,
+        "b": 396641,
+        "idx": 50
+      },
+      "prompt": "Return gcd(868926, 396641) as an integer."
+    },
+    {
+      "id": "5e0c98c38020614aa4622d461b59a09d5372fd4601867c8f8181d42fe2ce5645",
+      "kind": "gcd",
+      "metadata": {
+        "a": 256072,
+        "b": 820590,
+        "idx": 51
+      },
+      "prompt": "Return gcd(256072, 820590) as an integer."
+    },
+    {
+      "id": "aa92a42460d77ceec25f3de39180532081a629498e5542e44f436d5f070cf922",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 52,
+        "s": "ayb"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: ayb"
+    },
+    {
+      "id": "ca6b2fb5e7172b66c96a92c033e7c6f09cb3cda75a4854b8acdc71169aebb751",
+      "kind": "mod",
+      "metadata": {
+        "a": 2393,
+        "b": 333,
+        "idx": 53,
+        "m": 45400
+      },
+      "prompt": "Return (2393 ** 333) mod 45400."
+    },
+    {
+      "id": "9632e6147735846c9ed03b826f4cf6af420e3799774bb68c5a2ee7e97ae1d29a",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 54,
+        "s": "byyyab"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: byyyab"
+    },
+    {
+      "id": "8a1830c9fbe5dbb42b660ed6d0901a3e12718edda73164c61f7865661db893a7",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          67,
+          23,
+          -24,
+          -69
+        ],
+        "idx": 55
+      },
+      "prompt": "Sort this list ascending: [67, 23, -24, -69]"
+    },
+    {
+      "id": "98e80982bab3f7b86c2fe214c57108fcea52ee81f5ccc2edcc1b88f24ff14312",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 56,
+        "s": "ybzycyy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: ybzycyy"
+    },
+    {
+      "id": "c46744321943d65977b1be7fb5c4183f778b0c5b06cc1895ed3388abdf01bb62",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -50,
+          -45,
+          -25,
+          -28,
+          40,
+          58,
+          91,
+          -64,
+          -31,
+          78,
+          -95
+        ],
+        "idx": 57
+      },
+      "prompt": "Sort this list ascending: [-50, -45, -25, -28, 40, 58, 91, -64, -31, 78, -95]"
+    },
+    {
+      "id": "28b2bb55ca1b41ba5d08547f0f14e9158ddc817f52f75a9fc8a9a39ad0b2dbe1",
+      "kind": "compose",
+      "metadata": {
+        "a": 3,
+        "b": -3,
+        "c": -4,
+        "d": 0,
+        "idx": 58,
+        "x": 17
+      },
+      "prompt": "Let f(x)=3x+-3, g(x)=-4x+0. Return g(f(17)) as an integer."
+    },
+    {
+      "id": "f5d9b123c5c9d7c1c66ce2baa8b0aca532da0b7dfca0a6c51582e6c408b6d5bd",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 59,
+        "s": "aczxxyazczy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: aczxxyazczy"
+    }
+  ],
+  "seed_hash": "sha256:3b96c7da8a601e353da6252de3160df021c8a6bf60d864978f726af7de7ac847",
+  "task_count": 60
+}

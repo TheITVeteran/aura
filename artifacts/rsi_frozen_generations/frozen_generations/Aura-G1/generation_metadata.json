@@ -1,0 +1,91 @@
+{
+  "attempts": [
+    {
+      "attempt": 1,
+      "sandbox_result": {
+        "checks": [
+          {
+            "expected": 6,
+            "kind": "gcd",
+            "passed": true,
+            "predicted": 6
+          },
+          {
+            "expected": null,
+            "kind": "compose",
+            "passed": true,
+            "predicted": null,
+            "unsupported_kind": true
+          },
+          {
+            "expected": null,
+            "kind": "mod",
+            "passed": true,
+            "predicted": null,
+            "unsupported_kind": true
+          },
+          {
+            "expected": null,
+            "kind": "palindrome",
+            "passed": true,
+            "predicted": null,
+            "unsupported_kind": true
+          },
+          {
+            "expected": null,
+            "kind": "sort",
+            "passed": true,
+            "predicted": null,
+            "unsupported_kind": true
+          }
+        ],
+        "pass": true
+      },
+      "source_hash": "2a2efae53c157212758c53f0146c05a1ef7ec15df8cc6ef5a6738e7609017da2"
+    }
+  ],
+  "fallback_flag": false,
+  "generated_source_hash": "2a2efae53c157212758c53f0146c05a1ef7ec15df8cc6ef5a6738e7609017da2",
+  "parse_result": "success",
+  "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['gcd'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
+  "router_presence": true,
+  "sandbox_result": {
+    "checks": [
+      {
+        "expected": 6,
+        "kind": "gcd",
+        "passed": true,
+        "predicted": 6
+      },
+      {
+        "expected": null,
+        "kind": "compose",
+        "passed": true,
+        "predicted": null,
+        "unsupported_kind": true
+      },
+      {
+        "expected": null,
+        "kind": "mod",
+        "passed": true,
+        "predicted": null,
+        "unsupported_kind": true
+      },
+      {
+        "expected": null,
+        "kind": "palindrome",
+        "passed": true,
+        "predicted": null,
+        "unsupported_kind": true
+      },
+      {
+        "expected": null,
+        "kind": "sort",
+        "passed": true,
+        "predicted": null,
+        "unsupported_kind": true
+      }
+    ],
+    "pass": true
+  }
+}

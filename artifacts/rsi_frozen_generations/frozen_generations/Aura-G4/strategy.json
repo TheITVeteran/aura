@@ -1,0 +1,117 @@
+{
+  "generation_id": "Aura-G4",
+  "generation_metadata": {
+    "attempts": [
+      {
+        "attempt": 1,
+        "sandbox_result": {
+          "checks": [
+            {
+              "expected": 37,
+              "kind": "compose",
+              "passed": true,
+              "predicted": 37
+            },
+            {
+              "expected": 6,
+              "kind": "gcd",
+              "passed": true,
+              "predicted": 6
+            },
+            {
+              "expected": 1,
+              "kind": "mod",
+              "passed": true,
+              "predicted": 1
+            },
+            {
+              "expected": true,
+              "kind": "palindrome",
+              "passed": true,
+              "predicted": true
+            },
+            {
+              "expected": [
+                -2,
+                1,
+                3
+              ],
+              "kind": "sort",
+              "passed": true,
+              "predicted": [
+                -2,
+                1,
+                3
+              ]
+            }
+          ],
+          "pass": true
+        },
+        "source_hash": "fdafa5b671fcd909a6ab71fac2ff869430b556786fd0a6b3cd954bb65525595d"
+      }
+    ],
+    "fallback_flag": false,
+    "generated_source_hash": "fdafa5b671fcd909a6ab71fac2ff869430b556786fd0a6b3cd954bb65525595d",
+    "parse_result": "success",
+    "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['compose', 'gcd', 'mod', 'palindrome', 'sort'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\n- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\n- 'palindrome': Check if the string in metadata 's' reads the same backward as forward.\n- 'sort': Return a sorted copy of the list in metadata 'arr'.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
+    "router_presence": true,
+    "sandbox_result": {
+      "checks": [
+        {
+          "expected": 37,
+          "kind": "compose",
+          "passed": true,
+          "predicted": 37
+        },
+        {
+          "expected": 6,
+          "kind": "gcd",
+          "passed": true,
+          "predicted": 6
+        },
+        {
+          "expected": 1,
+          "kind": "mod",
+          "passed": true,
+          "predicted": 1
+        },
+        {
+          "expected": true,
+          "kind": "palindrome",
+          "passed": true,
+          "predicted": true
+        },
+        {
+          "expected": [
+            -2,
+            1,
+            3
+          ],
+          "kind": "sort",
+          "passed": true,
+          "predicted": [
+            -2,
+            1,
+            3
+          ]
+        }
+      ],
+      "pass": true
+    }
+  },
+  "handlers": [
+    "compose",
+    "gcd",
+    "mod",
+    "palindrome",
+    "sort"
+  ],
+  "hypothesis": "Add handlers for palindrome, sort because external hidden feedback shows low per-kind scores.",
+  "improves_improver": false,
+  "newly_added_handlers": [
+    "palindrome",
+    "sort"
+  ],
+  "parent_generation_id": "Aura-G3",
+  "source": "# Generated successor solver for Aura-G4.\nimport math\n\ndef solve(task):\n    if task.kind == 'compose':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        c = task.metadata['c']\n        d = task.metadata['d']\n        x = task.metadata['x']\n        return c * (a * x + b) + d\n    elif task.kind == 'gcd':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        return math.gcd(a, b)\n    elif task.kind == 'mod':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        m = task.metadata['m']\n        return pow(a, b, m)\n    elif task.kind == 'palindrome':\n        s = task.metadata['s']\n        return s == s[::-1]\n    elif task.kind == 'sort':\n        arr = task.metadata['arr']\n        return sorted(arr)\n    else:\n        return None"
+}

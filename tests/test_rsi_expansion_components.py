@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from core.learning.architecture_search import ArchitectureSearchLab
-from core.learning.autonomous_rsi import AutonomousSuccessorEngine, ExternalHiddenEvalCustodian, solve_with_handlers
+from core.learning.autonomous_rsi import (
+    AutonomousSuccessorEngine,
+    ExternalHiddenEvalCustodian,
+    solve_with_generated_code,
+    solve_with_handlers,
+)
 from core.learning.distributed_eval import DistributedEvalConfig, LocalDistributedEvaluator
 from core.learning.full_weight_training import FullWeightTrainingEngine, TrainingConfig
 from core.learning.governance_evolution import GovernanceEvolutionPolicy
@@ -202,6 +208,27 @@ def test_external_custodian_scores_without_leaking_hidden_answers():
     assert result.score == 1.0
 
 
+def test_generated_solver_execution_accepts_future_imports():
+    source = '''"""Generated successor solver."""
+from __future__ import annotations
+
+import math
+
+def solve(task):
+    if task.kind == "gcd":
+        return math.gcd(int(task.metadata["a"]), int(task.metadata["b"]))
+    return None
+'''
+
+    task = next(
+        task
+        for task in ExternalHiddenEvalCustodian(base_seed=4401, answer_salt="private", tasks_per_generation=40).issue_pack(1).tasks
+        if task.kind == "gcd"
+    )
+
+    assert solve_with_generated_code(task, source) == task.answer
+
+
 def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: Path):
     result = AutonomousSuccessorEngine(tmp_path, seed=4401, tasks_per_generation=40).run(generations=4)
 
@@ -225,3 +252,6 @@ def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: P
         assert (artifact_dir / "solver.py").exists()
         assert (artifact_dir / "promotion_certificate.json").exists()
         assert (artifact_dir / "rollback_target.json").exists()
+
+    final_config = json.loads((Path(result.artifacts[-1].directory) / "config.json").read_text(encoding="utf-8"))
+    assert set(final_config["handlers"]) == {"compose", "gcd", "mod", "palindrome", "sort"}

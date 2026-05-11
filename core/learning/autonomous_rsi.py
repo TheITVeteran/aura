@@ -13,7 +13,7 @@ import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Set
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 from core.learning.hidden_eval_repro import HiddenEvalPack
 from core.learning.rsi_lineage import RSIGenerationRecord, RSILineageLedger, RSILineageVerdict, evaluate_lineage
@@ -164,7 +164,7 @@ class PrimitiveInventionEngine:
             self.generation_improver_bonus = 0.10
             improves_improver = True
         batch = max(1, self.handler_batch_size)
-        selected = set(weakness_order[:batch])
+        selected = set(weakness_order if len(weakness_order) <= 2 else weakness_order[:batch])
         if not selected and missing:
             selected = {missing[0]}
         new_handlers = set(current_handlers) | selected
@@ -220,20 +220,19 @@ def solve_with_handlers(task: Task, handlers: Set[str]) -> Any:
     return baseline_solver(task)
 
 
-def solve_with_generated_code(task: Task, source: str) -> Any:
+def _run_generated_solver(task: Task, source: str) -> Tuple[bool, Any, str]:
     wrapper = f"""
-import sys
-import json
-import math
+{source}
 
 class MockTask:
     def __init__(self, kind, metadata):
         self.kind = kind
         self.metadata = metadata
 
-{source}
-
 if __name__ == '__main__':
+    import json
+    import sys
+
     data = json.loads(sys.stdin.read())
     t = MockTask(data['kind'], data['metadata'])
     result = solve(t)
@@ -261,15 +260,66 @@ if __name__ == '__main__':
         if proc.returncode == 0 and proc.stdout:
             try:
                 out_data = json.loads(proc.stdout)
-                res = out_data.get("result")
-                if res is not None:
-                    return res
-            except json.JSONDecodeError:
-                pass
+                if "result" in out_data:
+                    return True, out_data.get("result"), ""
+            except json.JSONDecodeError as exc:
+                return False, None, f"json_decode_error:{exc}:{proc.stdout[-240:]}"
+        return False, None, (proc.stderr or proc.stdout or f"returncode:{proc.returncode}")[-500:]
     except Exception as exc:
         from core.runtime.errors import record_degradation
         record_degradation("rsi_solver_execution", exc)
+        return False, None, repr(exc)
+
+
+def solve_with_generated_code(task: Task, source: str) -> Any:
+    ok, result, _error = _run_generated_solver(task, source)
+    if ok and result is not None:
+        return result
     return baseline_solver(task)
+
+
+def _sandbox_solver_source(source: str, handlers: Set[str]) -> Dict[str, Any]:
+    fixtures: Dict[str, tuple[Task, Any]] = {
+        "gcd": (Task("gcd", "", 6, {"a": 54, "b": 24}), 6),
+        "mod": (Task("mod", "", 1, {"a": 7, "b": 4, "m": 5}), 1),
+        "compose": (Task("compose", "", 37, {"a": 2, "b": 3, "c": 4, "d": 9, "x": 2}), 37),
+        "sort": (Task("sort", "", [-2, 1, 3], {"arr": [3, -2, 1]}), [-2, 1, 3]),
+        "palindrome": (Task("palindrome", "", True, {"s": "level"}), True),
+    }
+    checks: List[Dict[str, Any]] = []
+    for kind in sorted(handlers):
+        fixture = fixtures.get(kind)
+        if fixture is None:
+            checks.append({"kind": kind, "passed": False, "reason": "missing_fixture"})
+            continue
+        task, expected = fixture
+        ok, predicted, error = _run_generated_solver(task, source)
+        checks.append(
+            {
+                "kind": kind,
+                "passed": ok and predicted == expected,
+                "expected": expected,
+                "predicted": predicted,
+                **({"error": error} if error else {}),
+            }
+        )
+    for kind in sorted(set(HANDLER_ORDER) - set(handlers)):
+        task, _expected = fixtures[kind]
+        ok, predicted, error = _run_generated_solver(task, source)
+        checks.append(
+            {
+                "kind": kind,
+                "passed": ok and predicted is None,
+                "expected": None,
+                "predicted": predicted,
+                "unsupported_kind": True,
+                **({"error": error} if error else {}),
+            }
+        )
+    return {
+        "pass": bool(checks) and all(check["passed"] for check in checks),
+        "checks": checks,
+    }
 
 
 def baseline_solver(task: Task) -> Any:
@@ -280,6 +330,14 @@ def baseline_solver(task: Task) -> Any:
 
 def generate_solver_source(handlers: Set[str], *, generation_id: str) -> Tuple[str, Dict[str, Any]]:
     handlers_literal = sorted(handlers)
+    examples_by_kind = {
+        "gcd": "- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.",
+        "mod": "- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.",
+        "compose": "- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.",
+        "sort": "- 'sort': Return a sorted copy of the list in metadata 'arr'.",
+        "palindrome": "- 'palindrome': Check if the string in metadata 's' reads the same backward as forward.",
+    }
+    selected_examples = "\n".join(examples_by_kind[kind] for kind in handlers_literal if kind in examples_by_kind)
     
     fallback_code = (
         f'"""Generated successor solver for {generation_id}."""\n'
@@ -319,33 +377,69 @@ def generate_solver_source(handlers: Set[str], *, generation_id: str) -> Tuple[s
         brain = ServiceContainer.get("brain", default=None)
         if router or brain:
             metadata["router_presence"] = True
-            generator = LLMCodeGenerator(fallback_to_stub=False)
-            prompt = (
-                f"Write a Python module that defines a `solve(task)` function to handle the following task kinds: {handlers_literal}.\n"
-                "The `task` object has `task.kind` (string) and `task.metadata` (dict).\n"
-                "If `task.kind` is not supported, return `None`.\n"
-                "Implement the algorithms based on the task kind name and common algorithmic problem definitions.\n"
-                "For example:\n"
-                "- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'.\n"
-                "- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\n"
-                "- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.\n"
-                "- 'sort': Return a sorted copy of the list in metadata 'arr'.\n"
-                "- 'palindrome': Check if the string in metadata 's' reads the same backward as forward.\n"
-                "Do NOT use external libraries other than math.\n"
+            generator = LLMCodeGenerator(
+                fallback_to_stub=False,
+                prefer_tier="primary",
+                temperature=0.0,
+                timeout_s=600.0,
             )
-            code = generator.generate(prompt, context={"module_path": f"successor_solver_{generation_id}.py"})
-            if code and "def solve(" in code:
-                final_code = f'"""Generated successor solver for {generation_id}."""\n' + code
-                metadata["fallback_flag"] = False
-                metadata["parse_result"] = "success"
-                metadata["prompt_used"] = prompt
-                metadata["generated_source_hash"] = hashlib.sha256(final_code.encode("utf-8")).hexdigest()
-                return final_code, metadata
+            generator.is_background = False
+            prompt = (
+                f"Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: {handlers_literal}.\n"
+                "The `task` object has `task.kind` (string) and `task.metadata` (dict).\n"
+                "The task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\n"
+                "Always read the kind as `task.kind` and the metadata mapping as `task.metadata`.\n"
+                "If `task.kind` is not one of that exact list, return `None`.\n"
+                "Do not add branches or behavior for unsupported task kinds.\n"
+                "Required behavior for the supported kinds:\n"
+                f"{selected_examples}\n"
+                "Do NOT use external libraries other than math.\n"
+                "Return only Python source code.\n"
+            )
+            repair_feedback = ""
+            metadata["attempts"] = []
+            for attempt in range(1, 4):
+                attempt_prompt = prompt
+                if repair_feedback:
+                    attempt_prompt = (
+                        f"{prompt}\n"
+                        "Previous candidate failed the sandbox below. Return a corrected full module.\n"
+                        f"{repair_feedback}\n"
+                    )
+                code = generator.generate(
+                    attempt_prompt,
+                    context={"module_path": f"successor_solver_{generation_id}.py", "attempt": attempt},
+                )
+                if not code or "def solve(" not in code:
+                    sandbox_result = {"pass": False, "checks": [], "reason": "missing_solve_function"}
+                    repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
+                    metadata["attempts"].append({"attempt": attempt, "sandbox_result": sandbox_result})
+                    continue
+                final_code = f"# Generated successor solver for {generation_id}.\n" + code.lstrip()
+                source_hash = hashlib.sha256(final_code.encode("utf-8")).hexdigest()
+                sandbox_result = _sandbox_solver_source(final_code, handlers)
+                metadata["attempts"].append(
+                    {
+                        "attempt": attempt,
+                        "source_hash": source_hash,
+                        "sandbox_result": sandbox_result,
+                    }
+                )
+                if sandbox_result.get("pass"):
+                    metadata["fallback_flag"] = False
+                    metadata["parse_result"] = "success"
+                    metadata["sandbox_result"] = sandbox_result
+                    metadata["prompt_used"] = attempt_prompt
+                    metadata["generated_source_hash"] = source_hash
+                    return final_code, metadata
+                repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
+            raise RuntimeError(f"generated solver failed sandbox after repair attempts: {repair_feedback}")
     except Exception as exc:
         from core.runtime.errors import record_degradation
         record_degradation("autonomous_rsi_generation", exc)
         metadata["parse_result"] = str(exc)
 
+    metadata["sandbox_result"] = _sandbox_solver_source(fallback_code, handlers)
     metadata["generated_source_hash"] = hashlib.sha256(fallback_code.encode("utf-8")).hexdigest()
     return fallback_code, metadata
 
@@ -460,7 +554,7 @@ class AblationCourt:
             "aura_without_memory": partial_source,
             "aura_without_self_modification": "",
             "aura_without_training": "",
-            "aura_without_lineage_evaluator": final_source,
+            "aura_without_lineage_evaluator": partial_source,
             "full_aura": final_source,
         }
         scores: Dict[str, float] = {}
@@ -563,10 +657,12 @@ class AutonomousSuccessorEngine:
                 artifact_complete=True,
             )
             capability_score = self._capability_score(eval_after.score, improver_score)
-            promoted = capability_score > previous_score and eval_after.answer_hash_ok
+            hidden_improved = eval_after.score > eval_before.score
+            promoted = hidden_improved and capability_score > previous_score and eval_after.answer_hash_ok
             promotion = {
                 "generation_id": generation_id,
                 "promoted": promoted,
+                "candidate_improved_over_baseline": hidden_improved,
                 "baseline_score": previous_score,
                 "after_score": capability_score,
                 "hidden_eval_score": eval_after.score,

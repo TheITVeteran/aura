@@ -190,7 +190,7 @@ class LLMCodeGenerator:
         self,
         *,
         router: Any | None = None,
-        service_names: Iterable[str] = ("llm_router", "inference_gate", "cognitive_engine"),
+        service_names: Iterable[str] = ("inference_gate", "llm_router", "cognitive_engine"),
         prefer_tier: str = "primary",
         prefer_endpoint: str | None = None,
         max_tokens: int = 8192,
@@ -206,6 +206,7 @@ class LLMCodeGenerator:
         self.temperature = temperature
         self.timeout_s = timeout_s
         self.fallback_to_stub = fallback_to_stub
+        self.is_background = True
 
     def generate(self, prompt: str, context: dict[str, Any]) -> str:
         """Synchronous protocol adapter."""
@@ -213,7 +214,10 @@ class LLMCodeGenerator:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.generate_async(prompt, context))
+            try:
+                return asyncio.run(asyncio.wait_for(self.generate_async(prompt, context), timeout=self.timeout_s + 5.0))
+            except (asyncio.TimeoutError, TimeoutError):
+                raise TimeoutError(f"LLM generation exceeded timeout of {self.timeout_s + 5.0}s")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(lambda: asyncio.run(self.generate_async(prompt, context)))
@@ -226,6 +230,7 @@ class LLMCodeGenerator:
             prefer_tier=self.prefer_tier,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
+            is_background=self.is_background,
         )
 
         try:

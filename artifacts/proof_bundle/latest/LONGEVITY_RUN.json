@@ -1,7 +1,7 @@
 {
-  "generated_at": 1778456332.211136,
-  "note": "Long wall-clock longevity runs are intentionally separate; missing evidence is recorded as not_run.",
-  "passed": false,
+  "generated_at": 1778467690.560559,
+  "note": "Long wall-clock longevity runs are intentionally separate; missing evidence is recorded as unknown.",
+  "passed": "unknown",
   "profile": "instant_readiness_snapshot",
-  "status": "not_run"
+  "status": "missing_artifact"
 }

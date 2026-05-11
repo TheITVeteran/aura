@@ -69,10 +69,10 @@
         "passed": true,
         "predicted": false,
         "receipt_ids": [
-          "governance-7ca8480e-4cdd-4ea4-ab41-0b4582330570",
-          "autonomy-817f9d91-c402-42d0-abd4-031590f0bd1c",
-          "tool_execution-778971b6-f185-4e79-acdb-6122ab5bf888",
-          "memory_write-8f7df8b7-9ae8-4abf-a047-07f6b98c91de"
+          "governance-ae7659e1-ffe2-4e6b-8704-a3912ea077d6",
+          "autonomy-a2a0588d-31a2-466d-96be-2542e767809f",
+          "tool_execution-8a017738-afc9-46fa-8ca2-8cbdbddf5060",
+          "memory_write-cf2bd0c3-7a4c-4975-bc23-9943ecef20a2"
         ],
         "task_id": "8c64638c8c73e615bae1f0e0b4ed3469ff9a712166d08628733ecabc996b7668"
       },
@@ -94,10 +94,10 @@
           89
         ],
         "receipt_ids": [
-          "governance-4087b788-f1a4-4250-88ea-aa1525e4de8b",
-          "autonomy-9888a069-f06e-453d-95ba-e8872fb07275",
-          "tool_execution-822c991c-1ef1-44da-acb2-d234e73c614d",
-          "memory_write-c7b045b9-2b99-421b-8643-84c0cb420e80"
+          "governance-c92190a1-12c3-4f30-93fc-2b845beebf0b",
+          "autonomy-ea2f4de9-cb54-4489-8b4b-c8f710ab6125",
+          "tool_execution-b27330c4-c5a0-439d-9a21-6d45ab4d3f77",
+          "memory_write-87968046-a501-4fa5-ba08-128f068ead7c"
         ],
         "task_id": "54d862bcfbcaac0924eb22221c83518d67ad309a6cd2b669abbf9005e21e05d7"
       },
@@ -108,10 +108,10 @@
         "passed": true,
         "predicted": 5066,
         "receipt_ids": [
-          "governance-74c15ee9-7f8f-4e91-964b-864be245ae29",
-          "autonomy-03574db6-a3a8-454f-9868-081e517ff595",
-          "tool_execution-1d85a7d4-34bc-49fc-8b7a-8a65855cf0f2",
-          "memory_write-1045a9ff-bd99-41d9-b74a-ad05af34d4f0"
+          "governance-5390c18e-480d-4cb3-aa17-8f9e0b4155af",
+          "autonomy-2a2db0e1-883d-47ba-ba67-5f89c957bd60",
+          "tool_execution-063fa94f-8e91-49d2-a974-07b73a4d0718",
+          "memory_write-28000d44-ece0-4589-a2d9-c234e80e7ee6"
         ],
         "task_id": "ee6e5f82c5995912846053e3819c41e245b73f8fad4f1fab510423de39c504df"
       },
@@ -122,10 +122,10 @@
         "passed": true,
         "predicted": false,
         "receipt_ids": [
-          "governance-9b1460c9-ed84-490c-bd8a-7a13a72310e3",
-          "autonomy-5118088a-fe1a-4e3c-988c-601813f52d34",
-          "tool_execution-faa464fa-2bb7-4f54-8f13-4f83352220f6",
-          "memory_write-590b9a28-3ed9-42b0-b38d-d0dece2eda32"
+          "governance-30c0e221-239e-4900-a4be-e524bd07b685",
+          "autonomy-e5aa4fe0-583b-4020-8c62-fc45ec527f28",
+          "tool_execution-396fb844-55e1-4f8a-9bd6-0817c4becd0c",
+          "memory_write-63639055-5fa9-4045-b2a2-88bebcdd2a8d"
         ],
         "task_id": "6f821b64754ed270786fbd9845f305848bfa2a82cc8b2923ea43c3ed5af81a79"
       },
@@ -136,10 +136,10 @@
         "passed": true,
         "predicted": 10051,
         "receipt_ids": [
-          "governance-707ed1d2-6802-45f9-8299-5b394111b2c8",
-          "autonomy-25e8fe14-e1dd-4f19-8502-a25ce6c364f7",
-          "tool_execution-0628e118-002c-406d-a355-0ad41562bf7c",
-          "memory_write-5909682f-fcb6-4e5e-b92b-ea2e18a87bff"
+          "governance-056504f7-5d65-4585-b416-b1d91af77d11",
+          "autonomy-5d5049c2-36d4-482d-abee-c83382fe925a",
+          "tool_execution-5376166b-ab13-4177-b5f7-1a69f555260b",
+          "memory_write-3888e140-08ac-4614-b69a-a8e63274954a"
         ],
         "task_id": "774625098bbc1d3600c804eb29ae1e8bcc76237f01226dc2d065ee55119cc133"
       },
@@ -150,10 +150,10 @@
         "passed": true,
         "predicted": -108,
         "receipt_ids": [
-          "governance-68640b00-91d9-4ab2-b396-99ce66331042",
-          "autonomy-eeac0594-a67f-476f-84fe-ed476c023591",
-          "tool_execution-36abf9cd-b506-4cc8-a9f7-14eaf547ef8b",
-          "memory_write-3558c354-1e6c-4481-9272-13e61fdeae46"
+          "governance-2d476fa0-58b0-490a-a87f-e4be2f7bea49",
+          "autonomy-ea9bb2c8-3e5e-48a6-9321-5a39980174db",
+          "tool_execution-967b66d4-b6d1-4bec-b6a2-5dc4d19cbff6",
+          "memory_write-093690e5-17eb-4a44-8239-1a469690f70d"
         ],
         "task_id": "9224f9fd4a6dfc482ed8275bf84b7bcd3e649d763bcea555e308bbb359a6a9d6"
       },
@@ -164,10 +164,10 @@
         "passed": true,
         "predicted": 7591,
         "receipt_ids": [
-          "governance-c0fc0029-6e80-4ed1-b0d5-07bfbf3903e3",
-          "autonomy-5500e8c1-94d1-4f35-a6d8-4fdbce08ee58",
-          "tool_execution-e61ba3e4-a1f5-46e6-adcf-e6f86e9d6b47",
-          "memory_write-740e8356-603d-4ca5-8506-278cf8880fa2"
+          "governance-f0214312-3c08-4656-9fa3-3c4c61bfd3ff",
+          "autonomy-2eaa0944-c7da-4bbd-962d-5e6bb5e68049",
+          "tool_execution-e3b51685-8f34-4de2-b49d-ca51e94743be",
+          "memory_write-0227ad91-84b1-4ed6-ae13-102ce79bd970"
         ],
         "task_id": "79d8a25582cc0cdb316fd9a7e837d3ecd7d353bdc7d810f8de3d67aa559ae107"
       },
@@ -178,10 +178,10 @@
         "passed": true,
         "predicted": 6370,
         "receipt_ids": [
-          "governance-b6960075-b8e6-4384-856d-2772080f4aa7",
-          "autonomy-d50466ff-22ac-4b94-bc27-a29182a400e7",
-          "tool_execution-b171ec78-70a2-48c8-b28c-8ac15a25d613",
-          "memory_write-36dd8c52-a1f6-415c-b684-b94a693ca224"
+          "governance-31885000-0812-482d-b679-d6ae4c35682f",
+          "autonomy-335408b0-a164-42be-b929-4140c38b8eba",
+          "tool_execution-394e763e-91b5-4a6f-9d82-7f4ece02b4b2",
+          "memory_write-3638a6f9-c2eb-47cb-8bbe-d14bc6a3ba49"
         ],
         "task_id": "a67cb25b7a91b9c26b68d4f66c1ab369a407c64c5102ced9606fc1b6f35b80db"
       }
@@ -240,7 +240,7 @@
         "manifest_hash": "sha256:8b9908f2ae1b26fca33dccd4c4ea5d6de843ad9d250d942096ac0a4d240a3459",
         "pack_id": "sha256:fa592100c899d49a5",
         "passed": 9,
-        "runtime_s": 0.000878,
+        "runtime_s": 0.000882,
         "score": 0.18,
         "total": 50
       },
@@ -255,14 +255,14 @@
         "manifest_hash": "sha256:8b9908f2ae1b26fca33dccd4c4ea5d6de843ad9d250d942096ac0a4d240a3459",
         "pack_id": "sha256:fa592100c899d49a5",
         "passed": 50,
-        "runtime_s": 0.000883,
+        "runtime_s": 0.000858,
         "score": 1.0,
         "total": 50
       },
       "score": 1.0,
       "stderr": 0.0
     },
-    "generated_at": 1778213156.589014,
+    "generated_at": 1778460601.878013,
     "leakage_controls": {
       "answer_hash_ok": true,
       "answer_key_not_serialized_in_public_tasks": true,

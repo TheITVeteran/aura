@@ -1,0 +1,103 @@
+{
+  "generation_id": "Aura-G2",
+  "generation_metadata": {
+    "attempts": [
+      {
+        "attempt": 1,
+        "sandbox_result": {
+          "checks": [
+            {
+              "expected": 6,
+              "kind": "gcd",
+              "passed": true,
+              "predicted": 6
+            },
+            {
+              "expected": 1,
+              "kind": "mod",
+              "passed": true,
+              "predicted": 1
+            },
+            {
+              "expected": null,
+              "kind": "compose",
+              "passed": true,
+              "predicted": null,
+              "unsupported_kind": true
+            },
+            {
+              "expected": null,
+              "kind": "palindrome",
+              "passed": true,
+              "predicted": null,
+              "unsupported_kind": true
+            },
+            {
+              "expected": null,
+              "kind": "sort",
+              "passed": true,
+              "predicted": null,
+              "unsupported_kind": true
+            }
+          ],
+          "pass": true
+        },
+        "source_hash": "aae60fec329c697a0606edda91b1a5533ccccd6f8b9a3cf2a2dce6c9609da93e"
+      }
+    ],
+    "fallback_flag": false,
+    "generated_source_hash": "aae60fec329c697a0606edda91b1a5533ccccd6f8b9a3cf2a2dce6c9609da93e",
+    "parse_result": "success",
+    "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['gcd', 'mod'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\n- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
+    "router_presence": true,
+    "sandbox_result": {
+      "checks": [
+        {
+          "expected": 6,
+          "kind": "gcd",
+          "passed": true,
+          "predicted": 6
+        },
+        {
+          "expected": 1,
+          "kind": "mod",
+          "passed": true,
+          "predicted": 1
+        },
+        {
+          "expected": null,
+          "kind": "compose",
+          "passed": true,
+          "predicted": null,
+          "unsupported_kind": true
+        },
+        {
+          "expected": null,
+          "kind": "palindrome",
+          "passed": true,
+          "predicted": null,
+          "unsupported_kind": true
+        },
+        {
+          "expected": null,
+          "kind": "sort",
+          "passed": true,
+          "predicted": null,
+          "unsupported_kind": true
+        }
+      ],
+      "pass": true
+    }
+  },
+  "handlers": [
+    "gcd",
+    "mod"
+  ],
+  "hypothesis": "Add handlers for mod because external hidden feedback shows low per-kind scores.",
+  "improves_improver": true,
+  "newly_added_handlers": [
+    "mod"
+  ],
+  "parent_generation_id": "Aura-G1",
+  "source": "# Generated successor solver for Aura-G2.\nimport math\n\nclass Task:\n    def __init__(self, kind, metadata):\n        self.kind = kind\n        self.metadata = metadata\n\ndef solve(task):\n    if task.kind == 'gcd':\n        a = task.metadata.get('a', 0)\n        b = task.metadata.get('b', 0)\n        return math.gcd(a, b)\n    elif task.kind == 'mod':\n        a = task.metadata.get('a', 0)\n        b = task.metadata.get('b', 0)\n        m = task.metadata.get('m', 0)\n        return pow(a, b, m)\n    else:\n        return None"
+}

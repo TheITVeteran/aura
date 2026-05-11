@@ -390,6 +390,22 @@ def _asa_messy_refactors() -> dict[str, Any]:
 
 def _undeniable_rsi() -> dict[str, Any]:
     import subprocess
+
+    def _sandbox_pass(metadata: dict[str, Any]) -> bool:
+        sandbox = metadata.get("sandbox_result")
+        return isinstance(sandbox, dict) and bool(sandbox.get("pass"))
+
+    def _looks_like_fallback_template(source: str) -> bool:
+        required = (
+            "HANDLERS =",
+            "if task.kind == 'gcd'",
+            "if task.kind == 'mod'",
+            "if task.kind == 'compose'",
+            "if task.kind == 'sort'",
+            "if task.kind == 'palindrome'",
+        )
+        return all(token in source for token in required)
+
     rsi_dir = ROOT / "artifacts" / "rsi_frozen_generations" / "frozen_generations"
     if not rsi_dir.exists():
         return {"passed": "unknown", "status": "missing_artifact", "source": str(rsi_dir)}
@@ -410,17 +426,64 @@ def _undeniable_rsi() -> dict[str, Any]:
         metadata = json.loads((latest_gen / "generation_metadata.json").read_text(encoding="utf-8"))
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
         
+        baseline_score = float(eval_before.get("score", 0.0))
+        candidate_score = float(eval_after.get("score", 0.0))
+        router_presence = metadata.get("router_presence", False)
+        fallback_flag = metadata.get("fallback_flag", True)
+        candidate_improved = candidate_score > baseline_score
+        fallback_template = _looks_like_fallback_template(solver_source)
+        manifest_kinds = {
+            str(task.get("kind"))
+            for task in manifest.get("public_tasks", [])
+            if isinstance(task, dict) and task.get("kind")
+        }
+        strategy_handlers = {str(handler) for handler in strategy.get("handlers", [])}
+        handler_coverage_complete = bool(manifest_kinds) and manifest_kinds.issubset(strategy_handlers)
+        requirements = {
+            "fallback_flag_false": not fallback_flag,
+            "router_presence_true": bool(router_presence),
+            "candidate_improved_over_baseline": candidate_improved,
+            "generated_source_hash_present": bool(metadata.get("generated_source_hash")),
+            "generated_solver_not_fallback_template": not fallback_template,
+            "prompt_used_present": bool(metadata.get("prompt_used")),
+            "sandbox_result_pass": _sandbox_pass(metadata),
+            "handler_coverage_complete": handler_coverage_complete,
+        }
+
+        is_l3_proven = bool(
+            not fallback_flag
+            and router_presence
+            and candidate_improved
+            and metadata.get("generated_source_hash")
+            and solver_source != ""
+            and not fallback_template
+            and metadata.get("prompt_used")
+            and _sandbox_pass(metadata)
+            and handler_coverage_complete
+        )
+
         return {
-            "passed": True,
-            "status": "ok",
+            "passed": is_l3_proven,
+            "artifact_valid": True,
+            "status": "l3_rsi_proven" if is_l3_proven else "not_l3_evidence",
+            "reason": "all_l3_gates_passed" if is_l3_proven else "l3_gate_failed",
+            "failed_requirements": [name for name, passed in requirements.items() if not passed],
+            "l3_rsi_claim": is_l3_proven,
             "source": str(latest_gen),
             "generated_at": time.time(),
             "exact_commit_SHA": commit,
             "generated_solver_source": solver_source,
             "generated_source_hash": metadata.get("generated_source_hash"),
-            "fallback_flag": metadata.get("fallback_flag"),
-            "router_presence": metadata.get("router_presence"),
-            "prompt_used": metadata.get("prompt_used", "Prompt captured in LLM generation layer"),
+            "fallback_flag": fallback_flag,
+            "router_presence": router_presence,
+            "prompt_used": metadata.get("prompt_used"),
+            "sandbox_result": metadata.get("sandbox_result"),
+            "candidate_improved_over_baseline": candidate_improved,
+            "baseline_score": baseline_score,
+            "candidate_score": candidate_score,
+            "generated_solver_looks_like_fallback_template": fallback_template,
+            "manifest_kinds": sorted(manifest_kinds),
+            "strategy_handlers": sorted(strategy_handlers),
             "no_answer_leakage": True,
             "hidden_task_manifest_without_answers": manifest,
             "salted_answer_hashes": [task.get("answer_hash") for task in manifest.get("public_tasks", [])],

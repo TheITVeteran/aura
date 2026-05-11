@@ -1,0 +1,7 @@
+{
+  "generation_id": "Aura-G2",
+  "handlers": [
+    "gcd",
+    "mod"
+  ]
+}
