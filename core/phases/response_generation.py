@@ -39,7 +39,12 @@ class ResponseGenerationPhase(BasePhase):
             return 10.0
         if deep_handoff:
             return 135.0
-        return 75.0
+        # [STABILITY v55] Raised from 75s → 135s.  The 32B cortex on M5
+        # regularly takes 60-90s for prompt-eval on 3-5k token prompts
+        # with recurrent depth.  75s left zero headroom and was the
+        # single biggest cause of kernel-level PHASE_TIMEOUT, which
+        # cascaded into "My cognitive process timed out" dead responses.
+        return 135.0
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """

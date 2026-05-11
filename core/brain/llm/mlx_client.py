@@ -2603,7 +2603,11 @@ class MLXLocalClient:
                 try:
                     async with _foreground_owner_context(
                         owner_name,
-                        deadline=get_deadline(min(8.0, warmup_timeout)),
+                        # [STABILITY v55] Raised from 8s → 90s. The 32B model
+                        # cold-loads in 90-150s; holding the foreground owner
+                        # for only 8s released it before warmup finished,
+                        # allowing background 7B spawns to evict the cortex.
+                        deadline=get_deadline(min(90.0, warmup_timeout)),
                         foreground_request=True,
                     ):
                         alive = await self._ensure_worker_alive(

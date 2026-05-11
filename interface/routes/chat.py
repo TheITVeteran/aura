@@ -2793,19 +2793,22 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
 
         gate = PersonaEnforcementGate()
         valid, reason, _score = gate.validate_output(text, enforce_supervision=False)
-        if (
-            valid
-            and not generic
-            and not objective_parrot
-            and not lacks_self_anchor
-            and not lacks_live_grounding
-            and not unexpected_cjk
-            and not internal_state_leak
-            and not off_topic
-            and not stale_repeat
-            and not same_diff
-            and not truncated_tail
-        ):
+        # [STABILITY v55] ROOT CAUSE FIX: Only reject responses for HARD
+        # failures — prompt artifacts leaking through, internal state dumps,
+        # CJK script contamination, or genuinely off-topic responses.
+        # "Generic opener" patterns (Certainly, How can I help, etc.) are
+        # COSMETIC issues, not content failures. A cortex response that says
+        # "Certainly, here's what I think" is infinitely better than a canned
+        # voice reflex like "I'm here but my thoughts are taking longer."
+        # The old gate rejected on generic/objective_parrot/lacks_self_anchor
+        # which triggered a second 12s LLM rewrite call, creating contention
+        # and often falling through to robotic template responses.
+        hard_failure = bool(
+            internal_state_leak
+            or unexpected_cjk
+            or (off_topic and not generic)  # off-topic is only hard if not just generic-speak
+        )
+        if valid and not hard_failure:
             return text
         if generic:
             reason = generic_reason
@@ -4616,23 +4619,51 @@ async def api_chat(
                         timeout=soft_deadline,
                     )
                 except asyncio.TimeoutError:
-                    # Soft deadline missed — try protected foreground as a race
-                    # against the kernel task continuing in background.
+                    # Soft deadline missed.
+                    # [STABILITY v55] ROOT CAUSE FIX: DO NOT fire a competing
+                    # protected foreground request if the cortex is alive and
+                    # actively generating for the kernel task. The previous
+                    # design fired _attempt_protected_foreground_reply here,
+                    # which tried to acquire the same foreground owner the
+                    # kernel was using — creating a resource contention spiral
+                    # where BOTH requests stall. Only compete if the cortex
+                    # is genuinely dead/stuck.
                     hard_budget = max(2.0, _remaining_foreground_budget())
-                    protected_reply = await _attempt_protected_foreground_reply("kernel_soft_deadline")
-                    if protected_reply:
-                        kernel_task.add_done_callback(
-                            lambda task: task.exception() if not task.cancelled() else None
+                    cortex_alive = False
+                    try:
+                        gate = ServiceContainer.get("inference_gate", default=None)
+                        if gate and hasattr(gate, "is_alive"):
+                            cortex_alive = gate.is_alive()
+                    except Exception:
+                        pass
+                    if cortex_alive:
+                        # Cortex is alive — it's just slow. Wait for kernel
+                        # to finish instead of competing for the same LLM.
+                        logger.info(
+                            "⏳ Kernel soft deadline missed but cortex is alive and generating. "
+                            "Waiting %.0fs for kernel to finish (no competing request).",
+                            hard_budget,
                         )
-                        return await _finalize_fastpath(
-                            protected_reply,
-                            status="protected_foreground",
+                        reply_text = await asyncio.wait_for(
+                            asyncio.shield(kernel_task),
+                            timeout=hard_budget,
                         )
-                    # Protected foreground also failed — give kernel remaining time
-                    reply_text = await asyncio.wait_for(
-                        asyncio.shield(kernel_task),
-                        timeout=max(2.0, _remaining_foreground_budget()),
-                    )
+                    else:
+                        # Cortex is dead — try protected foreground (cloud/brainstem)
+                        protected_reply = await _attempt_protected_foreground_reply("kernel_soft_deadline")
+                        if protected_reply:
+                            kernel_task.add_done_callback(
+                                lambda task: task.exception() if not task.cancelled() else None
+                            )
+                            return await _finalize_fastpath(
+                                protected_reply,
+                                status="protected_foreground",
+                            )
+                        # Protected foreground also failed — give kernel remaining time
+                        reply_text = await asyncio.wait_for(
+                            asyncio.shield(kernel_task),
+                            timeout=max(2.0, _remaining_foreground_budget()),
+                        )
             except asyncio.TimeoutError as e:
                 kernel_timed_out = True
                 logger.error(

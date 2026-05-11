@@ -706,8 +706,8 @@ class HealthAwareLLMRouter:
             stripped = text.strip()
             if stripped:
                 return stripped
-            if isinstance(result, dict) and str(result.get("error", "") or "").strip() == "client_returned_no_text":
-                return "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
+            # [STABILITY v55] Don't mask failures with robot responses.
+            # Return None so the caller can retry or fallback properly.
             return None
         except Exception as exc:
             record_degradation('llm_health_router', exc)

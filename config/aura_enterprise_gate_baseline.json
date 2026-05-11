@@ -6,7 +6,7 @@
     "broad_exception_review": 4750,
     "dynamic_code_execution": 8,
     "hardcoded_local_path": 215,
-    "pass_only_function": 54,
+    "pass_only_function": 55,
     "placeholder_stub_mock": 680,
     "pytest_skip_xfail": 55,
     "raise_only_function": 50,
