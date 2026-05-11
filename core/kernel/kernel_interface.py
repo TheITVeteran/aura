@@ -205,7 +205,9 @@ class KernelInterface:
         """
         if not self.is_ready():
             logger.warning("KernelInterface.process() called before boot.")
-            return "I'm still initializing. Give me a moment."
+            # [STABILITY v55] Return empty so chat.py can fire protected
+            # foreground lane instead of showing a canned robot message.
+            return ""
 
         # Update the orchestrator's user-interaction timestamp so idle
         # detectors (substrate decay, sleep triggers, proactive presence)
@@ -265,7 +267,8 @@ class KernelInterface:
             record_degradation('kernel_interface', e)
             logger.error("KernelInterface.process() tick failed: %s", e, exc_info=True)
 
-        return "Something went wrong in my thinking. Please try again."
+        # [STABILITY v55] Return empty so caller can retry/escalate.
+        return ""
 
     # ── Feedback loop queries ────────────────────────────────────────────────────
 

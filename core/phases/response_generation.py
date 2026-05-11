@@ -202,7 +202,10 @@ class ResponseGenerationPhase(BasePhase):
                 depth_mod = 1.5
 
             token_budget = int((4096 if deep_handoff else 2048) * depth_mod) if not is_background else 1024
-            if thermal_c >= 85.0:
+            # [STABILITY v55] Raised thermal from 85°C to 95°C (M-series
+            # throttles at 100°C+) and memory pressure from 85% to 94%
+            # (32B model normally uses 85-90% of 64GB).
+            if thermal_c >= 95.0:
                 logger.warning(
                     "🌡️ ResponseGeneration: thermal guard active (temp=%.1fC cpu=%.1f%% mem=%.1f%%). Downshifting tier/tokens.",
                     thermal_c,
@@ -213,7 +216,7 @@ class ResponseGenerationPhase(BasePhase):
                 deep_handoff = False
                 token_budget = max(256, int(token_budget * 0.7))
                 state.response_modifiers["thermal_guard"] = True
-            elif float(memory_pressure or 0.0) >= 85.0:
+            elif float(memory_pressure or 0.0) >= 94.0:
                 token_budget = max(256, int(token_budget * 0.8))
                 state.response_modifiers["thermal_guard"] = True
             else:
@@ -253,15 +256,12 @@ class ResponseGenerationPhase(BasePhase):
                     "🛑 ResponseGeneration Phase TIMEOUT (%.0fs). Logic took too long.",
                     request_timeout + 4.0,
                 )
-                # Derivative state for "Thinking Timeout"
-                fail_state = state.derive("generation_timeout")
-                fail_state.cognition.working_memory.append({
-                    "role": "assistant",
-                    "content": "My cognitive process timed out. I am currently experiencing high load.",
-                    "timestamp": time.time(),
-                    "error": "PHASE_TIMEOUT"
-                })
-                return fail_state
+                # [STABILITY v55] Don't inject a robotic timeout message into
+                # working memory.  Return state unchanged (no response text)
+                # so the Kernel reports empty and chat.py fires the protected
+                # foreground lane as a rescue rather than showing
+                # "My cognitive process timed out" to the user.
+                return state
             
             # Handle None response from router.think()
             if response_text is None:

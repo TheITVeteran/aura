@@ -389,7 +389,7 @@ def _get_idemp_lock(): return _locks.setdefault("idemp", asyncio.Lock())
 # identity prompt produces identical text on every turn.
 _recent_responses: collections.deque = collections.deque(maxlen=12)
 _recent_response_pairs: collections.deque = collections.deque(maxlen=12)  # (user_fp, normalized_response) tuples
-_STALE_REPEAT_THRESHOLD = 2  # same text seen this many times = stale
+_STALE_REPEAT_THRESHOLD = 3  # [STABILITY v55] Raised from 2→3. Threshold of 2 was too aggressive — similar answers to similar questions are normal, not stale.
 _FUZZY_SIMILARITY_THRESHOLD = 0.80  # word-overlap ratio that counts as semantically stale
 _consecutive_degraded_count: int = 0  # tracks degradation streak for proactive recovery
 _TOPIC_TOKEN_RE = re.compile(r"\b[a-z0-9][a-z0-9'/-]*\b", re.IGNORECASE)
@@ -4133,7 +4133,13 @@ async def api_chat(
         sys_memory_pressure = False
         try:
             mem = psutil.virtual_memory()
-            if mem.percent > 85.0:
+            # [STABILITY v55] Raised from 85% to 94%. On a 64GB M5 system
+            # running the 32B model, 85-90% RAM is the NORMAL operating
+            # state. The old 85% threshold forced Limp Mode (REACTIVE
+            # cognitive mode, zero conversation energy) on nearly every
+            # request, crippling the cortex's reasoning capability.
+            # 94% is the actual macOS memory throttle wall.
+            if mem.percent > 94.0:
                 sys_memory_pressure = True
                 logger.warning("🚨 [VRAM CIRCUIT BREAKER] Unified memory at %.1f%%. Entering Limp Mode.", mem.percent)
                 # Force constraint at state level
@@ -4163,7 +4169,7 @@ async def api_chat(
         except asyncio.TimeoutError:
             return JSONResponse(
                 {
-                    "response": "I'm still finishing the last turn. Give me a second and ask again.",
+                    "response": "Hold on — I'm still in the middle of my last thought. Give me a second.",
                     "status": "foreground_busy",
                     "conversation_lane": _collect_conversation_lane_status(),
                     "response_confidence": "degraded",
@@ -4325,15 +4331,10 @@ async def api_chat(
                     status="protected_foreground",
                 )
             if protected_foreground_reason == "recovery_cooldown":
-                logger.info("🛡️ Recovery cooldown: protected foreground lane unavailable; fast-rejecting.")
-                return JSONResponse(
-                    {
-                        "response": _conversation_lane_user_message(lane),
-                        "status": "recovery_cooldown",
-                        "conversation_lane": lane,
-                    },
-                    status_code=503,
-                )
+                # [STABILITY v55] Don't 503-reject during recovery cooldown.
+                # The cooldown is only 1s — let the request flow through the
+                # normal kernel path instead of showing a canned error message.
+                logger.info("🛡️ Recovery cooldown: skipping protected foreground, proceeding to kernel.")
 
         if not bool(lane.get("conversation_ready", False)):
             gate = ServiceContainer.get("inference_gate", default=None)
@@ -4392,15 +4393,20 @@ async def api_chat(
                             )
 
         if _conversation_lane_blocks_fallback(lane):
-            # [STABILITY v51] Proactive lane recovery: even on hard 503,
-            # schedule a background cortex recovery so the next request
-            # finds a warm cortex instead of hitting 503 again.
+            # [STABILITY v55] Try protected foreground BEFORE returning 503.
+            # Cloud or brainstem can still serve while the cortex recovers.
             try:
                 gate = ServiceContainer.get("inference_gate", default=None)
                 if gate and hasattr(gate, "_schedule_background_cortex_prewarm"):
                     gate._schedule_background_cortex_prewarm(delay=2.0)
             except Exception:
                 pass  # no-op: intentional
+            rescue_reply = await _attempt_protected_foreground_reply("lane_hard_failure")
+            if rescue_reply:
+                return await _finalize_fastpath(
+                    rescue_reply,
+                    status="protected_foreground",
+                )
             return JSONResponse(
                 {
                     "response": _conversation_lane_user_message(lane),
@@ -4726,7 +4732,7 @@ async def api_chat(
                 get_task_tracker().track(
                     asyncio.to_thread(dispatch_user_input, effective_user_message)
                 )
-                reply_text = "Message dispatched (Kernel and Orchestrator offline)."
+                reply_text = ""  # [STABILITY v55] Don't show system messages
 
         reply_text = await _stabilize_user_facing_reply(body.message, reply_text)
 
