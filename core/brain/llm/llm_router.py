@@ -201,13 +201,13 @@ class LocalLLMAdapter:
             if repo:
                 state = await repo.get_current()
                 if state:
-                    context_parts.append(f"[AuraState v{state.version}: {state.cognition.current_mode.name}]")
+                    context_parts.append(f"Cognitive Mode: {state.cognition.current_mode.name} (v{state.version})")
             
             # 2. Add Mood context
             substrate = container.get("liquid_substrate", default=None)
             if substrate:
                 mood = substrate.get_summary()
-                if mood: context_parts.append(f"[Affect: {mood}]")
+                if mood: context_parts.append(f"Affective State: {mood}")
             
             # 3. Add Memory hooks
             vault = container.get("memory", default=None)
@@ -215,12 +215,16 @@ class LocalLLMAdapter:
                 recent = vault.memories[-3:] if hasattr(vault, "memories") else []
                 if recent:
                     snippet = " | ".join([str(m) for m in recent])
-                    context_parts.append(f"[Memories: {snippet}]")
+                    context_parts.append(f"Recent Memories: {snippet}")
         except Exception as e:
             record_degradation('llm_router', e)
             logger.debug("Context injection failed: %s", e)
             
-        return "\n".join(context_parts) + "\n\n" if context_parts else ""
+        if not context_parts:
+            return ""
+        
+        inner = "\n".join(context_parts)
+        return f"<system_state>\n{inner}\n</system_state>\n\n"
 
     async def generate_thought(self, context: str, **kwargs) -> str:
         """Issue 73: Explicit thought generation method for cognitive tracing."""
@@ -234,7 +238,8 @@ class LocalLLMAdapter:
             # 0. Augmented Prompting (Issue 74)
             context = await self._get_context_headers()
             system_prompt = str(kwargs.get("system_prompt", "") or "").strip()
-            augmented_prompt = f"{context}{prompt}"
+            # We don't want to blindly prepend to prompt anymore, it should be in system_prompt if possible
+            augmented_prompt = prompt
             
             if not self.endpoint.model_name:
                 return False, "", {"error": "Missing model_name"}

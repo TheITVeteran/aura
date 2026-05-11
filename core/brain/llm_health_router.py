@@ -1292,7 +1292,13 @@ class HealthAwareLLMRouter:
 
             if ctx_summary:
                 context_header = " ".join(ctx_summary)
-                prompt = f"{context_header}\n\n{prompt}"
+                # [Fix] Move Affective and Somatic state to system_prompt instead of user prompt to prevent echoing.
+                if system_prompt:
+                    system_prompt = f"System State Context:\n{context_header}\n\n{system_prompt}"
+                else:
+                    system_prompt = f"System State Context:\n{context_header}"
+                
+                # We no longer prepend this to the user prompt.
 
         # Mycelial Direction Hook
         guidance = await self._get_mycelial_direction(prompt)

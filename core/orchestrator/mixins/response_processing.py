@@ -390,48 +390,23 @@ class ResponseProcessingMixin:
         """Recovery logic for when a thinking task hangs and is killed by the watchdog."""
         logger.warning("🚨 [RECOVERY] Thinking timeout recovery triggered for origin: %s", origin)
 
-        coherence = 1.0
-        objective = self._current_objective or ""
-        try:
-            state = getattr(getattr(self, "state_repo", None), "_current", None)
-            cognition = getattr(state, "cognition", None)
-            coherence = float(getattr(cognition, "coherence_score", 1.0) or 1.0)
-        except Exception:
-            coherence = 1.0
-
-        fallback_pool = [
-            "My neural processors are taking longer than expected. I'm performing a cognitive regroup. One moment...",
-            "I hit a dense reasoning pocket and I'm restabilizing the thread before I answer.",
-            "I'm recovering from a cognitive stall and narrowing the path so I can respond cleanly.",
-        ]
-        if coherence < 0.72:
-            fallback_pool.insert(
-                0,
-                "My continuity pressure is elevated. I'm compressing context and re-centering before I continue.",
-            )
-        if objective:
-            fallback_pool.append(
-                f"I'm taking a lighter pass on '{str(objective)[:80]}' so I can recover without dropping the thread."
-            )
-        fallback_msg = fallback_pool[int(time.time()) % len(fallback_pool)]
-
-        # 1. Emit immediate feedback to user if applicable
-        if origin in ("user", "voice", "admin"):
-            if self.output_gate:
-                await self.output_gate.emit(fallback_msg, origin=origin, target="primary")
-
-        # 2. Reset status
+        # 1. Reset status silently (No meta-commentary fallback emitted to the UI)
         self.status.is_processing = False
         self._current_processing_start = None
 
-        # 3. Trigger a lighter, reactive 'downshift' cycle if we have an objective
+        # 2. Trigger a lighter, reactive 'downshift' cycle if we have an objective
         if self._current_objective and origin != "motivation":
-             logger.info("🔄 [RECOVERY] Attempting reactive downshift...")
+             logger.info("🔄 [RECOVERY] Attempting reactive downshift silent retry...")
              try:
+                 emergency_prompt = (
+                     "System recovery: Provide a direct, concise answer to the user's last input. "
+                     "Do not mention recovery, timeouts, or system state. Just answer."
+                 )
                  await self.cognitive_engine.think(
                      self._current_objective,
                      mode=ThinkingMode.FAST,
-                     origin=f"recovery_{origin}"
+                     origin=f"recovery_{origin}",
+                     system_prompt=emergency_prompt
                  )
              except Exception as e:
                  record_degradation('response_processing', e)

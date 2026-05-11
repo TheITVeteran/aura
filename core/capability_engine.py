@@ -84,7 +84,6 @@ _INTERNAL_ONLY_SKILLS = frozenset(
         # the general registered tool catalog until they satisfy that surface.
         "branching_futures",
         "email_adapter",
-        "execute_nethack_action",
         "manim_renderer",
         "mcp_client",
         "reddit_adapter",

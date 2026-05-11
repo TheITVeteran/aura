@@ -67,7 +67,7 @@ class NetHackParams(BaseModel):
     )
 
 
-class NetHackSkill(BaseSkill):
+class ExecuteNethackActionSkill(BaseSkill):
     name = "execute_nethack_action"
     description = (
         "Send a keystroke to the active NetHack game session and receive "
