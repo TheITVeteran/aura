@@ -1387,7 +1387,7 @@ def _conversation_lane_user_message(
     if status_override == "warming_failed":
         return f"{_mood_prefix}my thinking engine stumbled during warm-up. Try me again in a sec."
     if timed_out:
-        return f"{_mood_prefix}I was thinking but my cortex took too long to finish the thought. Try again — I should be warmer now."
+        return f"{_mood_prefix}that thought took longer than it should have. Send it again — I should respond faster this time."
     if _conversation_lane_is_standby(lane):
         return "I'm here. My cortex will spin up the moment you say something."
     if state == "recovering":

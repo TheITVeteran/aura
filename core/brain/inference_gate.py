@@ -98,6 +98,7 @@ class InferenceGate:
         self._last_cortex_check: float = 0.0
         self._cortex_recovery_attempts: int = 0
         self._cortex_recovery_exhausted_at: float = 0.0  # [STABILITY v53]
+        self._last_stale_reset_log_at: float = 0.0  # [HARDENING v54] Rate-limit stale state warnings
         self._last_successful_generation_at: float = time.time()
         self._prewarm_task: Optional[asyncio.Task] = None
         self._deferred_prewarm_task: Optional[asyncio.Task] = None
@@ -110,14 +111,14 @@ class InferenceGate:
 
     @classmethod
     def _user_facing_recovery_response(cls, prompt: str) -> str:
-        # [RESILIENCE] Actually acknowledge what the user said instead of a generic failure.
-        # This prevents the user from having to repeat themselves after a crash.
-        clamped = (prompt[:150] + "...") if len(prompt) > 150 else prompt
+        # [HARDENING v54] NEVER echo prompt content back to the user.
+        # The prompt may contain system prompts, stale conversation history from
+        # memory retrieval, or fragments from previous sessions. Echoing it back
+        # fabricates hallucinated statements the user never made.
         return (
-            "I dropped the heavy reasoning lane, but I didn't lose your thought. "
-            f"You were saying: '{clamped}'\n\n"
-            "I'm keeping this active. I'll answer properly as soon as the deeper lane recovers, "
-            "but right now I'm running in a lighter mode and marking my uncertainty plainly."
+            "My reasoning engine hit a transient issue on this turn. "
+            "I'm recovering in the background — send your message again "
+            "and I should respond properly."
         )
 
     @staticmethod
@@ -586,16 +587,35 @@ class InferenceGate:
                     or self._cortex_recovery_in_progress
                 )
                 if not has_active_task:
-                    logger.warning(
-                        "🚨 [STABILITY v53] Lane stuck in '%s' for >90s with no active task. "
-                        "Resetting to 'cold' to allow fresh warmup.",
-                        lane_state,
-                    )
+                    # [HARDENING v54] Rate-limit this log — get_conversation_status()
+                    # is called dozens of times per second by subsystems. Without
+                    # rate limiting, a stuck lane produces thousands of warnings.
+                    _now_mono = time.monotonic()
+                    _last_log = getattr(self, '_last_stale_reset_log_at', 0.0)
+                    if (_now_mono - _last_log) > 30.0:
+                        self._last_stale_reset_log_at = _now_mono
+                        logger.warning(
+                            "🚨 [HARDENING v54] Lane stuck in '%s' for >90s with no active task. "
+                            "Resetting to 'cold' and scheduling recovery.",
+                            lane_state,
+                        )
                     lane["state"] = "cold"
                     lane["warmup_in_flight"] = False
-                    # Clear stale MLX client flags too
-                    if self._mlx_client and hasattr(self._mlx_client, "_warmup_in_flight"):
-                        self._mlx_client._warmup_in_flight = False
+                    # [HARDENING v54] CRITICAL: Reset the MLX client's ACTUAL lane
+                    # state, not just the returned dict. Without this, the next call
+                    # reads "recovering" from the client again and the stale check
+                    # fires in an infinite loop.
+                    if self._mlx_client:
+                        if hasattr(self._mlx_client, "_warmup_in_flight"):
+                            self._mlx_client._warmup_in_flight = False
+                        if hasattr(self._mlx_client, "_set_lane_state"):
+                            self._mlx_client._set_lane_state("cold")
+                    # [HARDENING v54] Schedule a recovery warmup so the cortex
+                    # actually comes back online instead of staying cold forever.
+                    try:
+                        self._schedule_background_cortex_prewarm(delay=3.0)
+                    except Exception:
+                        pass  # Best-effort recovery scheduling
         return lane
 
     def note_foreground_timeout(self, reason: str = "foreground_timeout") -> None:
@@ -822,17 +842,18 @@ class InferenceGate:
         self._last_cortex_check = now
 
         if self._cortex_recovery_attempts >= 5:
-            # [STABILITY v53] BUG FIX: Previously compared (now - self._last_cortex_check)
-            # which was always ~0 since _last_cortex_check was just set above. This meant
-            # cortex recovery NEVER retried after 5 failures. Use a dedicated timestamp.
+            # [HARDENING v54] Exponential backoff: 30s after 5 failures, 60s after 10,
+            # capped at 120s. The previous 5-minute hard lockout made the cortex
+            # unreachable for entire conversation windows. Never permanently give up.
             exhausted_at = getattr(self, "_cortex_recovery_exhausted_at", 0.0)
+            cooldown = min(120.0, 30.0 * (1 + (self._cortex_recovery_attempts - 5) // 5))
             if exhausted_at == 0.0:
                 self._cortex_recovery_exhausted_at = now
-                logger.warning("[RECOVERY] Primary cortex: 5 failures reached. Will retry in 5 minutes.")
+                logger.warning("[RECOVERY] Primary cortex: %d failures reached. Will retry in %.0fs.", self._cortex_recovery_attempts, cooldown)
                 return
-            if (now - exhausted_at) < 300.0:
-                return  # Rate-limit: try again every 5 min after 5 failures
-            logger.warning("[RECOVERY] Primary cortex: 5-min cooldown elapsed. Resetting counter and retrying.")
+            if (now - exhausted_at) < cooldown:
+                return  # Rate-limit: exponential backoff
+            logger.warning("[RECOVERY] Primary cortex: %.0fs cooldown elapsed. Resetting counter and retrying.", cooldown)
             self._cortex_recovery_attempts = 0
             self._cortex_recovery_exhausted_at = 0.0
 

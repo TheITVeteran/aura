@@ -2257,9 +2257,9 @@ $('chat-form').onsubmit = async e => {
             const msgs = (DOM.messages || $('messages'));
             const lastAuraMsg = msgs ? msgs.querySelector('.msg.aura:last-of-type') : null;
             const lastAuraText = lastAuraMsg ? (lastAuraMsg.textContent || '').trim() : '';
-            const alreadyShowingRecovery = lastAuraText.includes('recovering from a long turn') || lastAuraText.includes('conversation lane');
+            const alreadyShowingRecovery = lastAuraText.includes('took too long') || lastAuraText.includes('respond faster');
             if (!streamedReplyInFlight && !alreadyShowingRecovery) {
-                appendMsg('aura', 'My 32B conversation lane is still recovering from a long turn. Please try again in a moment.');
+                appendMsg('aura', 'That took too long on my end. Try sending your message again \u2014 I should respond faster this time.');
             }
         } else {
             appendMsg('aura', '⚠ Communication error. Check connection.');
