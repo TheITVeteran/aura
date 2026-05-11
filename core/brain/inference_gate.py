@@ -712,7 +712,8 @@ class InferenceGate:
 
                 try:
                     self._extend_startup_quiet_window(20.0)
-                    await self.ensure_foreground_ready(timeout=60.0)
+                    # [STABILITY v56] Background prewarm needs full 180s timeout, not 60s.
+                    await self.ensure_foreground_ready(timeout=180.0)
                     logger.info("✅ Deferred cortex prewarm completed.")
                     return
                 except Exception as exc:
@@ -1522,7 +1523,8 @@ class InferenceGate:
                         self._mlx_client.warmup(),
                         name="InferenceGate.cortex_prewarm",
                     )
-                    await asyncio.wait_for(asyncio.shield(self._prewarm_task), timeout=75.0)
+                    # [STABILITY v56] Eager boot warmup needs full 180s timeout, not 75s.
+                    await asyncio.wait_for(asyncio.shield(self._prewarm_task), timeout=180.0)
                     self._extend_startup_quiet_window(5.0)
                     logger.info("✅ InferenceGate ONLINE (Cortex fully warmed).")
                 except Exception as warmup_err:
@@ -3173,8 +3175,11 @@ class InferenceGate:
                                 lane_status.get("state", "unknown"),
                             )
                             try:
+                                # [STABILITY v56] The 32B model can take 150s to cold load.
+                                # Don't artificially cap warmup at 90s. Give it at least 180s
+                                # or the primary timeout, whichever is greater.
                                 lane_status = await self.ensure_foreground_ready(
-                                    timeout=min(90.0, max(35.0, primary_timeout))
+                                    timeout=max(180.0, primary_timeout)
                                 )
                             except Exception as warmup_exc:
                                 record_degradation('inference_gate', warmup_exc)
@@ -3235,7 +3240,8 @@ class InferenceGate:
                                     retry_attempt,
                                 )
                                 try:
-                                    await self.ensure_foreground_ready(timeout=min(60.0, primary_timeout))
+                                    # [STABILITY v56] Same as above, don't cap at 60s.
+                                    await self.ensure_foreground_ready(timeout=max(180.0, primary_timeout))
                                 except Exception as warmup_exc:
                                     record_degradation('inference_gate', warmup_exc)
                                     logger.warning("🧠 Foreground warmup retry did not complete cleanly: %s", warmup_exc)

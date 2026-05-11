@@ -812,7 +812,9 @@ class MLXLocalClient:
         return 8.0
 
     def _warmup_timeout(self) -> float:
-        return 75.0 if self._is_primary_or_deep_lane() else 30.0
+        # [STABILITY v56] Raised from 75.0s → 180.0s. 32B models on M5 
+        # regularly take 120-150s to cold-load and compile Metal shaders.
+        return 180.0 if self._is_primary_or_deep_lane() else 30.0
 
     def _handshake_timeout(self) -> float:
         """Absolute upper bound for worker init before we declare the process wedged."""
@@ -2603,11 +2605,11 @@ class MLXLocalClient:
                 try:
                     async with _foreground_owner_context(
                         owner_name,
-                        # [STABILITY v55] Raised from 8s → 90s. The 32B model
+                        # [STABILITY v56] Raised from 90s → 180s. The 32B model
                         # cold-loads in 90-150s; holding the foreground owner
-                        # for only 8s released it before warmup finished,
+                        # for only 90s released it before warmup finished,
                         # allowing background 7B spawns to evict the cortex.
-                        deadline=get_deadline(min(90.0, warmup_timeout)),
+                        deadline=get_deadline(max(180.0, warmup_timeout)),
                         foreground_request=True,
                     ):
                         alive = await self._ensure_worker_alive(
