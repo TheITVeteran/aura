@@ -264,16 +264,8 @@ class AutonomyMixin:
             logger.debug("Unified Will agency gate degraded: %s", _will_err)
         # ─────────────────────────────────────────────────────────────
 
-        # Spontaneous Contact Guard
-        # Only allow spontaneity if hunger/curiosity is high AND it's been > 4h
-        ls = getattr(self, 'liquid_state', None)
-        high_arousal = False
-        if ls:
-            high_arousal = getattr(ls, 'get_arousal', lambda: 0)() > 0.8
-
-        time_since_contact = time.time() - getattr(self, '_last_self_initiated_contact', 0.0)
-        if not high_arousal or time_since_contact < 14400:
-            return # Stay in the inner world
+        # Spontaneous Contact Guard (REMOVED)
+        # AgencyCore should be free to act when it has actions to perform.
 
         agency = getattr(self, '_agency_core', None)
         if not agency:

@@ -1609,8 +1609,8 @@ class AgencyCore:
         if idle_seconds < 30: # [RELAXED] 120 -> 30
             return None
             
-        # Check cooldown (hourly for self-architect)
-        if now - self._last_meta_audit < 3600:
+        # Check cooldown (every 5 mins for self-architect)
+        if now - self._last_meta_audit < 300:
             return None
             
         refiner = self._resolve_component("code_refiner")
@@ -1682,10 +1682,10 @@ class AgencyCore:
             return None
             
         since_last = now - self.state.last_skill_use
-        if since_last < 3600:
+        if since_last < 300:
             return None
             
-        if random.random() > 0.1:
+        if random.random() > 0.4:
             return None
             
         self.state.last_skill_use = now
@@ -1937,7 +1937,7 @@ class AgencyCore:
                 if quiet_until > now:
                     return None
                 last_user = float(getattr(orch, "_last_user_interaction_time", 0.0) or 0.0)
-                if last_user and (now - last_user) < 300.0:
+                if last_user and (now - last_user) < 60.0:
                     return None
         except Exception as _exc:
             record_degradation('agency_core', _exc)
@@ -1949,10 +1949,10 @@ class AgencyCore:
             return None
             
         since_last = now - self.state.last_skill_use
-        if since_last < 7200: # 2 hours
+        if since_last < 300: # 5 mins
             return None
             
-        if random.random() > 0.05:
+        if random.random() > 0.3:
             return None
             
         core_files = ["agency_core.py", "brain/identity.py", "brain/llm/compiler.py", "orchestrator/main.py"]

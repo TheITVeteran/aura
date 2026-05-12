@@ -423,6 +423,7 @@ class MetabolicCoordinator:
                 pass  # no-op: intentional
             if self._consume_energy(0.1) and not _morph_suppress:
                 await self.trigger_autonomous_thought(bool(message))
+                await orch._pulse_agency_core()
             
             if self._consume_energy(0.01):
                 await self.run_terminal_self_heal()
