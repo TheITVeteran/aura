@@ -2792,6 +2792,10 @@ class InferenceGate:
                 if _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED, TrustLevel.GUEST):
                     protected_foreground_lane = True
                     logger.info("🎭 %s user recognized. Enforcing primary cortex lane (32B).", _trust_level.name)
+                
+                # Inject trust level into state for ContextAssembler visibility
+                if hasattr(state, "cognition") and hasattr(state.cognition, "modifiers"):
+                    state.cognition.modifiers["trust_level"] = _trust_level
 
                 # Block tool use for untrusted sessions
                 if _trust_level in (TrustLevel.SUSPICIOUS, TrustLevel.HOSTILE):

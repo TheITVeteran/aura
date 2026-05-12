@@ -24,9 +24,10 @@ import sys
 if sys.platform == "darwin":
     try:
         import AppKit
-        info = AppKit.NSBundle.mainBundle().infoDictionary()
-        info["LSUIElement"] = "1"
-    except ImportError:
+        # Force the process to be an 'Agent' (no dock icon, no menu bar)
+        # This prevents the duplicate Python icon while the separate GUI process runs.
+        AppKit.NSApp.setActivationPolicy_(2) # 2 = NSApplicationActivationPolicyProhibited (UI-less)
+    except Exception:
         pass
 
 import shutil
