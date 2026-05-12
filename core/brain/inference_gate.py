@@ -2787,11 +2787,11 @@ class InferenceGate:
                 )
                 _trust_guidance = _te.get_guidance_for_response()
 
-                # [SOVEREIGN SUPREMACY] If user is sovereign, they get the full 32B lane.
-                # No brainstem fallbacks, no speed-over-quality compromises.
-                if _trust_level == TrustLevel.SOVEREIGN:
+                # [STABILITY v58] Force Primary 32B lane for all human-interaction tiers.
+                # No brainstem fallbacks for Sovereign, Trusted, or Guest users.
+                if _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED, TrustLevel.GUEST):
                     protected_foreground_lane = True
-                    logger.info("👑 Sovereign user recognized. Enforcing primary cortex lane and clearing background headroom.")
+                    logger.info("🎭 %s user recognized. Enforcing primary cortex lane (32B).", _trust_level.name)
 
                 # Block tool use for untrusted sessions
                 if _trust_level in (TrustLevel.SUSPICIOUS, TrustLevel.HOSTILE):
