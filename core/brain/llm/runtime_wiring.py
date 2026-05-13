@@ -119,7 +119,14 @@ async def resolve_runtime_state(
 def _normalize_memory_snippet(item: Any) -> str:
     if isinstance(item, dict):
         content = str(item.get("content") or item.get("text") or "").strip()
-        metadata = item.get("metadata", {}) or {}
+        raw_meta = item.get("metadata")
+        if isinstance(raw_meta, str):
+            import json as _json
+            try:
+                raw_meta = _json.loads(raw_meta)
+            except (ValueError, _json.JSONDecodeError):
+                raw_meta = {}
+        metadata = raw_meta if isinstance(raw_meta, dict) else {}
         memory_type = str(metadata.get("type", "") or "").strip().lower()
         prefix = f"[{memory_type}] " if memory_type in {"fact", "preference", "recent_episode", "shared_ground"} else ""
         return f"{prefix}{content}".strip()

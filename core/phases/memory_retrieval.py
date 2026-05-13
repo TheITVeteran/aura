@@ -1,13 +1,30 @@
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
+import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from . import BasePhase
 from ..state.aura_state import AuraState
 from core.utils.queues import decode_stringified_priority_message, role_for_origin
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_metadata(raw: Any) -> Dict[str, Any]:
+    """Coerce metadata to a dict.  Knowledge-graph rows store metadata as a
+    JSON TEXT column; if the upstream forgot to parse it we handle it here."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return {}
+    return {}
 
 class MemoryRetrievalPhase(BasePhase):
     """
@@ -175,7 +192,7 @@ class MemoryRetrievalPhase(BasePhase):
         if kg_res:
             for km in kg_res:
                 if isinstance(km, dict):
-                    metadata = km.get("metadata", {}) or {}
+                    metadata = _safe_metadata(km.get("metadata", {}))
                     emotional_valence = float(metadata.get("emotional_valence", 0.0) or 0.0)
                     importance = float(metadata.get("importance", 0.0) or 0.0)
                     valence_alignment = 1.0 - min(1.0, abs(float(state.affect.valence or 0.0) - emotional_valence))
@@ -192,7 +209,7 @@ class MemoryRetrievalPhase(BasePhase):
                 if isinstance(item, dict):
                     content = item.get("content") or item.get("text") or ""
                     if content:
-                        metadata = item.get("metadata", {}) or {}
+                        metadata = _safe_metadata(item.get("metadata", {}))
                         emotional_valence = float(metadata.get("emotional_valence", 0.0) or 0.0)
                         importance = float(metadata.get("importance", 0.0) or 0.0)
                         score = float(item.get("score", 0.0) or 0.0)

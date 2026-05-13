@@ -36,32 +36,26 @@ HARD RULES:
 - Start with your answer or reaction — no preamble."""
 
 # Patterns that indicate a robotic fallback or "Assistant" persona leak
+# IMPORTANT: These are applied via re.sub which DELETES matched text.
+# Only include patterns that are UNAMBIGUOUSLY assistant-speak.
+# DO NOT add common natural phrases here — they mangle coherent responses.
 BANNED_PHRASES = [
     r"as an ai assistant",
     r"how can i assist you",
     r"i'm just a digital entity",
-    r"i am an ai",
+    r"i am an ai\b",
     r"i am a digital entity",
     r"i'm a digital intelligence",
-    r"digital intelligence",
     r"as an ai language model",
     r"i have processed your request",
     r"(?:how may i|may i) assist you today",
     r"how can i assist you(?: today)?",
     r"in this brief exchange",
     r"my presence is about providing information",
-    r"how\'s it going\?",
-    r"feel free to",
-    r"any specific questions",
-    r"happy to explore",
-    r"today\?",
-    r"i\'ll think about that for a moment",
-    r"this requires a bit of reasoning",
     r"goal: analyzing architectural bottlenecks",
     r"\.+(?:\s+\.+)+",
-    r"(?i)as an ai|as a language model|thinking step by step",
+    r"(?i)as a language model|thinking step by step",
     r"(?i)my internal reasoning|in my thought process",
-    r"(?i)here is my plan|let me think",
     r"(?im)^### \d+\. FINAL ANSWER.*$",
     r"(?im)^Final Answer:.*$",
     r"(?im)[\n\s]User:.*$",
@@ -388,43 +382,40 @@ def stabilize_user_facing_response(text: str, user_message: str = "") -> str:
     except Exception:
         corrupted_language = False
 
+    # A response is only genuinely broken if it's empty, very short, a known
+    # low-signal phrase, a broken-lane boilerplate leak, or corrupted text.
+    # Substantive, coherent model output (>= 40 chars, >= 8 words) should
+    # NEVER be replaced by a canned floor — that's the #1 source of "slop".
+    genuinely_broken = (
+        not cleaned
+        or len(cleaned) < 4
+        or low_signal
+        or broken_lane
+        or corrupted_language
+    )
+
     conversational = _conversation_response_floor(user_message)
-    if conversational and (not cleaned or low_signal or broken_lane or corrupted_language):
+    if conversational and genuinely_broken:
         return conversational
 
     floor = _direct_answer_floor(user_message)
     if floor:
-        stripped = cleaned.strip().strip(".!?").lower()
-        floor_key = floor.strip().strip(".!?").lower()
         if (
-            not cleaned
-            or len(cleaned) < 4
-            or low_signal
-            or broken_lane
-            or corrupted_language
+            genuinely_broken
             or "user" in cleaned.lower()
             or "assistant" in cleaned.lower()
-            or (floor_key and floor_key not in stripped and stripped not in floor_key)
         ):
             return floor
+        # If the model gave a substantive response (>= 40 chars), keep it.
+        # Only override for truly thin/broken output, not for richer phrasing.
 
     creative = _creative_response_floor(user_message)
     if creative:
         lowered = cleaned.lower()
-        ocean_poem_request = "short poem" in str(user_message or "").lower() and "ocean" in str(user_message or "").lower()
         if (
-            not cleaned
-            or low_signal
-            or broken_lane
-            or corrupted_language
-            or (ocean_poem_request and ("here you go" in lowered or "wave" not in lowered or len(cleaned) < 80))
+            genuinely_broken
             or "user" in lowered
             or "assistant" in lowered
-            or "not sure" in lowered
-            or "can't" in lowered
-            or "cannot" in lowered
-            or "just noise" in lowered
-            or "try again" in lowered
         ):
             return creative
     return cleaned
@@ -589,8 +580,7 @@ def cure_personality_leak(text: str) -> str:
         result = "Actually, I don't feel like answering as a machine. " + result
         
     # 4. Final cleaning
-    result = stabilize_user_facing_response(result)
-    return result
+    return strip_role_artifacts(result)
 
 
 class ConversationalSynthesizer:

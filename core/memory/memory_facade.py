@@ -120,6 +120,22 @@ class MemoryFacade:
     @property
     def cold(self): return self._cold
 
+    @staticmethod
+    def _safe_metadata(raw: Any) -> Dict[str, Any]:
+        """Coerce metadata to a dict — handles JSON TEXT from SQLite rows."""
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            import json as _json
+            try:
+                parsed = _json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (ValueError, _json.JSONDecodeError):
+                pass
+            return {}
+        return {} if raw is None else {}
+
     def _normalize_memory_result(
         self,
         *,
@@ -132,7 +148,7 @@ class MemoryFacade:
             "id": memory_id,
             "text": content,
             "content": content,
-            "metadata": dict(metadata or {}),
+            "metadata": self._safe_metadata(metadata),
         }
         if score is not None:
             payload["score"] = score
@@ -340,7 +356,7 @@ class MemoryFacade:
 
     async def _verify_memory_result(self, item: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(item)
-        metadata = dict(normalized.get("metadata") or {})
+        metadata = self._safe_metadata(normalized.get("metadata"))
         content = str(normalized.get("content") or normalized.get("text") or "").strip()
 
         verification_state = "not_applicable"
@@ -407,7 +423,7 @@ class MemoryFacade:
             return normalized
 
         for record in records:
-            metadata = dict(record.get("metadata") or {})
+            metadata = self._safe_metadata(record.get("metadata"))
             if filter_key and filter_value is not None:
                 if str(metadata.get(filter_key, "")).strip() != filter_value:
                     continue
@@ -682,7 +698,7 @@ class MemoryFacade:
         def _append(item: Any) -> None:
             if isinstance(item, dict):
                 content = str(item.get("content") or item.get("text") or "").strip()
-                metadata = dict(item.get("metadata") or {})
+                metadata = self._safe_metadata(item.get("metadata"))
                 normalized = self._normalize_memory_result(
                     content=content,
                     metadata=metadata,
@@ -735,7 +751,7 @@ class MemoryFacade:
                 record_degradation('memory_facade', e)
                 logger.debug("Memory live verification failed: %s", e)
                 normalized = dict(item)
-                metadata = dict(normalized.get("metadata") or {})
+                metadata = self._safe_metadata(normalized.get("metadata"))
                 metadata.setdefault("verification_state", "unverified")
                 normalized["metadata"] = metadata
             normalized["_retrieval_order"] = order
@@ -931,7 +947,7 @@ class MemoryFacade:
                         {
                             "id": str(item.get("id", "") or ""),
                             "content": str(item.get("content") or item.get("text") or ""),
-                            "metadata": dict(item.get("metadata") or {}),
+                            "metadata": self._safe_metadata(item.get("metadata")),
                             "score": item.get("score"),
                         }
                         for item in list(raw_results or [])

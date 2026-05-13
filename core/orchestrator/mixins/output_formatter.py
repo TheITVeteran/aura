@@ -32,12 +32,6 @@ class OutputFormatterMixin:
         """Personality-driven output filtering (Aura v10.0)."""
         if not text:
             return ""
-        try:
-            from core.synthesis import stabilize_user_facing_response
-
-            text = stabilize_user_facing_response(text)
-        except Exception:
-            pass
 
         # Identity Flux Guard: Neutralize assistant-speak
         banned_phrases = {
@@ -66,19 +60,20 @@ class OutputFormatterMixin:
                     styled = pe.apply_lexical_style(text)
                     if isinstance(styled, str):
                         text = styled
-                try:
-                    from core.synthesis import stabilize_user_facing_response
-
-                    text = stabilize_user_facing_response(text)
-                except Exception:
-                    pass
-                return text
-                if inspect.isawaitable(filtered):
-                    _dispose_awaitable(filtered)
             except Exception as exc:
                 record_degradation('output_formatter', exc)
                 logger.debug("Filter failed: %s", exc)
-                
+
+        # Single final stabilization pass — strip role artifacts and broken-lane boilerplate.
+        # NOTE: Do NOT call stabilize_user_facing_response without user_message context,
+        # as the floor logic cannot make informed decisions without knowing the prompt.
+        try:
+            from core.synthesis import strip_role_artifacts
+
+            text = strip_role_artifacts(text)
+        except Exception:
+            pass
+
         return text
 
     def _emit_thought_stream(self, thought):

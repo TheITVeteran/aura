@@ -80,7 +80,8 @@ class BeliefRevisionEngine:
         try:
             nodes = self._kg.search_knowledge("", type="belief", limit=500)
             for node in nodes:
-                meta = json.loads(node.get("metadata", "{}"))
+                raw_meta = node.get("metadata", {})
+                meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta or "{}")
                 belief = Belief(
                     id=node["id"],
                     proposition=node["content"],

@@ -239,7 +239,19 @@ class PersistentKnowledgeGraph:
             c = conn.cursor()
             c.execute("SELECT * FROM knowledge WHERE id = ?", (node_id,))
             row = c.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+            # metadata is stored as JSON TEXT — parse it back to a dict
+            raw_meta = d.get("metadata")
+            if isinstance(raw_meta, str):
+                try:
+                    d["metadata"] = json.loads(raw_meta)
+                except (json.JSONDecodeError, ValueError):
+                    d["metadata"] = {}
+            elif raw_meta is None:
+                d["metadata"] = {}
+            return d
     
     def search_knowledge(self, query: str, type: Optional[str] = None, limit: int = 10) -> List[Dict]:
         """Search knowledge"""
@@ -254,7 +266,20 @@ class PersistentKnowledgeGraph:
                 c.execute("""SELECT * FROM knowledge WHERE content LIKE ?
                             ORDER BY confidence DESC LIMIT ?""",
                          (f"%{query}%", limit))
-            return [dict(row) for row in c.fetchall()]
+            results = []
+            for row in c.fetchall():
+                d = dict(row)
+                # metadata is stored as JSON TEXT — parse it back to a dict
+                raw_meta = d.get("metadata")
+                if isinstance(raw_meta, str):
+                    try:
+                        d["metadata"] = json.loads(raw_meta)
+                    except (json.JSONDecodeError, ValueError):
+                        d["metadata"] = {}
+                elif raw_meta is None:
+                    d["metadata"] = {}
+                results.append(d)
+            return results
     
     def _update_knowledge_access(self, node_id: str, confidence_boost: float = 0.0):
         """Update access — caller must hold _lock or call within with self._lock."""
@@ -756,7 +781,19 @@ class PersistentKnowledgeGraph:
             else:
                 c.execute("""SELECT * FROM knowledge 
                             ORDER BY last_accessed DESC LIMIT ?""", (limit,))
-            return [dict(row) for row in c.fetchall()]
+            results = []
+            for row in c.fetchall():
+                d = dict(row)
+                raw_meta = d.get("metadata")
+                if isinstance(raw_meta, str):
+                    try:
+                        d["metadata"] = json.loads(raw_meta)
+                    except (json.JSONDecodeError, ValueError):
+                        d["metadata"] = {}
+                elif raw_meta is None:
+                    d["metadata"] = {}
+                results.append(d)
+            return results
 
 # Alias for compatibility
 KnowledgeGraph = PersistentKnowledgeGraph
