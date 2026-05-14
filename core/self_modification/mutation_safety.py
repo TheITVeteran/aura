@@ -31,6 +31,7 @@ to be vetted before being applied.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import resource
@@ -271,7 +272,12 @@ class SafeMutationEvaluator:
                 test_path.write_text(test_source or "", encoding="utf-8")
             bootstrap_path.write_text(_BOOTSTRAP_SOURCE, encoding="utf-8")
 
-            cmd = [sys.executable, str(bootstrap_path), str(source_path)]
+            cmd = [
+                sys.executable,
+                *self._python_startup_flags(source, test_source),
+                str(bootstrap_path),
+                str(source_path),
+            ]
             if test_path is not None:
                 cmd.append(str(test_path))
 
@@ -406,6 +412,34 @@ class SafeMutationEvaluator:
             if code == exit_code:
                 return MutationOutcome(name)
         return MutationOutcome.RUNTIME_EXCEPTION
+
+    @staticmethod
+    def _python_startup_flags(source: str, test_source: Optional[str]) -> List[str]:
+        if SafeMutationEvaluator._source_needs_site_packages(source):
+            return []
+        if test_source and SafeMutationEvaluator._source_needs_site_packages(test_source):
+            return []
+        # Import-free candidate mutations do not need Python's site-package
+        # bootstrap. Skipping it keeps the subprocess sandbox isolated while
+        # shaving a large, noisy CI startup cost from the hot pass path.
+        return ["-S"]
+
+    @staticmethod
+    def _source_needs_site_packages(source: str) -> bool:
+        try:
+            tree = ast.parse(source or "")
+        except SyntaxError:
+            return False
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                return True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "__import__"
+            ):
+                return True
+        return False
 
     def _maybe_quarantine(
         self,

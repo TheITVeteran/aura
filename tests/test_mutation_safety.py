@@ -154,6 +154,15 @@ def test_passed_does_not_quarantine(evaluator):
     assert entries == []
 
 
+def test_import_free_mutations_skip_site_bootstrap():
+    assert SafeMutationEvaluator._python_startup_flags("x = 1\n", None) == ["-S"]
+
+
+def test_importing_mutations_keep_site_bootstrap_available():
+    assert SafeMutationEvaluator._python_startup_flags("import requests\n", None) == []
+    assert SafeMutationEvaluator._python_startup_flags("x = 1\n", "import pytest\n") == []
+
+
 def test_quarantine_is_per_invocation(evaluator):
     # Two different broken mutations get two different quarantine dirs.
     a = evaluator.evaluate("syntax error here:::")
