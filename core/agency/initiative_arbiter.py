@@ -107,8 +107,8 @@ class InitiativeArbiter:
         if len(filtered) != len(pending):
             try:
                 state.cognition.pending_initiatives = filtered
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as exc:
+                logger.debug("InitiativeArbiter: unable to rewrite pending initiatives: %s", exc)
             logger.debug(
                 "InitiativeArbiter: quarantined %d generic continuity re-entry initiative(s).",
                 len(pending) - len(filtered),
@@ -463,7 +463,7 @@ def _is_generic_reentry_goal(initiative: dict) -> bool:
         from core.continuity import _is_generic_continuity_reentry_goal
 
         return _is_generic_continuity_reentry_goal(_goal(initiative))
-    except Exception:
+    except (ImportError, AttributeError, TypeError):
         lowered = " ".join(str(_goal(initiative) or "").strip().lower().split())
         return (
             "reconcile continuity gap" in lowered

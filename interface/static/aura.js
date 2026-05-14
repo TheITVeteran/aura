@@ -2135,7 +2135,7 @@ function normalizePercentValue(value) {
 function setHudRamUsage(value, { source = 'telemetry' } = {}) {
     const pct = normalizePercentValue(value);
     if (pct == null) return;
-    // Some stream payloads use 0 as an omitted RAM placeholder. Preserve the
+    // Some stream payloads use 0 as an omitted RAM sentinel. Preserve the
     // last real system reading so the HUD does not flicker to a false 0%.
     if (source !== 'health' && pct <= 0.1 && state.lastSystemRamPct != null && state.lastSystemRamPct > 1) {
         return;

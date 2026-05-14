@@ -176,8 +176,8 @@ class StabilityGuardian:
                     return True
                 if float(lane.get("request_age_s", 0.0) or 0.0) > 0.0:
                     return True
-        except Exception:
-            pass
+        except (ImportError, AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            logger.debug("StabilityGuardian inference activity probe unavailable: %s", exc)
         return False
 
     def _event_loop_lag_threshold_ms(self) -> float:
@@ -343,8 +343,8 @@ class StabilityGuardian:
                     if is_shutdown_requested():
                         logger.debug("StabilityGuardian loop exiting during runtime shutdown.")
                         break
-                except Exception:
-                    pass
+                except (ImportError, RuntimeError) as exc:
+                    logger.debug("StabilityGuardian shutdown probe skipped: %s", exc)
                 lag_ms = max(0.0, (time.monotonic() - expected_wakeup) * 1000.0)
                 self._loop_lag_samples.append((time.time(), lag_ms))
                 report = await self.run_checks()
@@ -657,8 +657,8 @@ class StabilityGuardian:
                     "Runtime shutdown in progress; tick-rate checks suppressed",
                     severity="info",
                 )
-        except Exception:
-            pass
+        except (ImportError, RuntimeError) as exc:
+            logger.debug("StabilityGuardian shutdown tick-rate probe skipped: %s", exc)
 
         now = time.time()
         elapsed = now - self._last_tick_at

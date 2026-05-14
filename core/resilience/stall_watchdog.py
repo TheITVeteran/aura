@@ -119,12 +119,12 @@ class StallWatchdog(threading.Thread):
             if is_shutdown_requested():
                 logger.debug("StallWatchdog: suppressing %.1fs stall during shutdown.", elapsed)
                 return True
-        except Exception:
-            pass
+        except (ImportError, RuntimeError) as exc:
+            logger.debug("StallWatchdog shutdown probe skipped: %s", exc)
 
         try:
             boot_grace = float(os.getenv("AURA_WATCHDOG_BOOT_GRACE_S", "120") or 120)
-        except Exception:
+        except (TypeError, ValueError):
             boot_grace = 120.0
         if boot_grace > 0 and (time.time() - self._started_at) < boot_grace:
             logger.info(
@@ -134,7 +134,7 @@ class StallWatchdog(threading.Thread):
             return True
         try:
             foreground_grace = float(os.getenv("AURA_WATCHDOG_FOREGROUND_GRACE_S", "75") or 75)
-        except Exception:
+        except (TypeError, ValueError):
             foreground_grace = 75.0
         if foreground_grace > 0 and elapsed <= foreground_grace:
             try:
@@ -142,7 +142,8 @@ class StallWatchdog(threading.Thread):
 
                 gate = ServiceContainer.get("inference_gate", default=None)
                 lane = gate.get_conversation_status() if gate and hasattr(gate, "get_conversation_status") else {}
-            except Exception:
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("StallWatchdog foreground lane probe unavailable: %s", exc)
                 lane = {}
             lane_state = str(lane.get("state") or "").lower()
             foreground_active = bool(

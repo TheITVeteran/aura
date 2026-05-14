@@ -230,7 +230,7 @@ class InferenceGate:
     def _env_float(name: str, default: float) -> float:
         try:
             return float(os.environ.get(name, str(default)))
-        except Exception:
+        except (TypeError, ValueError):
             return float(default)
 
     @staticmethod
@@ -288,7 +288,7 @@ class InferenceGate:
                 "can_admit": can_admit,
                 "reason": reason,
             }
-        except Exception as exc:
+        except (AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation("inference_gate", exc)
             logger.debug("Cortex warmup memory probe failed: %s", exc)
             return {
@@ -730,8 +730,8 @@ class InferenceGate:
                             else:
                                 self._schedule_background_cortex_prewarm(delay=2.0)
                                 logger.info("🔄 [STABILITY v53] Auto-scheduling cortex recovery after failed prewarm: %s", exc)
-                        except Exception:
-                            pass  # Best-effort recovery scheduling
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                            logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         lane_state = str(lane.get("state", "") or "").lower()
         recent_success = (time.time() - getattr(self, "_last_successful_generation_at", time.time())) <= 30.0
         recent_ready = any(
@@ -798,8 +798,8 @@ class InferenceGate:
                             self._log_cortex_warmup_deferral(warmup_deferral, context="background")
                         else:
                             self._schedule_background_cortex_prewarm(delay=3.0)
-                    except Exception:
-                        pass  # Best-effort recovery scheduling
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         return lane
 
     def note_foreground_timeout(self, reason: str = "foreground_timeout") -> None:
@@ -2977,7 +2977,7 @@ class InferenceGate:
                         )
                         if alive:
                             logger.info("✅ [STABILITY] Inline fast-recovery succeeded.")
-                    except Exception as inline_exc:
+                    except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as inline_exc:
                         record_degradation('inference_gate', inline_exc)
                         record_degradation('inference_gate', inline_exc)
                         logger.warning("⚠️ [STABILITY] Inline fast-recovery failed: %s", inline_exc)
@@ -3623,7 +3623,7 @@ class InferenceGate:
                                 lane_status = await self.ensure_foreground_ready(
                                     timeout=max(180.0, primary_timeout)
                                 )
-                            except Exception as warmup_exc:
+                            except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as warmup_exc:
                                 record_degradation('inference_gate', warmup_exc)
                                 record_degradation('inference_gate', warmup_exc)
                                 if "foreground_warmup_deferred" in str(warmup_exc):

@@ -44,7 +44,10 @@ async def test_search_pipeline_reuses_fresh_retained_artifact(tmp_path: Path, mo
     )
     store.append(artifact)
 
+    search_calls = []
+
     async def _unexpected_search(*args, **kwargs):
+        search_calls.append((args, kwargs))
         raise AssertionError("live search should not run when a fresh retained artifact exists")
 
     monkeypatch.setattr(pipeline, "_search_candidates", _unexpected_search)

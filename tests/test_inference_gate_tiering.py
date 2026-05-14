@@ -447,7 +447,8 @@ def test_adaptive_max_tokens_expands_budget_for_compound_prompt():
 
 
 @pytest.mark.asyncio
-async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation():
+async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation(monkeypatch):
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
     cortex = _ColdRecordingLaneClient("hello")
     gate._mlx_client = cortex
@@ -881,6 +882,7 @@ def test_conversation_status_respects_ready_lane_even_without_recent_generation(
 
 
 def test_note_foreground_timeout_schedules_fast_reprewarm(monkeypatch):
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
     scheduled = {}
 
@@ -895,7 +897,8 @@ def test_note_foreground_timeout_schedules_fast_reprewarm(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ensure_foreground_ready_warms_cold_lane_once():
+async def test_ensure_foreground_ready_warms_cold_lane_once(monkeypatch):
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
     client = _LaneWarmupClient()
     gate._mlx_client = client
@@ -908,7 +911,8 @@ async def test_ensure_foreground_ready_warms_cold_lane_once():
 
 
 @pytest.mark.asyncio
-async def test_ensure_foreground_ready_rearms_runtime_failed_lane_before_warmup():
+async def test_ensure_foreground_ready_rearms_runtime_failed_lane_before_warmup(monkeypatch):
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
     client = _RecoverableFailedLaneClient()
     gate._mlx_client = client

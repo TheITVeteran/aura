@@ -40,7 +40,7 @@ def test_connection_toast_and_ram_hud_are_live_runtime_safe():
     assert "lastSystemRamPct: null" in js
     assert "function setHudRamUsage" in js
     assert "source !== 'health' && pct <= 0.1" in js
-    assert "Some stream payloads use 0 as an omitted RAM placeholder" in js
+    assert "Some stream payloads use 0 as an omitted RAM sentinel" in js
     assert "toast.setAttribute('aria-hidden', 'true')" in js
     assert "connection lost|reconnecting" in js
     assert "function sanitizeThoughtMessage" in js

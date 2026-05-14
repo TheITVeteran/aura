@@ -62,6 +62,16 @@ class CheatCodeRequest(BaseModel):
 
 # Max chat message size to prevent memory exhaustion
 MAX_CHAT_MESSAGE_BYTES = 64 * 1024  # 64KB
+_CHAT_RECOVERABLE_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+    ImportError,
+    LookupError,
+    json.JSONDecodeError,
+)
 
 
 # ── Session & Conversation Log ────────────────────────────────
@@ -2146,7 +2156,7 @@ _PROMPT_ARTIFACT_PATTERNS = re.compile(
 # Reject raw search-result snippets that occasionally leak through when a
 # search skill returns retrieval text instead of a summarized answer.
 # Signature: textbook headers ("(BIO 101)", "Overview"), Wikipedia
-# stub-style intros ("This article describes…"), course catalog tags,
+# boilerplate intros ("This article describes…"), course catalog tags,
 # HTML entities, etc.
 _SEARCH_SNIPPET_PATTERNS = re.compile(
     r"(?im)"
@@ -4251,7 +4261,7 @@ async def _execute_live_runtime_proof(user_message: str) -> Optional[Dict[str, A
             from core.cognitive.state_machine import StateMachine
 
             html = StateMachine._snake_html_template()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('chat', exc)
             html = (
                 "<!doctype html><html><body><canvas id='board' width='320' height='320'></canvas>"
@@ -4364,7 +4374,7 @@ async def api_sessions(request: Request, _: None = Depends(_require_internal)):
         if db_coord and hasattr(db_coord, "get_recent_conversations"):
             try:
                 persisted = await db_coord.get_recent_conversations(limit=50)
-            except Exception as e:
+            except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)
                 logger.debug("Could not load persisted conversations: %s", e)
 
@@ -4383,7 +4393,7 @@ async def api_sessions(request: Request, _: None = Depends(_require_internal)):
             },
             "persisted_sessions": persisted,
         })
-    except Exception as e:
+    except _CHAT_RECOVERABLE_ERRORS as e:
         record_degradation('chat', e)
         logger.error("Sessions endpoint error: %s", e)
         return JSONResponse({"current_session": {"exchanges": 0, "messages": []}, "persisted_sessions": []})
@@ -4447,7 +4457,7 @@ async def api_chat_regenerate(
                 )
             except asyncio.TimeoutError:
                 raise
-            except Exception as e:
+            except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)
                 logger.error("Kernel regenerate failed natively, falling back: %s", e)
 
@@ -4467,7 +4477,7 @@ async def api_chat_regenerate(
         return JSONResponse(response_data)
     except asyncio.TimeoutError:
         return JSONResponse({"response": "Regeneration timed out.", "regenerated": False}, status_code=504)
-    except Exception as e:
+    except _CHAT_RECOVERABLE_ERRORS as e:
         record_degradation('chat', e)
         logger.error("Regenerate error: %s", e, exc_info=True)
         return JSONResponse({"error": "regeneration_failed", "message": str(e)}, status_code=500)
@@ -4511,7 +4521,7 @@ async def api_export(request: Request, _: None = Depends(_require_internal)):
         goal_svc = ServiceContainer.get("goal_manager", default=None)
         if goal_svc and hasattr(goal_svc, "get_active_goals"):
             goals = goal_svc.get_active_goals() or []
-    except Exception as _exc:
+    except _CHAT_RECOVERABLE_ERRORS as _exc:
         record_degradation('chat', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -4561,7 +4571,7 @@ async def api_think(
                 "timestamp": time.time()
             }
         })
-    except Exception as e:
+    except _CHAT_RECOVERABLE_ERRORS as e:
         record_degradation('chat', e)
         logger.error("Neural bridge failure in /api/think: %s", e)
         return JSONResponse({
@@ -4604,7 +4614,7 @@ async def api_chat(
         # Session id: client host is good enough for single-user local Aura.
         try:
             _chat_session_id = (request.client.host if request.client else "default") or "default"
-        except Exception:
+        except _CHAT_RECOVERABLE_ERRORS:
             _chat_session_id = "default"
 
         # 3) Late-answered messages first — give the cortex the prior thread
@@ -4627,7 +4637,7 @@ async def api_chat(
                 body.message = _ctx_block + body.message
                 logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
                             len(_delivered), _chat_session_id)
-        except Exception as _resume_exc:
+        except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
             record_degradation('chat', _resume_exc)
             logger.debug("Resume preflight skipped: %s", _resume_exc)
 
@@ -4639,7 +4649,7 @@ async def api_chat(
                 if _block:
                     body.message = f"{_block}\nUser message: {body.message}"
                     logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
-        except Exception as _file_exc:
+        except _CHAT_RECOVERABLE_ERRORS as _file_exc:
             record_degradation('chat', _file_exc)
             logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
 
@@ -4649,10 +4659,10 @@ async def api_chat(
             if _directive_prefix:
                 body.message = f"{_directive_prefix}{body.message}"
                 logger.info("Chat preflight: injected response directives.")
-        except Exception as _dir_exc:
+        except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
             record_degradation('chat', _dir_exc)
             logger.debug("Chat directive preflight skipped: %s", _dir_exc)
-    except Exception as _preflight_outer:
+    except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
         record_degradation('chat', _preflight_outer)
         logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
 
@@ -4693,7 +4703,7 @@ async def api_chat(
                 },
                 status_code=200,
             )
-    except Exception as _conscience_exc:
+    except _CHAT_RECOVERABLE_ERRORS as _conscience_exc:
         record_degradation('chat', _conscience_exc)
         logger.debug("conscience pre-gate skipped: %s", _conscience_exc)
 
@@ -4728,7 +4738,7 @@ async def api_chat(
                     live_state.cognition.conversation_energy = 0.0
                     live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
                     live_state.response_modifiers['sys_pressure'] = 'CRITICAL VRAM LIMIT'
-        except Exception as e:
+        except _CHAT_RECOVERABLE_ERRORS as e:
             record_degradation('chat', e)
             logger.debug("Memory check failed: %s", e)
 
@@ -4791,7 +4801,7 @@ async def api_chat(
                         ncs.on_novelty(amount)
                     elif "oxytocin" in trigger:
                         ncs.on_social_connection(amount)
-        except Exception as _ac_exc:
+        except _CHAT_RECOVERABLE_ERRORS as _ac_exc:
             record_degradation('chat', _ac_exc)
             logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 

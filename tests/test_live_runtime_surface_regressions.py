@@ -364,7 +364,10 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
             target.write_text(params["content"])
             return {"ok": True, "path": params["path"], "context": context}
 
+    repair_calls = []
+
     async def fail_if_repaired(*_args, **_kwargs):
+        repair_calls.append("called")
         raise AssertionError("verified live proof replies must not be replaced by quality repair")
 
     async def no_op_async(*_args, **_kwargs):
@@ -496,7 +499,7 @@ async def test_state_machine_live_coding_artifact_writes_runnable_snake_html():
             raise AssertionError(tool_name)
 
         def _publish_telemetry(self, _payload):
-            pass
+            calls.append(("telemetry", _payload, {}))
 
     machine = StateMachine(orchestrator=FakeOrchestrator())
     result = await machine._maybe_execute_live_coding_artifact(
@@ -510,7 +513,8 @@ async def test_state_machine_live_coding_artifact_writes_runnable_snake_html():
     reply, used_skills = result
     assert "artifacts/live_runtime/generated/test_snake.html" in reply
     assert used_skills == ["coding_skill", "file_operation"]
-    assert [call[0] for call in calls] == ["coding_skill", "file_operation"]
+    assert [call[0] for call in calls[:2]] == ["coding_skill", "file_operation"]
+    assert any(call[0] == "telemetry" for call in calls)
     assert_no_live_reset_boilerplate(reply)
 
 

@@ -88,7 +88,7 @@ class LiveRuntimeProbe:
             self.results.append(ProbeResult(name, True, detail, time.monotonic() - start, data or {}))
         except asyncio.TimeoutError:
             self.results.append(ProbeResult(name, False, f"TimeoutError: exceeded {self.probe_timeout_s:.0f}s", time.monotonic() - start))
-        except Exception as exc:
+        except (AssertionError, httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self.results.append(ProbeResult(name, False, f"{type(exc).__name__}: {exc}", time.monotonic() - start))
 
     async def _get(self, path: str) -> dict[str, Any]:
@@ -119,21 +119,21 @@ class LiveRuntimeProbe:
 
     async def _collect_ws_events(self) -> None:
         ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
-        while True:
+        while not (asyncio.current_task() and asyncio.current_task().cancelled()):
             try:
                 async with websockets.connect(ws_url, ping_interval=10, ping_timeout=20) as ws:
                     await ws.send(json.dumps({"type": "ping"}))
                     async for raw in ws:
                         try:
                             event = json.loads(raw)
-                        except Exception:
+                        except json.JSONDecodeError:
                             event = {"type": "raw", "content": str(raw)[:500]}
                         self.events.append(event)
                         if len(self.events) > 1000:
                             self.events = self.events[-1000:]
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except (websockets.WebSocketException, OSError, TimeoutError):
                 await asyncio.sleep(1.0)
 
     async def _health(self) -> tuple[str, dict[str, Any]]:
