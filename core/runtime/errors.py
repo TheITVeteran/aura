@@ -39,6 +39,25 @@ logger = logging.getLogger("Aura.Errors")
 
 Severity = Literal["debug", "warning", "degraded", "critical"]
 
+Severity = Literal["debug", "warning", "degraded", "critical"]
+
+# ---------------------------------------------------------------------------
+# Typed Degradation Exceptions
+# ---------------------------------------------------------------------------
+class BoundaryFailure(Exception): pass
+class DependencyUnavailable(Exception): pass
+class ModelUnavailable(Exception): pass
+class CapabilityDenied(Exception): pass
+class ReceiptInvalid(Exception): pass
+class StateCoherenceFailure(Exception): pass
+class MemoryWriteDenied(Exception): pass
+class NetworkEffectDenied(Exception): pass
+class SandboxViolation(Exception): pass
+class PersistenceCorruption(Exception): pass
+class TimeoutBudgetExceeded(Exception): pass
+class ResourceExhaustion(Exception): pass
+class InvariantViolation(Exception): pass
+
 # ---------------------------------------------------------------------------
 # In-memory degradation tracking
 # ---------------------------------------------------------------------------

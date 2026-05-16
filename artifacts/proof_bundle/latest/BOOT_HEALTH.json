@@ -1,9 +1,9 @@
 {
   "boot_probe_available": true,
   "compile_probe": {
-    "checked": 289,
+    "checked": 298,
     "errors": [],
     "passed": true
   },
-  "generated_at": 1778467690.563127
+  "generated_at": 1778916883.030735
 }

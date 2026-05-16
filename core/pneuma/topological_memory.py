@@ -107,7 +107,7 @@ def _vietoris_rips_h0(D: np.ndarray, n_steps: int = 20) -> List[Tuple[float, flo
     return diagrams
 
 
-def _compute_persistence_diagram(points: np.ndarray, use_ripser: bool = True) -> PersistenceDiagram:
+def _compute_persistence_diagram(points: np.ndarray, use_ripser: bool = False) -> PersistenceDiagram:
     """Compute persistence diagram for a point cloud."""
     if len(points) < 4:
         return PersistenceDiagram()
@@ -177,6 +177,19 @@ class TopologicalMemoryEngine:
     def _recompute(self):
         """Recompute persistence diagram from current buffer."""
         try:
+            # Drive-Aware Gating: Defer heavy topology math if low energy/curiosity
+            try:
+                from core.container import ServiceContainer
+                de = ServiceContainer.get("drive_engine", default=None)
+                if de and hasattr(de, "get_drive_vector"):
+                    drive = de.get_drive_vector()
+                    if drive.get("energy", 1.0) < 0.4 or drive.get("curiosity", 1.0) < 0.3:
+                        logger.debug("Topology recompute deferred (energy=%.2f, curiosity=%.2f).", 
+                                     drive.get("energy", 1.0), drive.get("curiosity", 1.0))
+                        return
+            except Exception:
+                pass
+
             points = np.array(self._buffer)
             self._diagram = _compute_persistence_diagram(points)
             self._attractor_count = sum(

@@ -56,11 +56,15 @@ class PredictiveSelfModel:
         # Return error norm as 'Surprise' signal
         return float(np.linalg.norm(error))
 
-    def forecast_fhn(self, energy: float, curiosity: float, steps: int = 10, K: int = 50, dt: float = 1.0) -> dict:
+    def forecast_fhn(self, energy: float, curiosity: float, steps: int = 10, K: int = 10, dt: float = 1.0) -> dict:
         """
-        Tier 4 Hardening: Run K=50 vectorized Fitzhugh-Nagumo Monte Carlo trajectories
+        Tier 4 Hardening: Run K vectorized Fitzhugh-Nagumo Monte Carlo trajectories
         to predict the short-term future envelope of the organism's metabolic drives.
         """
+        # Drive-Aware Gating: Reduce heavy compute when energy is low
+        if energy < 0.6 and steps > 5:
+            steps = 3
+
         # Initialize K parallel trajectories
         v = np.full(K, curiosity, dtype=np.float32)
         w = np.full(K, energy, dtype=np.float32)

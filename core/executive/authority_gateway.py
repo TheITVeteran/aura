@@ -132,6 +132,31 @@ class AuthorityGateway:
         if not content:
             return None
 
+        # 0. Contextual Authenticity Gate (Disclosure Policy)
+        try:
+            from core.constitution.disclosure_policy import DisclosurePolicy, SocialContext
+            is_public = "reddit" in tool_name
+            context = SocialContext(
+                is_trusted_channel="email" in tool_name and "bryan" in str(args).lower(),
+                user=source,
+                is_public=is_public,
+                direct_identity_question="are you an ai" in content.lower() or "are you human" in content.lower(),
+                risk_of_harm_high=False
+            )
+            policy = DisclosurePolicy()
+            decision = policy.decide(context)
+            if decision == "decline":
+                return self._contextualize(
+                    approved=False,
+                    outcome="rejected",
+                    reason="disclosure_policy: declined high risk engagement.",
+                    domain="social_governance",
+                    source=source
+                )
+        except Exception as e:
+            from core.runtime.errors import record_degradation
+            record_degradation('authority_gateway', e)
+
         # 1. Affective Gate: Block if highly agitated/negative
         valence, arousal, anger = 0.0, 0.0, 0.0
         try:

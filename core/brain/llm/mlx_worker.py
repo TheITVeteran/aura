@@ -678,15 +678,17 @@ def _mlx_worker_loop(
                 logger.info("🎯 Affective Steering Engine ONLINE (alpha=%.1f, hooks=%d).",
                             engine._alpha, len(getattr(engine, '_hooks', [])))
             else:
-                logger.warning("⚠️ Steering Engine attached but NOT ACTIVE — "
-                               "vectors may be missing. Run training/derive_vectors.py.")
+                logger.error("FATAL: Steering Engine attached but NOT ACTIVE — "
+                               "vectors may be missing.")
                 record_degradation('mlx_worker',
-                    RuntimeError("Steering attached but inactive — bootstrap mode"),
-                    severity="warning",
-                    action="Proceeding with latent-bridge sampling modulation only")
+                    RuntimeError("Steering attached but inactive"),
+                    severity="critical",
+                    action="Crashing worker to prevent unsteered inference")
+                raise RuntimeError("Steering liveness gate failed: Engine inactive")
         except Exception as se:
-            record_degradation('mlx_worker', se,
-                action="Steering unavailable; inference continues without activation injection")
+            record_degradation('affective_steering', se)
+            logger.error(f"FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. {se}")
+            raise RuntimeError(f"Steering liveness gate failed: {se}") from se
 
         # Write steering liveness to shared state so parent can query it
         if substrate_mem is not None:
