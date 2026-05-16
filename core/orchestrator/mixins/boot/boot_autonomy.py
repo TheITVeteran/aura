@@ -297,19 +297,8 @@ class BootAutonomyMixin:
             record_degradation('boot_autonomy', e)
             logger.error("ValueSystem init failed: %s", e)
 
-        # DreamProcessor — offline memory consolidation to long-term knowledge
-        try:
-            from core.dream_processor import DreamProcessor
-            memory_nexus = ServiceContainer.get("memory_facade", default=None) or ServiceContainer.get("memory_manager", default=None)
-            brain = ServiceContainer.get("cognitive_engine", default=None)
-            if memory_nexus and brain:
-                dreamer = DreamProcessor(memory_nexus, brain)
-                ServiceContainer.register_instance("dream_processor", dreamer)
-                ServiceContainer.register_instance("dreaming_process", dreamer)
-                logger.info("DreamProcessor registered — memory consolidation available.")
-        except Exception as e:
-            record_degradation('boot_autonomy', e)
-            logger.error("DreamProcessor init failed: %s", e)
+        # DreamProcessor — legacy offline memory consolidation (Disabled)
+        logger.debug("DreamProcessor is deprecated. Functionality moved to DreamCoordinator.")
 
         # GoalDriftDetector — prevents rabbit-holing during long goal pursuit
         try:

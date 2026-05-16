@@ -1249,6 +1249,52 @@ class RobustOrchestrator(OrchestratorBootMixin, StatusManagerMixin, Orchestrator
         logger.info("Orchestrator heartbeat stopped.")
 
 
+    async def _register_dream_tasks(self, scheduler):
+        """Registers all asynchronous memory consolidation systems through the DreamCoordinator singleton."""
+        from core.scheduler import TaskSpec
+        from core.maintenance.dream_coordinator import get_dream_coordinator
+        
+        coordinator = get_dream_coordinator()
+
+        # Priority 1: DLQ Re-ingestion (Crash Recovery)
+        async def _run_dlq():
+            from core.config import config
+            dlq_path = config.paths.data_dir / "dlq.jsonl"
+            if not dlq_path.exists() or dlq_path.stat().st_size == 0:
+                return
+            try:
+                from core.resilience.dream_cycle import DreamCycle
+                cycle = DreamCycle(self, dlq_path)
+                await cycle.process_dlq_async()
+            except Exception as e:
+                logger.error("DLQ Cycle failed: %s", e)
+
+        await scheduler.register(TaskSpec(
+            name="dream_dlq_recovery",
+            coro=lambda: coordinator.run_if_due("dlq_recovery", _run_dlq, 300, priority=1),
+            tick_interval=60.0
+        ))
+
+        # Priority 2: Biological Sleep Cycle (DreamerV2)
+        async def _run_dreamerv2():
+            try:
+                from core.dreamer_v2 import DreamerV2
+                dreamer = DreamerV2(
+                    brain=getattr(self, "cognitive_engine", None),
+                    knowledge_graph=ServiceContainer.get("knowledge_graph", default=None),
+                    vector_memory=ServiceContainer.get("vector_memory", default=None),
+                    belief_graph=ServiceContainer.get("belief_system", default=None),
+                )
+                await dreamer.engage_sleep_cycle_async()
+            except Exception as e:
+                logger.error("DreamerV2 cycle failed: %s", e)
+
+        await scheduler.register(TaskSpec(
+            name="dream_biological_sleep",
+            coro=lambda: coordinator.run_if_due("biological_sleep", _run_dreamerv2, 7200, priority=2),
+            tick_interval=300.0  # Check every 5 mins if due
+        ))
+
     async def _register_scheduled_tasks(self):
         """Standardize all periodic substrate tasks into the Central Scheduler."""
         from core.resilience.circuit_breaker import get_circuit_breaker
@@ -1339,6 +1385,8 @@ class RobustOrchestrator(OrchestratorBootMixin, StatusManagerMixin, Orchestrator
             coro=meta_evolution_wrapper,
             tick_interval=1800.0 # Runs every 30 minutes
         ))
+        
+        await self._register_dream_tasks(scheduler)
         
         logger.info("✓ Substrate tasks registered with Scheduler.")
 

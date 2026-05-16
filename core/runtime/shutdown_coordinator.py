@@ -201,6 +201,13 @@ def request_shutdown(reason: str = "") -> None:
     """Mark the whole process as shutting down."""
     if not _shutdown_requested.is_set():
         logger.info("Shutdown requested%s.", f": {reason}" if reason else "")
+        try:
+            from pathlib import Path
+            grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+            grace_file.parent.mkdir(parents=True, exist_ok=True)
+            grace_file.touch(exist_ok=True)
+        except Exception:
+            pass
     _shutdown_requested.set()
 
 

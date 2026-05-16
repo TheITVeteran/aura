@@ -665,6 +665,9 @@ class MLXLocalClient:
         from core.container import ServiceContainer
         repo = ServiceContainer.get("state_repository", default=None)
         self._substrate_mem = repo._shm if repo else None
+        
+        # Shared memory flag to track if affective steering successfully attached
+        self._steering_active = mp.Value('b', False)
 
     def _is_primary_or_deep_lane(self) -> bool:
         lowered = os.path.basename(self.model_path).lower()
@@ -1293,7 +1296,7 @@ class MLXLocalClient:
 
                 p = ctx.Process(
                     target=_mlx_worker_loop,
-                    args=(self.model_path, self._req_q, self._res_q, self.device, self._substrate_mem),
+                    args=(self.model_path, self._req_q, self._res_q, self.device, self._substrate_mem, self._steering_active),
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}"
                 )
@@ -2086,6 +2089,31 @@ class MLXLocalClient:
                 return {"tool": payload.get("name"), "args": args or {}}
         return None
 
+    def _check_steering_liveness(self) -> bool:
+        """Returns True if the worker subprocess reports steering as active."""
+        try:
+            sm = getattr(self, '_substrate_mem', None)
+            if sm is None:
+                return False
+            # Last slot written by worker as liveness flag
+            return float(sm[-1]) > 0.5
+        except Exception:
+            return False
+
+    def _emit_steering_status(self, origin: str | None):
+        """Log steering status on user-facing generations (max once per 60s)."""
+        now = time.time()
+        last = getattr(self, '_last_steering_status_log', 0.0)
+        if now - last < 60.0:
+            return
+        self._last_steering_status_log = now
+        active = self._check_steering_liveness()
+        if active:
+            logger.debug("✅ [STEERING] Active for this generation (origin=%s)", origin)
+        else:
+            logger.warning("⚠️ [STEERING] INACTIVE for generation (origin=%s) — "
+                           "substrate state not modulating inference.", origin)
+
     async def generate(self, prompt: str, **kwargs) -> Optional[str]:
         """High-level generation endpoint with unified deadlines.
 
@@ -2173,6 +2201,10 @@ class MLXLocalClient:
                 await self.reboot_worker(reason=reboot_reason, mark_failed=not recoverable)
             return None
         try:
+            # Check steering liveness
+            if not request_is_background:
+                self._emit_steering_status(origin_label)
+
             if foreground_request:
                 try:
                     async with _foreground_owner_context(

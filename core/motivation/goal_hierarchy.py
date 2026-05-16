@@ -437,8 +437,8 @@ class GoalHierarchy:
         try:
             os.makedirs(os.path.dirname(self._persist_path), exist_ok=True)
             data = {gid: asdict(g) for gid, g in self.goals.items()}
-            with open(self._persist_path, "w") as f:
-                json.dump(data, f, indent=2)
+            from core.runtime.atomic_writer import atomic_write_text
+            atomic_write_text(self._persist_path, json.dumps(data, indent=2))
         except Exception as e:
             record_degradation('goal_hierarchy', e)
             logger.error("Failed to save goals: %s", e)

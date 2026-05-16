@@ -77,14 +77,15 @@ class SystemStateMonitor:
             logger.warning(f"Cognitive stability low: {stability:.2f}. Triggering dream cycle.")
             try:
                 from core.scheduler import scheduler, TaskSpec
-                from core.maintenance.dream_cycle import run_dream_cycle
                 
-                # Check if already registered to avoid duplicates
+                from core.coordinators.dream_coordinator import get_dream_coordinator
+                coord = get_dream_coordinator()
+                
                 if not any(t.name == "dream_cycle" for t in scheduler.tasks):
                     await scheduler.register(TaskSpec(
                         name="dream_cycle",
-                        coro=run_dream_cycle,
-                        tick_interval=3600 # Run once per hour if stability stays low
+                        coro=coord.run_maintenance_dream,
+                        tick_interval=3600.0
                     ))
             except Exception as e:
                 record_degradation('system_monitor', e)

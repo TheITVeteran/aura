@@ -40,7 +40,10 @@ class DreamCycle:
         while self._running:
             await asyncio.sleep(interval)
             try:
-                await self.process_dreams()
+                from core.coordinators.dream_coordinator import get_dream_coordinator
+                coord = get_dream_coordinator()
+                # Run via coordinator lock
+                await coord.run_resilience_dream()
             except Exception as e:
                 record_degradation('dream_cycle', e)
                 logger.error("Dream Cycle failed: %s", e)

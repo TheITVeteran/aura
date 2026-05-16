@@ -632,8 +632,9 @@ class SteeringVectorLibrary:
                 d_model=d_model,
             )
             derived_at = time.time()
+            tmp_path = cache_path.with_suffix(".tmp")
             np.savez(
-                cache_path,
+                tmp_path,
                 v=vec,
                 derived_at=derived_at,
                 source="runtime_derived_caa",
@@ -642,6 +643,9 @@ class SteeringVectorLibrary:
                 selection_reason="runtime_derived",
                 extracted=False,
             )
+            # Atomic commit to avoid partial files surviving a crash
+            import shutil
+            shutil.move(tmp_path, cache_path)
             return SteeringVector(
                 key=key,
                 layer_idx=target_layer,

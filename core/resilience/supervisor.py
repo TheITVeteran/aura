@@ -49,7 +49,7 @@ class SovereignSupervisor:
         
         while self.should_run:
             try:
-                self._launch_process()
+                await self._launch_process()
                 await self._monitor_process()
             except KeyboardInterrupt:
                 await self.stop()
@@ -66,54 +66,57 @@ class SovereignSupervisor:
             logger.info("Stopping monitored process...")
             self._kill_process_tree(self.process.pid)
 
-    def _launch_process(self):
+    async def _launch_process(self):
         """Launches the target script as a subprocess."""
         cmd = [sys.executable, str(self.target_script)] + self.args
         logger.info("🚀 Launching %s...", self.target_script.name)
         
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(Path.cwd()),
-            text=True,
-            bufsize=1  # Line buffered
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path.cwd())
         )
 
-        # Start threads to stream output to our logger
-        threading.Thread(target=self._pipe_logger, args=(self.process.stdout, logging.INFO, "stdout"), daemon=True).start()
-        threading.Thread(target=self._pipe_logger, args=(self.process.stderr, logging.ERROR, "stderr"), daemon=True).start()
+        asyncio.create_task(self._pipe_logger_async(self.process.stdout, logging.INFO, "stdout"))
+        asyncio.create_task(self._pipe_logger_async(self.process.stderr, logging.ERROR, "stderr"))
 
-    def _pipe_logger(self, pipe, level, label):
-        """Reads from a pipe and logs each line."""
+    async def _pipe_logger_async(self, pipe: asyncio.StreamReader, level: int, label: str):
+        """Reads from an asyncio stream and logs each line."""
         try:
-            for line in iter(pipe.readline, ''):
-                if not line: break
-                clean_line = line.strip()
-                if clean_line:
-                    logger.log(level, "[Sub] %s", clean_line)
-        except ValueError as e:
-            # Handle 'I/O operation on closed file' specifically (BUG-010)
-            if "closed file" in str(e).lower():
-                logger.debug(f"Pipe {label} closed normally.")
-            else:
-                logger.error(f"ValueError in pipe {label}: {e}")
+            while self.should_run:
+                line_bytes = await pipe.readline()
+                if not line_bytes:
+                    break
+                try:
+                    line = line_bytes.decode('utf-8').strip()
+                except UnicodeDecodeError:
+                    line = line_bytes.decode('latin-1', errors='replace').strip()
+                if line:
+                    logger.log(level, "[Sub] %s", line)
         except Exception as e:
             record_degradation('supervisor', e)
             logger.error(f"Error reading pipe {label}: {e}")
-        finally:
-            pipe.close()
 
     async def _monitor_process(self):
         """Blocks while monitoring the process. Returns when process exits."""
-        while self.process and self.process.poll() is None:
+        # Implement a 5-second poll() timeout check
+        while self.process and self.process.returncode is None:
             if not self.should_run:
-                self.process.terminate()
+                try:
+                    self.process.terminate()
+                except ProcessLookupError:
+                    pass
                 return
 
-            await asyncio.sleep(1)
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                # 5-second poll timeout passed, process still alive
+                continue
+            except ProcessLookupError:
+                break
 
-        # Process has exited
         return_code = self.process.returncode
         await self._handle_exit(return_code)
 
@@ -123,14 +126,18 @@ class SovereignSupervisor:
             logger.info("Process exited (code %s). Supervisor stopping.", return_code)
             return
 
-        if return_code == 0:
-            # Clean exit — scheduled or deliberate restart
-            logger.info("Process exited cleanly (code 0). Restarting in 2s...")
-            await asyncio.sleep(2)
-            return  # FIX: early return, skip crash accounting below
+        grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+        graceful = grace_file.exists() or return_code == 0
+        if grace_file.exists():
+            grace_file.unlink(missing_ok=True)
+
+        if graceful:
+            logger.info("Process exited cleanly/gracefully (code %s). Restarting in 5s...", return_code)
+            await asyncio.sleep(5)
+            return
 
         # ── Crash path ─────────────────────────────────────────────────────
-        logger.warning("Process crashed/exited with code %s", return_code)
+        logger.warning("Process crashed/exited without grace flag (code %s)", return_code)
         
         now = time.time()
         if now - self.last_crash_time < 60:
@@ -139,9 +146,9 @@ class SovereignSupervisor:
             self.crash_count = 1  # Reset window
         self.last_crash_time = now
 
-        wait_time = min(30, 2 ** (self.crash_count - 1))
-        logger.info("Resurrection in %ds (crash #%d in current window)", wait_time, self.crash_count)
-        await asyncio.sleep(wait_time)
+        # Instant reboot (0s wait) on crash
+        logger.info("Resurrection instant (crash #%d in current window)", self.crash_count)
+        return
 
     def _kill_process_tree(self, pid):
         """Kills the process and its children using psutil."""

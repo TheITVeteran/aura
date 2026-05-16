@@ -91,15 +91,11 @@ class SubconsciousLoop:
         # 1. Identity/Memory Consolidation (Dreaming)
         if now - self.last_dream_cycle > 300.0:  # Every 5 mins of idle time
             try:
-                dreaming = (
-                    ServiceContainer.get("dreaming_process", default=None)
-                    or ServiceContainer.get("dream_processor", default=None)
-                    or ServiceContainer.get("dream_journal", default=None)
-                )
-                if dreaming and hasattr(dreaming, "dream"):
-                    logger.info("💭 Subconscious triggering Dream Cycle...")
-                    await dreaming.dream()
-                    self.last_dream_cycle = now
+                from core.coordinators.dream_coordinator import get_dream_coordinator
+                coord = get_dream_coordinator()
+                logger.info("💭 Subconscious triggering Dream Cycle (DreamerV2)...")
+                await coord.run_dreamer_v2()
+                self.last_dream_cycle = now
             except Exception as e:
                 record_degradation('subconscious_loop', e)
                 logger.debug(f"Subconscious dreaming failed: {e}")

@@ -568,7 +568,8 @@ def _mlx_worker_loop(
     request_queue: mp.Queue, 
     response_queue: mp.Queue, 
     device: str = "gpu",
-    substrate_mem: Any = None
+    substrate_mem: Any = None,
+    steering_active_flag: Any = None
 ):
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -661,26 +662,40 @@ def _mlx_worker_loop(
 
         # Attach Affective Steering
         engine = None
+        _steering_active = False
         try:
             from core.consciousness.affective_steering import get_steering_engine
             engine = get_steering_engine()
             engine.attach(model, tokenizer)
             if substrate_mem:
                 engine.start_substrate_sync(shared_state=substrate_mem)
-            logger.info("🎯 Affective Steering Engine ONLINE.")
-        except Exception as se:
-            record_degradation('mlx_worker', se)
-            try:
-                from core.evaluation.evidence_mode import require
-            except ImportError as import_exc:
-                record_degradation('mlx_worker', import_exc)
+            _steering_active = engine.is_active()
+            
+            if steering_active_flag is not None:
+                steering_active_flag.value = _steering_active
+                
+            if _steering_active:
+                logger.info("🎯 Affective Steering Engine ONLINE (alpha=%.1f, hooks=%d).",
+                            engine._alpha, len(getattr(engine, '_hooks', [])))
             else:
-                require(
-                    "steering_attach",
-                    False,
-                    f"affective steering failed to attach: {se}",
-                )
-            logger.warning(f"Failed to attach steering: {se}")
+                logger.warning("⚠️ Steering Engine attached but NOT ACTIVE — "
+                               "vectors may be missing. Run training/derive_vectors.py.")
+                record_degradation('mlx_worker',
+                    RuntimeError("Steering attached but inactive — bootstrap mode"),
+                    severity="warning",
+                    action="Proceeding with latent-bridge sampling modulation only")
+        except Exception as se:
+            record_degradation('mlx_worker', se,
+                action="Steering unavailable; inference continues without activation injection")
+
+        # Write steering liveness to shared state so parent can query it
+        if substrate_mem is not None:
+            try:
+                # Convention: substrate_mem[-1] = 1.0 if steering active, 0.0 if not
+                # (substrate_mem is a multiprocessing.Array of floats; last slot reserved)
+                substrate_mem[-1] = 1.0 if _steering_active else 0.0
+            except Exception:
+                pass  # Non-fatal; parent will treat absence as unknown
 
         # Apply Recurrent Depth — Mythos-inspired layer looping.
         # This changes HOW the model processes: middle layers loop N times,

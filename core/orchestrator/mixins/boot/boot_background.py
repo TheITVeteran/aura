@@ -190,18 +190,7 @@ class BootBackgroundMixin:
                     "✨ Singularity Threshold DETECTED. Subsurface Resonance active."
                 )
 
-            # Phase 21: Dream Cycle (DLQ Re-ingestion)
-            try:
-                from core.resilience.dream_cycle import DreamCycle
-
-                dlq_path = config.paths.data_dir / "dlq.jsonl"
-                self.dream_cycle = DreamCycle(self, dlq_path)
-                cycle = self.dream_cycle
-                if cycle:
-                    cycle.start()
-            except Exception as e:
-                record_degradation('boot_background', e)
-                logger.error("Failed to initialize Dream Cycle: %s", e)
+            # Phase 21: Dream Cycle (DLQ Re-ingestion) migrated to DreamCoordinator
 
         except Exception as e:
             record_degradation('boot_background', e)
