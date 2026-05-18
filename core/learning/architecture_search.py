@@ -6,16 +6,20 @@ registered baseline. It is small, deterministic, and honest: a candidate only
 """
 from __future__ import annotations
 
-import ast
+import logging
 import math
 import re
 import time
-from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from core.learning.distributed_eval import DistributedEvalConfig, LocalDistributedEvaluator
 from core.learning.hidden_eval_repro import HiddenEvalPack
 from core.promotion.dynamic_benchmark import Task
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger("Aura.ArchitectureSearch")
 
 
 @dataclass(frozen=True)
@@ -33,11 +37,11 @@ class ArchitectureSearchResult:
     winner_score: float
     improvement: float
     hidden_manifest_hash: str
-    evaluated_candidates: Dict[str, float]
+    evaluated_candidates: dict[str, float]
     promoted: bool
     runtime_s: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -71,7 +75,7 @@ def partial_arithmetic_solver(task: Task) -> Any:
     return baseline_text_heuristic(task)
 
 
-def _score_candidate(args: tuple[str, str, List[Task]]) -> tuple[str, float]:
+def _score_candidate(args: tuple[str, str, list[Task]]) -> tuple[str, float]:
     name, solver_name, tasks = args
     solver = {
         "baseline_text_heuristic": baseline_text_heuristic,
@@ -82,8 +86,9 @@ def _score_candidate(args: tuple[str, str, List[Task]]) -> tuple[str, float]:
     for task in tasks:
         try:
             passed += 1 if solver(task) == task.answer else 0
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation("architecture_search", exc)
+            logger.debug("Architecture candidate %s failed task %s: %s", solver_name, task.kind, exc)
     return name, passed / max(1, len(tasks))
 
 

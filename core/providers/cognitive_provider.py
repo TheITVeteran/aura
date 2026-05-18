@@ -1,10 +1,11 @@
 """core/providers/cognitive_provider.py — Cognitive, LLM, Learning & Reasoning Registration
 """
 
-from core.runtime.errors import record_degradation
 import logging
 import subprocess
+
 from core.container import ServiceLifetime
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Providers.Cognitive")
 
@@ -78,9 +79,6 @@ def register_cognitive_services(container, is_proxy: bool = False):
             logger.info("📡 Proxy Mode: Skipping AutonomousCognitiveEngine.")
             return None
         try:
-            from core.brain.llm.autonomous_brain_integration import AutonomousCognitiveEngine
-            from core.capability_engine import CapabilityEngine
-            from core.event_bus import get_event_bus
             # The actual instance is created within create_llm_router, this is just for registration
             # and to allow other services to depend on it if needed.
             # We return None here because the instance is managed by the router's creation.
@@ -258,7 +256,9 @@ def register_cognitive_services(container, is_proxy: bool = False):
                 check=False,
             )
             return res.stdout.strip() == "1"
-        except Exception:
+        except Exception as exc:
+            record_degradation("cognitive_provider", exc)
+            logger.debug("Apple Silicon probe failed: %s", exc)
             return False
 
     if _is_apple_silicon():
@@ -266,8 +266,9 @@ def register_cognitive_services(container, is_proxy: bool = False):
             try:
                 from core.brain.llm.nucleus_manager import NucleusManager
                 return NucleusManager()
-            except Exception:
-                logger.debug("Nucleus manager unavailable")
+            except Exception as exc:
+                record_degradation("cognitive_provider", exc)
+                logger.debug("Nucleus manager unavailable: %s", exc)
                 return None
         container.register('nucleus', create_nucleus, lifetime=ServiceLifetime.SINGLETON, required=False)
 

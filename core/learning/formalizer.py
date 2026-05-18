@@ -8,9 +8,6 @@ page content, extracting structured facts and relationships without
 blocking the user-facing response.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.utils.task_tracker import get_task_tracker
 
 import asyncio
 import hashlib
@@ -18,7 +15,9 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Formalizer")
 
@@ -96,7 +95,7 @@ class KnowledgeFormalizer:
             logger.debug("KnowledgeGraph resolution failed: %s", exc)
         return None
 
-    def _extract_atomic_facts(self, content: str, source_title: str = "", source_url: str = "") -> List[Dict[str, Any]]:
+    def _extract_atomic_facts(self, content: str, source_title: str = "", source_url: str = "") -> list[dict[str, Any]]:
         """Extract definitions, causal rules, procedures, and quantitative claims.
 
         This is not regex scraping dressed up as learning: every retained claim
@@ -135,7 +134,7 @@ class KnowledgeFormalizer:
 
         return [claim.to_knowledge() for claim in claims]
 
-    async def _extract_atomic_facts_llm(self, content: str, source_title: str = "", source_url: str = "") -> List[Dict[str, Any]]:
+    async def _extract_atomic_facts_llm(self, content: str, source_title: str = "", source_url: str = "") -> list[dict[str, Any]]:
         """Extract facts using the InferenceGate (LLM) when use_llm=True."""
         try:
             from core.container import ServiceContainer
@@ -162,8 +161,9 @@ class KnowledgeFormalizer:
                 end = result.rfind(']') + 1
                 if start != -1 and end != 0:
                     raw_claims = json.loads(result[start:end])
-            except Exception:
-                pass
+            except Exception as exc:
+                record_degradation("formalizer_llm", exc)
+                logger.debug("LLM formalization JSON parse failed: %s", exc)
                 
             claims = []
             for rc in raw_claims:
@@ -288,7 +288,7 @@ class KnowledgeFormalizer:
             confidence += 0.04
         return round(max(0.2, min(0.92, confidence)), 3)
 
-    def _extract_entities(self, content: str) -> List[str]:
+    def _extract_entities(self, content: str) -> list[str]:
         """Extract likely named entities and durable technical concepts."""
         entities = set()
         for match in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', content):
@@ -308,7 +308,7 @@ class KnowledgeFormalizer:
         source_title: str = "",
         source_url: str = "",
         use_llm: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Formalize raw content into knowledge graph entries.
 
         This is the main entry point, designed to be called via
@@ -353,7 +353,8 @@ class KnowledgeFormalizer:
                 return result
 
             # 2. Commit facts to graph
-            fact_ids: List[str] = []
+            fact_ids: list[str] = []
+            committed_facts: list[tuple[str, dict[str, Any]]] = []
             for fact in facts:
                 try:
                     node_id = kg.add_knowledge(
@@ -369,6 +370,7 @@ class KnowledgeFormalizer:
                         },
                     )
                     fact_ids.append(node_id)
+                    committed_facts.append((node_id, fact))
                     result["facts_committed"] += 1
                 except Exception as exc:
                     record_degradation('formalizer', exc)
@@ -381,7 +383,7 @@ class KnowledgeFormalizer:
             entities = self._extract_entities(content)
             result["entities_found"] = len(entities)
 
-            entity_ids: Dict[str, str] = {}
+            entity_ids: dict[str, str] = {}
             for entity in entities:
                 try:
                     eid = kg.add_knowledge(
@@ -397,7 +399,7 @@ class KnowledgeFormalizer:
                     logger.debug("Formalizer: entity commit failed: %s", exc)
 
             # 4. Link facts to entities they mention
-            for fact_id, fact in zip(fact_ids, facts):
+            for fact_id, fact in committed_facts:
                 for entity, eid in entity_ids.items():
                     if entity.lower() in fact["content"].lower():
                         try:
@@ -436,7 +438,7 @@ class KnowledgeFormalizer:
 
         return result
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Return formalization statistics."""
         return {
             "total_facts_committed": self._total_facts_committed,
@@ -447,7 +449,7 @@ class KnowledgeFormalizer:
 
 # ── Singleton ────────────────────────────────────────────────────────────────
 
-_formalizer_instance: Optional[KnowledgeFormalizer] = None
+_formalizer_instance: KnowledgeFormalizer | None = None
 
 
 def get_formalizer() -> KnowledgeFormalizer:
@@ -463,7 +465,7 @@ async def formalize_content(
     source_title: str = "",
     source_url: str = "",
     use_llm: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Convenience function to formalize content via the singleton."""
     return await get_formalizer().formalize(
         content=content,

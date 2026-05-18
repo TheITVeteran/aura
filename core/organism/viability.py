@@ -33,24 +33,23 @@ The state machine is observed by the AgencyOrchestrator, the universal
 error UX layer, the dashboard, and the conversation lane controller.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.utils.task_tracker import get_task_tracker
 
 import asyncio
 import enum
 import logging
-import math
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Viability")
 
 
-class ViabilityState(str, enum.Enum):
+class ViabilityState(enum.StrEnum):
     HEALTHY = "healthy"
     TIRED = "tired"
     STARVED = "starved"
@@ -79,7 +78,7 @@ class StateBehavior:
     chat_max_concurrent: int
 
 
-_BEHAVIORS: Dict[ViabilityState, StateBehavior] = {
+_BEHAVIORS: dict[ViabilityState, StateBehavior] = {
     ViabilityState.HEALTHY:    StateBehavior(6.0, "open",        4096, "open",   "full",                 4),
     ViabilityState.TIRED:      StateBehavior(3.0, "constrained", 3072, "staged", "full",                 3),
     ViabilityState.STARVED:    StateBehavior(1.0, "constrained", 2048, "staged", "brief",                2),
@@ -129,12 +128,12 @@ class ViabilityEngine:
 
     HYSTERESIS_S = 8.0
 
-    def __init__(self, sampler: Optional[Callable[[], ViabilitySample]] = None) -> None:
+    def __init__(self, sampler: Callable[[], ViabilitySample] | None = None) -> None:
         self._sampler = sampler or _sample_from_container
         self.state: ViabilityState = ViabilityState.HEALTHY
         self.last_transition_at: float = time.time()
-        self._on_transition: List[Callable[[ViabilityState, ViabilityState], None]] = []
-        self._task: Optional[asyncio.Task] = None
+        self._on_transition: list[Callable[[ViabilityState, ViabilityState], None]] = []
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # -------- score / classify ---------------------------------------------
@@ -275,7 +274,7 @@ class ViabilityEngine:
 
     # -------- introspection -----------------------------------------------
 
-    def report(self) -> Dict[str, Any]:
+    def report(self) -> dict[str, Any]:
         b = self.behavior()
         return {
             "state": self.state.value,
@@ -312,10 +311,13 @@ def _sample_from_container() -> ViabilitySample:
         ram = psutil.virtual_memory().percent
         try:
             disk = psutil.disk_usage("/").percent
-        except Exception:
+        except Exception as exc:
+            record_degradation("viability", exc)
+            logger.debug("Viability disk usage probe failed: %s", exc)
             disk = 0.0
-    except Exception:
-        pass  # no-op: intentional
+    except Exception as exc:
+        record_degradation("viability", exc)
+        logger.debug("Viability psutil probe failed: %s", exc)
     try:
         from core.container import ServiceContainer
         orch = ServiceContainer.get("orchestrator", default=None)
@@ -346,8 +348,9 @@ def _sample_from_container() -> ViabilitySample:
         belief_graph = ServiceContainer.get("belief_graph", default=None)
         if belief_graph is not None and hasattr(belief_graph, "incoherent_count"):
             incoherent = int(belief_graph.incoherent_count() or 0)
-    except Exception:
-        pass  # no-op: intentional
+    except Exception as exc:
+        record_degradation("viability", exc)
+        logger.debug("Viability service metrics probe failed: %s", exc)
     return ViabilitySample(
         cpu_pct=cpu,
         ram_pct=ram,
@@ -363,7 +366,7 @@ def _sample_from_container() -> ViabilitySample:
     )
 
 
-_ENGINE: Optional[ViabilityEngine] = None
+_ENGINE: ViabilityEngine | None = None
 
 
 def get_viability() -> ViabilityEngine:

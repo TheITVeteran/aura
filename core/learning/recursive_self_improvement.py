@@ -15,9 +15,10 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -33,7 +34,7 @@ class ImprovementSignal:
     severity: float = 0.5
     metric: str = "quality"
     delta: float = 0.0
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -42,9 +43,9 @@ class ImprovementScorecard:
     """Comparable evaluation snapshot before or after a cycle."""
 
     score: float
-    metrics: Dict[str, float] = field(default_factory=dict)
-    regressions: List[str] = field(default_factory=list)
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
+    regressions: list[str] = field(default_factory=list)
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -52,8 +53,8 @@ class ImprovementPlan:
     """One bounded recursive-improvement step."""
 
     objective: str
-    actions: List[str]
-    rationale: List[str]
+    actions: list[str]
+    rationale: list[str]
     depth: int
     fine_tune_type: str = "lora"
     full_weights_unlocked: bool = False
@@ -61,7 +62,7 @@ class ImprovementPlan:
     system2_selected_action: str = ""
     system2_confidence: float = 0.0
     system2_reason: str = ""
-    system2_receipt: Dict[str, Any] = field(default_factory=dict)
+    system2_receipt: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,14 +75,14 @@ class ImprovementCycleResult:
     plan: ImprovementPlan
     baseline: ImprovementScorecard
     after: ImprovementScorecard
-    attempted_actions: List[str] = field(default_factory=list)
-    action_results: Dict[str, Any] = field(default_factory=dict)
+    attempted_actions: list[str] = field(default_factory=list)
+    action_results: dict[str, Any] = field(default_factory=dict)
     promoted: bool = False
     rollback_performed: bool = False
     authorized: bool = True
     authorization_reason: str = ""
     score_delta: float = 0.0
-    child_results: List["ImprovementCycleResult"] = field(default_factory=list)
+    child_results: list[ImprovementCycleResult] = field(default_factory=list)
 
 
 Evaluator = Callable[[], Any]
@@ -107,8 +108,8 @@ class RecursiveSelfImprovementLoop:
         live_learner: Any = None,
         self_modifier: Any = None,
         structural_improver: Any = None,
-        evaluator: Optional[Evaluator] = None,
-        ledger_path: Optional[Path] = None,
+        evaluator: Evaluator | None = None,
+        ledger_path: Path | None = None,
         min_score_delta: float = 0.01,
         max_depth: int = 3,
         auto_recurse: bool = True,
@@ -122,7 +123,7 @@ class RecursiveSelfImprovementLoop:
         self.max_depth = max(1, int(max_depth))
         self.auto_recurse = bool(auto_recurse)
         self.require_will_authorization = bool(require_will_authorization)
-        self._signals: List[ImprovementSignal] = []
+        self._signals: list[ImprovementSignal] = []
         self._cycle_lock = asyncio.Lock()
 
         if ledger_path is None:
@@ -143,7 +144,7 @@ class RecursiveSelfImprovementLoop:
         severity: float = 0.5,
         metric: str = "quality",
         delta: float = 0.0,
-        evidence: Optional[Dict[str, Any]] = None,
+        evidence: dict[str, Any] | None = None,
     ) -> ImprovementSignal:
         signal = ImprovementSignal(
             source=source,
@@ -157,7 +158,7 @@ class RecursiveSelfImprovementLoop:
         self._signals = self._signals[-500:]
         return signal
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "signals": len(self._signals),
             "max_depth": self.max_depth,
@@ -222,8 +223,8 @@ class RecursiveSelfImprovementLoop:
             self._append_ledger(result)
             return result
 
-        action_results: Dict[str, Any] = {}
-        attempted: List[str] = []
+        action_results: dict[str, Any] = {}
+        attempted: list[str] = []
         weight_action_ran = False
         weight_action_succeeded = False
 
@@ -294,8 +295,8 @@ class RecursiveSelfImprovementLoop:
         depth: int,
     ) -> ImprovementPlan:
         signals = list(self._signals[-50:])
-        actions: List[str] = []
-        rationale: List[str] = []
+        actions: list[str] = []
+        rationale: list[str] = []
         stats = self._learning_stats()
         policy = stats.get("training_policy", {}) if isinstance(stats, dict) else {}
 
@@ -492,8 +493,8 @@ class RecursiveSelfImprovementLoop:
             logger.error("Recursive weight update failed: %s", exc)
             return False
 
-    async def _run_code_refinement(self) -> Dict[str, Any]:
-        deterministic: Dict[str, Any] = {}
+    async def _run_code_refinement(self) -> dict[str, Any]:
+        deterministic: dict[str, Any] = {}
         if self.structural_improver and hasattr(self.structural_improver, "find_and_fix"):
             try:
                 deterministic = await asyncio.to_thread(
@@ -580,7 +581,7 @@ class RecursiveSelfImprovementLoop:
             )
         return ImprovementScorecard(score=0.0, regressions=["invalid_scorecard"])
 
-    def _learning_stats(self) -> Dict[str, Any]:
+    def _learning_stats(self) -> dict[str, Any]:
         if self.live_learner and hasattr(self.live_learner, "get_learning_stats"):
             try:
                 return dict(self.live_learner.get_learning_stats() or {})
@@ -592,7 +593,9 @@ class RecursiveSelfImprovementLoop:
         stats = self._learning_stats()
         try:
             return int(stats.get("buffer_size", 0) or 0)
-        except Exception:
+        except Exception as exc:
+            record_degradation("recursive_self_improvement", exc)
+            logger.debug("Learning stats buffer-size read failed: %s", exc)
             return 0
 
     def _should_recurse(self, result: ImprovementCycleResult) -> bool:
@@ -616,13 +619,13 @@ class RecursiveSelfImprovementLoop:
             record_degradation("recursive_self_improvement", exc)
             logger.debug("Failed to write RSI ledger: %s", exc)
 
-    def _serialize_result(self, result: ImprovementCycleResult) -> Dict[str, Any]:
+    def _serialize_result(self, result: ImprovementCycleResult) -> dict[str, Any]:
         payload = asdict(result)
         payload["child_results"] = [self._serialize_result(child) for child in result.child_results]
         return payload
 
 
-_instance: Optional[RecursiveSelfImprovementLoop] = None
+_instance: RecursiveSelfImprovementLoop | None = None
 
 
 def get_recursive_self_improvement_loop() -> RecursiveSelfImprovementLoop:
@@ -643,8 +646,8 @@ def register_recursive_self_improvement_loop(
     live_learner: Any = None,
     self_modifier: Any = None,
     structural_improver: Any = None,
-    evaluator: Optional[Evaluator] = None,
-    ledger_path: Optional[Path] = None,
+    evaluator: Evaluator | None = None,
+    ledger_path: Path | None = None,
 ) -> RecursiveSelfImprovementLoop:
     global _instance
     _instance = RecursiveSelfImprovementLoop(

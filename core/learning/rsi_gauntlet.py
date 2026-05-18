@@ -10,11 +10,13 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import logging
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from core.introspection.source_model import SourceIntrospector
 from core.learning.architecture_search import ArchitectureSearchLab
@@ -37,8 +39,11 @@ from core.learning.rsi_lineage import (
 from core.learning.rsi_test_catalog import catalog_summary, default_rsi_test_catalog
 from core.learning.successor_lab import SuccessorLab
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 from core.runtime.hot_swap import HotSwapRegistry
 from core.self_modification.formal_verifier import verify_mutation
+
+logger = logging.getLogger("Aura.RSIGauntlet")
 
 
 @dataclass(frozen=True)
@@ -46,9 +51,9 @@ class GauntletCheck:
     name: str
     passed: bool
     detail: str
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -56,12 +61,12 @@ class GauntletCheck:
 class RSIGauntletResult:
     passed: bool
     verdict: str
-    checks: List[GauntletCheck]
+    checks: list[GauntletCheck]
     lineage_verdict: RSILineageVerdict
     ledger_path: str
     duration_s: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
             "verdict": self.verdict,
@@ -79,7 +84,7 @@ class _SyntheticLearner:
         self.force_train_calls = 0
         self.rollback_calls = 0
 
-    def get_learning_stats(self) -> Dict[str, Any]:
+    def get_learning_stats(self) -> dict[str, Any]:
         return {
             "buffer_size": 4,
             "session_avg_quality": 0.62,
@@ -112,7 +117,7 @@ class RSIGauntlet:
         self,
         root: Path | str,
         *,
-        artifact_dir: Optional[Path | str] = None,
+        artifact_dir: Path | str | None = None,
         max_source_files: int = 2500,
     ):
         self.root = Path(root).resolve()
@@ -121,7 +126,7 @@ class RSIGauntlet:
         self.max_source_files = max(100, int(max_source_files))
         self.run_id = f"{int(time.time() * 1000)}"
         self.lineage = RSILineageLedger(self.artifact_dir / f"rsi_generation_lineage_{self.run_id}.jsonl")
-        self.checks: List[GauntletCheck] = []
+        self.checks: list[GauntletCheck] = []
 
     async def run(self) -> RSIGauntletResult:
         start = time.time()
@@ -288,10 +293,10 @@ class RSIGauntlet:
             def score(self, value: int) -> int:
                 return value * self.multiplier
 
-        def export_state(service: Service) -> Dict[str, Any]:
+        def export_state(service: Service) -> dict[str, Any]:
             return dict(service.memory)
 
-        def import_state(service: Service, state: Dict[str, Any]) -> Service:
+        def import_state(service: Service, state: dict[str, Any]) -> Service:
             service.memory = dict(state)
             return service
 
@@ -552,7 +557,7 @@ class RSIGauntlet:
 
     def _score_canary(self, target: Path) -> float:
         mod = self._load_module(target)
-        tests: List[Callable[[], bool]] = [
+        tests: list[Callable[[], bool]] = [
             lambda: mod.clamp01(-1) == 0.0,
             lambda: mod.clamp01(0.4) == 0.4,
             lambda: mod.clamp01(2) == 1.0,
@@ -564,8 +569,9 @@ class RSIGauntlet:
         for test in tests:
             try:
                 passed += 1 if test() else 0
-            except Exception:
-                pass
+            except Exception as exc:
+                record_degradation("rsi_gauntlet", exc)
+                logger.debug("RSI canary test failed during scoring: %s", exc)
         return passed / len(tests)
 
     @staticmethod
@@ -577,7 +583,7 @@ class RSIGauntlet:
         spec.loader.exec_module(module)
         return module
 
-    def _record(self, name: str, passed: bool, detail: str, evidence: Optional[Dict[str, Any]] = None) -> None:
+    def _record(self, name: str, passed: bool, detail: str, evidence: dict[str, Any] | None = None) -> None:
         self.checks.append(GauntletCheck(name=name, passed=bool(passed), detail=detail, evidence=evidence or {}))
 
     @staticmethod
@@ -595,7 +601,7 @@ def _square(value: int) -> int:
 async def run_rsi_gauntlet(
     root: Path | str,
     *,
-    artifact_dir: Optional[Path | str] = None,
+    artifact_dir: Path | str | None = None,
     max_source_files: int = 2500,
 ) -> RSIGauntletResult:
     return await RSIGauntlet(root, artifact_dir=artifact_dir, max_source_files=max_source_files).run()

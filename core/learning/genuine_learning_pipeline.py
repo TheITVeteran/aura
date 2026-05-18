@@ -1,16 +1,16 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import json
 import logging
-import os
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.GenuineLearning")
 
@@ -27,9 +27,9 @@ class TrainingExample:
     quality_score: float          # 0.0–1.0 — only examples above threshold get trained on
     source: str                   # "user_positive", "self_play", "dream_insight", "correction"
     timestamp: float = field(default_factory=time.time)
-    emotional_context: Dict[str, float] = field(default_factory=dict)
+    emotional_context: dict[str, float] = field(default_factory=dict)
 
-    def to_mlx_format(self) -> Dict[str, str]:
+    def to_mlx_format(self) -> dict[str, str]:
         """Convert to the chat template format MLX-LM expects."""
         return {
             "messages": [
@@ -47,8 +47,8 @@ class TrainingExample:
 class BenchmarkCase:
     """A behavioral regression test — things Aura must still do after training."""
     input: str
-    must_contain: List[str]       # At least one must appear in response
-    must_not_contain: List[str]   # None of these should appear
+    must_contain: list[str]       # At least one must appear in response
+    must_not_contain: list[str]   # None of these should appear
     description: str
 
 
@@ -73,7 +73,7 @@ class ExperienceBuffer:
     QUALITY_THRESHOLD = 0.6
     MAX_BUFFER_SIZE = 10_000
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         from core.config import config
         self.db_path = Path(db_path or config.paths.data_dir / "learning" / "experience_buffer.jsonl")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ class ExperienceBuffer:
     def _load_existing(self):
         """Load previously buffered examples (survive restarts)."""
         if self.db_path.exists():
-            with open(self.db_path, 'r') as f:
+            with open(self.db_path) as f:
                 for line in f:
                     try:
                         data = json.loads(line)
@@ -100,7 +100,7 @@ class ExperienceBuffer:
         response: str,
         follow_up_detected: bool = False,
         confusion_detected: bool = False,
-        emotional_context: Dict[str, float] = None,
+        emotional_context: dict[str, float] = None,
     ) -> float:
         """Calculate quality score for a single interaction."""
         score = 0.5  # Neutral baseline
@@ -137,7 +137,7 @@ class ExperienceBuffer:
         response: str,
         quality_score: float,
         source: str = "conversation",
-        emotional_context: Dict[str, float] = None,
+        emotional_context: dict[str, float] = None,
     ) -> bool:
         """Record an interaction if it meets quality threshold."""
         if quality_score < self.QUALITY_THRESHOLD:
@@ -168,15 +168,16 @@ class ExperienceBuffer:
                 try:
                     with open(self.db_path, 'a') as f:
                         f.write(json.dumps(record) + '\n')
-                except Exception:
-                    pass
+                except Exception as exc:
+                    record_degradation("genuine_learning_pipeline", exc)
+                    logger.debug("Training example background persist failed: %s", exc)
             import threading
             threading.Thread(target=_write_record, daemon=True).start()
 
         logger.debug("📖 Recorded experience (quality=%.2f, source=%s)", quality_score, source)
         return True
 
-    def get_training_batch(self, n: int = 50, min_quality: float = 0.65) -> List[Dict]:
+    def get_training_batch(self, n: int = 50, min_quality: float = 0.65) -> list[dict]:
         """Get the best N examples for a training run."""
         with self._lock:
             candidates = [
@@ -225,7 +226,7 @@ class BehavioralBenchmark:
         ),
     ]
 
-    async def run(self, inference_fn) -> Tuple[bool, List[str]]:
+    async def run(self, inference_fn) -> tuple[bool, list[str]]:
         """
         Run all benchmarks against the NEW model before committing.
         
@@ -260,7 +261,7 @@ class BehavioralBenchmark:
                             f"Got: {response[:100]}"
                         )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 failures.append(f"FAIL [{case.description}]: Inference timed out")
             except Exception as e:
                 record_degradation('genuine_learning_pipeline', e)
@@ -300,7 +301,7 @@ class LoRATrainer:
     def __init__(
         self,
         model_path: str,
-        adapter_dir: Optional[str] = None,
+        adapter_dir: str | None = None,
         lora_rank: int = 8,           # Rank of LoRA decomposition (higher = more capacity, more VRAM)
         lora_alpha: float = 16.0,     # LoRA scaling factor
         learning_rate: float = 1e-5,  # Conservative LR for fine-tuning
@@ -338,7 +339,7 @@ class LoRATrainer:
             logger.debug('Ignored Exception in genuine_learning_pipeline.py: %s', _e)
         return self.learning_rate
 
-    def _write_training_data(self, examples: List[Dict]) -> Path:
+    def _write_training_data(self, examples: list[dict]) -> Path:
         """Write training examples to a temp JSONL file for MLX-LM."""
         train_path = self.adapter_dir / "train_batch.jsonl"
         with open(train_path, 'w') as f:
@@ -348,7 +349,7 @@ class LoRATrainer:
                 f.write(json.dumps(clean) + '\n')
         return train_path
 
-    def _run_training_subprocess(self, train_path: Path) -> Tuple[bool, str]:
+    def _run_training_subprocess(self, train_path: Path) -> tuple[bool, str]:
         """
         Execute MLX-LM fine-tuning in a subprocess.
         This is the actual weight update — the heart of genuine learning.
@@ -396,7 +397,7 @@ class LoRATrainer:
             logger.error("❌ Training subprocess error: %s", e)
             return False, str(e)
 
-    async def train(self, examples: List[Dict]) -> bool:
+    async def train(self, examples: list[dict]) -> bool:
         """
         Run a training pass on the provided examples.
         
@@ -490,7 +491,7 @@ class LearningScheduler:
         """Call this on every user interaction."""
         self._last_activity = time.time()
 
-    def should_train(self) -> Tuple[bool, str]:
+    def should_train(self) -> tuple[bool, str]:
         """Check if training conditions are met."""
         buffer_len = len(self.buffer)
         idle_seconds = time.time() - self._last_activity
@@ -590,7 +591,7 @@ class ContinuousLearner:
         learner.record_turn(..., explicit_positive=True)
     """
 
-    def __init__(self, model_path: str, adapter_dir: Optional[str] = None, orchestrator=None):
+    def __init__(self, model_path: str, adapter_dir: str | None = None, orchestrator=None):
         self.orchestrator = orchestrator
         self.buffer = ExperienceBuffer()
         self.trainer = LoRATrainer(model_path=model_path, adapter_dir=adapter_dir)
@@ -610,8 +611,8 @@ class ContinuousLearner:
         follow_up_detected: bool = False,
         confusion_detected: bool = False,
         explicit_positive: bool = False,
-        explicit_correction: Optional[str] = None,
-        emotional_context: Dict[str, float] = None,
+        explicit_correction: str | None = None,
+        emotional_context: dict[str, float] = None,
     ):
         """
         Record a completed conversation turn for potential learning.
@@ -676,7 +677,7 @@ class ContinuousLearner:
         """
         await self.scheduler.run_if_ready(inference_fn)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "buffer_size": len(self.buffer),
             "last_train": self.trainer._last_train_time,
@@ -714,7 +715,6 @@ def register_continuous_learner(orchestrator=None) -> ContinuousLearner:
         )
     """
     from core.config import config
-    from core.container import ServiceContainer
 
     # Try to find the local model path
     model_path = getattr(config, 'local_model_path', None)
@@ -741,4 +741,3 @@ def register_continuous_learner(orchestrator=None) -> ContinuousLearner:
 
     logger.info("🧬 ContinuousLearner created.")
     return learner
-

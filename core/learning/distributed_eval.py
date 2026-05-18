@@ -8,10 +8,16 @@ parallel successor/architecture experiments while LoRA or model jobs are live.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import os
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Iterable, List, Optional, Sequence
+from typing import Any
+
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger("Aura.DistributedEval")
 
 
 @dataclass(frozen=True)
@@ -26,9 +32,9 @@ class DistributedEvalConfig:
 class DistributedEvalResult:
     worker_count: int
     input_count: int
-    outputs: List[Any]
+    outputs: list[Any]
     runtime_s: float
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -38,12 +44,14 @@ class DistributedEvalResult:
         return asdict(self)
 
 
-def _available_memory_mb() -> Optional[float]:
+def _available_memory_mb() -> float | None:
     try:
         import psutil  # type: ignore
 
         return float(psutil.virtual_memory().available / (1024 * 1024))
-    except Exception:
+    except Exception as exc:
+        record_degradation("distributed_eval", exc)
+        logger.debug("Available-memory probe failed: %s", exc)
         return None
 
 
@@ -62,7 +70,7 @@ def safe_worker_count(config: DistributedEvalConfig) -> int:
 class LocalDistributedEvaluator:
     """Process-pool evaluator with conservative resource caps."""
 
-    def __init__(self, config: Optional[DistributedEvalConfig] = None):
+    def __init__(self, config: DistributedEvalConfig | None = None):
         self.config = config or DistributedEvalConfig()
 
     def map(self, fn: Callable[[Any], Any], inputs: Sequence[Any]) -> DistributedEvalResult:
@@ -71,8 +79,8 @@ class LocalDistributedEvaluator:
         if not items:
             return DistributedEvalResult(worker_count=0, input_count=0, outputs=[], runtime_s=0.0)
         workers = min(safe_worker_count(self.config), len(items))
-        errors: List[str] = []
-        outputs: List[Any] = []
+        errors: list[str] = []
+        outputs: list[Any] = []
         try:
             with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
                 for value in pool.map(fn, items):

@@ -7,6 +7,7 @@ obligations are discharged by formal verifier output and locked policy checks.
 from __future__ import annotations
 
 import ast
+import logging
 import py_compile
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -14,7 +15,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.self_modification.formal_verifier import verify_mutation
+
+logger = logging.getLogger("Aura.ProofObligations")
 
 
 class ProofStatus(StrEnum):
@@ -141,6 +145,8 @@ class ProofObligationEngine:
                 py_compile.compile(str(target), doraise=True)
             return True, {"ok": True}
         except Exception as exc:
+            record_degradation("proof_obligations", exc)
+            logger.debug("Bytecode proof obligation failed for %s: %s", file_path, exc)
             return False, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
