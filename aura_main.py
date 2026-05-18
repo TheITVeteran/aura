@@ -8,6 +8,10 @@ Replaces: aura_launcher.py, aura_desktop.py, run_aura.py, run_aura_loop.py, and 
 
 import argparse
 import asyncio
+import sys
+
+if sys.version_info < (3, 12):  # noqa: UP036 - boot contract asserts a clear runtime guard.
+    raise SystemExit("Aura requires Python 3.12+")
 
 from core.runtime.errors import record_degradation
 
@@ -23,7 +27,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
