@@ -20,18 +20,19 @@ High-confidence wrong beliefs are the most dangerous — this system finds them.
 Output: EpistemicProfile fed to InquiryEngine every cycle.
 """
 
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import json
 import logging
 import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.EpistemicTracker")
 
@@ -47,7 +48,7 @@ class KnowledgeNode:
     last_updated: float        # timestamp
     source_count: int          # how many distinct sources support this
     contradicted: bool         # does this conflict with another belief?
-    contradiction_with: Optional[str] = None
+    contradiction_with: str | None = None
     last_challenged: float = 0.0
     challenge_survived: int = 0  # times a counterargument failed to shake it
 
@@ -70,12 +71,12 @@ class EpistemicGap:
 class EpistemicProfile:
     """Snapshot of Aura's current epistemic state. Fed to InquiryEngine."""
     timestamp: float
-    strong_nodes: List[KnowledgeNode]    # high confidence, well-sourced
-    weak_nodes: List[KnowledgeNode]      # low confidence or sparse
-    contradictions: List[Tuple[str, str]] # pairs of conflicting beliefs
-    gaps: List[EpistemicGap]             # detected knowledge gaps
+    strong_nodes: list[KnowledgeNode]    # high confidence, well-sourced
+    weak_nodes: list[KnowledgeNode]      # low confidence or sparse
+    contradictions: list[tuple[str, str]] # pairs of conflicting beliefs
+    gaps: list[EpistemicGap]             # detected knowledge gaps
     overall_confidence: float            # average across domains
-    most_urgent_gap: Optional[EpistemicGap] = None
+    most_urgent_gap: EpistemicGap | None = None
 
 
 # ─── EpistemicTracker ────────────────────────────────────────────────────────
@@ -98,15 +99,15 @@ class EpistemicTracker:
     URGENCY_GROWTH_PER_DAY = 0.12
 
     def __init__(self):
-        self._nodes: Dict[str, KnowledgeNode] = {}
-        self._gaps: List[EpistemicGap] = []
-        self._resolved_gaps: List[str] = []  # descriptions of closed gaps
+        self._nodes: dict[str, KnowledgeNode] = {}
+        self._gaps: list[EpistemicGap] = []
+        self._resolved_gaps: list[str] = []  # descriptions of closed gaps
         self._db_path = Path.home() / ".aura" / "data" / "epistemic_map.json"
         self._beliefs = None
         self._memory_synth = None
-        self._update_task: Optional[asyncio.Task] = None
+        self._update_task: asyncio.Task | None = None
         self.running = False
-        self._profile_cache: Optional[EpistemicProfile] = None
+        self._profile_cache: EpistemicProfile | None = None
         self._cache_age = 0.0
         self._load()
         logger.info("EpistemicTracker constructed (%d nodes, %d gaps).",
@@ -135,7 +136,7 @@ class EpistemicTracker:
         except Exception as e:
             record_degradation('epistemic_tracker', e)
             capture_and_log(e, {"context": "EpistemicTracker.start.event_bus"})
-            pass  # no-op: intentional
+            logger.debug("EpistemicTracker event bus registration failed: %s", e)
 
         logger.info("✅ EpistemicTracker ONLINE — meta-cognition active.")
 
@@ -211,7 +212,7 @@ class EpistemicTracker:
                 description=desc,
                 urgency=0.8,  # Contradictions are urgent
                 gap_type="contradicted",
-                seed_question=f"These two things I believe seem to conflict. Which is right, or is there a synthesis?"
+                seed_question="These two things I believe seem to conflict. Which is right, or is there a synthesis?"
             )
 
     def signal_gap_resolved(self, gap_description: str, resolution: str):
@@ -249,9 +250,9 @@ class EpistemicTracker:
                 contradicted=False,
             )
 
-    def get_most_uncertain_domains(self, n: int = 3) -> List[str]:
+    def get_most_uncertain_domains(self, n: int = 3) -> list[str]:
         """Return the domains where Aura is most uncertain."""
-        domain_scores: Dict[str, List[float]] = defaultdict(list)
+        domain_scores: dict[str, list[float]] = defaultdict(list)
         for node in self._nodes.values():
             domain = self._classify_domain(node.concept)
             domain_scores[domain].append(node.confidence)
@@ -263,7 +264,7 @@ class EpistemicTracker:
         }
         return sorted(avg_scores, key=avg_scores.get)[:n]
 
-    def get_urgent_gaps(self, min_urgency: float = 0.4) -> List[EpistemicGap]:
+    def get_urgent_gaps(self, min_urgency: float = 0.4) -> list[EpistemicGap]:
         """Get gaps above urgency threshold, with urgency grown by age."""
         self._age_gaps()
         return sorted(
@@ -293,11 +294,10 @@ class EpistemicTracker:
                 return
 
             # Build/update nodes from beliefs
-            seen: Set[str] = set()
+            seen: set[str] = set()
             for belief in beliefs:
                 content = getattr(belief, "content", "")
                 confidence = getattr(belief, "confidence", 0.5)
-                domain = getattr(belief, "domain", "general")
                 source = getattr(belief, "source", "unknown")
 
                 key = content[:50].lower().strip()
@@ -330,7 +330,7 @@ class EpistemicTracker:
     async def _detect_contradictions(self, beliefs):
         """Look for logically conflicting beliefs using indexed lookup."""
         # Map of subject prefix -> list of (polarity, belief_index)
-        subjects: Dict[str, List[Tuple[bool, int]]] = defaultdict(list)
+        subjects: dict[str, list[tuple[bool, int]]] = defaultdict(list)
         
         negation_pairs = [
             ("i am", "i am not"),
@@ -351,7 +351,7 @@ class EpistemicTracker:
                     break
 
         # Check only within same subject keys
-        for pos_key, occurrences in subjects.items():
+        for _pos_key, occurrences in subjects.items():
             positives = [idx for is_pos, idx in occurrences if is_pos]
             negatives = [idx for is_pos, idx in occurrences if not is_pos]
             
@@ -505,7 +505,7 @@ class EpistemicTracker:
             capture_and_log(e, {"context": "EpistemicTracker.load"})
             logger.debug("EpistemicTracker load failed: %s", e)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "nodes":        len(self._nodes),
             "gaps":         len(self._gaps),
@@ -518,7 +518,7 @@ class EpistemicTracker:
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_tracker: Optional[EpistemicTracker] = None
+_tracker: EpistemicTracker | None = None
 
 def get_epistemic_tracker() -> EpistemicTracker:
     global _tracker

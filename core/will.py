@@ -27,18 +27,17 @@ Design principles:
     6. IDENTITY-ROOTED: CanonicalSelf feeds every decision
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import hashlib
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from enum import StrEnum
+from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Will")
 
@@ -75,7 +74,7 @@ def _score_memory_results(results: Any) -> float:
 # Enums
 # ---------------------------------------------------------------------------
 
-class ActionDomain(str, Enum):
+class ActionDomain(StrEnum):
     """What kind of action is being decided on."""
     RESPONSE = "response"               # sending a reply to the user
     TOOL_EXECUTION = "tool_execution"   # external tool / skill dispatch
@@ -142,7 +141,7 @@ def is_plastic_target_allowed(module_name: str) -> bool:
     return name in ALLOWED_PLASTIC_MODULES
 
 
-class WillOutcome(str, Enum):
+class WillOutcome(StrEnum):
     """The Will's decision."""
     PROCEED = "proceed"           # full authorization
     CONSTRAIN = "constrain"       # proceed with reduced scope
@@ -151,7 +150,7 @@ class WillOutcome(str, Enum):
     CRITICAL_PASS = "critical"    # safety-critical override, always pass
 
 
-class IdentityAlignment(str, Enum):
+class IdentityAlignment(StrEnum):
     """How well the action aligns with current identity."""
     ALIGNED = "aligned"           # consistent with who I am
     NEUTRAL = "neutral"           # no identity conflict
@@ -186,7 +185,7 @@ class WillDecision:
     causal_closure_score: float = 1.0
 
     # Constraints (if outcome is CONSTRAIN)
-    constraints: List[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
 
     # Provenance
     source: str = ""                    # who requested this action
@@ -247,12 +246,12 @@ class UnifiedWill:
 
     def __init__(self) -> None:
         self._state = WillState()
-        self._audit_trail: Deque[WillDecision] = deque(maxlen=self._MAX_AUDIT_TRAIL)
+        self._audit_trail: deque[WillDecision] = deque(maxlen=self._MAX_AUDIT_TRAIL)
         self._started = False
         self._boot_time = time.time()
 
         # Identity anchors (loaded from CanonicalSelf)
-        self._core_values: List[str] = []
+        self._core_values: list[str] = []
         self._identity_name: str = "Aura"
         self._identity_stance: str = "sovereign"
 
@@ -272,7 +271,7 @@ class UnifiedWill:
         self._started = True
         logger.info("UnifiedWill ONLINE -- single locus of decision authority active")
 
-    def propose_constitutional_amendment(self, patch: Dict[str, Any], proposer: str, rationale: str) -> WillDecision:
+    def propose_constitutional_amendment(self, patch: dict[str, Any], proposer: str, rationale: str) -> WillDecision:
         """Sovereign constitutional self-governance procedure.
 
         Evaluates a proposed change to canonical_self.json against current identity
@@ -284,7 +283,7 @@ class UnifiedWill:
         content_hash = hashlib.sha256(content[:500].encode()).hexdigest()[:16]
         receipt_id = self._make_receipt_id(t0, proposer, content)
 
-        def finalize(outcome: WillOutcome, reason: str, constraints: List[str]) -> WillDecision:
+        def finalize(outcome: WillOutcome, reason: str, constraints: list[str]) -> WillDecision:
             decision = WillDecision(
                 receipt_id=receipt_id,
                 outcome=outcome,
@@ -353,7 +352,7 @@ class UnifiedWill:
         *,
         priority: float = 0.5,
         is_critical: bool = False,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> WillDecision:
         """The ONE method through which ALL decisions flow.
 
@@ -585,7 +584,7 @@ class UnifiedWill:
     def _consult_substrate(
         self, content: str, source: str, domain: ActionDomain,
         priority: float, is_critical: bool
-    ) -> Tuple[float, float, str]:
+    ) -> tuple[float, float, str]:
         """Consult SubstrateAuthority for embodied decision input.
 
         Returns (field_coherence, somatic_approach, substrate_receipt_id).
@@ -630,8 +629,8 @@ class UnifiedWill:
 
     def _check_behavioral_scars(
         self, content: str, source: str, domain: ActionDomain,
-        context: Dict[str, Any],
-    ) -> List[str]:
+        context: dict[str, Any],
+    ) -> list[str]:
         """Consult the scar formation system for learned caution.
 
         Returns a list of constraint strings from active behavioral scars
@@ -666,7 +665,7 @@ class UnifiedWill:
             return []
 
     def _check_memory_relevance(
-        self, content: str, context: Dict[str, Any]
+        self, content: str, context: dict[str, Any]
     ) -> float:
         """Check if memory has relevant context for this decision."""
         relevance = 0.0
@@ -757,7 +756,7 @@ class UnifiedWill:
             logger.debug("Will: phenomenological modulation failed: %s", e)
 
     def _apply_world_state_modulation(self, domain: ActionDomain,
-                                       context: Dict[str, Any]) -> None:
+                                       context: dict[str, Any]) -> None:
         """Read WorldState to inform decisions about timing and context.
 
         Late night + user frustrated → increase urgency for helpful actions
@@ -791,9 +790,9 @@ class UnifiedWill:
             record_degradation('will', e)
             logger.debug("Will: world state modulation failed: %s", e)
 
-    def _read_unity_context(self) -> Dict[str, Any]:
+    def _read_unity_context(self) -> dict[str, Any]:
         """Read the live unity state without hard-failing if the layer is absent."""
-        context: Dict[str, Any] = {
+        context: dict[str, Any] = {
             "level": "unknown",
             "unity_score": 1.0,
             "fragmentation_score": 0.0,
@@ -859,7 +858,7 @@ class UnifiedWill:
         return context
 
     @staticmethod
-    def _looks_external_social_action(content: str, context: Dict[str, Any]) -> bool:
+    def _looks_external_social_action(content: str, context: dict[str, Any]) -> bool:
         payload = str(content or "").lower()
         if any(marker in payload for marker in ("post ", "publish", "email", "send", "tweet", "message ", "slack", "discord", "github", "commit", "push")):
             return True
@@ -874,7 +873,7 @@ class UnifiedWill:
         self,
         domain: ActionDomain,
         source: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
     ) -> bool:
         """Reserved emergency lane for self-repair under refusal storms.
 
@@ -934,24 +933,24 @@ class UnifiedWill:
         domain: ActionDomain,
         source: str,
         priority: float,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         content: str,
         identity_alignment: IdentityAlignment,
         affect_valence: float,
         substrate_coherence: float,
         somatic_approach: float,
         memory_relevance: float,
-        unity_context: Dict[str, Any],
+        unity_context: dict[str, Any],
         catatonia_relief: bool = False,
-    ) -> Tuple[WillOutcome, str, List[str]]:
+    ) -> tuple[WillOutcome, str, list[str]]:
         """Compose all advisory inputs into a single decision.
 
         This is the core decision logic of the Will.
 
         Returns (outcome, reason, constraints).
         """
-        reasons: List[str] = []
-        constraints: List[str] = []
+        reasons: list[str] = []
+        constraints: list[str] = []
 
         # ── Identity gate (hardest constraint) ──────────────────────
         if identity_alignment == IdentityAlignment.VIOLATION:
@@ -1088,15 +1087,13 @@ class UnifiedWill:
         # The whole "she talked about doing it but nothing happened"
         # failure mode was bred by this exact gate returning DEFER.
         user_granted = False
-        try:
-            ctx = context or {}
+        ctx = context or {}
+        if hasattr(ctx, "get"):
             user_granted = bool(
                 ctx.get("user_granted_permission")
                 or ctx.get("user_explicit_action_request")
                 or ctx.get("user_requested_action")
             )
-        except Exception:
-            user_granted = False
 
         # ── Priority vs domain gating ───────────────────────────────
         if domain == ActionDomain.INITIATIVE and priority < 0.3 and not user_granted:
@@ -1167,8 +1164,9 @@ class UnifiedWill:
                 "signature_scheme": decision.signature_scheme,
                 "timestamp": decision.timestamp,
             })
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("will", exc)
+            logger.debug("Will decision event publish failed: %s", exc)
 
     @staticmethod
     def _make_receipt_id(ts: float, source: str, content: str) -> str:
@@ -1206,7 +1204,7 @@ class UnifiedWill:
     # Public API
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return current Will state for health/status endpoints."""
         return {
             "total_decisions": self._state.total_decisions,
@@ -1227,7 +1225,7 @@ class UnifiedWill:
             "uptime_s": round(time.time() - self._boot_time, 1),
         }
 
-    def get_recent_decisions(self, n: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_decisions(self, n: int = 20) -> list[dict[str, Any]]:
         """Return recent decisions for audit."""
         recent = list(self._audit_trail)[-n:]
         return [
@@ -1254,7 +1252,7 @@ class UnifiedWill:
             for d in recent
         ]
 
-    def get_recent_refusals(self, n: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_refusals(self, n: int = 10) -> list[dict[str, Any]]:
         """Return recent refusals for audit."""
         refusals = [d for d in self._audit_trail
                     if d.outcome == WillOutcome.REFUSE]
@@ -1285,7 +1283,7 @@ class UnifiedWill:
                 )
         return False
 
-    def get_receipt_verification_material(self, receipt_id: str) -> Dict[str, Any]:
+    def get_receipt_verification_material(self, receipt_id: str) -> dict[str, Any]:
         """Return payload/signature material for external receipt verification."""
         for decision in self._audit_trail:
             if getattr(decision, "receipt_id", None) == receipt_id:
@@ -1319,7 +1317,7 @@ class UnifiedWill:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_will_instance: Optional[UnifiedWill] = None
+_will_instance: UnifiedWill | None = None
 
 
 def get_will() -> UnifiedWill:

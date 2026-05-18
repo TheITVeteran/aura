@@ -1,16 +1,17 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import os
 import time
+from typing import Any
+
 import numpy as np
-import subprocess
 import psutil
-from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright
+
 from core.container import ServiceContainer
 from core.runtime.boot_safety import main_process_camera_policy
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SensoryMotor")
 _cv2 = None
@@ -31,7 +32,7 @@ class SensoryMotorCortex:
     """
     name = "sensory_motor_cortex"
 
-    def __init__(self, orchestrator=None, config: Dict[str, Any] = None):
+    def __init__(self, orchestrator=None, config: dict[str, Any] = None):
         self.orchestrator = orchestrator or ServiceContainer.get("orchestrator", default=None)
         self.config = config or {}
         self.is_active = False
@@ -109,7 +110,8 @@ class SensoryMotorCortex:
                         cap = cv2.VideoCapture(0)
                         if cap and cap.isOpened():
                             break
-                if not self.is_active: return
+                if not self.is_active:
+                    return
 
             # Set low res for background monitoring
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
@@ -136,7 +138,8 @@ class SensoryMotorCortex:
                     continue
 
                 ret, frame2 = cap.read()
-                if not ret: break
+                if not ret:
+                    break
                 
                 gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
                 # Ensure sizes match to prevent OpenCV exceptions
@@ -197,14 +200,16 @@ class SensoryMotorCortex:
 
         try:
             orch_last = float(getattr(orch, "_last_user_interaction_time", 0.0) or 0.0)
-        except Exception:
+        except (TypeError, ValueError) as exc:
+            record_degradation("sensory_motor_cortex", exc)
+            logger.debug("SensoryMotorCortex: invalid orchestrator interaction timestamp: %s", exc)
             orch_last = 0.0
 
         if orch_last > self.last_interaction_time:
             self.last_interaction_time = orch_last
         return self.last_interaction_time
 
-    def _should_trigger_volition(self, now: Optional[float] = None) -> bool:
+    def _should_trigger_volition(self, now: float | None = None) -> bool:
         """Prevent spontaneous volition from interrupting active foreground turns."""
         now = float(now if now is not None else time.time())
         self._sync_last_interaction_time()
@@ -233,8 +238,9 @@ class SensoryMotorCortex:
                     logger.debug("SensoryMotorCortex: idle volition deferred: %s", policy_reason)
                     self.last_interaction_time = max(self.last_interaction_time, now)
                     return False
-            except Exception:
-                pass
+            except Exception as exc:
+                record_degradation("sensory_motor_cortex", exc)
+                logger.debug("SensoryMotorCortex: background policy probe failed: %s", exc)
 
             status = getattr(orch, "status", None)
             if getattr(status, "is_processing", False):
@@ -415,8 +421,9 @@ class SensoryMotorCortex:
     def _requests_fetch(query: str) -> str:
         """Lightweight fallback: DuckDuckGo HTML search, extract snippets."""
         try:
-            import requests
             from html.parser import HTMLParser
+
+            import requests
 
             class SnippetParser(HTMLParser):
                 def __init__(self):
