@@ -1,13 +1,88 @@
 """core/providers/cognitive_provider.py — Cognitive, LLM, Learning & Reasoning Registration
 """
+from __future__ import annotations
 
 import logging
-import subprocess
+import platform
+from collections.abc import Callable
 
 from core.container import ServiceLifetime
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Providers.Cognitive")
+
+_COGNITIVE_PROVIDER_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+class ProxyLLMRouter:
+    """Lightweight router for GUI proxy mode when the model stack lives elsewhere."""
+
+    status = "proxy"
+
+    async def think(self, *args, **kwargs) -> str:
+        return "LLM unavailable in GUI Proxy Mode"
+
+    async def generate(self, *args, **kwargs) -> str:
+        return await self.think(*args, **kwargs)
+
+    def route(self, *args, **kwargs):
+        return self
+
+    def get_status(self) -> dict[str, str]:
+        return {"status": self.status, "detail": "model stack intentionally skipped for proxy mode"}
+
+
+def _native_sysctlbyname_int(name: str) -> int | None:
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None)
+        value = ctypes.c_int(0)
+        size = ctypes.c_size_t(ctypes.sizeof(value))
+        result = libc.sysctlbyname(
+            name.encode("utf-8"),
+            ctypes.byref(value),
+            ctypes.byref(size),
+            None,
+            0,
+        )
+        return int(value.value) if result == 0 else None
+    except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS as exc:
+        record_degradation("cognitive_provider", exc)
+        logger.debug("Native sysctl probe failed for %s: %s", name, exc)
+        return None
+
+
+def is_apple_silicon_host(
+    *,
+    system_name: str | None = None,
+    machine_name: str | None = None,
+    sysctl_reader: Callable[[str], int | None] | None = None,
+) -> bool:
+    system = system_name if system_name is not None else platform.system()
+    if system != "Darwin":
+        return False
+
+    machine = (machine_name if machine_name is not None else platform.machine() or "").lower()
+    if machine in {"arm64", "aarch64"}:
+        return True
+
+    reader = sysctl_reader or _native_sysctlbyname_int
+    try:
+        return reader("hw.optional.arm64") == 1
+    except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS as exc:
+        record_degradation("cognitive_provider", exc)
+        logger.debug("Apple Silicon probe failed: %s", exc)
+        return False
+
 
 def register_cognitive_services(container, is_proxy: bool = False):
     # 1. Cognitive Engine
@@ -18,7 +93,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.brain.cognitive_engine import CognitiveEngine
             return CognitiveEngine()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create cognitive_engine")
             return None
     container.register('cognitive_engine', create_cognitive_engine, lifetime=ServiceLifetime.SINGLETON, required=True)
@@ -30,7 +105,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.brain.cognitive_manager import CognitiveManager
             return CognitiveManager()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create cognitive_manager")
             return None
     container.register('cognitive_manager', create_cognitive_manager, lifetime=ServiceLifetime.SINGLETON, required=True)
@@ -39,13 +114,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
     def create_llm_router():
         if is_proxy:
             logger.info("📡 Proxy Mode: Skipping LLM Router (Prevents MLX Load).")
-            # Return a mock router that doesn't trigger heavy dependencies
-            class MockRouter:
-                async def think(self, *args, **kwargs):
-                    return "LLM unavailable in GUI Proxy Mode"
-                def route(self, *args, **kwargs):
-                    return self
-            return MockRouter()
+            return ProxyLLMRouter()
         
         try:
             from core.brain.llm_health_router import HealthAwareLLMRouter
@@ -65,7 +134,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
             )
             
             return router
-        except Exception as e:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS as e:
             record_degradation('cognitive_provider', e)
             logger.error("🛑 LLMRouter Initialization Critical Failure: %s", e)
             # Do NOT return None; let the container know it failed so it can be re-attempted
@@ -83,7 +152,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
             # and to allow other services to depend on it if needed.
             # We return None here because the instance is managed by the router's creation.
             return None
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create autonomous_brain")
             return None
     container.register('autonomous_brain', create_autonomous_brain, lifetime=ServiceLifetime.SINGLETON, required=False)
@@ -107,7 +176,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
             from core.reasoning.native_system2 import NativeSystem2Engine
             llm = container.get("llm_interface", default=None)
             return NativeSystem2Engine(llm=llm, governed=True)
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create native_system2")
             return None
     container.register('native_system2', create_native_system2, lifetime=ServiceLifetime.SINGLETON, required=True)
@@ -239,34 +308,12 @@ def register_cognitive_services(container, is_proxy: bool = False):
     container.register('cognition', lambda: container.get("context_manager"), lifetime=ServiceLifetime.SINGLETON, required=False)
 
     # Nucleus (MLX) - Apple Silicon Only
-    def _is_apple_silicon():
-        import platform
-        if platform.system() != "Darwin":
-            return False
-
-        machine = (platform.machine() or "").lower()
-        if machine in {"arm64", "aarch64"}:
-            return True
-
-        try:
-            res = subprocess.run(
-                ["sysctl", "-n", "hw.optional.arm64"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return res.stdout.strip() == "1"
-        except Exception as exc:
-            record_degradation("cognitive_provider", exc)
-            logger.debug("Apple Silicon probe failed: %s", exc)
-            return False
-
-    if _is_apple_silicon():
+    if is_apple_silicon_host():
         def create_nucleus():
             try:
                 from core.brain.llm.nucleus_manager import NucleusManager
                 return NucleusManager()
-            except Exception as exc:
+            except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS as exc:
                 record_degradation("cognitive_provider", exc)
                 logger.debug("Nucleus manager unavailable: %s", exc)
                 return None
@@ -302,7 +349,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.learning.genuine_learning_pipeline import register_continuous_learner
             return register_continuous_learner()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create continuous_learner")
             return None
     container.register('continuous_learner', create_continuous_learner, lifetime=ServiceLifetime.SINGLETON, required=False)
@@ -314,7 +361,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
             engine = container.get("cognitive_engine")
             orch = container.get("orchestrator", default=None)
             return ReActLoop(brain=engine, orchestrator=orch)
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create react_loop")
             return None
     container.register('react_loop', create_react_loop, lifetime=ServiceLifetime.SINGLETON, required=False)
@@ -324,7 +371,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.brain.personality_bridge import PersonalityBridge
             return PersonalityBridge()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create personality_bridge")
             return None
     container.register('personality_bridge', create_personality_bridge, lifetime=ServiceLifetime.SINGLETON, required=False)
@@ -334,7 +381,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.critic_engine import get_critic_engine
             return get_critic_engine()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create critic_engine")
             return None
     container.register('critic_engine', create_critic_engine, lifetime=ServiceLifetime.SINGLETON, required=True)
@@ -345,7 +392,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
             from core.collective.delegator import AgentDelegator
             orch = container.get("orchestrator", default=None)
             return AgentDelegator(orchestrator=orch)
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create agent_delegator")
             return None
     container.register('agent_delegator', create_agent_delegator, lifetime=ServiceLifetime.SINGLETON, required=True)
@@ -355,7 +402,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
         try:
             from core.cognition.paraconsistent_logic import ParaconsistentEngine
             return ParaconsistentEngine()
-        except Exception:
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create paraconsistent_engine")
             return None
     container.register('paraconsistent_engine', create_paraconsistent_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
