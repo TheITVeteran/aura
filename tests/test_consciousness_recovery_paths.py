@@ -11,6 +11,7 @@ from core.consciousness import (
     affective_steering,
     aura_protocol,
     consciousness_bridge,
+    endogenous_fitness,
     executive_closure,
     free_energy,
     neural_mesh,
@@ -22,6 +23,7 @@ from core.consciousness import (
 from core.consciousness.affective_steering import SteeringVectorLibrary, SubstrateSyncThread
 from core.consciousness.aura_protocol import AuraProtocolClient, build_message_from_state
 from core.consciousness.consciousness_bridge import ConsciousnessBridge
+from core.consciousness.endogenous_fitness import EndogenousFitness
 from core.consciousness.executive_closure import ExecutiveClosureEngine
 from core.consciousness.free_energy import FreeEnergyEngine
 from core.consciousness.neurochemical_system import NeurochemicalSystem
@@ -382,6 +384,86 @@ def test_structural_opacity_uses_weight_topology_as_readout():
     assert 0.0 <= signature.opacity_index <= 1.0
     assert 0.0 <= signature.causal_depth <= 1.0
     assert monitor._measurement_count == 1
+
+
+def test_endogenous_fitness_sampling_failures_keep_safe_defaults(monkeypatch):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        endogenous_fitness,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    class _UnavailableSubstrate:
+        idx_energy = 5
+
+        @property
+        def x(self):
+            self.read_attempted = True
+            raise RuntimeError("substrate energy unavailable")
+
+    class _UnavailableFreeEnergy:
+        @property
+        def _current(self):
+            self.read_attempted = True
+            raise RuntimeError("free energy unavailable")
+
+    class _UnavailableHomeostasis:
+        compute_vitality = _FailingCallable("vitality unavailable")
+
+        @property
+        def curiosity(self):
+            self.read_attempted = True
+            raise RuntimeError("curiosity unavailable")
+
+    def service_get(name, default=None):
+        services = {
+            "liquid_substrate": _UnavailableSubstrate(),
+            "homeostasis": _UnavailableHomeostasis(),
+            "anomaly_detector": types.SimpleNamespace(
+                get_threat_level=_FailingCallable("threat unavailable")
+            ),
+            "free_energy_engine": _UnavailableFreeEnergy(),
+            "phi_core": types.SimpleNamespace(
+                get_status=_FailingCallable("phi status unavailable")
+            ),
+            "affective_steering": types.SimpleNamespace(
+                get_status=_FailingCallable("affect status unavailable")
+            ),
+        }
+        if name == "ice_layer":
+            return None
+        return services.get(name, default)
+
+    monkeypatch.setattr(endogenous_fitness.ServiceContainer, "get", service_get)
+
+    fitness = EndogenousFitness()
+    sampled = fitness._sample_system_state()
+    vector = fitness._get_behavioral_state_vector()
+
+    assert sampled == {
+        "energy": 50.0,
+        "vitality": 0.8,
+        "threat_level": 0.0,
+        "free_energy": 0.3,
+        "entropy": 4.0,
+        "phi": 1.0,
+    }
+    assert vector.shape == (7,)
+    assert recorded == [
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+        ("endogenous_fitness", "RuntimeError"),
+    ]
 
 
 def test_substrate_authority_reader_and_audit_failures_are_visible(monkeypatch):

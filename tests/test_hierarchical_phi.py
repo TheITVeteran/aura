@@ -15,28 +15,22 @@ Covers:
 """
 from __future__ import annotations
 
-
 import math
-import os
-import random
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 # Make the aura root importable when tests run standalone.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.consciousness.hierarchical_phi import (  # noqa: E402
-    HierarchicalPhi,
     PRIMARY_N_NODES,
     SUBSYSTEM_SIZE,
-    MIN_HISTORY,
+    HierarchicalPhi,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -211,6 +205,16 @@ def test_exclusion_picks_max_phi_complex():
     if complex_candidates:
         top = max(complex_candidates, key=lambda c: c[1])
         assert r.max_complex_name == top[0] or r.max_complex_phi >= top[1] - 1e-9
+
+
+def test_primary_cognitive_candidate_is_real_sixteen_node_complex():
+    """The cognitive primary candidate must not collapse to an eight-node alias."""
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=500)
+    r = h.compute(force=True)
+    assert r is not None
+    assert r.primary_16_cognitive is not None
+    assert r.primary_16_cognitive.node_indices == tuple(range(8, 16)) + tuple(range(20, 28))
 
 
 # ── Monotonicity test ─────────────────────────────────────────────────────────

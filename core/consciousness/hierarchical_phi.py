@@ -41,21 +41,21 @@ ClosedCausalLoop which calls ``record_mesh_snapshot(mesh_field)`` every
 prediction tick.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import logging
 import math
 import random
 import threading
 import time
-from collections import Counter, deque
+from collections import deque
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.HierarchicalPhi")
 
@@ -107,10 +107,10 @@ MESH_ASSOCIATION_END = 48        # cols 16-47
 class SubsystemResult:
     """φ result for one subsystem (primary, mesh, or overlapping)."""
     name: str
-    node_indices: Tuple[int, ...]      # Indices into the unified 32+16K node space
+    node_indices: tuple[int, ...]      # Indices into the unified 32+16K node space
     phi: float
-    mip_a: Tuple[int, ...]
-    mip_b: Tuple[int, ...]
+    mip_a: tuple[int, ...]
+    mip_b: tuple[int, ...]
     n_transitions: int
     computed_ms: float = 0.0
 
@@ -122,14 +122,14 @@ class SubsystemResult:
 @dataclass
 class HierarchicalPhiResult:
     """The aggregated result: per-subsystem φ + the winning max-φ complex."""
-    primary_32: Optional[SubsystemResult]
-    primary_16_affective: Optional[SubsystemResult]
-    primary_16_cognitive: Optional[SubsystemResult]
-    mesh_subsystems: List[SubsystemResult]
+    primary_32: SubsystemResult | None
+    primary_16_affective: SubsystemResult | None
+    primary_16_cognitive: SubsystemResult | None
+    mesh_subsystems: list[SubsystemResult]
 
     max_complex_name: str
     max_complex_phi: float
-    max_complex_nodes: Tuple[int, ...]
+    max_complex_nodes: tuple[int, ...]
     max_complex_size: int
 
     total_compute_ms: float
@@ -138,7 +138,7 @@ class HierarchicalPhiResult:
     null_baseline_age_s: float = 0.0
     computed_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "primary_32_phi": round(self.primary_32.phi, 6) if self.primary_32 else None,
             "primary_16_affective_phi": (
@@ -191,21 +191,21 @@ class HierarchicalPhi:
         self._history: deque = deque(maxlen=HISTORY_LEN)
 
         # Per-node running value history for median binarization.
-        self._node_value_history: List[deque] = [
+        self._node_value_history: list[deque] = [
             deque(maxlen=128) for _ in range(PRIMARY_N_NODES)
         ]
         self._running_medians: np.ndarray = np.zeros(PRIMARY_N_NODES, dtype=np.float32)
 
         # K overlapping subsystems — list of (name, node_indices) into the 32-dim
         # primary node vector.  Regenerated when mesh sampling changes.
-        self._subsystems: List[Tuple[str, Tuple[int, ...]]] = self._default_subsystems()
+        self._subsystems: list[tuple[str, tuple[int, ...]]] = self._default_subsystems()
 
         # Mesh sampling plan: which 16 of the 4096 neurons feed nodes 16..31 of the
         # primary complex.  Chosen across tiers to cover sensory, association, exec.
         self._mesh_sample_indices: np.ndarray = self._choose_mesh_samples()
 
         # Last computed result (cached for REFRESH_INTERVAL_S).
-        self._last_result: Optional[HierarchicalPhiResult] = None
+        self._last_result: HierarchicalPhiResult | None = None
         self._last_compute_time: float = 0.0
 
         # Null-hypothesis baseline (computed occasionally).
@@ -261,7 +261,7 @@ class HierarchicalPhi:
         return np.array(sorted(samples), dtype=np.int32)
 
     @staticmethod
-    def _default_subsystems() -> List[Tuple[str, Tuple[int, ...]]]:
+    def _default_subsystems() -> list[tuple[str, tuple[int, ...]]]:
         """The K=8 overlapping 16-node subsystems carved out of the 32-node
         primary complex.
 
@@ -336,7 +336,7 @@ class HierarchicalPhi:
 
     # ── Binarized-history helpers ──────────────────────────────────────────────
 
-    def _snapshot_history(self) -> List[int]:
+    def _snapshot_history(self) -> list[int]:
         with self._lock:
             return list(self._history)
 
@@ -353,7 +353,7 @@ class HierarchicalPhi:
 
     def _build_causal_graph(
         self,
-        history: List[int],
+        history: list[int],
         node_indices: Sequence[int],
     ) -> np.ndarray:
         """k×k mutual-information graph from binarized history (no full TPM)."""
@@ -413,7 +413,7 @@ class HierarchicalPhi:
         return graph
 
     @staticmethod
-    def _fiedler_partition(graph: np.ndarray) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    def _fiedler_partition(graph: np.ndarray) -> tuple[tuple[int, ...], tuple[int, ...]]:
         """Spectral bisection via the Fiedler vector of the normalized Laplacian."""
         k = graph.shape[0]
         if k < 2:
@@ -422,11 +422,11 @@ class HierarchicalPhi:
         # Symmetrize so eigendecomposition is real.
         sym = 0.5 * (graph + graph.T)
         deg = sym.sum(axis=1)
-        L = np.diag(deg) - sym
+        laplacian = np.diag(deg) - sym
         # Handle isolated nodes (degree 0): pin them to partition A.
         try:
             # Small matrix — dense eigendecomp.
-            w, v = np.linalg.eigh(L)
+            w, v = np.linalg.eigh(laplacian)
         except np.linalg.LinAlgError:
             return (tuple(range(k // 2)), tuple(range(k // 2, k)))
 
@@ -444,10 +444,10 @@ class HierarchicalPhi:
 
     @staticmethod
     def _neighbor_candidates(
-        base: Tuple[Tuple[int, ...], Tuple[int, ...]],
+        base: tuple[tuple[int, ...], tuple[int, ...]],
         k: int,
         n_random: int,
-    ) -> List[Tuple[Tuple[int, ...], Tuple[int, ...]]]:
+    ) -> list[tuple[tuple[int, ...], tuple[int, ...]]]:
         """One-node-swap neighbors of ``base`` + a few random perturbations."""
         out = [base]
         a, b = base
@@ -493,9 +493,9 @@ class HierarchicalPhi:
     @classmethod
     def _phi_from_history(
         cls,
-        history: List[int],
+        history: list[int],
         subset_indices: Sequence[int],
-        partition_local: Tuple[Tuple[int, ...], Tuple[int, ...]],
+        partition_local: tuple[tuple[int, ...], tuple[int, ...]],
     ) -> float:
         """Estimate φ(partition_local | subset_indices) from transition history.
 
@@ -528,12 +528,12 @@ class HierarchicalPhi:
         min_obs = cls._MIN_SOURCE_OBS
 
         # Accumulate counts.  joint_by_src[(s_a,s_b)] -> {(sn_a,sn_b): count}.
-        joint_by_src: Dict[Tuple[int, int], Dict[Tuple[int, int], int]] = {}
-        a_by_src: Dict[int, Dict[int, int]] = {}
-        b_by_src: Dict[int, Dict[int, int]] = {}
-        a_src_counts: Dict[int, int] = {}
-        b_src_counts: Dict[int, int] = {}
-        src_counts: Dict[Tuple[int, int], int] = {}
+        joint_by_src: dict[tuple[int, int], dict[tuple[int, int], int]] = {}
+        a_by_src: dict[int, dict[int, int]] = {}
+        b_by_src: dict[int, dict[int, int]] = {}
+        a_src_counts: dict[int, int] = {}
+        b_src_counts: dict[int, int] = {}
+        src_counts: dict[tuple[int, int], int] = {}
 
         for t in range(n_trans):
             s = history[t]
@@ -609,10 +609,10 @@ class HierarchicalPhi:
 
     def _compute_subsystem(
         self,
-        history: List[int],
+        history: list[int],
         name: str,
-        node_indices: Tuple[int, ...],
-    ) -> Optional[SubsystemResult]:
+        node_indices: tuple[int, ...],
+    ) -> SubsystemResult | None:
         t0 = time.time()
         n_trans = len(history) - 1
         if n_trans < MIN_HISTORY or len(node_indices) < 2:
@@ -650,7 +650,7 @@ class HierarchicalPhi:
 
     # ── Public compute ─────────────────────────────────────────────────────────
 
-    def compute(self, force: bool = False) -> Optional[HierarchicalPhiResult]:
+    def compute(self, force: bool = False) -> HierarchicalPhiResult | None:
         """Compute the full hierarchical φ snapshot.
 
         Cached for REFRESH_INTERVAL_S unless ``force=True``.
@@ -678,16 +678,15 @@ class HierarchicalPhi:
             self._n_compute_calls += 1
 
             # Primary 32-node + 2 primary-16 + K mesh subsystems, in parallel.
-            jobs: List[Tuple[str, Tuple[int, ...]]] = [
+            jobs: list[tuple[str, tuple[int, ...]]] = [
                 ("primary_32", tuple(range(PRIMARY_N_NODES))),
                 ("primary_16_affective", tuple(range(16))),
-                ("primary_16_cognitive", tuple(range(8, 16)) + tuple(range(8, 16))[:0]),
-                # ^ keep 8-node for quick sanity if needed; but main cognitive-16 is
-                # simply the 8..15 cognitive range; we use primary_16_affective
-                # as a baseline equal to phi_core's 16-node subject.
+                ("primary_16_cognitive", tuple(range(8, 16)) + tuple(range(20, 28))),
             ]
-            # Replace cognitive placeholder with a clean 16-cognitive subsystem only
-            # if mesh-sampled indices cover the cognitive band. Otherwise drop.
+            # The cognitive subsystem combines high-order cognitive-affective
+            # nodes with association/executive mesh samples from the same
+            # primary state vector, giving the exclusion pass a real 16-node
+            # cognition-heavy candidate instead of the full affective baseline.
             jobs = [j for j in jobs if len(j[1]) >= 2]
             for name, idxs in self._subsystems:
                 jobs.append((name, idxs))
@@ -698,7 +697,7 @@ class HierarchicalPhi:
                     self._executor.submit(self._compute_subsystem, history, name, idxs)
                 )
 
-            results: List[SubsystemResult] = []
+            results: list[SubsystemResult] = []
             for f in futures:
                 try:
                     r = f.result(timeout=10.0)
@@ -715,7 +714,7 @@ class HierarchicalPhi:
                          if r.name not in {"primary_32", "primary_16_affective", "primary_16_cognitive"}]
 
             # IIT 4.0 EXCLUSION: pick the subsystem with the highest φ.
-            all_for_max: List[SubsystemResult] = [r for r in results if r.is_complex]
+            all_for_max: list[SubsystemResult] = [r for r in results if r.is_complex]
             if all_for_max:
                 winner = max(all_for_max, key=lambda r: r.phi)
             else:
@@ -770,7 +769,7 @@ class HierarchicalPhi:
 
     # ── Null-hypothesis guard ──────────────────────────────────────────────────
 
-    def compute_null_baseline(self, history: Optional[List[int]] = None) -> float:
+    def compute_null_baseline(self, history: list[int] | None = None) -> float:
         """Destroy temporal structure by shuffling history, then recompute φ.
 
         Φ under shuffled history should be ~0 if our estimator is well
@@ -802,9 +801,9 @@ class HierarchicalPhi:
 
     # ── Public accessors ───────────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         r = self._last_result
-        status: Dict[str, Any] = {
+        status: dict[str, Any] = {
             "primary_n_nodes": PRIMARY_N_NODES,
             "n_subsystems": len(self._subsystems),
             "subsystem_size": SUBSYSTEM_SIZE,
@@ -820,7 +819,7 @@ class HierarchicalPhi:
     def current_max_phi(self) -> float:
         return self._last_result.max_complex_phi if self._last_result else 0.0
 
-    def current_max_complex(self) -> Optional[Tuple[str, Tuple[int, ...], float]]:
+    def current_max_complex(self) -> tuple[str, tuple[int, ...], float] | None:
         r = self._last_result
         if r is None:
             return None
@@ -829,13 +828,14 @@ class HierarchicalPhi:
     def shutdown(self) -> None:
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("hierarchical_phi", exc)
+            logger.debug("HierarchicalPhi executor shutdown failed: %s", exc)
 
 
 # ── Singleton-style accessor ──────────────────────────────────────────────────
 
-_INSTANCE: Optional[HierarchicalPhi] = None
+_INSTANCE: HierarchicalPhi | None = None
 
 
 def get_hierarchical_phi() -> HierarchicalPhi:

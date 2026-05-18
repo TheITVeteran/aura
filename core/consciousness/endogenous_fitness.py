@@ -37,7 +37,6 @@ Integration:
 """
 from __future__ import annotations
 
-
 __all__ = [
     "EndogenousFitness",
     "EndogenousFitnessConfig",
@@ -52,11 +51,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.EndogenousFitness")
 
@@ -191,7 +191,7 @@ class FitnessResult:
     """
     fitness_score: float
     survival_time: float
-    crisis_reason: Optional[CrisisReason]
+    crisis_reason: CrisisReason | None
     efficiency_bonus: float
     phi_bonus: float
     behavioral_fitness: float
@@ -214,10 +214,10 @@ class SpeciesInfo:
         champions_per_species: Best fitness score in each species.
     """
     species_count: int
-    sizes: List[int]
+    sizes: list[int]
     turnover_rate: float
     silhouette_score: float
-    champions_per_species: List[float] = field(default_factory=list)
+    champions_per_species: list[float] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +248,8 @@ class BehavioralGenome:
     to more nuanced behavioral strategies.
     """
 
-    def __init__(self, weights: Optional[np.ndarray] = None,
-                 rng: Optional[np.random.Generator] = None):
+    def __init__(self, weights: np.ndarray | None = None,
+                 rng: np.random.Generator | None = None):
         self._rng = rng or np.random.default_rng()
         if weights is not None:
             if weights.shape != (NUM_ACTIONS, STATE_DIM):
@@ -343,7 +343,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
 
 
-def _silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:
+def _silhouette_score(data: np.ndarray, labels: np.ndarray) -> float:
     """Compute the mean silhouette score for a clustering.
 
     The silhouette score measures how similar each point is to its own
@@ -353,7 +353,7 @@ def _silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:
     This is a pure-numpy implementation to avoid requiring scikit-learn.
 
     Args:
-        X: Data matrix of shape (n_samples, n_features).
+        data: Data matrix of shape (n_samples, n_features).
         labels: Cluster assignment for each sample, shape (n_samples,).
 
     Returns:
@@ -368,8 +368,8 @@ def _silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:
 
     # Pairwise distance matrix (Euclidean)
     # Using broadcasting: ||x_i - x_j||^2 = ||x_i||^2 + ||x_j||^2 - 2*x_i.x_j
-    norms_sq = np.sum(X ** 2, axis=1)
-    dist_sq = norms_sq[:, np.newaxis] + norms_sq[np.newaxis, :] - 2.0 * (X @ X.T)
+    norms_sq = np.sum(data ** 2, axis=1)
+    dist_sq = norms_sq[:, np.newaxis] + norms_sq[np.newaxis, :] - 2.0 * (data @ data.T)
     dist = np.sqrt(np.maximum(dist_sq, 0.0))
 
     silhouettes = np.zeros(n, dtype=np.float64)
@@ -405,14 +405,14 @@ def _silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:
     return float(np.mean(silhouettes))
 
 
-def _kmeans(X: np.ndarray, k: int, max_iter: int = 50,
-            rng: Optional[np.random.Generator] = None) -> np.ndarray:
+def _kmeans(data: np.ndarray, k: int, max_iter: int = 50,
+            rng: np.random.Generator | None = None) -> np.ndarray:
     """Simple k-means clustering. Returns label array of shape (n_samples,).
 
     Pure numpy implementation — no sklearn dependency.
 
     Args:
-        X: Data matrix of shape (n_samples, n_features).
+        data: Data matrix of shape (n_samples, n_features).
         k: Number of clusters.
         max_iter: Maximum iterations.
         rng: Random number generator for centroid initialization.
@@ -421,25 +421,25 @@ def _kmeans(X: np.ndarray, k: int, max_iter: int = 50,
         Integer array of cluster labels, shape (n_samples,).
     """
     rng = rng or np.random.default_rng()
-    n, d = X.shape
+    n, d = data.shape
     if n <= k:
         return np.arange(n, dtype=np.int32)
 
     # k-means++ initialization for better convergence
-    centroids = np.empty((k, d), dtype=X.dtype)
-    centroids[0] = X[rng.integers(0, n)]
+    centroids = np.empty((k, d), dtype=data.dtype)
+    centroids[0] = data[rng.integers(0, n)]
     for c in range(1, k):
         dist_sq = np.min(
-            np.sum((X[:, np.newaxis, :] - centroids[np.newaxis, :c, :]) ** 2, axis=2),
+            np.sum((data[:, np.newaxis, :] - centroids[np.newaxis, :c, :]) ** 2, axis=2),
             axis=1,
         )
         probs = dist_sq / (dist_sq.sum() + 1e-12)
-        centroids[c] = X[rng.choice(n, p=probs)]
+        centroids[c] = data[rng.choice(n, p=probs)]
 
     labels = np.zeros(n, dtype=np.int32)
     for _ in range(max_iter):
         # Assign
-        dists = np.sum((X[:, np.newaxis, :] - centroids[np.newaxis, :, :]) ** 2, axis=2)
+        dists = np.sum((data[:, np.newaxis, :] - centroids[np.newaxis, :, :]) ** 2, axis=2)
         new_labels = np.argmin(dists, axis=1).astype(np.int32)
 
         if np.array_equal(new_labels, labels):
@@ -450,7 +450,7 @@ def _kmeans(X: np.ndarray, k: int, max_iter: int = 50,
         for c in range(k):
             mask = labels == c
             if np.any(mask):
-                centroids[c] = X[mask].mean(axis=0)
+                centroids[c] = data[mask].mean(axis=0)
 
     return labels
 
@@ -510,20 +510,20 @@ class EndogenousFitness:
 
         # Speciation tracking
         self._species_labels: np.ndarray = np.array([], dtype=np.int32)
-        self._species_history: List[SpeciesInfo] = []
+        self._species_history: list[SpeciesInfo] = []
         self._evolution_cycle_count: int = 0
         self._previous_species_count: int = 1
 
         # Genome archive for speciation analysis
         # Each entry: (genome_vector, fitness_score)
-        self._genome_archive: List[Tuple[np.ndarray, float]] = []
+        self._genome_archive: list[tuple[np.ndarray, float]] = []
         self._archive_max_size: int = 200
 
         # Running statistics for efficiency bonus calculation
         # Stores per-tick average energy consumption from each evaluation.
         # Used to compute a rolling 90th-percentile baseline so the
         # efficiency gradient does not collapse after a single outlier.
-        self._energy_avg_observations: List[float] = []
+        self._energy_avg_observations: list[float] = []
         self._energy_baseline: float = 100.0  # rolling p90 baseline (same unit as avg_consumed)
 
         logger.info(
@@ -542,7 +542,7 @@ class EndogenousFitness:
     async def evaluate_fitness(
         self,
         genome_params: dict,
-        evaluation_window_s: Optional[float] = None,
+        evaluation_window_s: float | None = None,
     ) -> FitnessResult:
         """Evaluate a genome's fitness by observing system survival.
 
@@ -605,11 +605,11 @@ class EndogenousFitness:
         energy_consumed_total: float = 0.0
         phi_total: float = 0.0
         tick_count: int = 0
-        crisis_reason: Optional[CrisisReason] = None
+        crisis_reason: CrisisReason | None = None
         start_time = time.monotonic()
-        previous_energy: Optional[float] = None
+        previous_energy: float | None = None
 
-        for t in range(max_ticks):
+        for _t in range(max_ticks):
             # Yield control so the rest of the system keeps running.
             # This is critical: we are observing the LIVE system, not
             # a simulation. The genome is already applied to the mesh,
@@ -789,7 +789,7 @@ class EndogenousFitness:
     # System state sampling
     # ------------------------------------------------------------------
 
-    def _sample_system_state(self) -> Dict[str, float]:
+    def _sample_system_state(self) -> dict[str, float]:
         """Read the current system state from live services.
 
         This reaches into the ServiceContainer to read real values from
@@ -797,7 +797,7 @@ class EndogenousFitness:
         safe defaults are used (the system is assumed healthy unless we
         can prove otherwise — innocent until proven dead).
         """
-        state: Dict[str, float] = {
+        state: dict[str, float] = {
             "energy": 50.0,       # safe default: mid-range
             "vitality": 0.8,      # safe default: healthy
             "threat_level": 0.0,  # safe default: no threat
@@ -818,16 +818,18 @@ class EndogenousFitness:
                     getattr(substrate, "idx_energy", 5)
                 ])
                 state["energy"] = raw_energy * 100.0  # scale to 0-100 range
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness energy sample failed: %s", exc)
 
         # Vitality (autopoiesis) from homeostasis
         try:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis is not None:
                 state["vitality"] = float(homeostasis.compute_vitality())
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness vitality sample failed: %s", exc)
 
         # Threat level from anomaly detector / ICE layer
         try:
@@ -838,8 +840,9 @@ class EndogenousFitness:
                 anomaly = ServiceContainer.get("anomaly_detector", default=None)
                 if anomaly is not None and hasattr(anomaly, "get_threat_level"):
                     state["threat_level"] = float(anomaly.get_threat_level())
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness threat sample failed: %s", exc)
 
         # Free energy from the active inference engine
         try:
@@ -852,8 +855,9 @@ class EndogenousFitness:
                     state["free_energy"] = float(
                         getattr(fe_engine, "_smoothed_fe", 0.3)
                     )
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness free-energy sample failed: %s", exc)
 
         # Entropy from phi_core or substrate
         try:
@@ -867,8 +871,9 @@ class EndogenousFitness:
                 substrate = ServiceContainer.get("liquid_substrate", default=None)
                 if substrate is not None:
                     state["phi"] = float(getattr(substrate, "_current_phi", 1.0))
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness phi/entropy sample failed: %s", exc)
 
         return state
 
@@ -894,8 +899,9 @@ class EndogenousFitness:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis is not None:
                 vec[2] = float(np.clip(getattr(homeostasis, "curiosity", 0.5), 0.0, 1.0))
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness curiosity sample failed: %s", exc)
 
         try:
             affect = ServiceContainer.get("affective_steering", default=None)
@@ -907,8 +913,9 @@ class EndogenousFitness:
                 sh = status.get("social_hunger", None)
                 if sh is not None:
                     vec[1] = float(np.clip(sh, 0.0, 1.0))
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("endogenous_fitness", exc)
+            logger.debug("EndogenousFitness social hunger sample failed: %s", exc)
 
         return vec
 
@@ -919,7 +926,7 @@ class EndogenousFitness:
     def _assess_behavioral_fitness(
         self,
         behavior: BehavioralGenome,
-        state: Dict[str, float],
+        state: dict[str, float],
     ) -> float:
         """Assess how well the behavioral genome's preferences align with
         the system's current needs.
@@ -969,7 +976,7 @@ class EndogenousFitness:
     def mutate_behavioral_genome(
         self,
         genome: np.ndarray,
-        rate: Optional[float] = None,
+        rate: float | None = None,
     ) -> np.ndarray:
         """Mutate a behavioral genome (FCM weight matrix).
 
@@ -1003,7 +1010,7 @@ class EndogenousFitness:
     def mutate_structural_genome(
         self,
         genome_params: dict,
-        rate: Optional[float] = None,
+        rate: float | None = None,
     ) -> dict:
         """Mutate structural genome parameters.
 
@@ -1072,23 +1079,23 @@ class EndogenousFitness:
             return
 
         # Build the data matrix from archived genome vectors
-        X = np.array([vec for vec, _ in self._genome_archive], dtype=np.float32)
+        data = np.array([vec for vec, _ in self._genome_archive], dtype=np.float32)
         fitnesses = np.array([fit for _, fit in self._genome_archive], dtype=np.float32)
 
         # Normalize features for fair distance computation
-        std = X.std(axis=0)
+        std = data.std(axis=0)
         std[std < 1e-8] = 1.0
-        X_norm = (X - X.mean(axis=0)) / std
+        normalized_data = (data - data.mean(axis=0)) / std
 
         best_k = 1
         best_score = -1.0
-        best_labels = np.zeros(len(X_norm), dtype=np.int32)
+        best_labels = np.zeros(len(normalized_data), dtype=np.int32)
 
         for k in range(self.cfg.speciation_min_k, self.cfg.speciation_max_k + 1):
-            if k >= len(X_norm):
+            if k >= len(normalized_data):
                 break
-            labels = _kmeans(X_norm, k, rng=self._rng)
-            score = _silhouette_score(X_norm, labels)
+            labels = _kmeans(normalized_data, k, rng=self._rng)
+            score = _silhouette_score(normalized_data, labels)
             if score > best_score:
                 best_score = score
                 best_k = k
@@ -1096,8 +1103,8 @@ class EndogenousFitness:
 
         # Compute species sizes and champions
         species_count = best_k if best_score > self.cfg.speciation_silhouette_threshold else 1
-        sizes: List[int] = []
-        champions: List[float] = []
+        sizes: list[int] = []
+        champions: list[float] = []
 
         if species_count > 1:
             for s in range(best_k):
@@ -1113,7 +1120,7 @@ class EndogenousFitness:
             sizes = [sizes[i] for i in order]
             champions = [champions[i] for i in order]
         else:
-            sizes = [len(X_norm)]
+            sizes = [len(normalized_data)]
             champions = [float(np.max(fitnesses)) if len(fitnesses) > 0 else 0.0]
 
         # Turnover: how much the species landscape changed
@@ -1162,8 +1169,8 @@ class EndogenousFitness:
 
     def get_niche_protected_genomes(
         self,
-        genomes: List[Tuple[np.ndarray, float]],
-    ) -> List[int]:
+        genomes: list[tuple[np.ndarray, float]],
+    ) -> list[int]:
         """Return indices of genomes that should be protected via niche protection.
 
         For each species, the best-performing genome is protected from
@@ -1185,26 +1192,26 @@ class EndogenousFitness:
                 return [best_idx]
 
             # Cluster the provided genomes
-            X = np.array([g[0] for g in genomes], dtype=np.float32)
+            data = np.array([g[0] for g in genomes], dtype=np.float32)
             fitnesses = np.array([g[1] for g in genomes], dtype=np.float32)
 
-            std = X.std(axis=0)
+            std = data.std(axis=0)
             std[std < 1e-8] = 1.0
-            X_norm = (X - X.mean(axis=0)) / std
+            normalized_data = (data - data.mean(axis=0)) / std
 
             best_k = 1
             best_score = -1.0
-            best_labels = np.zeros(len(X_norm), dtype=np.int32)
+            best_labels = np.zeros(len(normalized_data), dtype=np.int32)
 
-            for k in range(self.cfg.speciation_min_k, min(self.cfg.speciation_max_k + 1, len(X_norm))):
-                labels = _kmeans(X_norm, k, rng=self._rng)
-                score = _silhouette_score(X_norm, labels)
+            for k in range(self.cfg.speciation_min_k, min(self.cfg.speciation_max_k + 1, len(normalized_data))):
+                labels = _kmeans(normalized_data, k, rng=self._rng)
+                score = _silhouette_score(normalized_data, labels)
                 if score > best_score:
                     best_score = score
                     best_k = k
                     best_labels = labels
 
-            protected: List[int] = []
+            protected: list[int] = []
             if best_score > self.cfg.speciation_silhouette_threshold:
                 for s in range(best_k):
                     mask = best_labels == s
@@ -1248,7 +1255,7 @@ class EndogenousFitness:
                 rng=self._rng,
             )
 
-    def get_behavioral_preferences(self) -> Dict[str, float]:
+    def get_behavioral_preferences(self) -> dict[str, float]:
         """Compute and return current action preferences from the FCM.
 
         Useful for debugging and visualization: shows what actions the
@@ -1266,7 +1273,7 @@ class EndogenousFitness:
     # Genome vector conversion for speciation
     # ------------------------------------------------------------------
 
-    def _genome_to_vector(self, genome_params: dict) -> Optional[np.ndarray]:
+    def _genome_to_vector(self, genome_params: dict) -> np.ndarray | None:
         """Flatten a genome parameter dictionary into a 1D vector for clustering.
 
         Concatenates all numeric arrays and scalar values into a single
@@ -1274,7 +1281,7 @@ class EndogenousFitness:
 
         Returns None if the genome has no numeric content.
         """
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
 
         for key in sorted(genome_params.keys()):
             value = genome_params[key]
@@ -1291,7 +1298,7 @@ class EndogenousFitness:
     # Status
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return a status dictionary for dashboards and monitoring."""
         with self._lock:
             species = self._species_history[-1] if self._species_history else None
@@ -1310,7 +1317,7 @@ class EndogenousFitness:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[EndogenousFitness] = None
+_instance: EndogenousFitness | None = None
 
 
 def get_endogenous_fitness(
