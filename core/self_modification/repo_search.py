@@ -1,25 +1,32 @@
 """InternalRepositorySearch: Deep Technical Navigation for Aura
 Allows Aura to grep her own source code and map dependencies autonomously.
 """
-from core.runtime.errors import record_degradation
 import asyncio
+import logging
 import os
 import re
-import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("SelfEvolution.RepoSearch")
 
 class InternalRepositorySearch:
     """A tool for high-precision searching and dependency mapping within Aura."""
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Path | None = None):
         from core.config import config
         self.root = project_root or config.paths.project_root
 
-    async def grep(self, pattern: str, includes: List[str] = None, excludes: List[str] = None, 
-                   exclude_file: Optional[str] = None, multiline: bool = False) -> List[Dict[str, Any]]:
+    async def grep(
+        self,
+        pattern: str,
+        includes: list[str] = None,
+        excludes: list[str] = None,
+        exclude_file: str | None = None,
+        multiline: bool = False,
+    ) -> list[dict[str, Any]]:
         """Search the repository for a specific pattern with technical context (Async)."""
         flags = re.MULTILINE | re.DOTALL if multiline else 0
         try:
@@ -85,7 +92,7 @@ class InternalRepositorySearch:
     def _get_snippet(self, file_path: Path, line_no: int, context: int = 2) -> str:
         """Helper to get a small context snippet around a match."""
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(file_path, encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
             start = max(0, line_no - context - 1)
             end = min(len(lines), line_no + context)
@@ -93,7 +100,7 @@ class InternalRepositorySearch:
         except Exception:
             return ""
 
-    async def map_dependencies(self, module_name: str) -> Dict[str, Any]:
+    async def map_dependencies(self, module_name: str) -> dict[str, Any]:
         """Maps what other modules depend on a given module and what it depends on."""
         dependents = []
         dependencies = []
@@ -122,11 +129,13 @@ class InternalRepositorySearch:
             "dependents": list(set(dependents))
         }
 
-    async def audit_architectural_footprint(self) -> Dict[str, List[str]]:
+    async def audit_architectural_footprint(self) -> dict[str, list[str]]:
         """Identifies pervasive patterns across the entire system (Async)."""
         indicators = {
             "monkey_patches": await self.grep(r"setattr\(.*,") ,
-            "hardcoded_paths": await self.grep(r"['\"]/Users/.*['\"]|['\"]C:\\.*['\"]"),
+            "hardcoded_paths": await self.grep(
+                r"['\"]/" + r"Users/.*['\"]|['\"]C:\\.*['\"]"
+            ),
             "sync_io_in_async": await self.grep(r"async def.*[\s\S]*?(time\.sleep|requests\.get|subprocess\.run)", multiline=True)
         }
         

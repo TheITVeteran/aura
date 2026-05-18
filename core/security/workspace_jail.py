@@ -11,22 +11,22 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
-from typing import FrozenSet, Optional, Set, Tuple
 
 logger = logging.getLogger("Aura.Security.WorkspaceJail")
 
 # Default allowed roots. The jail permits I/O within these trees.
-_DEFAULT_ALLOWED_ROOTS: Tuple[str, ...] = (
+_DEFAULT_ALLOWED_ROOTS: tuple[str, ...] = (
     str(Path.home() / ".aura"),
     str(Path.home() / "Desktop"),
     str(Path.home() / "Documents"),
     str(Path.home() / "Downloads"),
-    "/tmp/aura",
+    str(Path(tempfile.gettempdir()) / "aura"),
 )
 
 # Absolutely denied paths, even if under an allowed root.
-_DENIED_PATHS: FrozenSet[str] = frozenset({
+_DENIED_PATHS: frozenset[str] = frozenset({
     "/etc/passwd",
     "/etc/shadow",
     "/etc/sudoers",
@@ -38,7 +38,7 @@ _DENIED_PATHS: FrozenSet[str] = frozenset({
 })
 
 # Denied filename patterns
-_DENIED_FILENAMES: FrozenSet[str] = frozenset({
+_DENIED_FILENAMES: frozenset[str] = frozenset({
     ".env",
     ".env.local",
     ".env.production",
@@ -54,19 +54,19 @@ class WorkspaceJail:
 
     def __init__(
         self,
-        allowed_roots: Optional[Tuple[str, ...]] = None,
-        extra_denied: Optional[Set[str]] = None,
+        allowed_roots: tuple[str, ...] | None = None,
+        extra_denied: set[str] | None = None,
     ) -> None:
         self._allowed_roots = tuple(
             str(Path(r).resolve()) for r in (allowed_roots or _DEFAULT_ALLOWED_ROOTS)
         )
-        self._extra_denied: Set[str] = extra_denied or set()
+        self._extra_denied: set[str] = extra_denied or set()
         logger.info(
             "WorkspaceJail initialized with %d allowed roots",
             len(self._allowed_roots),
         )
 
-    def validate_path(self, raw_path: str) -> Tuple[bool, str, str]:
+    def validate_path(self, raw_path: str) -> tuple[bool, str, str]:
         """Validate a path against the jail.
 
         Returns:
@@ -115,7 +115,7 @@ class WorkspaceJail:
         )
         return False, resolved, "outside_jail"
 
-    def sanitize_path(self, raw_path: str) -> Optional[str]:
+    def sanitize_path(self, raw_path: str) -> str | None:
         """Sanitize and return the resolved path, or None if denied."""
         allowed, resolved, reason = self.validate_path(raw_path)
         if allowed:
@@ -137,7 +137,7 @@ class WorkspaceJail:
 
 
 # Singleton
-_jail_instance: Optional[WorkspaceJail] = None
+_jail_instance: WorkspaceJail | None = None
 
 
 def get_workspace_jail() -> WorkspaceJail:

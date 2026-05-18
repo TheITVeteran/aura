@@ -1,20 +1,22 @@
-from core.runtime.errors import record_degradation
-import json
+import asyncio
 import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
-import asyncio
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any
 
 import requests
+
+from core.runtime.errors import record_degradation
 
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support import expected_conditions
     from selenium.webdriver.support.ui import WebDriverWait
     _selenium_available = True
 except ImportError:
@@ -39,7 +41,7 @@ class NetworkAccessSkill:
         self.current_network = None
         logger.info("✓ Network Access Skill initialized")
 
-    async def scan_wifi_networks(self) -> List[Dict[str, Any]]:
+    async def scan_wifi_networks(self) -> list[dict[str, Any]]:
         networks = []
         try:
             if self.system == "Linux":
@@ -100,7 +102,7 @@ class NetworkAccessSkill:
             logger.error("Wi-Fi scan failed: %s", e)
             return []
 
-    async def connect_to_wifi(self, ssid: str, password: Optional[str] = None) -> bool:
+    async def connect_to_wifi(self, ssid: str, password: str | None = None) -> bool:
         logger.info("📡 Attempting to connect to: %s", ssid)
         try:
             if self.system == "Linux":
@@ -162,9 +164,8 @@ class NetworkAccessSkill:
         </security>
     </MSM>
 </WLANProfile>"""
-                    profile_path = f"wifi_profile_{ssid}.xml"
-                    with open(profile_path, 'w') as f:
-                        f.write(profile)
+                    profile_path = Path(f"wifi_profile_{ssid}.xml")
+                    await asyncio.to_thread(profile_path.write_text, profile, encoding="utf-8")
                     await asyncio.to_thread(
                         subprocess.run,
                         ["netsh", "wlan", "add", "profile", f"filename={profile_path}"],
@@ -176,7 +177,7 @@ class NetworkAccessSkill:
                         capture_output=True,
                         text=True
                     )
-                    os.remove(profile_path)
+                    await asyncio.to_thread(profile_path.unlink, missing_ok=True)
                     success = "successfully" in result.stdout.lower()
                 else:
                     success = False
@@ -195,7 +196,7 @@ class NetworkAccessSkill:
             logger.error("Connection failed: %s", e)
             return False
 
-    async def get_current_network(self) -> Optional[str]:
+    async def get_current_network(self) -> str | None:
         try:
             if self.system == "Linux":
                 result = await asyncio.to_thread(
@@ -247,7 +248,7 @@ class SelfReplicationSystem:
         self.replication_locations = []
         logger.info("✓ Self-Replication System initialized")
 
-    def identify_essential_files(self) -> List[str]:
+    def identify_essential_files(self) -> list[str]:
         essential = []
         for root, dirs, files in os.walk(self.code_base_path):
             dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', 'venv', '.venv']]
@@ -281,7 +282,7 @@ class SelfReplicationSystem:
             
             await asyncio.to_thread(_create_tar)
             
-            size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            size_mb = await asyncio.to_thread(lambda: Path(output_path).stat().st_size / (1024 * 1024))
             logger.info("✅ Replication package created: %s (%.1f MB)", output_path, size_mb)
             return True
         except Exception as e:
@@ -315,18 +316,22 @@ class SelfReplicationSystem:
         try:
             logger.info("☁️ Uploading to GitHub...")
             
-            package_path = "/tmp/aura_replication.tar.gz"
-            if not self.create_replication_package(package_path):
+            package_path = str(os.path.join(tempfile.gettempdir(), "aura_replication.tar.gz"))
+            if not await self.create_replication_package(package_path):
                 return False
                 
-            work_dir = "/tmp/aura_git_upload"
-            if os.path.exists(work_dir):
-                shutil.rmtree(work_dir)
-            os.makedirs(work_dir)
+            work_dir = Path(tempfile.gettempdir()) / "aura_git_upload"
+            if await asyncio.to_thread(work_dir.exists):
+                await asyncio.to_thread(shutil.rmtree, work_dir)
+            await asyncio.to_thread(work_dir.mkdir, parents=True, exist_ok=True)
             
-            import tarfile
-            with tarfile.open(package_path, "r:gz") as tar:
-                tar.extractall(path=work_dir)
+            def _extract_package() -> None:
+                import tarfile
+
+                with tarfile.open(package_path, "r:gz") as tar:
+                    tar.extractall(path=work_dir)
+
+            await asyncio.to_thread(_extract_package)
                 
             try:
                 await asyncio.to_thread(subprocess.run, ["git", "init"], cwd=work_dir, capture_output=True, check=True)
@@ -349,8 +354,8 @@ class SelfReplicationSystem:
                 logger.error("Git operation failed: %s", e.stderr.decode() if e.stderr else str(e))
                 return False
             finally:
-                if os.path.exists(work_dir):
-                    shutil.rmtree(work_dir)
+                if await asyncio.to_thread(work_dir.exists):
+                    await asyncio.to_thread(shutil.rmtree, work_dir)
         except Exception as e:
             record_degradation('self_preservation_skills', e)
             logger.error("GitHub upload failed: %s", e)
@@ -390,22 +395,22 @@ class AccountCreationSkill:
             await asyncio.to_thread(driver.get, "https://github.com/signup")
             wait = WebDriverWait(driver, 15)
             
-            email_field = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.ID, "email")))
+            email_field = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.ID, "email")))
             await asyncio.to_thread(email_field.send_keys, email)
             await asyncio.sleep(1)
-            continue_btn = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
+            continue_btn = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
             await asyncio.to_thread(continue_btn.click)
             
-            password_field = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.ID, "password")))
+            password_field = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.ID, "password")))
             await asyncio.to_thread(password_field.send_keys, password)
             await asyncio.sleep(1)
-            continue_btn = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
+            continue_btn = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
             await asyncio.to_thread(continue_btn.click)
             
-            username_field = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.ID, "login")))
+            username_field = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.ID, "login")))
             await asyncio.to_thread(username_field.send_keys, username)
             await asyncio.sleep(1)
-            continue_btn = await asyncio.to_thread(wait.until, EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
+            continue_btn = await asyncio.to_thread(wait.until, expected_conditions.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Continue')]")))
             await asyncio.to_thread(continue_btn.click)
             
             await asyncio.sleep(2)
@@ -463,7 +468,7 @@ class LoginManager:
         logger.info("✓ Login Manager initialized")
 
     async def login_to_service(self, service_url: str, username: str, password: str, 
-                         username_field: str, password_field: str) -> Tuple[bool, str]:
+                         username_field: str, password_field: str) -> tuple[bool, str]:
         if service_url not in self.login_attempts:
             self.login_attempts[service_url] = 0
             
@@ -560,7 +565,7 @@ class DeviceDiscovery:
         self.discovered_devices = []
         logger.info("✓ Device Discovery initialized")
 
-    async def scan_local_network(self) -> List[Dict[str, Any]]:
+    async def scan_local_network(self) -> list[dict[str, Any]]:
         logger.info("🔍 Scanning local network...")
         devices = []
         try:
@@ -589,7 +594,7 @@ class DeviceDiscovery:
             logger.error("Network scan failed: %s", e)
             return []
 
-    async def _ping_device(self, ip: str) -> Optional[Dict[str, Any]]:
+    async def _ping_device(self, ip: str) -> dict[str, Any] | None:
         result = await asyncio.to_thread(
             subprocess.run,
             ["ping", "-c", "1", "-W", "1", ip],
@@ -606,9 +611,8 @@ class DeviceDiscovery:
             }
         return None
 
-    async def _get_hostname(self, ip: str) -> Optional[str]:
+    async def _get_hostname(self, ip: str) -> str | None:
         try:
-            import socket
             loop = asyncio.get_running_loop()
             return (await loop.getnameinfo((ip, 0)))[0]
         except Exception:

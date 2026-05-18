@@ -24,23 +24,24 @@ Defensive against:
 """
 
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
+import asyncio
 import json
 import logging
 import os
 import re
+import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
 logger = logging.getLogger("Aura.ChatPreflight")
 
-PROJECT_ROOT = Path("/Users/bryan/.aura/live-source").resolve()
+PROJECT_ROOT = Path(os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[2])).resolve()
 PENDING_QUEUE_PATH = Path.home() / ".aura/live-source/aura/knowledge/pending-chat-queue.jsonl"
 
 FILE_READ_BUDGET = 16 * 1024  # 16 KB total across all referenced files
@@ -83,13 +84,13 @@ _REF_PATTERNS = [
 ]
 
 
-def extract_file_references(message: str) -> List[str]:
+def extract_file_references(message: str) -> list[str]:
     """Return file path strings mentioned in the user's message.
     Order-preserving, deduplicated, capped at MAX_FILES_PER_TURN.
     """
     if not message:
         return []
-    seen: List[str] = []
+    seen: list[str] = []
     for pat in _REF_PATTERNS:
         for match in pat.finditer(message):
             cand = match.group(1).strip(" \t.,;:!?")
@@ -102,7 +103,7 @@ def extract_file_references(message: str) -> List[str]:
     return seen[:MAX_FILES_PER_TURN]
 
 
-def _resolve_safely(ref: str) -> Optional[Path]:
+def _resolve_safely(ref: str) -> Path | None:
     """Resolve a reference to an absolute path inside PROJECT_ROOT, or None.
     Refuses traversal (../) and absolute paths outside the project root.
     Refuses files whose extension isn't on the allowlist.
@@ -134,12 +135,12 @@ def _resolve_safely(ref: str) -> Optional[Path]:
     return None
 
 
-def load_referenced_files(refs: List[str], remaining_budget: int = FILE_READ_BUDGET) -> List[Tuple[str, str]]:
+def load_referenced_files(refs: list[str], remaining_budget: int = FILE_READ_BUDGET) -> list[tuple[str, str]]:
     """Read the referenced files (best-effort, defensive). Returns a list of
     ``(display_path, contents)`` tuples. Total content bounded by
     ``remaining_budget`` chars.
     """
-    out: List[Tuple[str, str]] = []
+    out: list[tuple[str, str]] = []
     for ref in refs:
         resolved = _resolve_safely(ref)
         if resolved is None:
@@ -164,7 +165,7 @@ def load_referenced_files(refs: List[str], remaining_budget: int = FILE_READ_BUD
     return out
 
 
-def build_file_context_block(refs: List[str]) -> str:
+def build_file_context_block(refs: list[str]) -> str:
     """Convenience: extract → load → format as a system-prompt-ready block.
     Returns empty string if no files were resolvable.
     """
@@ -188,7 +189,7 @@ class PendingChat:
     reason: str = ""           # what made it pend (timeout, lockdown, etc.)
     answered: bool = False
     answer_text: str = ""
-    answered_at: Optional[float] = None
+    answered_at: float | None = None
 
 
 def _ensure_dir(path: Path) -> None:
@@ -198,11 +199,11 @@ def _ensure_dir(path: Path) -> None:
         pass  # no-op: intentional
 
 
-def _read_all(path: Path = PENDING_QUEUE_PATH) -> List[Dict[str, Any]]:
+def _read_all(path: Path = PENDING_QUEUE_PATH) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
@@ -216,7 +217,7 @@ def _read_all(path: Path = PENDING_QUEUE_PATH) -> List[Dict[str, Any]]:
         return []
 
 
-def _write_all(records: List[Dict[str, Any]], path: Path = PENDING_QUEUE_PATH) -> None:
+def _write_all(records: list[dict[str, Any]], path: Path = PENDING_QUEUE_PATH) -> None:
     _ensure_dir(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -268,14 +269,14 @@ def answer_pending(session_id: str, answer_text: str, path: Path = PENDING_QUEUE
     return updated
 
 
-def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> List[PendingChat]:
+def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> list[PendingChat]:
     """Return all answered pending chats for a session, mark them consumed
     (delete from the queue). Caller is responsible for surfacing them to the
     user. Unanswered entries stay in the queue.
     """
     records = _read_all(path)
-    delivered: List[PendingChat] = []
-    remaining: List[Dict[str, Any]] = []
+    delivered: list[PendingChat] = []
+    remaining: list[dict[str, Any]] = []
     for r in records:
         if r.get("session_id") == session_id and r.get("answered"):
             try:
@@ -304,7 +305,7 @@ def has_unanswered_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH)
     )
 
 
-def format_resume_prefix(delivered: List[PendingChat]) -> str:
+def format_resume_prefix(delivered: list[PendingChat]) -> str:
     """Format a "I came back to your earlier question" preface for the next
     response, summarizing what was answered late.
     """
@@ -503,7 +504,7 @@ def compose_chat_directive_prefix(message: str) -> str:
         # descriptions. Treating those quotations as Bryan directly probing
         # Aura's identity injects the wrong guidance into the live turn.
         return ""
-    directives: List[str] = []
+    directives: list[str] = []
     if any(p.search(message) for p in _INSTANCE_REQUEST_PATTERNS):
         directives.append(_ANTI_CONFABULATION_DIRECTIVE)
     if any(p.search(message) for p in _INNER_STATE_PATTERNS):
@@ -523,10 +524,7 @@ def compose_chat_directive_prefix(message: str) -> str:
 
 # ── Background retry for queued chats ─────────────────────────────────────
 
-import asyncio
-import threading
-
-_RETRY_TASKS: Dict[str, asyncio.Task] = {}
+_RETRY_TASKS: dict[str, asyncio.Task] = {}
 _RETRY_TASKS_LOCK = threading.Lock()
 RETRY_BUDGET_MULTIPLIER = 3.0
 RETRY_MAX_BUDGET_S = 300.0

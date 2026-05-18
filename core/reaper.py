@@ -4,19 +4,20 @@ Spawned before the Kernel. Survives SIGKILL of the Kernel.
 Performs post-mortem cleanup when the Kernel disappears.
 """
 
-from core.runtime.errors import record_degradation
-import os
-import signal
-import time
 import json
 import logging
-import atexit
 import multiprocessing.shared_memory as shm_lib
+import os
+import signal
+import tempfile
+import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
-DEFAULT_REAPER_MANIFEST = Path("/tmp/aura_reaper_manifest.json")
+DEFAULT_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
 POLL_INTERVAL = 1.0  # seconds
 
 logger = logging.getLogger("Aura.Reaper")
@@ -37,7 +38,7 @@ class ReaperManifest:
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path is not None else resolve_reaper_manifest_path()
-        self._data: Dict[str, Any] = {"shm_names": [], "child_pids": [], "pipe_fds": []}
+        self._data: dict[str, Any] = {"shm_names": [], "child_pids": [], "pipe_fds": []}
         self._load()
 
     def register_shm(self, name: str):
@@ -119,7 +120,7 @@ def _execute_cleanup(manifest: ReaperManifest):
     """Execute cleanup in order: children first, then shared memory."""
 
     # 1. Terminate orphaned child processes
-    child_pids: List[int] = manifest._data.get("child_pids", [])
+    child_pids: list[int] = manifest._data.get("child_pids", [])
     for pid in list(child_pids):
         try:
             logger.info("[REAPER] Cleaning up PID %d", pid)
@@ -143,7 +144,7 @@ def _execute_cleanup(manifest: ReaperManifest):
         manifest.deregister_pid(pid)
 
     # 2. Unlink named shared memory segments
-    shm_names: List[str] = manifest._data.get("shm_names", [])
+    shm_names: list[str] = manifest._data.get("shm_names", [])
     for name in list(shm_names):
         try:
             # We must attach before we can unlink in some versions,

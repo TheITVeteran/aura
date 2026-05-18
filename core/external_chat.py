@@ -10,18 +10,19 @@ CRITICAL CAPABILITIES:
 
 This allows Aura to "tap you on the shoulder" when she wants to talk.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
-import json
 import logging
 import os
 import queue
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("ExternalChat")
 
@@ -66,7 +67,7 @@ class TerminalChatWindow:
         
         logger.info("✓ Terminal Chat Window created: %s", window_id)
     
-    def open(self, initial_message: Optional[str] = None):
+    def open(self, initial_message: str | None = None):
         """Open terminal chat window.
         
         Args:
@@ -124,14 +125,18 @@ end tell
             record_degradation('external_chat', e)
             logger.error("Failed to open terminal: %s", e)
     
-    def _create_chat_script(self, initial_message: Optional[str]) -> str:
+    def _create_chat_script(self, initial_message: str | None) -> str:
         """Create bash script for chat interface"""
+        chat_dir = os.path.join(tempfile.gettempdir(), "aura_chat")
+        os.makedirs(chat_dir, exist_ok=True)
+        pipe_in = os.path.join(chat_dir, f"{self.window_id}_in")
+        pipe_out = os.path.join(chat_dir, f"{self.window_id}_out")
         script = f'''#!/bin/bash
 
 # Chat window for Aura
 WINDOW_ID="{self.window_id}"
-PIPE_IN="/tmp/aura_chat_{self.window_id}_in"
-PIPE_OUT="/tmp/aura_chat_{self.window_id}_out"
+PIPE_IN="{pipe_in}"
+PIPE_OUT="{pipe_out}"
 
 # Create named pipes
 mkfifo $PIPE_IN 2>/dev/null
@@ -180,7 +185,7 @@ rm -f $PIPE_IN $PIPE_OUT
 '''
         
         # Write script
-        script_path = f"/tmp/aura_chat_{self.window_id}.sh"
+        script_path = os.path.join(chat_dir, f"{self.window_id}.sh")
         with open(script_path, 'w') as f:
             f.write(script)
         
@@ -199,8 +204,8 @@ rm -f $PIPE_IN $PIPE_OUT
     
     async def _message_handler_loop(self):
         """Handle bidirectional communication"""
-        pipe_in = f"/tmp/aura_chat_{self.window_id}_in"
-        pipe_out = f"/tmp/aura_chat_{self.window_id}_out"
+        chat_dir = os.path.join(tempfile.gettempdir(), "aura_chat")
+        pipe_out = os.path.join(chat_dir, f"{self.window_id}_out")
         
         while self.active:
             try:
@@ -210,10 +215,9 @@ rm -f $PIPE_IN $PIPE_OUT
                 # Write Aura's messages
                 if not self.outgoing_queue.empty():
                     aura_msg = self.outgoing_queue.get()
-                    if os.path.exists(pipe_out):
+                    if await asyncio.to_thread(os.path.exists, pipe_out):
                         # This opens the pipe, writes, and closes
-                        with open(pipe_out, 'w') as f:
-                            f.write(aura_msg + '\n')
+                        await asyncio.to_thread(self._write_pipe_message, pipe_out, aura_msg)
                 
                 await asyncio.sleep(0.1)
                 
@@ -221,6 +225,11 @@ rm -f $PIPE_IN $PIPE_OUT
                 record_degradation('external_chat', e)
                 logger.error("Message handler error: %s", e)
                 await asyncio.sleep(1)
+
+    @staticmethod
+    def _write_pipe_message(pipe_out: str, message: str) -> None:
+        with open(pipe_out, "w") as f:
+            f.write(message + "\n")
     
     def _process_user_message(self, message: str):
         """Process user message through orchestrator.
@@ -272,8 +281,11 @@ rm -f $PIPE_IN $PIPE_OUT
         self.active = False
         
         # Clean up pipes
-        for pipe in [f"/tmp/aura_chat_{self.window_id}_in", 
-                     f"/tmp/aura_chat_{self.window_id}_out"]:
+        chat_dir = os.path.join(tempfile.gettempdir(), "aura_chat")
+        for pipe in [
+            os.path.join(chat_dir, f"{self.window_id}_in"),
+            os.path.join(chat_dir, f"{self.window_id}_out"),
+        ]:
             if os.path.exists(pipe):
                 try:
                     os.remove(pipe)
@@ -303,7 +315,7 @@ class GUIChatWindow:
         
         logger.info("✓ GUI Chat Window created: %s", window_id)
     
-    def open(self, initial_message: Optional[str] = None):
+    def open(self, initial_message: str | None = None):
         """Open GUI chat window"""
         logger.info("🪟 Opening GUI chat window: %s", self.window_id)
         
@@ -317,7 +329,7 @@ class GUIChatWindow:
         
         self.active = True
     
-    def _create_gui(self, initial_message: Optional[str]):
+    def _create_gui(self, initial_message: str | None):
         """Create tkinter GUI"""
         try:
             import tkinter as tk
@@ -485,7 +497,7 @@ class ExternalChatManager:
         self.orchestrator = orchestrator
         
         # Track windows
-        self.windows: Dict[str, Any] = {}
+        self.windows: dict[str, Any] = {}
         self.next_window_id = 1
         
         # Preferences
@@ -493,8 +505,11 @@ class ExternalChatManager:
         
         logger.info("✓ External Chat Manager initialized")
     
-    def open_chat_window(self, message: Optional[str] = None, 
-                        window_type: Optional[str] = None) -> str:
+    def open_chat_window(
+        self,
+        message: str | None = None,
+        window_type: str | None = None,
+    ) -> str:
         """Open a new chat window.
         
         Args:

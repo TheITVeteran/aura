@@ -4,7 +4,7 @@ The platform decision for disaster recovery is "manual backups + a
 *tested* restore drill."  This module is the test, runnable both
 inside pytest and from the operator CLI:
 
-    perform_drill(home_override=Path("/tmp/aura_drill"))
+    perform_drill(home_override=Path(tempfile.gettempdir()) / "aura_drill")
 
 The drill:
 
@@ -30,7 +30,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.runtime.backup_restore import (
     BACKUP_INCLUDED_DIRS,
@@ -47,11 +47,11 @@ class DrillReport:
     file_count: int
     fingerprint_before: str
     fingerprint_after: str
-    mismatches: List[str] = field(default_factory=list)
+    mismatches: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
-    notes: List[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -63,9 +63,9 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _fingerprint_tree(root: Path) -> Dict[str, str]:
+def _fingerprint_tree(root: Path) -> dict[str, str]:
     """Return ``{rel_path: sha256}`` for every regular file under root."""
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     if not root.exists():
         return out
     for p in sorted(root.rglob("*")):
@@ -75,12 +75,12 @@ def _fingerprint_tree(root: Path) -> Dict[str, str]:
     return out
 
 
-def _fingerprint_hash(fp: Dict[str, str]) -> str:
+def _fingerprint_hash(fp: dict[str, str]) -> str:
     listing = "\n".join(f"{rel}:{sha}" for rel, sha in sorted(fp.items()))
     return "sha256:" + hashlib.sha256(listing.encode("utf-8")).hexdigest()
 
 
-def _seed_synthetic_home(home: Path) -> Dict[str, str]:
+def _seed_synthetic_home(home: Path) -> dict[str, str]:
     """Create a small but realistic Aura-shaped data tree.
 
     Returns the per-file fingerprint of the seeded tree so callers can
@@ -110,8 +110,8 @@ def _seed_synthetic_home(home: Path) -> Dict[str, str]:
 
 def perform_drill(
     *,
-    home_override: Optional[Path] = None,
-    backup_target_override: Optional[Path] = None,
+    home_override: Path | None = None,
+    backup_target_override: Path | None = None,
     seed: bool = True,
 ) -> DrillReport:
     """Run the full backup -> wipe -> restore -> verify cycle.
@@ -125,7 +125,7 @@ def perform_drill(
     verify their *current* live data set ``seed=False``.
     """
     started = time.monotonic()
-    notes: List[str] = []
+    notes: list[str] = []
 
     if home_override is None:
         home_override = Path(tempfile.mkdtemp(prefix="aura_drill_home_"))
@@ -189,7 +189,7 @@ def perform_drill(
         after_fp = _fingerprint_tree(home_override)
         after_hash = _fingerprint_hash(after_fp)
 
-        mismatches: List[str] = []
+        mismatches: list[str] = []
         before_keys = set(before_fp.keys())
         after_keys = set(after_fp.keys())
         for missing in sorted(before_keys - after_keys):

@@ -6,9 +6,10 @@ Standardized, single-entry launcher for CLI, Server, Desktop, and Watchdog modes
 Replaces: aura_launcher.py, aura_desktop.py, run_aura.py, run_aura_loop.py, and reboot.py.
 """
 
-from core.runtime.errors import record_degradation
 import argparse
 import asyncio
+
+from core.runtime.errors import record_degradation
 
 # Install global task supervision before subsystems spawn background tasks.
 try:
@@ -17,20 +18,22 @@ except Exception as exc:
     record_degradation("aura_main", exc)
 
 import logging
+import multiprocessing
 import os
-
-import sys
-
 import shutil
 import signal
-import socket
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Optional, List, Any, Dict
-import multiprocessing
+from typing import Any
+
+import httpx
+
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
+from core.utils.singleton import acquire_instance_lock, release_instance_lock
 from core.utils.task_tracker import get_task_tracker
 
 # Phase 31: Native Apple Silicon Resilience Fixes
@@ -52,7 +55,6 @@ if sys.platform == "darwin":
     # one-shot duplicate-class notice and leaves subsequent transitive imports
     # silent.
     try:
-        import contextlib as _contextlib
         _devnull_fd = os.open(os.devnull, os.O_WRONLY)
         _saved_stderr = os.dup(2)
         try:
@@ -167,7 +169,7 @@ try:
     except Exception as _keep_awake_exc:
         record_degradation("aura_main", _keep_awake_exc)
         logger.warning("Aura keep-awake setup failed: %s", _keep_awake_exc)
-except Exception as e:
+except Exception:
     # Minimal fallback logging if core is broken
     import traceback
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -177,7 +179,7 @@ except Exception as e:
     config = None # Ensure NameError is avoided
 
 # Category 11: Reliability Hardening
-_supervisor_tree: Optional[Any] = None
+_supervisor_tree: Any | None = None
 
 def get_supervisor_tree() -> Any:
     global _supervisor_tree
@@ -221,10 +223,6 @@ def check_environment():
         record_degradation('aura_main', e)
         logger.error("   • core import failed: %s", e)
     
-    if sys.version_info < (3, 12):
-        logger.error("Aura requires Python 3.12+")
-        sys.exit(1)
-        
     if config is None:
         logger.error("❌ Environment check aborted: Configuration not loaded.")
         raise RuntimeError("Configuration not loaded")
@@ -326,7 +324,7 @@ def clean_artifacts():
             logger.debug("Unable to remove bytecode file %s: %s", p, exc)
 
 
-def _select_preferred_launcher_python(current_executable: Optional[str] = None) -> Optional[Path]:
+def _select_preferred_launcher_python(current_executable: str | None = None) -> Path | None:
     """Prefer a stable Homebrew Python 3.12 launcher over shimmed venv paths."""
     if sys.platform != "darwin":
         return None
@@ -366,7 +364,7 @@ def _launcher_python_executable() -> str:
 
 
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
-DEFAULT_REAPER_MANIFEST = Path("/tmp/aura_reaper_manifest.json")
+DEFAULT_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
 
 
 def _ensure_reaper_manifest_env() -> Path:
@@ -410,10 +408,9 @@ except ImportError:
 
 async def bootstrap_aura(orchestrator: Any):
     """Initialize background services using the Resilient Boot sequence."""
-    from core.ops.resilient_boot import ResilientBoot
-    from core.container import ServiceContainer
     from core.bus.actor_bus import create_actor_bus
-    from core.utils.task_tracker import get_task_tracker
+    from core.container import ServiceContainer
+    from core.ops.resilient_boot import ResilientBoot
     
     # Register core services early to satisfy boot dependencies
     supervisor = get_supervisor_tree()
@@ -490,8 +487,8 @@ async def bootstrap_aura(orchestrator: Any):
 
     # Apply Consciousness, Response, and SafeMode Genesis Patches
     try:
-        from core.consciousness.apply_patches import apply_consciousness_patches
         from core.apply_response_patches import apply_response_patches
+        from core.consciousness.apply_patches import apply_consciousness_patches
         from core.safe_mode import apply_orchestrator_patches
 
         apply_consciousness_patches(orchestrator)
@@ -507,11 +504,11 @@ async def bootstrap_aura(orchestrator: Any):
 async def _boot_runtime_orchestrator(
     *,
     ready_label: str,
-    readiness_context: Optional[str] = None,
+    readiness_context: str | None = None,
 ):
     """Canonical runtime boot path shared by CLI/server/desktop surfaces."""
-    from core.orchestrator import create_orchestrator
     from core.container import ServiceContainer
+    from core.orchestrator import create_orchestrator
 
     orchestrator = create_orchestrator()
     await bootstrap_aura(orchestrator)
@@ -715,8 +712,8 @@ def _register_runtime_singletons(orchestrator: Any) -> None:
       - aura_runtime / orchestrator (alias)
     """
     try:
-        from core.container import ServiceContainer
         from core.adapters.nethack_adapter import NetHackAdapter
+        from core.container import ServiceContainer
     except Exception:
         return
 
@@ -870,12 +867,12 @@ def _enforce_service_manifest(ready_label: str) -> None:
     a desktop crash.
     """
     try:
+        from core.container import ServiceContainer
         from core.runtime.service_manifest import (
             SERVICE_MANIFEST,
             critical_violations,
             verify_manifest,
         )
-        from core.container import ServiceContainer
     except Exception as exc:  # pragma: no cover - defensive import
         logger.debug("ServiceManifest unavailable during boot: %s", exc)
         return
@@ -916,13 +913,13 @@ async def run_console():
 async def run_philosophy_stream(port: int = 8000):
     """Stream the live qualia-gap proof surface as JSON lines."""
     import json
+
     from core.container import ServiceContainer
 
     orchestrator = await _boot_runtime_orchestrator(
         ready_label="Philosophy",
         readiness_context="philosophy_stream",
     )
-    from core.utils.task_tracker import get_task_tracker
 
     get_task_tracker().create_task(orchestrator.run(), name="OrchestratorMainLoop")
     logger.info("🧾 Philosophy stream active. Press Ctrl-C to stop.")
@@ -943,7 +940,7 @@ async def run_philosophy_stream(port: int = 8000):
                 if hasattr(substrate, "get_state_vector"):
                     vec = substrate.get_state_vector()
                 elif hasattr(substrate, "x"):
-                    vec = getattr(substrate, "x")
+                    vec = substrate.x
                 else:
                     vec = []
                 payload["trajectory_head"] = [round(float(x), 5) for x in list(vec)[:16]]
@@ -991,6 +988,7 @@ async def run_philosophy_stream(port: int = 8000):
 async def run_server_async(host: str, port: int):
     """API Server Mode (Unified Loop)"""
     import uvicorn
+
     from interface.server import app as fastapi_app
     logger.info("🚀 Starting API Server on %s:%s", host, port)
     
@@ -1000,15 +998,13 @@ async def run_server_async(host: str, port: int):
     server = uvicorn.Server(server_config)
     await server.serve()
 
-import httpx # Added import for httpx
-
-async def _wait_for_server_http(url: str, timeout: float = 60.0) -> bool:
+async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
     """Wait for internal API server to return 200 OK and report ready status."""
     start = time.time()
     
     logger.info("📡 Waiting for API Server health check: %s", url)
     count = 0
-    while time.time() - start < timeout:
+    while time.time() - start < timeout_s:
         count += 1
         try:
             async with httpx.AsyncClient() as client:
@@ -1034,7 +1030,7 @@ async def _wait_for_server_http(url: str, timeout: float = 60.0) -> bool:
 
         await asyncio.sleep(1.0)
         
-    logger.error("❌ API Server health check TIMEOUT after %.1fs", timeout)
+    logger.error("❌ API Server health check TIMEOUT after %.1fs", timeout_s)
     return False
 
 def _native_launcher_owns_gui() -> bool:
@@ -1044,12 +1040,11 @@ def _native_launcher_owns_gui() -> bool:
     )
 
 
-async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
+async def run_desktop(port: int, *, launch_gui: bool | None = None):
     """GUI Mode (Managed Actor Process)"""
     from core.container import ServiceContainer
     from core.supervisor.tree import ActorSpec
     from interface.gui_actor import gui_actor_entry
-    from core.utils.task_tracker import get_task_tracker
     
     supervisor = get_supervisor_tree()
     tracker = get_task_tracker()
@@ -1070,8 +1065,7 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
 
     # 1. Start API Server (v21: Server now runs in Kernel)
     # [STABILITY] Start API immediately so port 8000 binds while brain thaws.
-    import uvicorn
-    from interface.server import app as fastapi_app
+
     host = "127.0.0.1" if config.security.internal_only_mode else "0.0.0.0"
 
     def _serve_api_sync():
@@ -1079,6 +1073,7 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
         try:
             # Re-import inside thread to avoid loop issues
             import uvicorn
+
             from interface.server import app as _app
             server_config = uvicorn.Config(_app, host=host, port=port, log_level="info", loop="asyncio")
             server_config.handle_signals = False
@@ -1111,7 +1106,6 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
         await asyncio.to_thread(_serve_api_sync)
 
     async def _main_loop():
-        from core.container import ServiceContainer
         
         # 1. Initialize Orchestrator and wait for boot
         logger.info("🧠 Orchestrator boot beginning...")
@@ -1163,11 +1157,14 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
                         content = []
                         while True:
                             line = await stream.readline()
-                            if not line: break
+                            if not line:
+                                break
                             decoded = line.decode('utf-8', errors='replace').rstrip()
                             if decoded:
-                                if level == "ERROR": logger.error(f"[GUI] {decoded}")
-                                else: logger.debug(f"[GUI] {decoded}")
+                                if level == "ERROR":
+                                    logger.error(f"[GUI] {decoded}")
+                                else:
+                                    logger.debug(f"[GUI] {decoded}")
                                 content.append(decoded)
                         return "\n".join(content)
 
@@ -1193,7 +1190,7 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
                         try:
                             # Wait with timeout to allow checking shutdown flag
                             await asyncio.wait_for(proc.wait(), timeout=2.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             pass
                     
                     # Ensure stream reading completes
@@ -1257,19 +1254,20 @@ async def run_desktop(port: int, *, launch_gui: Optional[bool] = None):
         # We also wait on the orchestrator's main loop if we created one
         orchestrator_loop_task = [t for t in asyncio.all_tasks() if t.get_name() == "OrchestratorMainLoop"]
         tasks_to_wait = [api_task]
-        if orchestrator_loop_task: tasks_to_wait.append(orchestrator_loop_task[0])
+        if orchestrator_loop_task:
+            tasks_to_wait.append(orchestrator_loop_task[0])
         
         # Actually wait forever for the supervisor
         await supervisor.wait_forever()
 
     await _main_loop()
 
-def _watchdog_child_args(args: Optional[argparse.Namespace] = None) -> List[str]:
+def _watchdog_child_args(args: argparse.Namespace | None = None) -> list[str]:
     """Build restart args that preserve the mode the watchdog was asked to supervise."""
     if args is None:
         return ["--desktop"]
 
-    child_args: List[str] = []
+    child_args: list[str] = []
     if getattr(args, "gui_window", False):
         child_args.append("--gui-window")
     elif getattr(args, "headless", False):
@@ -1293,7 +1291,7 @@ def _watchdog_child_args(args: Optional[argparse.Namespace] = None) -> List[str]
     return child_args
 
 
-async def run_watchdog(args: Optional[argparse.Namespace] = None):
+async def run_watchdog(args: argparse.Namespace | None = None):
     """Stability Watchdog Loop (Async)."""
     # [STABILITY] Ensure only one Watchdog is active.
     # This prevents the "two instances" issue where multiple supervisors
@@ -1334,9 +1332,6 @@ async def run_watchdog(args: Optional[argparse.Namespace] = None):
             await asyncio.sleep(delay)
     finally:
         release_instance_lock()
-
-# ---------------------------------------------------------------------------
-from core.utils.singleton import acquire_instance_lock, release_instance_lock
 
 def _reap_orphaned_aura_processes() -> int:
     """Kill any stale Aura main processes owned by this user before taking the
@@ -1442,7 +1437,7 @@ def stop_aura():
         return
 
     try:
-        with open(lock_file, "r") as f:
+        with open(lock_file) as f:
             pid_str = f.read().strip()
             if not pid_str:
                 print("Lock file found but no PID recorded.")
@@ -1470,7 +1465,8 @@ def stop_aura():
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             print("Process already dead or inaccessible.")
-            if lock_file.exists(): lock_file.unlink()
+            if lock_file.exists():
+                lock_file.unlink()
             return
 
         # Wait for cleanup

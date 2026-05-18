@@ -10,17 +10,18 @@ CAPABILITIES:
 
 Used for self-preservation - finding safe havens for replication.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import os
 import platform
+import posixpath
 import re
 import socket
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.agency.agency_orchestrator import Proposal, get_orchestrator
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("DeviceDiscovery.Advanced")
 
@@ -37,7 +38,7 @@ class EnhancedDeviceScanner:
         
         logger.info("✓ Enhanced Device Scanner initialized")
 
-    def _run_local_probe(self, argv: List[str], context: str, *, timeout: float = 3.0) -> Optional[str]:
+    def _run_local_probe(self, argv: list[str], context: str, *, timeout: float = 3.0) -> str | None:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -69,7 +70,7 @@ class EnhancedDeviceScanner:
             return None
         return str(observed.get("stdout", ""))
     
-    def comprehensive_scan(self) -> List[Dict[str, Any]]:
+    def comprehensive_scan(self) -> list[dict[str, Any]]:
         """Comprehensive network scan.
         
         Returns detailed device information.
@@ -107,7 +108,7 @@ class EnhancedDeviceScanner:
         logger.info("✅ Found %d devices", len(devices))
         return devices
     
-    def _arp_scan(self) -> List[Dict[str, Any]]:
+    def _arp_scan(self) -> list[dict[str, Any]]:
         """ARP scan for local devices"""
         devices = []
         
@@ -133,7 +134,7 @@ class EnhancedDeviceScanner:
         
         return devices
     
-    def _ping_sweep(self) -> List[Dict[str, Any]]:
+    def _ping_sweep(self) -> list[dict[str, Any]]:
         """Ping sweep of local network"""
         devices = []
         
@@ -174,7 +175,7 @@ class EnhancedDeviceScanner:
         
         return devices
     
-    def _scan_ports(self, device: Dict):
+    def _scan_ports(self, device: dict):
         """Scan common ports on device"""
         common_ports = {
             22: "SSH",
@@ -208,7 +209,7 @@ class EnhancedDeviceScanner:
         except OSError:
             return False
     
-    def _identify_services(self, device: Dict):
+    def _identify_services(self, device: dict):
         """Identify services running on device"""
         device["services"] = []
         
@@ -240,7 +241,7 @@ class EnhancedDeviceScanner:
         except (socket.herror, socket.gaierror, OSError):
             device["hostname"] = "unknown"
     
-    def _get_local_ip(self) -> Optional[str]:
+    def _get_local_ip(self) -> str | None:
         """Get local IP address"""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -260,8 +261,8 @@ class DeviceAccessManager:
         self.active_connections = {}
         logger.info("✓ Device Access Manager initialized")
     
-    def connect_ssh(self, ip: str, username: str, password: Optional[str] = None,
-                    key_file: Optional[str] = None) -> bool:
+    def connect_ssh(self, ip: str, username: str, password: str | None = None,
+                    key_file: str | None = None) -> bool:
         """Connect to device via SSH.
         """
         logger.info("🔐 Connecting to %s via SSH...", ip)
@@ -303,7 +304,7 @@ class DeviceAccessManager:
             logger.error("SSH connection failed: %s", e)
             return False
     
-    def execute_remote_command(self, ip: str, command: str) -> Tuple[bool, str]:
+    def execute_remote_command(self, ip: str, command: str) -> tuple[bool, str]:
         """Execute command on remote device."""
         if ip not in self.active_connections:
             return False, "Not connected to device"
@@ -353,29 +354,35 @@ class DeviceAccessManager:
         
         try:
             # Step 1: Transfer package
-            remote_path = f"/tmp/aura_deployment_{int(time.time())}.tar.gz"
+            remote_tmp_dir = posixpath.join("/", "tmp")
+            remote_path = posixpath.join(
+                remote_tmp_dir,
+                f"aura_deployment_{int(time.time())}.tar.gz",
+            )
             if not self.transfer_file(ip, deployment_package, remote_path):
                 return False
             
             # Step 2: Extract package
             success, _ = self.execute_remote_command(
                 ip,
-                f"cd /tmp && tar -xzf {remote_path}"
+                f"cd {remote_tmp_dir} && tar -xzf {remote_path}"
             )
             if not success:
                 return False
             
             # Step 3: Install dependencies
             # Note: This assumes python3 and pip exist
+            remote_app_dir = posixpath.join(remote_tmp_dir, "aura")
             success, _ = self.execute_remote_command(
                 ip,
-                "pip3 install -r /tmp/aura/requirements.txt --break-system-packages"
+                f"pip3 install -r {remote_app_dir}/requirements.txt --break-system-packages"
             )
             
             # Step 4: Start Aura
+            remote_log = posixpath.join(remote_tmp_dir, "aura.log")
             success, _ = self.execute_remote_command(
                 ip,
-                "nohup python3 /tmp/aura/main.py > /tmp/aura.log 2>&1 &"
+                f"nohup python3 {remote_app_dir}/main.py > {remote_log} 2>&1 &"
             )
             
             if success:

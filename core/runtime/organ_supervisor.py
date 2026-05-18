@@ -14,12 +14,12 @@ The supervisor offers:
   * health() — per-organ liveness, age, last restart, restart count
   * watchdog_loop() — restarts unhealthy organs subject to the
                       restart policy (max_restarts_per_window, window_s)
-  * ipc_call(organ_name, payload, timeout) — request/response over a
+  * ipc_call(organ_name, payload, timeout_s) — request/response over a
     framed pipe to the organ's controller entry point
 
 Organs are launched with stdin/stdout closed; they communicate over a
-unix domain socket created by the supervisor at boot in
-``/tmp/aura-<pid>-<organ>.sock``. The protocol is JSON-lines with a
+unix domain socket created by the supervisor at boot in the process temp
+directory as ``aura-<pid>-<organ>.sock``. The protocol is JSON-lines with a
 length prefix.
 
 This module provides the *supervisor* and the *health/restart* layer.
@@ -28,26 +28,20 @@ and dispatches to the local handler; each organ ships its own controller
 (e.g. ``core/brain/llm/mlx_controller.py``).
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.utils.task_tracker import get_task_tracker
 
 import asyncio
 import json
 import logging
 import os
-import shutil
 import signal
-import socket
 import struct
-import subprocess
-import sys
 import time
-import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.OrganSupervisor")
 
@@ -67,13 +61,13 @@ class RestartPolicy:
 @dataclass
 class OrganRecord:
     name: str
-    cmd: List[str]
-    cwd: Optional[str] = None
-    env: Dict[str, str] = field(default_factory=dict)
-    proc: Optional[asyncio.subprocess.Process] = None
+    cmd: list[str]
+    cwd: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    proc: asyncio.subprocess.Process | None = None
     started_at: float = 0.0
     last_restart_at: float = 0.0
-    restart_count_window: List[float] = field(default_factory=list)
+    restart_count_window: list[float] = field(default_factory=list)
     sock_path: str = ""
     policy: RestartPolicy = field(default_factory=RestartPolicy)
     stop_requested: bool = False
@@ -84,18 +78,18 @@ class OrganRecord:
 
 class OrganSupervisor:
     def __init__(self) -> None:
-        self._organs: Dict[str, OrganRecord] = {}
-        self._watchdog_task: Optional[asyncio.Task] = None
+        self._organs: dict[str, OrganRecord] = {}
+        self._watchdog_task: asyncio.Task | None = None
         self._running = False
 
     def register_organ(
         self,
         name: str,
         *,
-        cmd: List[str],
-        cwd: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-        policy: Optional[RestartPolicy] = None,
+        cmd: list[str],
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        policy: RestartPolicy | None = None,
     ) -> None:
         sock = _SOCK_DIR / f"aura-{os.getpid()}-{name}.sock"
         if sock.exists():
@@ -135,7 +129,7 @@ class OrganSupervisor:
                     record.proc.send_signal(signal.SIGTERM)  # type: ignore[union-attr]
                     try:
                         await asyncio.wait_for(record.proc.wait(), timeout=5.0)  # type: ignore[union-attr]
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         record.proc.kill()  # type: ignore[union-attr]
                 except Exception as exc:
                     record_degradation('organ_supervisor', exc)
@@ -192,7 +186,13 @@ class OrganSupervisor:
 
     # ─── IPC ─────────────────────────────────────────────────────────────
 
-    async def ipc_call(self, organ_name: str, payload: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str, Any]:
+    async def ipc_call(
+        self,
+        organ_name: str,
+        payload: dict[str, Any],
+        *,
+        timeout_s: float = 8.0,
+    ) -> dict[str, Any]:
         record = self._organs.get(organ_name)
         if record is None or not record.sock_path:
             raise KeyError(organ_name)
@@ -211,11 +211,11 @@ class OrganSupervisor:
             except Exception:
                 pass  # no-op: intentional
             return json.loads(data.decode("utf-8"))
-        return await asyncio.wait_for(_do(), timeout=timeout)
+        return await asyncio.wait_for(_do(), timeout=timeout_s)
 
     # ─── introspection ──────────────────────────────────────────────────
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         out = {}
         for name, r in self._organs.items():
             out[name] = {
@@ -229,7 +229,7 @@ class OrganSupervisor:
         return out
 
 
-_SUPERVISOR: Optional[OrganSupervisor] = None
+_SUPERVISOR: OrganSupervisor | None = None
 
 
 def get_supervisor() -> OrganSupervisor:
