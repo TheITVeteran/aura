@@ -6,12 +6,12 @@ as a successful answer that later systems have to explain away.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
 
 from core.runtime.structured_input import looks_like_learning_resource_bundle
-
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
 _ROLE_OR_PROMPT_ARTIFACT_RE = re.compile(
@@ -706,10 +706,6 @@ def _is_live_surface_diagnostic_prompt(user_message: Any) -> bool:
             "debug",
             "diagnos",
             "died",
-            "fail",
-            "failed",
-            "failing",
-            "fails",
             "mismatch",
             "what exactly",
             "what caused",
@@ -1237,7 +1233,6 @@ def assess_user_facing_reply(
     """Classify whether a reply is safe to present as a completed chat turn."""
     del recent_user_messages  # reserved for future context-aware checks
     raw = str(reply_text or "").strip()
-    normalized_reply = _normalize(raw)
     reasons: list[str] = []
 
     reasons.extend(

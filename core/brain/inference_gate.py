@@ -10,12 +10,9 @@ This module is the FAST PATH for user-facing chat. It injects Aura's full
 identity/personality system prompt so responses sound like Aura, not a bare LLM.
 Timeouts are kept tight (45s) for conversational responsiveness.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import gc
 import inspect
-import json
 import logging
 import os
 import threading as _threading
@@ -23,7 +20,7 @@ import time
 import weakref
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import psutil
 
@@ -41,11 +38,26 @@ from core.conversation.response_reliability import (
     is_live_self_reflection_turn,
 )
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.deadlines import Deadline, get_deadline
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.InferenceGate")
+
+_INFERENCE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    asyncio.InvalidStateError,
+    psutil.Error,
+)
 
 _DOWNSTREAM_REPAIRABLE_SELF_REFLECTION_REASONS = frozenset(
     {
@@ -110,7 +122,7 @@ _USER_FACING_ORIGINS = frozenset({
 })
 
 
-class _UserFacingCortexFailure(Exception):
+class _UserFacingCortexError(Exception):
     """Sentinel: Cortex failed on a user-facing request — skip brainstem, escalate to cloud."""
 
 
@@ -118,13 +130,13 @@ class _UserFacingCortexFailure(Exception):
 async def _thread_lock_context(
     lock: Any,
     *,
-    timeout: Optional[float] = None,
+    timeout_s: float | None = None,
     label: str = "lock",
 ):
-    if timeout is None:
+    if timeout_s is None:
         acquired = await asyncio.to_thread(lock.acquire)
     else:
-        acquired = await asyncio.to_thread(lock.acquire, True, max(0.0, float(timeout)))
+        acquired = await asyncio.to_thread(lock.acquire, True, max(0.0, float(timeout_s)))
     if not acquired:
         raise TimeoutError(f"{label}_timeout")
     try:
@@ -145,7 +157,7 @@ class InferenceGate:
         self._mlx_client = None
         self._initialized = False
         self._init_error = None
-        self._cached_identity_prompt: Optional[str] = None
+        self._cached_identity_prompt: str | None = None
         self._identity_prompt_time: float = 0.0
         self._cloud_backoff_until: float = 0.0
         self._cortex_recovery_in_progress: bool = False
@@ -154,9 +166,9 @@ class InferenceGate:
         self._cortex_recovery_exhausted_at: float = 0.0  # [STABILITY v53]
         self._last_stale_reset_log_at: float = 0.0  # [HARDENING v54] Rate-limit stale state warnings
         self._last_successful_generation_at: float = time.time()
-        self._prewarm_task: Optional[asyncio.Task] = None
-        self._deferred_prewarm_task: Optional[asyncio.Task] = None
-        self._maintenance_task: Optional[asyncio.Task] = None
+        self._prewarm_task: asyncio.Task | None = None
+        self._deferred_prewarm_task: asyncio.Task | None = None
+        self._maintenance_task: asyncio.Task | None = None
         self._foreground_ready_lock = _threading.Lock()
         self._last_background_memory_shed_at: float = 0.0
         self._last_spare_maintenance_at: float = 0.0
@@ -176,8 +188,9 @@ class InferenceGate:
             direct = deterministic_user_facing_floor(prompt)
             if direct:
                 return direct
-        except Exception:
-            pass
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            record_degradation("inference_gate", exc)
+            logger.debug("Deterministic recovery response unavailable: %s", exc)
         # STABILITY v56: Return empty string instead of "cognitive snag" reflex.
         # This forces the orchestrator to handle the failure (e.g. by retrying
         # inference) rather than masking it with a canned template.
@@ -229,7 +242,7 @@ class InferenceGate:
             return float(default)
 
     @staticmethod
-    def _cortex_warmup_admission_snapshot(context: str = "background") -> Dict[str, Any]:
+    def _cortex_warmup_admission_snapshot(context: str = "background") -> dict[str, Any]:
         """Return whether a cold Cortex load is safe under current RAM pressure.
 
         The normal foreground headroom check is intentionally permissive because
@@ -297,7 +310,7 @@ class InferenceGate:
                 "reason": "memory_probe_failed",
             }
 
-    def _cortex_warmup_deferral_reason(self, context: str = "background") -> Optional[str]:
+    def _cortex_warmup_deferral_reason(self, context: str = "background") -> str | None:
         if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
             "1",
             "true",
@@ -343,8 +356,7 @@ class InferenceGate:
                     snapshot["available_gb"],
                 )
                 return False
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Boot warmup memory probe failed: %s", exc)
 
@@ -363,7 +375,7 @@ class InferenceGate:
         return True
 
     @staticmethod
-    def _headroom_snapshot(requested_tier: str = "primary") -> Dict[str, Any]:
+    def _headroom_snapshot(requested_tier: str = "primary") -> dict[str, Any]:
         try:
             from core.utils.memory_monitor import AppleSiliconMemoryMonitor
             pressure = AppleSiliconMemoryMonitor()._get_pressure_sysctl()
@@ -437,20 +449,20 @@ class InferenceGate:
         )
 
     @staticmethod
-    def _iter_local_clients() -> Dict[str, Any]:
-        clients: Dict[str, Any] = {}
+    def _iter_local_clients() -> dict[str, Any]:
+        clients: dict[str, Any] = {}
         try:
             from core.brain.llm.local_server_client import _SERVER_CLIENTS
 
             clients.update(dict(_SERVER_CLIENTS))
-        except Exception:
-            pass  # no-op: intentional
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Local server client registry unavailable: %s", exc)
         try:
             from core.brain.llm.mlx_client import _CLIENTS
 
             clients.update(dict(_CLIENTS))
-        except Exception:
-            pass  # no-op: intentional
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("MLX client registry unavailable: %s", exc)
         return clients
 
     async def _enforce_foreground_admission(
@@ -458,7 +470,7 @@ class InferenceGate:
         requested_tier: str,
         *,
         protected_foreground: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         snapshot = self._headroom_snapshot(requested_tier)
         if snapshot["can_admit"]:
             return snapshot
@@ -508,8 +520,7 @@ class InferenceGate:
                 get_deep_model_path,
                 get_fallback_path,
             )
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Hot-spare setup unavailable: %s", exc)
             return False
@@ -538,8 +549,7 @@ class InferenceGate:
 
         try:
             await client.warmup(foreground_request=False)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Hot-spare warmup failed for %s: %s", endpoint_name, exc)
             return False
@@ -565,13 +575,12 @@ class InferenceGate:
                             reason="scheduled_fragmentation_recycle",
                             mark_failed=False,
                         )
-            except Exception as exc:
-                record_degradation('inference_gate', exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 logger.debug("Idle runtime recycle skipped: %s", exc)
 
     async def _maintenance_loop(self) -> None:
-        while True:
+        while not is_shutdown_requested():
             try:
                 await asyncio.sleep(15.0 if self._last_spare_maintenance_at <= 0.0 else 45.0)
                 self._last_spare_maintenance_at = time.monotonic()
@@ -593,8 +602,7 @@ class InferenceGate:
                 await self._recycle_idle_local_clients()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                record_degradation('inference_gate', exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 # [STABILITY v53] Upgraded from debug to warning — silent maintenance
                 # failures can cascade into cortex death without visibility.
@@ -640,8 +648,8 @@ class InferenceGate:
                 exc = self._prewarm_task.exception()
                 if exc:
                     logger.warning("🔍 [WATCHDOG] Stale failed prewarm task found: %s. Clearing.", exc)
-            except (asyncio.CancelledError, asyncio.InvalidStateError):
-                pass  # no-op: intentional
+            except (asyncio.CancelledError, asyncio.InvalidStateError) as exc:
+                logger.debug("Prewarm task state was unavailable during watchdog cleanup: %s", exc)
             self._prewarm_task = None  # Allow fresh warmup on next request
 
         # 4. Log cortex health for observability
@@ -654,7 +662,7 @@ class InferenceGate:
                 if hasattr(self._mlx_client, "note_lane_recovering"):
                     self._mlx_client.note_lane_recovering("watchdog_state_correction")
 
-    def get_conversation_status(self) -> Dict[str, Any]:
+    def get_conversation_status(self) -> dict[str, Any]:
         # [STABILITY v53] Default to "cold" not "warming" — only report warming
         # when something is actually in flight. Prevents zombie warming state.
         _default_state = "failed" if self._init_error else "cold"
@@ -787,13 +795,13 @@ class InferenceGate:
                             self._mlx_client._set_lane_state("cold")
                     # [HARDENING v54] Schedule a recovery warmup so the cortex
                     # actually comes back online instead of staying cold forever.
+                    # The prewarm runner performs the RAM admission check before
+                    # loading anything; scheduling the runner here keeps recovery
+                    # alive without forcing an unsafe immediate model load.
                     try:
-                        warmup_deferral = self._cortex_warmup_deferral_reason("background")
-                        if warmup_deferral:
-                            self._log_cortex_warmup_deferral(warmup_deferral, context="background")
-                        else:
-                            self._schedule_background_cortex_prewarm(delay=3.0)
-                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        self._schedule_background_cortex_prewarm(delay=3.0)
+                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                        record_degradation("inference_gate", exc)
                         logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         return lane
 
@@ -802,8 +810,7 @@ class InferenceGate:
         if self._mlx_client and hasattr(self._mlx_client, "note_lane_recovering"):
             try:
                 self._mlx_client.note_lane_recovering(reason)
-            except Exception as exc:
-                record_degradation('inference_gate', exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 logger.debug("Failed to mark cortex lane recovering: %s", exc)
         self._extend_startup_quiet_window(8.0)
@@ -817,8 +824,7 @@ class InferenceGate:
                 self._log_cortex_warmup_deferral(warmup_deferral, context="background")
             else:
                 self._schedule_background_cortex_prewarm(delay=2.0)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Failed to schedule deferred cortex re-prewarm after timeout: %s", exc)
 
@@ -829,13 +835,12 @@ class InferenceGate:
                 from core.container import ServiceContainer
 
                 orch = ServiceContainer.get("orchestrator", default=None)
-            except Exception:
+            except _INFERENCE_RECOVERABLE_ERRORS:
                 orch = None
         if orch and hasattr(orch, "_extend_foreground_quiet_window"):
             try:
                 orch._extend_foreground_quiet_window(seconds)
-            except Exception as exc:
-                record_degradation('inference_gate', exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 logger.debug("Failed to extend foreground quiet window: %s", exc)
 
@@ -893,8 +898,7 @@ class InferenceGate:
                         )
                         next_delay = min(45.0, max(12.0, next_delay * 1.5))
                         continue
-                except Exception as exc:
-                    record_degradation('inference_gate', exc)
+                except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     record_degradation('inference_gate', exc)
                     logger.debug("Deferred prewarm memory probe failed: %s", exc)
 
@@ -906,8 +910,7 @@ class InferenceGate:
                     await self.ensure_foreground_ready(timeout=300.0)
                     logger.info("✅ Deferred cortex prewarm completed.")
                     return
-                except Exception as exc:
-                    record_degradation('inference_gate', exc)
+                except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     record_degradation('inference_gate', exc)
                     logger.warning("⚠️ Deferred cortex prewarm failed (attempt=%d): %s", attempt, exc)
                     next_delay = min(45.0, max(12.0, next_delay * 1.5))
@@ -944,8 +947,7 @@ class InferenceGate:
 
         try:
             rearmed = bool(client.refresh_runtime_availability(force_probe=force_probe))
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Failed to re-arm runtime-blocked Cortex lane: %s", exc)
             return False
@@ -957,7 +959,7 @@ class InferenceGate:
             )
         return rearmed
 
-    async def ensure_foreground_ready(self, timeout: Optional[float] = None) -> Dict[str, Any]:
+    async def ensure_foreground_ready(self, timeout: float | None = None) -> dict[str, Any]:  # noqa: ASYNC109
         """Ensure the 32B conversation lane has actually attempted warmup for this turn."""
         timeout = max(15.0, float(timeout or 90.0))
         lane = self.get_conversation_status()
@@ -973,11 +975,11 @@ class InferenceGate:
         if not self._mlx_client or not hasattr(self._mlx_client, "warmup"):
             raise RuntimeError("foreground_lane_unavailable")
 
-        task: Optional[asyncio.Task] = None
+        task: asyncio.Task | None = None
         try:
             async with _thread_lock_context(
                 self._foreground_ready_lock,
-                timeout=min(timeout, 30.0),
+                timeout_s=min(timeout, 30.0),
                 label="foreground_ready_lock",
             ):
                 lane = self.get_conversation_status()
@@ -1012,21 +1014,18 @@ class InferenceGate:
             task_loop = getattr(task, "get_loop", lambda: asyncio.get_running_loop())()
             current_loop = asyncio.get_running_loop()
             if task_loop is not current_loop:
-                async def _poll_wait():
-                    while not task.done():
-                        await asyncio.sleep(0.25)
-                    exc = task.exception()
-                    if exc:
-                        raise exc
-                    return task.result()
-                await asyncio.wait_for(_poll_wait(), timeout=timeout)
+                async def _await_foreign_task() -> Any:
+                    return await task
+
+                future = asyncio.run_coroutine_threadsafe(_await_foreign_task(), task_loop)
+                await asyncio.wait_for(asyncio.wrap_future(future), timeout=timeout)
             else:
                 await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if hasattr(self._mlx_client, "note_lane_recovering"):
                 self._mlx_client.note_lane_recovering("foreground_warmup_timeout")
             raise
-        except Exception as exc:
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             if hasattr(self._mlx_client, "note_lane_failed"):
                 self._mlx_client.note_lane_failed(f"foreground_warmup_failed:{type(exc).__name__}")
@@ -1113,7 +1112,7 @@ class InferenceGate:
                 gc.collect()
                 try:
                     await asyncio.to_thread(self._mlx_client._kill_and_join_blocking, self._mlx_client._process)
-                except Exception as _e:
+                except _INFERENCE_RECOVERABLE_ERRORS as _e:
                     record_degradation('inference_gate', _e)
                     logger.debug('Ignored Exception in inference_gate.py killing process: %s', _e)
 
@@ -1148,7 +1147,7 @@ class InferenceGate:
                     logger.info("✅ [RECOVERY] Primary 32B cortex restored after disruption.")
                 self._cortex_recovery_attempts = 0
                 self._cortex_recovery_exhausted_at = 0.0
-            except Exception as exc:
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 if cold_start_recovery:
                     logger.error(
@@ -1196,7 +1195,7 @@ class InferenceGate:
         logger.info("🔄 _respawn_cortex_if_needed: cortex is dead, delegating to recovery.")
         await self._ensure_cortex_recovery()
 
-    async def ensure_all_tiers_healthy(self) -> Dict[str, str]:
+    async def ensure_all_tiers_healthy(self) -> dict[str, str]:
         """Proactive health check for ALL inference tiers. Called by MindTick.
 
         Returns a dict of {tier: status} for monitoring.
@@ -1220,8 +1219,7 @@ class InferenceGate:
                     await self._ensure_cortex_recovery()
             else:
                 statuses["cortex"] = "not_initialized"
-        except Exception as e:
-            record_degradation('inference_gate', e)
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
             record_degradation('inference_gate', e)
             statuses["cortex"] = f"error:{e}"
 
@@ -1246,7 +1244,7 @@ class InferenceGate:
                         statuses["brainstem"] = "recovering"
             else:
                 statuses["brainstem"] = "not_initialized"
-        except Exception as e:
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
             record_degradation('inference_gate', e)
             statuses["brainstem"] = f"error:{e}"
 
@@ -1254,17 +1252,20 @@ class InferenceGate:
         try:
             from core.brain.llm.model_registry import get_fallback_path
             fallback_path = get_fallback_path()
-            if fallback_path and Path(str(fallback_path)).exists():
+            fallback_exists = bool(
+                fallback_path and await asyncio.to_thread(Path(str(fallback_path)).exists)
+            )
+            if fallback_exists:
                 statuses["reflex"] = "available"
             else:
                 statuses["reflex"] = "model_missing"
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             statuses["reflex"] = "unknown"
 
         return statuses
 
     @staticmethod
-    def _normalize_tier(prefer_tier: Optional[str]) -> str:
+    def _normalize_tier(prefer_tier: str | None) -> str:
         tier = str(prefer_tier or "primary").strip().lower()
         aliases = {
             "local": "primary",
@@ -1276,7 +1277,7 @@ class InferenceGate:
         return aliases.get(tier, tier)
 
     @staticmethod
-    def _origin_is_user_facing(origin: Optional[str]) -> bool:
+    def _origin_is_user_facing(origin: str | None) -> bool:
         normalized = str(origin or "").strip().lower().replace("-", "_")
         if not normalized:
             return False
@@ -1306,7 +1307,7 @@ class InferenceGate:
             if not InferenceGate._origin_is_user_facing(current_origin):
                 return False
             return not bool(getattr(orch, "_current_task_is_autonomous", False))
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return False
 
     @staticmethod
@@ -1319,7 +1320,7 @@ class InferenceGate:
                 return False
             quiet_until = float(getattr(orch, "_foreground_user_quiet_until", 0.0) or 0.0)
             return quiet_until > time.time()
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return False
 
     def _safe_boot_background_guard_active(self) -> bool:
@@ -1328,7 +1329,7 @@ class InferenceGate:
             return False
         try:
             startup_guard_secs = float(os.environ.get("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180"))
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             startup_guard_secs = 180.0
         if startup_guard_secs <= 0:
             return False
@@ -1368,10 +1369,10 @@ class InferenceGate:
                 )
             )
             return bool(vm.percent >= max_pressure or available_gb <= min_available_gb)
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return False
 
-    def _background_local_deferral_reason(self, *, origin: Optional[str] = None) -> Optional[str]:
+    def _background_local_deferral_reason(self, *, origin: str | None = None) -> str | None:
         if self._foreground_user_turn_active() or self._foreground_owner_active():
             return "foreground_reserved"
         if self._foreground_headroom_reserved("primary"):
@@ -1387,8 +1388,7 @@ class InferenceGate:
 
             if get_local_backend() != "mlx" and lane.get("conversation_ready"):
                 return "cortex_resident"
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         lane_state = str(lane.get("state", "") or "").strip().lower()
@@ -1425,16 +1425,14 @@ class InferenceGate:
             from core.brain.llm.local_server_client import _SERVER_CLIENTS
 
             client_registry.update(dict(_SERVER_CLIENTS))
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Local-runtime background memory shed unavailable: %s", exc)
         try:
             from core.brain.llm.mlx_client import _CLIENTS
 
             client_registry.update(dict(_CLIENTS))
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("MLX background memory shed unavailable: %s", exc)
         if not client_registry:
@@ -1460,8 +1458,7 @@ class InferenceGate:
                 else:
                     continue
                 shed_count += 1
-            except Exception as exc:
-                record_degradation('inference_gate', exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 record_degradation('inference_gate', exc)
                 logger.debug("Background worker shed failed for %s: %s", client_path, exc)
 
@@ -1478,13 +1475,13 @@ class InferenceGate:
             from core.brain.llm.mlx_client import _foreground_owner_active
 
             return bool(_foreground_owner_active())
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return False
 
     @classmethod
     def _default_timeout_for_request(
         cls,
-        origin: Optional[str],
+        origin: str | None,
         requested_tier: str,
         *,
         deep_handoff: bool,
@@ -1521,14 +1518,14 @@ class InferenceGate:
                         base = 120.0  # Warm but not sizzling
                 # Cold/recovering cortex keeps full 150s ceiling to allow
                 # inline recovery without premature fallback.
-        except Exception:
-            pass  # no-op: intentional
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Adaptive timeout lane probe unavailable: %s", exc)
 
         return base
 
     @staticmethod
     def _should_use_rich_context(
-        origin: Optional[str],
+        origin: str | None,
         requested_tier: str,
         *,
         deep_handoff: bool,
@@ -1543,7 +1540,7 @@ class InferenceGate:
     @classmethod
     def _should_use_compact_foreground_context(
         cls,
-        origin: Optional[str],
+        origin: str | None,
         requested_tier: str,
         *,
         deep_handoff: bool,
@@ -1562,7 +1559,7 @@ class InferenceGate:
     @classmethod
     def _default_max_tokens_for_request(
         cls,
-        origin: Optional[str],
+        origin: str | None,
         requested_tier: str,
         *,
         deep_handoff: bool,
@@ -1584,7 +1581,7 @@ class InferenceGate:
         prompt: str,
         *,
         base_tokens: int,
-        origin: Optional[str],
+        origin: str | None,
         requested_tier: str,
         is_background: bool,
     ) -> int:
@@ -1642,8 +1639,8 @@ class InferenceGate:
         self,
         enabled: bool,
         priority: bool,
-        worker: Optional[str] = None,
-        timeout: Optional[float] = None,
+        worker: str | None = None,
+        timeout_s: float | None = None,
     ):
         # [STABILITY v53] Priority user-facing requests BYPASS the semaphore.
         # The per-worker semaphore was causing a deadlock: kernel holds cortex
@@ -1657,8 +1654,7 @@ class InferenceGate:
             return
         try:
             from core.resilience.resource_arbitrator import get_resource_arbitrator
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.warning("Resource arbitration unavailable, continuing without lock: %s", exc)
             yield
@@ -1667,7 +1663,7 @@ class InferenceGate:
         async with get_resource_arbitrator().inference_context(
             priority=priority,
             worker=worker,
-            timeout=max(0.25, float(timeout or 30.0)),
+            timeout=max(0.25, float(timeout_s or 30.0)),
         ):
             yield
 
@@ -1693,12 +1689,11 @@ class InferenceGate:
                 timeout=300.0,
             )
             logger.info("♻️ Restored %s after deep handoff.", PRIMARY_ENDPOINT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("⚠️ Failed to restore %s after deep handoff: warmup timed out (300s)", PRIMARY_ENDPOINT)
             # Schedule deferred recovery so next request doesn't hit dead cortex
             self._schedule_background_cortex_prewarm(delay=5.0)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.error("⚠️ Failed to restore %s after deep handoff: %s", PRIMARY_ENDPOINT, exc)
             self._schedule_background_cortex_prewarm(delay=5.0)
@@ -1727,7 +1722,7 @@ class InferenceGate:
     SILENCE_SENTINEL = "\x00AURA_SILENCE\x00"
 
     @staticmethod
-    def _strip_silence(text: str) -> Optional[str]:
+    def _strip_silence(text: str) -> str | None:
         """
         If the model chose silence, return the sentinel string so the caller
         can suppress output cleanly. Any response that IS substantive is
@@ -1744,17 +1739,17 @@ class InferenceGate:
         client: Any,
         prompt: str,
         system_prompt: str,
-        history: List[Dict],
+        history: list[dict],
         deadline: Deadline,
         label: str,
-        messages: Optional[List[Dict[str, str]]] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
+        messages: list[dict[str, str]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
         origin: str = "",
         is_background: bool = False,
         foreground_request: bool = False,
         **kwargs
-    ) -> Optional[str]:
+    ) -> str | None:
         llm_messages = messages or self._build_messages(prompt, system_prompt, history)
         local_prompt = self._flatten_messages_for_local_model(llm_messages)
         gen_kwargs: dict = {
@@ -1876,8 +1871,7 @@ class InferenceGate:
                     await asyncio.wait_for(asyncio.shield(self._prewarm_task), timeout=300.0)
                     self._extend_startup_quiet_window(5.0)
                     logger.info("✅ InferenceGate ONLINE (Cortex fully warmed).")
-                except Exception as warmup_err:
-                    record_degradation('inference_gate', warmup_err)
+                except _INFERENCE_RECOVERABLE_ERRORS as warmup_err:
                     record_degradation('inference_gate', warmup_err)
                     logger.warning("⚠️ Cortex warmup slow/failed: %s. Will retry on first request.", warmup_err)
             elif self._boot_should_schedule_deferred_prewarm():
@@ -1895,8 +1889,7 @@ class InferenceGate:
             
             self._initialized = True
             
-        except Exception as e:
-            record_degradation('inference_gate', e)
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
             record_degradation('inference_gate', e)
             self._init_error = str(e)
             logger.error("❌ InferenceGate init failed: %s. Cloud fallback will be used.", e)
@@ -1921,9 +1914,7 @@ class InferenceGate:
                 repo = ServiceContainer.get("state_repository", default=None)
                 if repo:
                     # We can't await here in a sync method, so use the cached state
-                    import asyncio
                     try:
-                        loop = asyncio.get_running_loop()
                         # Get state synchronously from the repo's cache
                         state = getattr(repo, '_current_state', None)
                         if state:
@@ -1934,10 +1925,9 @@ class InferenceGate:
                             logger.debug("🧠 Built full identity system prompt (len=%d)", len(base))
                         else:
                             raise ValueError("No cached state available")
-                    except Exception:
+                    except _INFERENCE_RECOVERABLE_ERRORS:
                         raise
-            except Exception as e:
-                record_degradation('inference_gate', e)
+            except _INFERENCE_RECOVERABLE_ERRORS as e:
                 record_degradation('inference_gate', e)
                 logger.debug("🧠 ContextAssembler unavailable (%s), using static identity", e)
                 # Fallback: Use the static identity prompt
@@ -1961,7 +1951,7 @@ class InferenceGate:
                     )
                     self._cached_identity_prompt = base
                     self._identity_prompt_time = now
-                except Exception:
+                except _INFERENCE_RECOVERABLE_ERRORS:
                     base = (
                         "You are Aura. You are sharp, witty, authentic, and grounded. "
                         "Never say 'Certainly', 'As an AI', or 'I can assist with that'. "
@@ -2022,7 +2012,7 @@ class InferenceGate:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _topic_hint_from_prompt(prompt: str) -> Optional[str]:
+    def _topic_hint_from_prompt(prompt: str) -> str | None:
         text = str(prompt or "").strip()
         if not text:
             return None
@@ -2041,10 +2031,10 @@ class InferenceGate:
 
         try:
             from core.container import ServiceContainer
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return ""
 
-        segments: List[str] = []
+        segments: list[str] = []
 
         try:
             repo = ServiceContainer.get("state_repository", default=None)
@@ -2072,8 +2062,7 @@ class InferenceGate:
                 f"- Thermal state: {thermal_label} ({temperature:.1f} C)\n"
                 f"- Memory pressure: {float(memory_pressure or 0.0):.1f}%"
             )
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Physiology injection unavailable: %s", exc)
 
@@ -2083,8 +2072,7 @@ class InferenceGate:
                 report = await _resolve(self_report.generate_state_report())
                 if report:
                     segments.append(f"## GROUNDED SELF-REPORT\n{report}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Self-report injection unavailable: %s", exc)
 
@@ -2109,8 +2097,7 @@ class InferenceGate:
                 if unity_repair and getattr(unity_repair, "steps", None):
                     lines.append(f"- Repair bias: {str(unity_repair.steps[0])[:180]}")
                 segments.append("\n".join(lines))
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Unity injection unavailable: %s", exc)
 
@@ -2132,8 +2119,7 @@ class InferenceGate:
                 sovereign = await _resolve(getattr(personality, "get_sovereign_context", lambda: "")())
                 if sovereign:
                     segments.append(str(sovereign).strip()[:400])
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Personality injection unavailable: %s", exc)
 
@@ -2147,8 +2133,7 @@ class InferenceGate:
                     fragment = getattr(experiencer, "phenomenal_context_string", "")
                 if fragment:
                     segments.append(f"## PHENOMENOLOGY\n{str(fragment).strip()[:500]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Phenomenology injection unavailable: %s", exc)
 
@@ -2159,8 +2144,7 @@ class InferenceGate:
                 opinion_context = await _resolve(opinion_engine.get_context_injection(topic_hint))
                 if opinion_context:
                     segments.append(f"## HELD POSITIONS\n{str(opinion_context).strip()[:400]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Opinion injection unavailable: %s", exc)
 
@@ -2174,8 +2158,7 @@ class InferenceGate:
                     )
                     if check and getattr(check, "injection", ""):
                         segments.append(f"## SPIRITUAL SPINE\n{check.injection}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Spine injection unavailable: %s", exc)
 
@@ -2186,8 +2169,7 @@ class InferenceGate:
             _hsv_block = _hsv.to_context_block()
             if _hsv_block:
                 segments.append(_hsv_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("HeartstoneValues injection unavailable: %s", exc)
 
@@ -2201,8 +2183,7 @@ class InferenceGate:
                 overview = arch_idx.get_overview()
                 if overview:
                     segments.append(overview[:800])
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Architecture overview injection unavailable: %s", exc)
 
@@ -2215,8 +2196,7 @@ class InferenceGate:
                 segments.append(_pneuma_block)
             # Also push the current prompt as evidence into the belief flow
             _pneuma.on_evidence(prompt[:300], weight=0.2)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("PNEUMA injection unavailable: %s", exc)
 
@@ -2227,8 +2207,7 @@ class InferenceGate:
             _mhaf_block = _mhaf.get_context_block()
             if _mhaf_block:
                 segments.append(_mhaf_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("MHAF injection unavailable: %s", exc)
 
@@ -2240,8 +2219,7 @@ class InferenceGate:
             lex_block = _neo.get_lexicon_block()
             if lex_block:
                 segments.append(lex_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("NeologismEngine injection unavailable: %s", exc)
 
@@ -2250,9 +2228,9 @@ class InferenceGate:
         _shared_valence, _shared_arousal, _shared_curiosity, _shared_energy = \
             0.0, 0.5, 0.5, 0.7
         try:
-            from core.container import ServiceContainer as _SC2
+            from core.container import ServiceContainer
             # valence + arousal from AffectiveCircumplex (authoritative source)
-            _circ = _SC2.get("affective_circumplex", default=None)
+            _circ = ServiceContainer.get("affective_circumplex", default=None)
             if _circ and hasattr(_circ, "_sample_raw_axes"):
                 _shared_valence, _shared_arousal = _circ._sample_raw_axes()
             elif _circ and hasattr(_circ, "get_llm_params"):
@@ -2260,13 +2238,12 @@ class InferenceGate:
                 _shared_valence = float(_cp.get("valence", 0.0))
                 _shared_arousal = float(_cp.get("arousal", 0.5))
             # curiosity + energy from liquid_state (percentages → 0.0-1.0)
-            _ls = _SC2.get("liquid_state", default=None)
+            _ls = ServiceContainer.get("liquid_state", default=None)
             if _ls and hasattr(_ls, "get_status"):
                 _lsd = _ls.get_status()
                 _shared_curiosity = float(_lsd.get("curiosity", 50)) / 100.0
                 _shared_energy    = float(_lsd.get("energy",    70)) / 100.0
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -2283,8 +2260,7 @@ class InferenceGate:
             _crsm_block = _crsm.get_context_block()
             if _crsm_block:
                 segments.append(_crsm_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CRSM injection unavailable: %s", exc)
 
@@ -2302,8 +2278,7 @@ class InferenceGate:
             _hot_block = _hot.get_context_block()
             if _hot_block:
                 segments.append(_hot_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("HOT Engine injection unavailable: %s", exc)
 
@@ -2317,8 +2292,7 @@ class InferenceGate:
             _hg_block = _hg.get_context_block()
             if _hg_block:
                 segments.append(_hg_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("HedoniGradient injection unavailable: %s", exc)
 
@@ -2329,8 +2303,7 @@ class InferenceGate:
                 goal_block = goal_engine.get_context_block(limit=5)
                 if goal_block:
                     segments.append(goal_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("GoalEngine injection unavailable: %s", exc)
 
@@ -2341,8 +2314,7 @@ class InferenceGate:
             _hp_block = _hp.get_context_block()
             if _hp_block:
                 segments.append(_hp_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("HierarchicalPlanner injection unavailable: %s", exc)
 
@@ -2353,8 +2325,7 @@ class InferenceGate:
             _ce_block = _ce.get_context_block()
             if _ce_block:
                 segments.append(_ce_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CommitmentEngine injection unavailable: %s", exc)
 
@@ -2365,8 +2336,7 @@ class InferenceGate:
             _cx_block = _cx.get_context_block()
             if _cx_block:
                 segments.append(_cx_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CuriosityExplorer injection unavailable: %s", exc)
 
@@ -2378,8 +2348,7 @@ class InferenceGate:
             _circ_block = _circ_eng.get_context_block()
             if _circ_block:
                 segments.append(_circ_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CircadianEngine injection unavailable: %s", exc)
 
@@ -2390,8 +2359,7 @@ class InferenceGate:
             _ec_block = _ec.get_context_block()
             if _ec_block:
                 segments.append(_ec_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("ExperienceConsolidator injection unavailable: %s", exc)
 
@@ -2416,8 +2384,7 @@ class InferenceGate:
                     if hasattr(_crsm2, "hidden_state") else 0.0
                 ),
             )
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CRSMLoraBridge injection unavailable: %s", exc)
 
@@ -2433,8 +2400,7 @@ class InferenceGate:
                 _block = homeostasis.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Homeostasis injection unavailable: %s", exc)
 
@@ -2445,8 +2411,7 @@ class InferenceGate:
                 _block = fe_engine.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("FreeEnergy injection unavailable: %s", exc)
 
@@ -2457,8 +2422,7 @@ class InferenceGate:
                 _block = attention.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("AttentionSchema injection unavailable: %s", exc)
 
@@ -2469,8 +2433,7 @@ class InferenceGate:
                 _block = credit.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("CreditAssignment injection unavailable: %s", exc)
 
@@ -2481,8 +2444,7 @@ class InferenceGate:
                 _block = tom.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("TheoryOfMind injection unavailable: %s", exc)
 
@@ -2494,8 +2456,7 @@ class InferenceGate:
                 _block = world_model.get_context_block(topic_hint=topic)
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("WorldModel injection unavailable: %s", exc)
 
@@ -2506,8 +2467,7 @@ class InferenceGate:
                 narrative = await _resolve(temporal.get_narrative())
                 if narrative and len(str(narrative)) > 30:
                     segments.append(f"## TEMPORAL CONTINUITY\n{str(narrative)[:200]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("TemporalBinding injection unavailable: %s", exc)
 
@@ -2518,8 +2478,7 @@ class InferenceGate:
                 _block = predictive.get_context_block()
                 if _block:
                     segments.append(_block)
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("PredictiveEngine injection unavailable: %s", exc)
 
@@ -2534,10 +2493,10 @@ class InferenceGate:
 
         try:
             from core.container import ServiceContainer
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return ""
 
-        segments: List[str] = []
+        segments: list[str] = []
 
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
@@ -2548,8 +2507,7 @@ class InferenceGate:
                 mood = str(emo.get("mood", "neutral") or "neutral")
                 tone = str(emo.get("tone", "balanced") or "balanced")
                 segments.append(f"## LIVE TONE\nMood: {mood}\nTone: {tone}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Compact personality injection unavailable: %s", exc)
 
@@ -2565,8 +2523,7 @@ class InferenceGate:
                     name, weight, _text = list(unity_report.top_causes)[0]
                     parts.append(f"Top cause: {str(name).replace('_', ' ')}={float(weight):.2f}")
                 segments.append(f"## UNITY\n{' | '.join(parts)}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Compact unity injection unavailable: %s", exc)
 
@@ -2581,8 +2538,7 @@ class InferenceGate:
                 if fragment:
                     compact_fragment = " ".join(str(fragment).strip().split())
                     segments.append(f"## PHENOMENOLOGY\n{compact_fragment[:180]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Compact phenomenology injection unavailable: %s", exc)
 
@@ -2593,8 +2549,7 @@ class InferenceGate:
                 if goal_block:
                     compact_goal = " ".join(goal_block.split())
                     segments.append(f"## GOALS\n{compact_goal[:260]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Compact GoalEngine injection unavailable: %s", exc)
 
@@ -2606,14 +2561,13 @@ class InferenceGate:
                 if opinion_context:
                     compact_opinion = " ".join(str(opinion_context).strip().split())
                     segments.append(f"## HELD POSITION\n{compact_opinion[:220]}")
-        except Exception as exc:
-            record_degradation('inference_gate', exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation('inference_gate', exc)
             logger.debug("Compact opinion injection unavailable: %s", exc)
 
         return "\n\n".join(segment for segment in segments if segment)
 
-    def _build_messages(self, prompt: str, system_prompt: str, history: List[Dict]) -> List[Dict[str, str]]:
+    def _build_messages(self, prompt: str, system_prompt: str, history: list[dict]) -> list[dict[str, str]]:
         """Build a cognitive message list for the LLM.
         
         The LLM is Aura's language/thinking center. It speaks FROM her mind,
@@ -2645,8 +2599,7 @@ class InferenceGate:
                 if messages and len(messages) >= 2:
                     logger.debug("🧠 Full cognitive message stack built (%d messages)", len(messages))
                     return messages
-        except Exception as e:
-            record_degradation('inference_gate', e)
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
             record_degradation('inference_gate', e)
             logger.debug("🧠 ContextAssembler.build_messages() unavailable (%s), using manual build", e)
         
@@ -2664,7 +2617,7 @@ class InferenceGate:
         
         return messages
 
-    def _build_compact_messages(self, prompt: str, system_prompt: str, history: List[Dict]) -> List[Dict[str, str]]:
+    def _build_compact_messages(self, prompt: str, system_prompt: str, history: list[dict]) -> list[dict[str, str]]:
         """Compact prompt path for live conversation on the 32B lane."""
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -2711,7 +2664,7 @@ class InferenceGate:
         """
         try:
             runtime_window = max(4096, int(os.getenv("AURA_CORTEX_CTX", "8192") or 8192))
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             runtime_window = 8192
 
         try:
@@ -2719,7 +2672,7 @@ class InferenceGate:
 
             registry_window = int(get_lane_context_window(PRIMARY_ENDPOINT) or runtime_window)
             return max(4096, min(runtime_window, registry_window))
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             return runtime_window
 
     @staticmethod
@@ -2745,11 +2698,11 @@ class InferenceGate:
 
     def _compact_prebuilt_messages(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
         history_limit: int = 12,
         deep_probe: bool = False,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """Trim oversized prebuilt chat payloads for the live 32B lane.
 
         Many callers already assemble messages upstream. For fast foreground turns,
@@ -2760,9 +2713,9 @@ class InferenceGate:
         if not isinstance(messages, list):
             return []
 
-        system_message: Optional[Dict[str, str]] = None
-        preserved_system_messages: List[Dict[str, str]] = []
-        convo: List[Dict[str, str]] = []
+        system_message: dict[str, str] | None = None
+        preserved_system_messages: list[dict[str, str]] = []
+        convo: list[dict[str, str]] = []
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
@@ -2783,7 +2736,7 @@ class InferenceGate:
             if len(content) > 5200:
                 system_message["content"] = content[:5199].rstrip() + "…"
 
-        compact: List[Dict[str, str]] = []
+        compact: list[dict[str, str]] = []
         if system_message is not None:
             compact.append(system_message)
         if not deep_probe:
@@ -2815,12 +2768,17 @@ class InferenceGate:
 
         return compact
 
-    def _flatten_messages_for_local_model(self, messages: List[Dict[str, str]]) -> str:
+    def _flatten_messages_for_local_model(self, messages: list[dict[str, str]]) -> str:
         """Flatten Aura messages into a Qwen/ChatML prompt for local MLX models."""
         return format_chatml_messages(messages)
 
 
-    async def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None) -> Any:
+    async def generate(  # noqa: ASYNC109
+        self,
+        prompt: str,
+        context: dict[str, Any] | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109
+    ) -> Any:
         """Primary generation endpoint.
 
         [v7.4] Deadline-Aware Generation:
@@ -2846,7 +2804,7 @@ class InferenceGate:
                         prompt,
                         is_user_facing=True,
                     )
-            except Exception as _mesh_exc:  # pragma: no cover - defensive
+            except _INFERENCE_RECOVERABLE_ERRORS as _mesh_exc:  # pragma: no cover - defensive
                 logger.debug("Mesh-only path declined: %s", _mesh_exc)
 
         origin = str(context.get("origin", "") or "").lower()
@@ -2860,7 +2818,7 @@ class InferenceGate:
             from core.runtime.turn_analysis import looks_like_deep_mind_probe
 
             deep_probe_request = looks_like_deep_mind_probe(prompt)
-        except Exception:
+        except _INFERENCE_RECOVERABLE_ERRORS:
             deep_probe_request = False
         if deep_probe_request and (explicit_foreground or self._origin_is_user_facing(origin)):
             if os.environ.get("AURA_EMBODIED_CHALLENGE"):
@@ -2951,8 +2909,8 @@ class InferenceGate:
                         _morph_advice.get("pressure", 0.0),
                     )
                     requested_tier = "tertiary"
-            except Exception:
-                pass  # no-op: intentional
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                logger.debug("Morphogenesis routing advice unavailable: %s", exc)
 
         # ── Proactive cortex recovery (laptop sleep / MLX worker death) ───
         if not is_background:
@@ -2988,8 +2946,7 @@ class InferenceGate:
                         )
                         if alive:
                             logger.info("✅ [STABILITY] Inline fast-recovery succeeded.")
-                    except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as inline_exc:
-                        record_degradation('inference_gate', inline_exc)
+                    except (TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as inline_exc:
                         record_degradation('inference_gate', inline_exc)
                         logger.warning("⚠️ [STABILITY] Inline fast-recovery failed: %s", inline_exc)
 
@@ -3047,8 +3004,8 @@ class InferenceGate:
                             "to prevent OOM.", ram_pct,
                         )
                         requested_tier = "tertiary"
-                except Exception:
-                    pass  # no-op: intentional
+                except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                    logger.debug("Foreground RAM pressure probe unavailable: %s", exc)
 
             if requested_tier != "secondary" and self._background_memory_pressure_active():
                 await self._shed_background_workers_for_memory_pressure()
@@ -3074,8 +3031,8 @@ class InferenceGate:
             context["trust_gate_skipped"] = "deep_mind_probe"
         elif not _is_bg_request:
             try:
+                from core.security.trust_engine import TrustLevel, get_trust_engine
                 from core.security.user_recognizer import get_user_recognizer
-                from core.security.trust_engine import get_trust_engine, TrustLevel
                 _te = get_trust_engine()
                 _ur = get_user_recognizer()
                 # Offload PBKDF2-heavy recognition to thread pool
@@ -3114,7 +3071,7 @@ class InferenceGate:
                 existing_brief = str(context.get("brief", ""))
                 if _trust_guidance:
                     context["brief"] = (_trust_guidance + "\n\n" + existing_brief).strip()
-            except Exception as _te_exc:
+            except _INFERENCE_RECOVERABLE_ERRORS as _te_exc:
                 record_degradation('inference_gate', _te_exc)
                 logger.warning("Trust gate error (passphrase check may have failed): %s", _te_exc)
 
@@ -3162,12 +3119,11 @@ class InferenceGate:
                     )
                     requested_tier = "primary"
                     deep_handoff = False
-            except Exception as _swap_exc:
-                record_degradation('inference_gate', _swap_exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as _swap_exc:
                 record_degradation('inference_gate', _swap_exc)
                 logger.debug("Cortex lane probe before secondary admission failed: %s", _swap_exc)
 
-        admission_snapshot: Optional[Dict[str, Any]] = None
+        admission_snapshot: dict[str, Any] | None = None
         if not is_background and requested_tier in {"primary", "secondary"}:
             admission_snapshot = await self._enforce_foreground_admission(
                 requested_tier,
@@ -3213,7 +3169,6 @@ class InferenceGate:
             # [RESTORED] Removed the artificial cap. Aura maintains her full voice
             # even when the system is under load. Throttling tokens just creates
             # "slop" responses and frustrates the user.
-            pass
 
         # ── Resource Stakes: scale token budget by computational survival state ──
         try:
@@ -3221,8 +3176,9 @@ class InferenceGate:
             token_mult = get_resource_stakes().get_token_budget_multiplier()
             if token_mult < 0.95:
                 max_tokens = max(384, int(max_tokens * token_mult))
-        except Exception:
-            pass  # no-op: intentional
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            record_degradation("inference_gate", exc)
+            logger.debug("Resource-stakes token multiplier unavailable: %s", exc)
 
         # ── Operational Resource Stakes: persistent viability constrains action ──
         # This newer ledger is stricter than the legacy multiplier above: it can
@@ -3244,16 +3200,15 @@ class InferenceGate:
                         requested_tier = "primary"
                         deep_handoff = False
                 context["resource_stakes_envelope"] = envelope.as_dict()
-        except Exception as _stakes_exc:
-            record_degradation('inference_gate', _stakes_exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _stakes_exc:
             record_degradation('inference_gate', _stakes_exc)
             logger.debug("ResourceStakesLedger unavailable: %s", _stakes_exc)
 
         # ── Affective Circumplex: let somatic state modulate generation params ──
         # Only applies on user-facing, non-background requests. Background tasks
         # run at fixed params to avoid thermal feedback loops.
-        somatic_temperature: Optional[float] = None
-        morpho_kwargs: Dict[str, Any] = {}
+        somatic_temperature: float | None = None
+        morpho_kwargs: dict[str, Any] = {}
         if not is_background and self._origin_is_user_facing(origin):
             try:
                 from core.affect.affective_circumplex import get_circumplex
@@ -3269,8 +3224,7 @@ class InferenceGate:
                     circumplex_params["valence"], circumplex_params["arousal"],
                     somatic_temperature, max_tokens,
                 )
-            except Exception as _ce:
-                record_degradation('inference_gate', _ce)
+            except _INFERENCE_RECOVERABLE_ERRORS as _ce:
                 record_degradation('inference_gate', _ce)
                 logger.debug("Circumplex unavailable: %s", _ce)
 
@@ -3284,8 +3238,7 @@ class InferenceGate:
                     base = somatic_temperature if somatic_temperature is not None else 0.72
                     somatic_temperature = round(0.5 * base + 0.5 * ais_temp, 3)
                     logger.debug("🎯 PNEUMA precision temp blend → %.3f", somatic_temperature)
-            except Exception as _ais_e:
-                record_degradation('inference_gate', _ais_e)
+            except _INFERENCE_RECOVERABLE_ERRORS as _ais_e:
                 record_degradation('inference_gate', _ais_e)
                 logger.debug("ActiveInferenceSampler unavailable: %s", _ais_e)
 
@@ -3306,8 +3259,7 @@ class InferenceGate:
                         _mods.temperature_mod, _mods.depth_mod,
                         somatic_temperature or 0.0, max_tokens,
                     )
-            except Exception as _hc_e:
-                record_degradation('inference_gate', _hc_e)
+            except _INFERENCE_RECOVERABLE_ERRORS as _hc_e:
                 record_degradation('inference_gate', _hc_e)
                 logger.debug("HomeostaticCoupling modifiers unavailable: %s", _hc_e)
 
@@ -3330,8 +3282,7 @@ class InferenceGate:
                         _h_mods["temperature_mod"], _h_mods["token_multiplier"],
                         _h_mods["caution_level"],
                     )
-            except Exception as _he_e:
-                record_degradation('inference_gate', _he_e)
+            except _INFERENCE_RECOVERABLE_ERRORS as _he_e:
                 record_degradation('inference_gate', _he_e)
                 logger.debug("Homeostasis inference modifiers unavailable: %s", _he_e)
 
@@ -3364,8 +3315,7 @@ class InferenceGate:
                         
                     logger.debug("🧬 Morphogenetic Coupling: danger=%.2f curiosity=%.2f pres=%.2f -> temp=%.2f tokens=%d",
                                  _danger, _curiosity, _resource_pressure, somatic_temperature or 0.0, max_tokens)
-            except Exception as _m_e:
-                record_degradation('inference_gate', _m_e)
+            except _INFERENCE_RECOVERABLE_ERRORS as _m_e:
                 record_degradation('inference_gate', _m_e)
                 logger.debug("Morphogenetic coupling unavailable: %s", _m_e)
 
@@ -3387,8 +3337,7 @@ class InferenceGate:
                             )
                             # Don't force tier switch — just extend token budget
                             max_tokens = min(max_tokens + 256, 4096)
-            except Exception as _fe_e:
-                record_degradation('inference_gate', _fe_e)
+            except _INFERENCE_RECOVERABLE_ERRORS as _fe_e:
                 record_degradation('inference_gate', _fe_e)
                 logger.debug("FreeEnergy tier nudge unavailable: %s", _fe_e)
 
@@ -3464,7 +3413,7 @@ class InferenceGate:
                     self._build_living_mind_context(prompt, origin),
                     timeout=5.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "⚠️ [STABILITY] Full living mind context assembly exceeded 5s budget. "
                     "Falling back to compact context to preserve generation headroom."
@@ -3482,8 +3431,7 @@ class InferenceGate:
                 _soma_narrative = get_circumplex().describe()
                 if _soma_narrative:
                     system_prompt = f"{system_prompt}\n\n## SOMATIC STATE\n{_soma_narrative}"
-            except Exception as _exc:
-                record_degradation('inference_gate', _exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 record_degradation('inference_gate', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -3511,8 +3459,7 @@ class InferenceGate:
                     arch_excerpt = get_architecture_index().query(prompt, max_results=3)
                     if arch_excerpt:
                         system_prompt = f"{system_prompt}\n\n{arch_excerpt}"
-            except Exception as _ae:
-                record_degradation('inference_gate', _ae)
+            except _INFERENCE_RECOVERABLE_ERRORS as _ae:
                 record_degradation('inference_gate', _ae)
                 logger.debug("ArchIndex injection skipped: %s", _ae)
             system_prompt = (
@@ -3634,8 +3581,7 @@ class InferenceGate:
                                 lane_status = await self.ensure_foreground_ready(
                                     timeout=max(180.0, primary_timeout)
                                 )
-                            except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as warmup_exc:
-                                record_degradation('inference_gate', warmup_exc)
+                            except (TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as warmup_exc:
                                 record_degradation('inference_gate', warmup_exc)
                                 if "foreground_warmup_deferred" in str(warmup_exc):
                                     primary_warmup_memory_deferred = True
@@ -3668,7 +3614,7 @@ class InferenceGate:
                             enabled=local_label != FALLBACK_ENDPOINT,
                             priority=_is_user_facing,
                             worker=local_label,
-                            timeout=primary_deadline.remaining or primary_timeout,
+                            timeout_s=primary_deadline.remaining or primary_timeout,
                         ):
                             text = await self._generate_with_client(
                                 local_client,
@@ -3712,7 +3658,7 @@ class InferenceGate:
                                 try:
                                     # [STABILITY v56] Same as above, don't cap at 60s.
                                     await self.ensure_foreground_ready(timeout=max(180.0, primary_timeout))
-                                except Exception as warmup_exc:
+                                except _INFERENCE_RECOVERABLE_ERRORS as warmup_exc:
                                     record_degradation('inference_gate', warmup_exc)
                                     logger.warning("🧠 Foreground warmup retry did not complete cleanly: %s", warmup_exc)
                             if is_shutdown_requested():
@@ -3732,7 +3678,7 @@ class InferenceGate:
                                 enabled=True,
                                 priority=True,
                                 worker=local_label,
-                                timeout=retry_deadline.remaining or retry_timeout,
+                                timeout_s=retry_deadline.remaining or retry_timeout,
                             ):
                                 text = await self._generate_with_client(
                                     local_client,
@@ -3761,7 +3707,7 @@ class InferenceGate:
                         # For user-facing requests, skip brainstem — go straight to cloud
                         if allow_cloud_fallback:
                             logger.warning("🧠 Escalating to cloud before brainstem for user-facing request.")
-                            raise _UserFacingCortexFailure()
+                            raise _UserFacingCortexError()
                         lane_status = self.get_conversation_status()
                         if (
                             not protected_deep_fallback
@@ -3797,7 +3743,7 @@ class InferenceGate:
                         enabled=fallback_label != FALLBACK_ENDPOINT,
                         priority=_is_user_facing,
                         worker=fallback_label,
-                        timeout=fallback_deadline.remaining or fallback_timeout,
+                        timeout_s=fallback_deadline.remaining or fallback_timeout,
                     ):
                         fallback_max_tokens = (
                             max_tokens
@@ -3832,14 +3778,13 @@ class InferenceGate:
                     if restore_primary and not primary_restored_inline:
                         self._schedule_primary_restore_after_deep_handoff()
                 
-            except _UserFacingCortexFailure:
+            except _UserFacingCortexError:
                 logger.warning("🧠 User-facing Cortex failure — bypassing brainstem, escalating to cloud.")
-            except asyncio.TimeoutError:
+            except TimeoutError as timeout_exc:
                 logger.warning("🛑 Local inference TIMED OUT (Budget: %.0fs).", timeout_val)
                 if not is_background and self._origin_is_user_facing(origin) and not allow_cloud_fallback:
-                    raise asyncio.TimeoutError(f"{local_label} timed out after {timeout_val:.0f}s")
-            except Exception as e:
-                record_degradation('inference_gate', e)
+                    raise TimeoutError(f"{local_label} timed out after {timeout_val:.0f}s") from timeout_exc
+            except _INFERENCE_RECOVERABLE_ERRORS as e:
                 record_degradation('inference_gate', e)
                 logger.warning("🛑 Local inference FAILURE: %s", e)
 
@@ -3880,8 +3825,7 @@ class InferenceGate:
                             prompt,
                             is_user_facing=True,
                         )
-            except Exception as reflex_err:
-                record_degradation('inference_gate', reflex_err)
+            except _INFERENCE_RECOVERABLE_ERRORS as reflex_err:
                 record_degradation('inference_gate', reflex_err)
                 logger.debug("Reflex fallback failed: %s", reflex_err)
 
@@ -3914,20 +3858,19 @@ class InferenceGate:
                         if hasattr(self._mlx_client, '_req_q'):
                             try:
                                 self._mlx_client._req_q.close()
-                            except Exception:
-                                pass  # no-op: intentional
+                            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                                logger.debug("Request queue close skipped during cascade cleanup: %s", exc)
                             self._mlx_client._req_q = _mp.Queue(maxsize=10)
                         if hasattr(self._mlx_client, '_res_q'):
                             try:
                                 self._mlx_client._res_q.close()
-                            except Exception:
-                                pass  # no-op: intentional
+                            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                                logger.debug("Response queue close skipped during cascade cleanup: %s", exc)
                             self._mlx_client._res_q = _mp.Queue(maxsize=10)
                         self._mlx_client._process = None
                         self._mlx_client._init_done = False
                         logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")
-                    except Exception as cleanup_exc:
-                        record_degradation('inference_gate', cleanup_exc)
+                    except _INFERENCE_RECOVERABLE_ERRORS as cleanup_exc:
                         record_degradation('inference_gate', cleanup_exc)
                         logger.debug("Cascade cleanup error (non-fatal): %s", cleanup_exc)
                 # Force cortex recovery in background
@@ -3947,8 +3890,8 @@ class InferenceGate:
                         breaker.state = CircuitState.HALF_OPEN
                         breaker.reset_timeout = min(breaker.reset_timeout, 15.0)
                         logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
-                except Exception:
-                    pass  # no-op: intentional
+                except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                    logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
                 return self._user_facing_recovery_response(prompt)
             return None
 
@@ -3962,7 +3905,7 @@ class InferenceGate:
             # PII SCRUBBING: Strip personal identifiers before sending to cloud.
             # biography_private.json data (real names, trust scores, relationship
             # labels) must never leave the local machine. The scrubber replaces
-            # PII with generic placeholders while preserving conversational context.
+            # PII with neutral replacements while preserving conversational context.
             cloud_system_prompt = system_prompt
             cloud_prompt = prompt
             try:
@@ -3971,8 +3914,7 @@ class InferenceGate:
                 cloud_prompt = scrub_pii_for_cloud(prompt)
             except ImportError:
                 logger.debug("PII scrubber not available — sending prompt as-is to cloud")
-            except Exception as scrub_exc:
-                record_degradation('inference_gate', scrub_exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as scrub_exc:
                 record_degradation('inference_gate', scrub_exc)
                 logger.warning("PII scrubbing failed (%s) — sending prompt as-is", scrub_exc)
 
@@ -3992,8 +3934,7 @@ class InferenceGate:
                         from core.consciousness.closed_loop import notify_closed_loop_output
 
                         notify_closed_loop_output(result.strip())
-                    except Exception as exc:
-                        record_degradation('inference_gate', exc)
+                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
                         record_degradation('inference_gate', exc)
                         logger.debug("Cloud output notification skipped: %s", exc)
                     return self._stabilize_user_facing_text(
@@ -4015,8 +3956,7 @@ class InferenceGate:
                         from core.consciousness.closed_loop import notify_closed_loop_output
 
                         notify_closed_loop_output(result.strip())
-                    except Exception as exc:
-                        record_degradation('inference_gate', exc)
+                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
                         record_degradation('inference_gate', exc)
                         logger.debug("Router output notification skipped: %s", exc)
                     return self._stabilize_user_facing_text(
@@ -4024,8 +3964,7 @@ class InferenceGate:
                         prompt,
                         is_user_facing=_is_user_facing,
                     )
-        except Exception as cloud_err:
-            record_degradation('inference_gate', cloud_err)
+        except _INFERENCE_RECOVERABLE_ERRORS as cloud_err:
             record_degradation('inference_gate', cloud_err)
             cloud_err_text = str(cloud_err)
             if "429" in cloud_err_text or "quota" in cloud_err_text.lower():
@@ -4053,16 +3992,14 @@ class InferenceGate:
         try:
             from core.consciousness.crsm import get_crsm
             get_crsm().post_inference_update(response_text)
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         try:
             from core.consciousness.hot_engine import get_hot_engine
             hot = get_hot_engine()
             hot.apply_feedback()  # apply any pending reflexive modifications
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         try:
@@ -4086,12 +4023,10 @@ class InferenceGate:
                     response_text=response_text,
                     hedonic_after=hg.score,
                 )
-            except Exception as _exc:
-                record_degradation('inference_gate', _exc)
+            except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 record_degradation('inference_gate', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -4112,8 +4047,7 @@ class InferenceGate:
                     outcome=quality,
                     domain="chat",
                 )
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception in credit feedback: %s", _exc)
 
@@ -4122,8 +4056,7 @@ class InferenceGate:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis and hasattr(homeostasis, "on_response_success"):
                 homeostasis.on_response_success(response_length=len(response_text))
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception in homeostasis feedback: %s", _exc)
 
@@ -4135,8 +4068,7 @@ class InferenceGate:
                     user_id="default_user",
                     response_text=response_text,
                 )
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception in ToM feedback: %s", _exc)
 
@@ -4146,12 +4078,11 @@ class InferenceGate:
             if world_model and hasattr(world_model, "extract_beliefs_from_response"):
                 if len(response_text) > 100:
                     world_model.extract_beliefs_from_response(response_text)
-        except Exception as _exc:
-            record_degradation('inference_gate', _exc)
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             record_degradation('inference_gate', _exc)
             logger.debug("Suppressed Exception in world model feedback: %s", _exc)
 
-    async def think(self, prompt: str, system_prompt: str = "", **kwargs) -> Optional[str]:
+    async def think(self, prompt: str, system_prompt: str = "", **kwargs) -> str | None:
         """Unified thinking interface for cognitive components.
 
         Preserve standard LLM adapter semantics:
@@ -4165,7 +4096,7 @@ class InferenceGate:
         system_prompt_is_brief = bool(kwargs.pop("system_prompt_is_brief", False))
         provided_messages = kwargs.get("messages")
 
-        context: Dict[str, Any] = {}
+        context: dict[str, Any] = {}
         if provided_messages is not None:
             context["messages"] = provided_messages
         elif brief is not None:
