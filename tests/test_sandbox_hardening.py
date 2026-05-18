@@ -16,19 +16,19 @@ fixed before the system runs autonomously.
 import ast
 import asyncio
 import json
-import os
+import sys
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import sys
 
-sys.path.append(str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.agency.tool_orchestrator import ToolOrchestrator
-
+from core.agency.tool_orchestrator import ToolOrchestrator  # noqa: E402
 
 # ════════════════════════════════════════════════════════════════════════
 # 1. AST GUARD — Dangerous Code Detection
@@ -140,20 +140,20 @@ class TestShadowASTHealerGovernance:
             healer = ShadowASTHealer()
             # Mock governance to deny
             with patch.object(healer, "_check_governance", return_value=False):
-                result = asyncio.run(
+                asyncio.run(
                     healer.attempt_repair(temp_path, "name 'undefined_var' is not defined")
                 )
             # File should be unchanged
             content = temp_path.read_text()
             assert "original content" in content
         finally:
-            get_task_tracker().create_task(get_storage_gateway().delete(temp_path, cause='TestShadowASTHealerGovernance.test_healer_rejects_write_when_governance_denies'))
+            temp_path.unlink(missing_ok=True)
 
     def test_healer_only_modifies_within_codebase_root(self):
         """The healer must refuse to modify files outside the codebase root."""
         from core.self_modification.shadow_ast_healer import ShadowASTHealer
 
-        healer = ShadowASTHealer(codebase_root=Path("/Users/bryan/.aura/live-source"))
+        healer = ShadowASTHealer(codebase_root=PROJECT_ROOT)
         # Attempt to repair a file outside the root
         outside_path = Path("/tmp/evil_target.py")
         outside_path.write_text("x = 1")
@@ -163,7 +163,7 @@ class TestShadowASTHealerGovernance:
             )
             assert result is False, "Healer must refuse to modify files outside codebase root"
         finally:
-            get_task_tracker().create_task(get_storage_gateway().delete(outside_path, cause='TestShadowASTHealerGovernance.test_healer_only_modifies_within_codebase_root'))
+            outside_path.unlink(missing_ok=True)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -215,7 +215,7 @@ class TestSnapshotThawGovernance:
         manager = SnapshotManager(orchestrator=MagicMock())
 
         # Create a minimal valid snapshot
-        get_task_tracker().create_task(get_storage_gateway().create_dir(manager.snapshot_file.parent, cause='TestSnapshotThawGovernance.test_thaw_logs_governance_check'))
+        manager.snapshot_file.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {
             "version": SnapshotManager.VERSION,
             "timestamp": time.time(),
@@ -224,10 +224,9 @@ class TestSnapshotThawGovernance:
         }
         manager.snapshot_file.write_text(json.dumps(snapshot))
 
-        with patch("core.resilience.snapshot_manager.logger") as mock_logger:
+        with patch("core.resilience.snapshot_manager.logger"):
             manager.thaw()
             # Verify governance was at least logged
-            all_calls = " ".join(str(c) for c in mock_logger.method_calls)
             # The thaw should complete (governance check is now inline)
 
     def test_snapshot_version_mismatch_rejected(self):
@@ -235,7 +234,7 @@ class TestSnapshotThawGovernance:
         from core.resilience.snapshot_manager import SnapshotManager
 
         manager = SnapshotManager(orchestrator=MagicMock())
-        get_task_tracker().create_task(get_storage_gateway().create_dir(manager.snapshot_file.parent, cause='TestSnapshotThawGovernance.test_snapshot_version_mismatch_rejected'))
+        manager.snapshot_file.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {"version": "0.0", "timestamp": time.time(), "subsystems": {}}
         manager.snapshot_file.write_text(json.dumps(snapshot))
 

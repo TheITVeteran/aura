@@ -1,9 +1,17 @@
 import csv
+import os
 import re
 from pathlib import Path
 
+
 def main():
-    ledger_file = Path("/Users/bryan/Downloads/aura_exhaustive_forensic_ledger/by_category/direct_state_mutation_surface.csv")
+    ledger_root = Path(
+        os.environ.get(
+            "AURA_AUDIT_LEDGER_ROOT",
+            Path.home() / "Downloads" / "aura_exhaustive_forensic_ledger" / "by_category",
+        )
+    ).expanduser()
+    ledger_file = ledger_root / "direct_state_mutation_surface.csv"
     if not ledger_file.exists():
         print("CSV not found.")
         return
@@ -11,7 +19,7 @@ def main():
     # Track modifications per file
     file_mods = {}
 
-    with open(ledger_file, "r") as f:
+    with open(ledger_file) as f:
         reader = csv.DictReader(f)
         for row in reader:
             filepath = Path(row["file"])

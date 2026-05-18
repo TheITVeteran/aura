@@ -14,9 +14,10 @@ Tests cover:
 
 import asyncio
 import time
+from pathlib import Path
+
 import numpy as np
 import pytest
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -498,14 +499,15 @@ class TestBrowserURLRouting:
     def test_file_exists_request_normalizes_into_exists_params(self):
         from core.kernel.upgrades_10x import GodModeToolPhase
 
+        snake_path = Path.home() / "Desktop" / "agency_test" / "aura_live_snake.html"
         params = GodModeToolPhase._normalize_skill_params(
             "file_operation",
-            "check if /Users/bryan/Desktop/agency_test/aura_live_snake.html exists",
+            f"check if {snake_path} exists",
             {"query": "wrong"},
         )
 
         assert params["action"] == "exists"
-        assert params["path"] == "/Users/bryan/Desktop/agency_test/aura_live_snake.html"
+        assert params["path"] == str(snake_path)
 
     def test_manifest_request_prefers_manifest_skill_over_file_operation(self):
         from core.kernel.upgrades_10x import GodModeToolPhase

@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 exact_quotes = {
     "CORTANA": [
@@ -192,7 +195,7 @@ for character, pairs in exact_quotes.items():
             "source": character
         })
 
-with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes.json', 'w') as f:
+with open(RAW_DATA_DIR / "verbatim_quotes.json", "w") as f:
     json.dump(parsed_quotes, f, indent=2)
 
 print(f"Saved {len(parsed_quotes)} verbatim quotes for ALL 21 characters to JSON.")

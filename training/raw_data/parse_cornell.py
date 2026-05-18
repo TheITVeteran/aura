@@ -1,15 +1,18 @@
 import ast
 import json
+from pathlib import Path
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 lines = {}
-with open('/Users/bryan/.aura/live-source/training/raw_data/movie_lines.txt', 'r', encoding='iso-8859-1') as f:
+with open(RAW_DATA_DIR / "movie_lines.txt", encoding="iso-8859-1") as f:
     for line in f:
         parts = line.split(' +++$+++ ')
         if len(parts) == 5:
             lines[parts[0]] = parts[4].strip()
 
 convs = []
-with open('/Users/bryan/.aura/live-source/training/raw_data/movie_conversations.txt', 'r', encoding='iso-8859-1') as f:
+with open(RAW_DATA_DIR / "movie_conversations.txt", encoding="iso-8859-1") as f:
     for line in f:
         parts = line.split(' +++$+++ ')
         if len(parts) == 4:
@@ -30,7 +33,7 @@ for conv in convs:
                 })
 
 # Save to json
-with open('/Users/bryan/.aura/live-source/training/raw_data/human_conversations.json', 'w') as f:
+with open(RAW_DATA_DIR / "human_conversations.json", "w") as f:
     json.dump(parsed_conversations, f, indent=2)
 
 print(f"Extracted {len(parsed_conversations)} conversation pairs from Cornell Movie Dialogs.")

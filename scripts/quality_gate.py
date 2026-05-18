@@ -9,7 +9,6 @@ Usage:
     python scripts/quality_gate.py --quick  # Syntax + imports only
 """
 import ast
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,15 +41,16 @@ def check_syntax():
             fail(f"{py_file.relative_to(ROOT)}: {e}")
             errors += 1
     if errors == 0:
-        ok(f"All Python files parse cleanly")
+        ok("All Python files parse cleanly")
     return errors
 
 
 def check_hardcoded_paths():
-    """No /Users/bryan in tracked files."""
+    """No author-specific home paths in tracked files."""
     print("\n[2/6] Hardcoded path check...")
+    home_pattern = str(Path.home())
     result = subprocess.run(
-        ["git", "grep", "-l", "/Users/bryan", "--", "*.py", "*.md", "*.sh", "*.plist"],
+        ["git", "grep", "-l", home_pattern, "--", "*.py", "*.md", "*.sh", "*.plist"],
         capture_output=True, text=True, cwd=ROOT,
     )
     # Exclude files that legitimately reference the pattern (the gate itself, specs)
@@ -60,7 +60,7 @@ def check_hardcoded_paths():
         for f in files:
             fail(f"Hardcoded path in: {f}")
         return len(files)
-    ok("No hardcoded /Users/bryan paths")
+    ok("No hardcoded personal home paths")
     return 0
 
 

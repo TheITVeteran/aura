@@ -7,15 +7,30 @@ other low-memory settings that were added to stay under the Metal cap.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
-import re
 
-BASE_MODEL = "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit"
-ADAPTER_PATH = Path("/Users/bryan/.aura/live-source/training/adapters/aura-personality")
-DATA_DIR = "/Users/bryan/.aura/live-source/training/data"
-LOG_PATH = Path("/Users/bryan/.aura/live-source/training/logs/train_and_fuse.log")
+PROJECT_ROOT = Path(os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
+BASE_MODEL = os.environ.get(
+    "AURA_TRAINING_BASE_MODEL",
+    str(PROJECT_ROOT / "models" / "Qwen2.5-32B-Instruct-4bit"),
+)
+ADAPTER_PATH = Path(
+    os.environ.get(
+        "AURA_TRAINING_ADAPTER_PATH",
+        PROJECT_ROOT / "training" / "adapters" / "aura-personality",
+    )
+).expanduser()
+DATA_DIR = os.environ.get("AURA_TRAINING_DATA_DIR", str(PROJECT_ROOT / "training" / "data"))
+LOG_PATH = Path(
+    os.environ.get(
+        "AURA_TRAINING_LOG_PATH",
+        PROJECT_ROOT / "training" / "logs" / "train_and_fuse.log",
+    )
+).expanduser()
 TRAINING_CONFIG_PATH = ADAPTER_PATH / "training_config.json"
 
 TOTAL_ITERS_FALLBACK = 90153
@@ -160,17 +175,7 @@ def main() -> int:
         log.flush()
         process = subprocess.Popen(
             cmd,
-            cwd="/Users/bryan/.aura/live-source",
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-        process.wait()
-        return process.returncode
-
-        log.flush()
-        process = subprocess.Popen(
-            cmd,
-            cwd="/Users/bryan/.aura/live-source",
+            cwd=PROJECT_ROOT,
             stdout=log,
             stderr=subprocess.STDOUT,
         )

@@ -6,7 +6,7 @@ Designed to run on a schedule (cron) or before each commit.
 
 Checks:
   1. Dead imports (imported but never used in file)
-  2. Hardcoded paths (author-specific /Users/bryan references)
+  2. Hardcoded paths (author-specific home-directory references)
   3. Large files in git (> 1MB)
   4. Stale log/data files tracked in git
   5. Empty __init__.py files that could be cleaned
@@ -21,25 +21,23 @@ Usage:
 """
 import ast
 import json
-import os
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
 
 
-def get_tracked_files() -> List[str]:
+def get_tracked_files() -> list[str]:
     result = subprocess.run(
         ["git", "ls-files"], capture_output=True, text=True, cwd=ROOT,
     )
     return [f for f in result.stdout.strip().split("\n") if f]
 
 
-def check_dead_imports(py_files: List[Path]) -> List[Dict]:
+def check_dead_imports(py_files: list[Path]) -> list[dict]:
     """Find imports that are never referenced in the file."""
     issues = []
     for f in py_files:
@@ -79,10 +77,11 @@ def check_dead_imports(py_files: List[Path]) -> List[Dict]:
     return issues[:50]  # Cap to avoid noise
 
 
-def check_hardcoded_paths() -> List[Dict]:
+def check_hardcoded_paths() -> list[dict]:
     """Find author-specific paths in tracked files."""
+    home_pattern = str(Path.home())
     result = subprocess.run(
-        ["git", "grep", "-n", "/Users/bryan", "--", "*.py", "*.sh", "*.md"],
+        ["git", "grep", "-n", home_pattern, "--", "*.py", "*.sh", "*.md"],
         capture_output=True, text=True, cwd=ROOT,
     )
     issues = []
@@ -101,7 +100,7 @@ def check_hardcoded_paths() -> List[Dict]:
     return issues
 
 
-def check_large_files() -> List[Dict]:
+def check_large_files() -> list[dict]:
     """Find files > 1MB tracked in git."""
     issues = []
     for f in get_tracked_files():
@@ -116,7 +115,7 @@ def check_large_files() -> List[Dict]:
     return issues
 
 
-def check_missing_docstrings(py_files: List[Path]) -> List[Dict]:
+def check_missing_docstrings(py_files: list[Path]) -> list[dict]:
     """Find Python files with no module docstring."""
     issues = []
     for f in py_files:
@@ -135,7 +134,7 @@ def check_missing_docstrings(py_files: List[Path]) -> List[Dict]:
     return issues[:30]
 
 
-def check_duplicate_functions(py_files: List[Path]) -> List[Dict]:
+def check_duplicate_functions(py_files: list[Path]) -> list[dict]:
     """Find functions defined in multiple files (potential duplication)."""
     func_locations = defaultdict(list)
     for f in py_files:
@@ -161,7 +160,7 @@ def check_duplicate_functions(py_files: List[Path]) -> List[Dict]:
     return sorted(issues, key=lambda x: -x["count"])[:20]
 
 
-def check_security_concerns() -> List[Dict]:
+def check_security_concerns() -> list[dict]:
     """Find files that suggest dangerous capabilities."""
     issues = []
     dangerous_patterns = [
@@ -187,7 +186,6 @@ def check_security_concerns() -> List[Dict]:
 
 
 def main():
-    fix_mode = "--fix" in sys.argv
     json_mode = "--json" in sys.argv
 
     # Collect Python files

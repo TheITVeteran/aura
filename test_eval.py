@@ -1,5 +1,3 @@
-import sys
-sys.path.append("/Users/bryan/.aura/live-source")
 from core.learning.autonomous_rsi import generate_solver_source, solve_with_generated_code
 from core.learning.successor_lab import Task
 

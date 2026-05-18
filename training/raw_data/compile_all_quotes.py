@@ -1,5 +1,8 @@
 import json
 import random
+from pathlib import Path
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 # Massive deep-recall exact quotes compilation.
 
@@ -589,7 +592,7 @@ def main():
     # 3. Load previously extracted Cornell-Ripley quotes and apply dynamic cap
     ripley_quotes = []
     try:
-        with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_expanded.json', 'r') as f:
+        with open(RAW_DATA_DIR / "verbatim_quotes_expanded.json") as f:
             data = json.load(f)
             # Filter to just the Cornell extractions
             all_ripley = [q for q in data if q.get("source") == "RIPLEY_CORNELL"]
@@ -605,7 +608,7 @@ def main():
     print(f"Added {len(ripley_quotes)} Ripley Cornell quotes (Dynamic Cap applied).")
     print(f"Total Verbatim Dataset: {len(total_quotes)}")
 
-    with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_final.json', 'w') as f:
+    with open(RAW_DATA_DIR / "verbatim_quotes_final.json", "w") as f:
         json.dump(total_quotes, f, indent=2)
 
 if __name__ == "__main__":

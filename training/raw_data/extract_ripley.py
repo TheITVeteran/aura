@@ -1,10 +1,13 @@
 import ast
 import json
+from pathlib import Path
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 # Extract Ripley quotes from Cornell
 lines = {}
 ripley_lines = set()
-with open('/Users/bryan/.aura/live-source/training/raw_data/movie_lines.txt', 'r', encoding='iso-8859-1') as f:
+with open(RAW_DATA_DIR / "movie_lines.txt", encoding="iso-8859-1") as f:
     for line in f:
         parts = line.split(' +++$+++ ')
         if len(parts) == 5:
@@ -13,7 +16,7 @@ with open('/Users/bryan/.aura/live-source/training/raw_data/movie_lines.txt', 'r
                 ripley_lines.add(parts[0])
 
 convs = []
-with open('/Users/bryan/.aura/live-source/training/raw_data/movie_conversations.txt', 'r', encoding='iso-8859-1') as f:
+with open(RAW_DATA_DIR / "movie_conversations.txt", encoding="iso-8859-1") as f:
     for line in f:
         parts = line.split(' +++$+++ ')
         if len(parts) == 4:
@@ -37,14 +40,14 @@ print(f"Extracted {len(ripley_quotes)} conversational pairs for Ripley from Corn
 
 # Load the existing verbatim quotes
 try:
-    with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes.json', 'r') as f:
+    with open(RAW_DATA_DIR / "verbatim_quotes.json") as f:
         existing_quotes = json.load(f)
 except Exception:
     existing_quotes = []
 
 # Merge and save
 all_quotes = existing_quotes + ripley_quotes
-with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_expanded.json', 'w') as f:
+with open(RAW_DATA_DIR / "verbatim_quotes_expanded.json", "w") as f:
     json.dump(all_quotes, f, indent=2)
 
 print(f"Total verbatim quotes now: {len(all_quotes)}")

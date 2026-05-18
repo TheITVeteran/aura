@@ -6,14 +6,16 @@ without stalling, reflexing, or losing the plot.
 """
 import asyncio
 import gc
-import sys
 import os
+import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # [STABILITY v59] Persistent logging for 200-turn audit
-LOG_FILE = "/Users/bryan/.aura/live-source/endurance_test_results.log"
+LOG_FILE = PROJECT_ROOT / "endurance_test_results.log"
 with open(LOG_FILE, "w") as f:
     f.write(f"=== AURA 200-TURN ENDURANCE TEST START: {time.ctime()} ===\n\n")
 
@@ -379,7 +381,7 @@ async def main():
                     "tier": tier,
                 })
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed = time.time() - t0
                 print(f"❌ FAIL {turn_label}: asyncio.TimeoutError after {elapsed:.1f}s", flush=True)
                 failures += 1
@@ -395,14 +397,14 @@ async def main():
 
     # === FINAL REPORT ===
     print(f"\n{'='*60}", flush=True)
-    print(f"  FINAL RESULTS", flush=True)
+    print("  FINAL RESULTS", flush=True)
     print(f"{'='*60}", flush=True)
     print(f"  Passed: {successes}/200", flush=True)
     print(f"  Failed: {failures}/200", flush=True)
     print(f"  Pass Rate: {successes/200*100:.1f}%", flush=True)
 
     if failures > 0:
-        print(f"\n  FAILURES:", flush=True)
+        print("\n  FAILURES:", flush=True)
         for r in results:
             if r["verdict"] == "FAIL":
                 print(f"    Topic {r['topic']} Turn {r['turn']}: {r['fail_reason']}", flush=True)

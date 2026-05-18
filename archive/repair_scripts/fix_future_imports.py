@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 
-SOURCE_DIR = "/Users/bryan/.aura/live-source"
+SOURCE_DIR = Path(os.environ.get("AURA_SOURCE_DIR", Path(__file__).resolve().parents[2])).expanduser().resolve()
 
 FUTURE_IMPORT = "from __future__ import annotations"
 

@@ -1,9 +1,13 @@
-import requests
 import json
 import re
-import urllib.parse
-from bs4 import BeautifulSoup
 import time
+import urllib.parse
+from pathlib import Path
+
+import requests
+from bs4 import BeautifulSoup
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 TARGETS = {
     "CORTANA": ["Halo: Combat Evolved", "Halo 2", "Halo 3", "Halo 4", "Halo 5: Guardians", "Halo Infinite"],
@@ -128,6 +132,5 @@ for char_id, pages in TARGETS.items():
 
 print(f"Total scraped quotes: {len(all_scraped_quotes)}")
 
-with open('/Users/bryan/.aura/live-source/training/raw_data/scraped_quotes.json', 'w') as f:
+with open(RAW_DATA_DIR / "scraped_quotes.json", "w") as f:
     json.dump(all_scraped_quotes, f, indent=2)
-

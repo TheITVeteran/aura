@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 EXACT_QUOTES_PART_2 = {
     # ── ARCHER: PAM POOVEY ──
@@ -160,7 +163,7 @@ EXACT_QUOTES_PART_2 = {
 
 def append_part_2():
     try:
-        with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_final.json', 'r') as f:
+        with open(RAW_DATA_DIR / "verbatim_quotes_final.json") as f:
             existing_quotes = json.load(f)
     except (OSError, json.JSONDecodeError):
         existing_quotes = []
@@ -180,7 +183,7 @@ def append_part_2():
     print(f"Appended {len(compiled)} exact manual quotes from Part 2.")
     print(f"Total Verbatim Dataset is now: {len(total)}")
 
-    with open('/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_final.json', 'w') as f:
+    with open(RAW_DATA_DIR / "verbatim_quotes_final.json", "w") as f:
         json.dump(total, f, indent=2)
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
-import os
-import time
-import subprocess
-import signal
 import logging
+import os
+import signal
+import subprocess
+import time
 from pathlib import Path
 
 # Configuration
-LOG_FILE = Path("/Users/bryan/.aura/live-source/simulate_out_v7.txt")
+PROJECT_ROOT = Path(os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
+LOG_FILE = Path(os.environ.get("AURA_NETHACK_LOG", PROJECT_ROOT / "simulate_out_v7.txt")).expanduser()
 CHECK_INTERVAL = 60  # Check every minute
 STALL_TIMEOUT = 1800 # 30 minutes
 AURA_MAIN = "aura_main.py"

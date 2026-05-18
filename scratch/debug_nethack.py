@@ -1,11 +1,13 @@
-
-import sys
 import os
-sys.path.append("/Users/bryan/.aura/live-source")
+import sys
+import time
+from pathlib import Path
 
 import pexpect
-import pyte
-import time
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 nethack_path = "/opt/homebrew/bin/nethack"
 env = os.environ.copy()

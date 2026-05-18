@@ -4,12 +4,11 @@ Unit tests for the chat preflight helpers (file-reference detection,
 file loading with sandboxing, pending-chat queue).
 
 Run:
-    /Users/bryan/.aura/live-source/.venv/bin/python -m unittest tests.test_chat_preflight -v
+    .venv/bin/python -m unittest tests.test_chat_preflight -v
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -21,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.conversation.chat_preflight import (
+from core.conversation.chat_preflight import (  # noqa: E402
     PendingChat,
     answer_pending,
     build_file_context_block,
@@ -40,7 +39,7 @@ def _temp_path(suffix: str = ".jsonl") -> Path:
     os.close(fd)
     p = Path(path)
     if p.exists():
-        get_task_tracker().create_task(get_storage_gateway().delete(p, cause='_temp_path'))
+        p.unlink()
     return p
 
 
@@ -109,7 +108,7 @@ class TestPendingQueue(unittest.TestCase):
 
     def tearDown(self):
         if self.path.exists():
-            get_task_tracker().create_task(get_storage_gateway().delete(self.path, cause='TestPendingQueue.tearDown'))
+            self.path.unlink()
 
     def test_enqueue_and_unanswered_check(self):
         enqueue("session-1", "What is the meaning of life?", reason="timeout", path=self.path)
@@ -229,10 +228,10 @@ class TestNeurochemicalHomeostasis(unittest.TestCase):
 
     def test_chemical_returns_to_baseline_with_no_production(self):
         # Late-import to avoid pulling in heavy stack at module-load
+        import core.container  # noqa: F401
+        import core.exceptions  # noqa: F401
         import core.runtime.atomic_writer  # noqa: F401
-        import core.utils.concurrency      # noqa: F401
-        import core.exceptions             # noqa: F401
-        import core.container              # noqa: F401
+        import core.utils.concurrency  # noqa: F401
         from core.consciousness.neurochemical_system import Chemical
 
         gaba = Chemical(name="gaba", level=0.5, baseline=0.5,
@@ -250,10 +249,10 @@ class TestNeurochemicalHomeostasis(unittest.TestCase):
                              f"GABA overshot to {gaba.tonic_level:.3f} after 100 ticks")
 
     def test_chemical_recovers_from_depletion(self):
+        import core.container  # noqa: F401
+        import core.exceptions  # noqa: F401
         import core.runtime.atomic_writer  # noqa: F401
-        import core.utils.concurrency      # noqa: F401
-        import core.exceptions             # noqa: F401
-        import core.container              # noqa: F401
+        import core.utils.concurrency  # noqa: F401
         from core.consciousness.neurochemical_system import Chemical
 
         gaba = Chemical(name="gaba", level=0.5, baseline=0.5,
@@ -271,10 +270,10 @@ class TestNeurochemicalHomeostasis(unittest.TestCase):
 
     def test_chemical_does_not_collapse_below_threshold(self):
         """The test that would have caught the original bug."""
+        import core.container  # noqa: F401
+        import core.exceptions  # noqa: F401
         import core.runtime.atomic_writer  # noqa: F401
-        import core.utils.concurrency      # noqa: F401
-        import core.exceptions             # noqa: F401
-        import core.container              # noqa: F401
+        import core.utils.concurrency  # noqa: F401
         from core.consciousness.neurochemical_system import Chemical
 
         # GABA starts at baseline; with no surges/depletes, should never

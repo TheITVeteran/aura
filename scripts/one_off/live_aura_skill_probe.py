@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Run a file-backed live Aura proof through the real orchestrator.
 
@@ -6,25 +5,26 @@ This harness exists for one purpose: prove that Aura herself can route,
 authorize, execute, and complete representative tasks through her runtime
 entrypoints instead of us doing them externally and calling it good.
 """
-
-from core.utils.task_tracker import get_task_tracker
-from core.runtime.atomic_writer import atomic_write_text
+from __future__ import annotations
 
 import asyncio
 import json
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+from core.utils.task_tracker import get_task_tracker  # noqa: E402
+
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv  # noqa: E402
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
 except Exception:
@@ -254,10 +254,10 @@ def _read_head(path: Path, limit: int = 240) -> str:
     return _trimmed_text(path.read_text(encoding="utf-8", errors="ignore"), limit)
 
 
-async def _wait_for_service(name: str, timeout: float = 60.0) -> Any:
+async def _wait_for_service(name: str, timeout_s: float = 60.0) -> Any:
     from core.container import ServiceContainer
 
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         service = ServiceContainer.get(name, default=None)
         if service is not None:
@@ -316,15 +316,15 @@ async def main() -> int:
     os.environ.pop("AURA_SKIP_LLM", None)
     os.environ.pop("AURA_TEST_HARNESS", None)
 
-    get_task_tracker().create_task(get_storage_gateway().create_dir(AGENCY_TEST_DIR, cause='main'))
-    get_task_tracker().create_task(get_storage_gateway().create_dir(ARTIFACT_PATH.parent, cause='main'))
+    AGENCY_TEST_DIR.mkdir(parents=True, exist_ok=True)
+    ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if TERMINAL_PROOF_PATH.exists():
-        get_task_tracker().create_task(get_storage_gateway().delete(TERMINAL_PROOF_PATH, cause='main'))
+        TERMINAL_PROOF_PATH.unlink()
     if SNAKE_PATH.exists():
-        get_task_tracker().create_task(get_storage_gateway().delete(SNAKE_PATH, cause='main'))
+        SNAKE_PATH.unlink()
 
-    get_task_tracker().create_task(get_storage_gateway().create_dir(MANIFEST_DIR, cause='main'))
+    MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     manifest_before = {path.resolve() for path in MANIFEST_DIR.iterdir() if path.is_file()}
 
     config.skeletal_mode = False
@@ -339,16 +339,16 @@ async def main() -> int:
     run_task = get_task_tracker().create_task(orchestrator.run(), name="live_aura_skill_probe")
 
     try:
-        capability_engine = await _wait_for_service("capability_engine", timeout=90.0)
+        capability_engine = await _wait_for_service("capability_engine", timeout_s=90.0)
         originals = _install_capability_tracing(capability_engine, route_log, exec_log)
 
-        async def run_turn(label: str, prompt: str, timeout: float = 180.0) -> dict[str, Any]:
+        async def run_turn(label: str, prompt: str, timeout_s: float = 180.0) -> dict[str, Any]:
             route_index = len(route_log)
             exec_index = len(exec_log)
             started = time.perf_counter()
             response = await asyncio.wait_for(
                 orchestrator.process_user_input(prompt, origin="user"),
-                timeout=timeout,
+                timeout=timeout_s,
             )
             entry = {
                 "label": label,
@@ -362,7 +362,7 @@ async def main() -> int:
             turns.append(entry)
             return entry
 
-        async def run_skill(label: str, skill_name: str, params: dict[str, Any], *, timeout: float = 180.0) -> dict[str, Any]:
+        async def run_skill(label: str, skill_name: str, params: dict[str, Any], *, timeout_s: float = 180.0) -> dict[str, Any]:
             exec_index = len(exec_log)
             started = time.perf_counter()
             result = await asyncio.wait_for(
@@ -376,7 +376,7 @@ async def main() -> int:
                         "intent_source": "live_aura_skill_probe",
                     },
                 ),
-                timeout=timeout,
+                timeout=timeout_s,
             )
             entry = {
                 "label": label,
@@ -393,9 +393,8 @@ async def main() -> int:
         await run_turn(
             "terminal_proof_write",
             (
-                "execute: mkdir -p /Users/bryan/Desktop/agency_test && "
-                "printf 'AURA_RUNTIME_PROOF\\n' > "
-                "/Users/bryan/Desktop/agency_test/aura_terminal_runtime_proof.txt"
+                f"execute: mkdir -p {shlex.quote(str(AGENCY_TEST_DIR))} && "
+                f"printf 'AURA_RUNTIME_PROOF\\n' > {shlex.quote(str(TERMINAL_PROOF_PATH))}"
             ),
         )
 
@@ -411,7 +410,7 @@ async def main() -> int:
 
         await run_turn(
             "snake_exists_check",
-            "check if /Users/bryan/Desktop/agency_test/aura_live_snake.html exists",
+            f"check if {SNAKE_PATH} exists",
         )
 
         await run_turn(
@@ -422,7 +421,7 @@ async def main() -> int:
         await run_turn(
             "natural_language_research",
             "research about Python 3.12 release notes key improvements",
-            timeout=240.0,
+            timeout_s=240.0,
         )
 
         await run_skill(
@@ -435,7 +434,7 @@ async def main() -> int:
                 "retain": True,
                 "force_refresh": True,
             },
-            timeout=300.0,
+            timeout_s=300.0,
         )
 
         await run_skill(
@@ -446,7 +445,7 @@ async def main() -> int:
                 "deep": False,
                 "num_results": 3,
             },
-            timeout=180.0,
+            timeout_s=180.0,
         )
 
         new_manifests = sorted(

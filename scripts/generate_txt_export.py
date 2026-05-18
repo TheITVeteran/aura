@@ -2,9 +2,10 @@ import os
 import shutil
 from pathlib import Path
 
+
 def generate_txt_export():
-    root = Path("/Users/bryan/Desktop/aura")
-    downloads = Path("/Users/bryan/Downloads")
+    root = Path(os.environ.get("AURA_SOURCE_DIR", Path(__file__).resolve().parents[1])).expanduser().resolve()
+    downloads = Path(os.environ.get("AURA_EXPORT_DIR", Path.home() / "Downloads")).expanduser().resolve()
     
     # Folders considered "Architecture and Infrastructure".  ``research``
     # is included because it owns load-bearing modules (e.g.
@@ -29,7 +30,7 @@ def generate_txt_export():
     # an architecture extension.  node_modules alone contributes >5000
     # files under interface/static which previously drowned out the
     # actual Aura code in the folder copy.
-    EXCLUDE_DIR_SEGMENTS = (
+    exclude_dir_segments = (
         "node_modules",
         "__pycache__",
         ".next",
@@ -44,7 +45,7 @@ def generate_txt_export():
 
     def _excluded(path):
         s = str(path)
-        return any(f"/{seg}/" in s or s.endswith(f"/{seg}") for seg in EXCLUDE_DIR_SEGMENTS)
+        return any(f"/{seg}/" in s or s.endswith(f"/{seg}") for seg in exclude_dir_segments)
 
     all_files = []
     for folder in arch_folders:
@@ -88,26 +89,26 @@ def generate_txt_export():
     # architecture set fits — the current source has ~1480 files and
     # is growing; the previous 1000 cap was silently dropping research/
     # and slo/ off the end.
-    FOLDER_COPY_CAP = 1600
+    folder_copy_cap = 1600
     copy_dir = downloads / "aura_source_copy"
     if copy_dir.exists():
         shutil.rmtree(copy_dir)
     copy_dir.mkdir(parents=True)
 
-    for p in all_files[:FOLDER_COPY_CAP]:
+    for p in all_files[:folder_copy_cap]:
         rel_path = p.relative_to(root)
         target = copy_dir / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(p, target)
 
     print(
-        f"✅ Created folder copy with {len(all_files[:FOLDER_COPY_CAP])} files "
-        f"in {copy_dir} (cap {FOLDER_COPY_CAP}; total architecture files: "
+        f"✅ Created folder copy with {len(all_files[:folder_copy_cap])} files "
+        f"in {copy_dir} (cap {folder_copy_cap}; total architecture files: "
         f"{len(all_files)})"
     )
 
     # 2. Generate Multi-part .txt export
-    MAX_CHARS = 4_000_000
+    max_chars = 4_000_000
     current_part = 1
     current_chars = 0
     current_content = []
@@ -121,7 +122,7 @@ def generate_txt_export():
             content = p.read_text(encoding="utf-8", errors="replace")
             full_entry = header + content
             
-            if current_chars + len(full_entry) > MAX_CHARS and current_content:
+            if current_chars + len(full_entry) > max_chars and current_content:
                 # Flush current part
                 out_path = downloads / f"aura_source_part_{current_part}.txt"
                 final_text = "".join(current_content)

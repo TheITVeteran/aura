@@ -1,9 +1,13 @@
-import requests
 import json
 import re
-import urllib.parse
-from bs4 import BeautifulSoup
 import time
+import urllib.parse
+from pathlib import Path
+
+import requests
+from bs4 import BeautifulSoup
+
+RAW_DATA_DIR = Path(__file__).resolve().parent
 
 TARGETS = {
     "GLADOS": ["Portal (video game)", "Portal 2"],
@@ -101,7 +105,7 @@ for char_id, pages in TARGETS.items():
             "source": char_id
         })
 
-with open('/Users/bryan/.aura/live-source/training/raw_data/new_scraped_quotes.json', 'w') as f:
+with open(RAW_DATA_DIR / "new_scraped_quotes.json", "w") as f:
     json.dump(all_scraped_quotes, f, indent=2)
 
 print("Saved to new_scraped_quotes.json")

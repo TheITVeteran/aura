@@ -13,10 +13,9 @@ Assembles training data from ALL 7 domains into a single JSONL dataset:
 Generates train/val JSONL in chat format for LoRA fine-tuning.
 
 Run:
-    cd /Users/bryan/.aura/live-source && python training/build_dataset_v3.py
+    python training/build_dataset_v3.py
 """
 import json
-import os
 import random
 import sys
 from pathlib import Path
@@ -24,24 +23,24 @@ from pathlib import Path
 # ── Imports from sibling modules ──────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 
-from personality_spec_v2 import get_training_pairs, get_dpo_pairs, get_personality_prompt
+from personality_spec_v2 import get_dpo_pairs, get_personality_prompt, get_training_pairs
+
 try:
     from personality_spec_v2 import DPO_PAIRS_V2
 except ImportError:
     DPO_PAIRS_V2 = []
 
+from architecture_knowledge import get_all_architecture_pairs
+from autonomy_training import get_all_autonomy_pairs, get_boundary_sequences
+from character_direct_quotes import get_all_direct_quotes
 from character_voices import get_all_character_pairs
 from character_voices_expanded import get_all_expansion_pairs
 from character_voices_expanded_part2 import get_part2_expansion_pairs
-from character_direct_quotes import get_all_direct_quotes
-from architecture_knowledge import get_all_architecture_pairs
-from autonomy_training import get_all_autonomy_pairs, get_boundary_sequences
-from theory_knowledge import get_all_theory_pairs
-import json
-import random
 from dpo_enhanced import get_all_enhanced_dpo
+from theory_knowledge import get_all_theory_pairs
 
 OUTPUT_DIR = Path(__file__).parent / "data"
+RAW_DATA_DIR = Path(__file__).parent / "raw_data"
 SYSTEM_PROMPT = get_personality_prompt()
 
 # ── System prompt variants (expanded from 6 → 12) ─────────────────────────
@@ -148,11 +147,11 @@ def main():
 
     # Load authentic raw data
     try:
-        with open("/Users/bryan/.aura/live-source/training/raw_data/verbatim_quotes_final.json", "r") as f:
+        with open(RAW_DATA_DIR / "verbatim_quotes_final.json") as f:
             raw_quotes = json.load(f)
             direct_quotes = [(q["user"], q["assistant"]) for q in raw_quotes]
 
-        with open("/Users/bryan/.aura/live-source/training/raw_data/new_scraped_quotes.json", "r") as f2:
+        with open(RAW_DATA_DIR / "new_scraped_quotes.json") as f2:
             new_quotes = json.load(f2)
             direct_quotes.extend([(q["user"], q["assistant"]) for q in new_quotes])
     except Exception:
@@ -160,7 +159,7 @@ def main():
         direct_quotes = get_all_direct_quotes()
 
     try:
-        with open("/Users/bryan/.aura/live-source/training/raw_data/human_conversations.json", "r") as f:
+        with open(RAW_DATA_DIR / "human_conversations.json") as f:
             raw_human = json.load(f)
             # REDUCED SAMPLING: As requested, we are sampling a smaller subset (15,000)
             # to ensure the character voices remain dominant while maintaining conversational variety.
