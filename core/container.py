@@ -1,26 +1,25 @@
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
-import asyncio
 import contextvars
 import functools
 import hashlib
 import inspect
 import json
 import logging
-import os
 import threading
 import time
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Type
+from typing import Any, Optional
 
-from core.utils.concurrency import RobustLock
 from core.exceptions import (
     CircularDependencyError,
     ContainerError,
     LifecycleError,
     ServiceNotFoundError,
 )
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.utils.concurrency import RobustLock
 
 logger = logging.getLogger("Aura.Container")
 
@@ -70,7 +69,7 @@ class ServiceDescriptor:
     """Describes how to create and manage a service."""
     def __init__(self, name: str, factory: Callable, lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
                  instance: Any = None, required: bool = True, initialized: bool = False,
-                 dependencies: Optional[List[str]] = None):
+                 dependencies: list[str] | None = None):
         self.name = name
         self.factory = factory
         self.lifetime = lifetime
@@ -80,13 +79,16 @@ class ServiceDescriptor:
         self._async_initialized = False
         self.dependencies = list(dependencies or [])
 
-def ZeroSyncGuard(func: Callable):
+def zero_sync_guard(func: Callable):
     """Decorator to ensure async methods do not perform synchronous blocking calls."""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         # In the future, this could monitor thread status or event loop lag
         return await func(*args, **kwargs)
     return wrapper
+
+
+ZeroSyncGuard = zero_sync_guard
 
 class ServiceContainer:
     """Aura 3.0 Static ServiceContainer.
@@ -102,14 +104,14 @@ class ServiceContainer:
     # intentional — ServiceContainer itself is a singleton (__new__) and all
     # access goes through classmethods.  Keep them here so that callers can
     # interact with the class directly without needing an instance.
-    _services: Dict[str, ServiceDescriptor] = {}
-    _aliases: Dict[str, str] = {}
+    _services: dict[str, ServiceDescriptor] = {}
+    _aliases: dict[str, str] = {}
     _registration_locked = False
-    _resolving_var: contextvars.ContextVar[FrozenSet[str]] = contextvars.ContextVar('resolving', default=frozenset())
+    _resolving_var: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar('resolving', default=frozenset())
     _wake_lock = RobustLock("ServiceContainer.Wake")
-    _start_time: Optional[float] = None
-    _init_locks: Dict[str, threading.Lock] = {}
-    _last_seal_hash: Optional[str] = None
+    _start_time: float | None = None
+    _init_locks: dict[str, threading.Lock] = {}
+    _last_seal_hash: str | None = None
 
     def __new__(cls):
         with cls._lock:
@@ -118,7 +120,7 @@ class ServiceContainer:
             return cls._instance
 
     @classmethod
-    def get_all_subsystem_statuses(cls) -> Dict[str, str]:
+    def get_all_subsystem_statuses(cls) -> dict[str, str]:
         """Return the active/degraded/missing status of all registered subsystems."""
         with cls._lock:
             statuses = {}
@@ -161,7 +163,7 @@ class ServiceContainer:
         factory: Callable,
         lifetime=ServiceLifetime.SINGLETON,
         required=True,
-        dependencies: Optional[List[str]] = None,
+        dependencies: list[str] | None = None,
     ):
         """Register a service factory."""
         if cls._registration_locked:
@@ -217,8 +219,9 @@ class ServiceContainer:
                 if len(stack) >= 2:
                     frame = stack[-2]
                     frame_info = f" (from {frame.filename}:{frame.lineno})"
-            except Exception:
-                pass  # no-op: intentional
+            except Exception as exc:
+                record_degradation("container", exc)
+                logger.debug("ServiceContainer unlock stack capture failed: %s", exc)
             logger.warning(
                 "ServiceContainer registration UNLOCKED by '%s'%s%s",
                 caller,
@@ -324,7 +327,7 @@ class ServiceContainer:
             logger.debug("Registered service alias: %s -> %s", alias, target)
 
     @classmethod
-    def register_aliases(cls, aliases: Dict[str, str]) -> None:
+    def register_aliases(cls, aliases: dict[str, str]) -> None:
         """Bulk-register legacy aliases."""
         for alias, target in aliases.items():
             cls.register_alias(alias, target)
@@ -355,7 +358,7 @@ class ServiceContainer:
     @classmethod
     def _resolve_name(cls, name: str) -> str:
         """Resolve an alias chain to its canonical service name."""
-        seen: Set[str] = set()
+        seen: set[str] = set()
         current = name
         while True:
             with cls._lock:
@@ -368,7 +371,7 @@ class ServiceContainer:
             current = target
 
     @classmethod
-    def _infer_dependency_names(cls, desc: ServiceDescriptor) -> List[str]:
+    def _infer_dependency_names(cls, desc: ServiceDescriptor) -> list[str]:
         """Infer dependencies from explicit metadata or required factory parameters."""
         if desc.dependencies:
             return list(desc.dependencies)
@@ -378,7 +381,7 @@ class ServiceContainer:
         except (TypeError, ValueError):
             return []
 
-        dependencies: List[str] = []
+        dependencies: list[str] = []
         for param in signature.parameters.values():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 continue
@@ -401,8 +404,8 @@ class ServiceContainer:
         except (TypeError, ValueError):
             return [resolved[dep_name] for dep_name in dependency_names], {}
 
-        args: List[Any] = []
-        kwargs: Dict[str, Any] = {}
+        args: list[Any] = []
+        kwargs: dict[str, Any] = {}
         unresolved = dict(resolved)
 
         for param in signature.parameters.values():
@@ -537,9 +540,9 @@ class ServiceContainer:
         return service
 
     @classmethod
-    def validate(cls) -> tuple[bool, List[str]]:
+    def validate(cls) -> tuple[bool, list[str]]:
         """Check that required dependencies are registered without instantiating services."""
-        errors: List[str] = []
+        errors: list[str] = []
         with cls._lock:
             descriptors = list(cls._services.items())
 
@@ -552,7 +555,7 @@ class ServiceContainer:
         return not errors, errors
 
     @classmethod
-    async def wake(cls) -> List[str]:
+    async def wake(cls) -> list[str]:
         """EAGER WAKE: Lock registration and initialize all required services."""
         if cls._wake_lock is None:
             cls._wake_lock = RobustLock("ServiceContainer.WakeLock")
@@ -574,7 +577,7 @@ class ServiceContainer:
                     except Exception as e:
                         record_degradation('container', e)
                         logger.critical("   [!] %s FAILED: %s", name, e)
-                        raise ContainerError(f"Wake failed for {name}: {e}")
+                        raise ContainerError(f"Wake failed for {name}: {e}") from e
 
             try:
                 seal = cls.write_sovereignty_seal()
@@ -591,14 +594,16 @@ class ServiceContainer:
     @classmethod
     async def shutdown(cls) -> None:
         """Cleanup all singleton services in reverse order."""
-        def _resolve_hook(instance: Any, hook_name: str) -> Optional[Callable[..., Any]]:
+        def _resolve_hook(instance: Any, hook_name: str) -> Callable[..., Any] | None:
             try:
                 inspect.getattr_static(instance, hook_name)
             except AttributeError:
                 return None
             try:
                 hook = getattr(instance, hook_name)
-            except Exception:
+            except Exception as exc:
+                record_degradation("container", exc)
+                logger.debug("Unable to resolve %s hook for %s: %s", hook_name, name, exc)
                 return None
             return hook if callable(hook) else None
 
@@ -641,7 +646,7 @@ class ServiceContainer:
             desc._async_initialized = False
 
     @classmethod
-    def get_health_report(cls) -> Dict[str, Any]:
+    def get_health_report(cls) -> dict[str, Any]:
         """Generate a health report for all registered services."""
         report = {
             "status": "operational",
@@ -684,14 +689,16 @@ class ServiceContainer:
             from core.config import config
 
             return config.paths.data_dir / "sovereignty_seal.json"
-        except Exception:
+        except Exception as exc:
+            record_degradation("container", exc)
+            logger.debug("Falling back to default sovereignty seal path after config lookup failed: %s", exc)
             return Path.home() / ".aura" / "data" / "sovereignty_seal.json"
 
     @classmethod
-    def _manifest_snapshot(cls) -> Dict[str, str]:
+    def _manifest_snapshot(cls) -> dict[str, str]:
         with cls._lock:
             descriptors = dict(cls._services)
-        manifest: Dict[str, str] = {}
+        manifest: dict[str, str] = {}
         for name, desc in descriptors.items():
             instance = desc.instance
             if instance is not None:
@@ -701,7 +708,7 @@ class ServiceContainer:
         return manifest
 
     @classmethod
-    def write_sovereignty_seal(cls) -> Dict[str, Any]:
+    def write_sovereignty_seal(cls) -> dict[str, Any]:
         manifest = cls._manifest_snapshot()
         digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
         payload = {
@@ -723,7 +730,9 @@ class ServiceContainer:
             return True
         try:
             stored = json.loads(seal_path.read_text())
-        except Exception:
+        except Exception as exc:
+            record_degradation("container", exc)
+            logger.debug("Sovereignty seal read failed: %s", exc)
             return False
         current = hashlib.sha256(
             json.dumps(cls._manifest_snapshot(), sort_keys=True).encode("utf-8")
@@ -749,9 +758,10 @@ class ServiceContainer:
                 classification="non_critical_fallback",
                 context={"service": service_name},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation("container", exc)
+            logger.debug("Unable to emit absent-service breadcrumb for %s: %s", service_name, exc)
 
 
-def get_container() -> Type[ServiceContainer]:
+def get_container() -> type[ServiceContainer]:
     return ServiceContainer

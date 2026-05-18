@@ -19,19 +19,17 @@ Architecture:
                                       spontaneously share a position
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
-from core.runtime.atomic_writer import atomic_write_text
-
-import asyncio
 import json
 import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.OpinionEngine")
 
@@ -47,7 +45,7 @@ class Opinion:
     last_updated: float
     update_count: int = 0
     source: str = "autonomous_thought"  # how it was formed
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 class OpinionEngine:
@@ -65,18 +63,18 @@ class OpinionEngine:
     def __init__(
         self,
         orchestrator=None,
-        db_path: Optional[Path] = None,
+        db_path: Path | None = None,
         max_opinions: int = 500,
     ):
         self.orchestrator = orchestrator
         self._db_path = db_path or Path.home() / ".aura" / "opinions.json"
-        self._opinions: Dict[str, Opinion] = {}  # topic → Opinion
+        self._opinions: dict[str, Opinion] = {}  # topic → Opinion
         self._max_opinions = max_opinions
         self._load()
 
     # ── Formation ─────────────────────────────────────────────────────────
 
-    async def form_opinion(self, topic: str, context: str = "") -> Optional[Opinion]:
+    async def form_opinion(self, topic: str, context: str = "") -> Opinion | None:
         """
         Ask the cognitive engine to form or update a position on a topic.
         Called during autonomous thought cycles, NOT during conversations.
@@ -150,7 +148,7 @@ Respond in JSON only:
 
     # ── Querying ──────────────────────────────────────────────────────────
 
-    def query(self, topic: str, fuzzy: bool = True) -> Optional[Opinion]:
+    def query(self, topic: str, fuzzy: bool = True) -> Opinion | None:
         """
         Look up Aura's existing position on a topic.
 
@@ -169,7 +167,7 @@ Respond in JSON only:
 
         # Fuzzy: find opinions whose topic overlaps with the query words
         query_words = set(key.split("_"))
-        best: Optional[Opinion] = None
+        best: Opinion | None = None
         best_overlap = 0
 
         for stored_key, opinion in self._opinions.items():
@@ -201,7 +199,7 @@ Respond in JSON only:
 
     # ── Spontaneous Surfacing ─────────────────────────────────────────────
 
-    async def surface_random(self, min_confidence: float = 0.6) -> Optional[str]:
+    async def surface_random(self, min_confidence: float = 0.6) -> str | None:
         """
         Proactively surface a held opinion — unprompted.
 
@@ -254,7 +252,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
         if topic:
             await self.form_opinion(topic, context=context)
 
-    async def _pick_topic(self, context: str) -> Optional[str]:
+    async def _pick_topic(self, context: str) -> str | None:
         """Select the most interesting topic to form an opinion on right now."""
         # Pull from knowledge graph if available
         if self.orchestrator:
@@ -305,7 +303,9 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception:
+        except Exception as exc:
+            record_degradation("opinion_engine", exc)
+            logger.debug("[Opinion] Cognitive engine lookup failed: %s", exc)
             return None
 
     def _save(self):
@@ -339,7 +339,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
             record_degradation('opinion_engine', e)
             logger.debug("[Opinion] Load failed: %s", e)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "total_opinions": len(self._opinions),
             "high_confidence": sum(1 for o in self._opinions.values() if o.confidence >= 0.7),

@@ -1,7 +1,6 @@
 """Sensory Integration System
 Gives Aura access to cameras, microphones, speakers, and A/V production tools
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import base64
 import logging
@@ -9,7 +8,9 @@ import threading
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 try:
     from .container import ServiceContainer, ServiceLifetime
@@ -49,7 +50,7 @@ class SensorySystem:
         self.max_memory_items = 100
         self.sensory_memory = deque(maxlen=self.max_memory_items)
         
-    async def perceive(self, modality: SensoryModality, **kwargs) -> Dict[str, Any]:
+    async def perceive(self, modality: SensoryModality, **kwargs) -> dict[str, Any]:
         """Perceive through specified sensory modality (Async)."""
         perception = {
             "timestamp": time.time(),
@@ -81,7 +82,7 @@ class SensorySystem:
             perception["error"] = str(e)
             return perception
     
-    async def express(self, modality: SensoryModality, content: Any, **kwargs) -> Dict[str, Any]:
+    async def express(self, modality: SensoryModality, content: Any, **kwargs) -> dict[str, Any]:
         """Express through specified modality (Async)."""
         expression = {
             "timestamp": time.time(),
@@ -104,12 +105,12 @@ class SensorySystem:
             expression["error"] = str(e)
             return expression
     
-    def _store_in_memory(self, perception: Dict[str, Any]):
+    def _store_in_memory(self, perception: dict[str, Any]):
         """Store perception in short-term sensory memory"""
         # Issue 43: deque handle limits automatically
         self.sensory_memory.append(perception)
     
-    def get_recent_perceptions(self, modality: Optional[SensoryModality] = None, count: int = 10) -> List[Dict]:
+    def get_recent_perceptions(self, modality: SensoryModality | None = None, count: int = 10) -> list[dict]:
         """Get recent perceptions, optionally filtered by modality"""
         # Issue 43: Convert deque slice to list
         perceptions = list(self.sensory_memory)[-count:]
@@ -156,11 +157,14 @@ class VisionSystem:
             cap.release()
             return available
         except ImportError:
+            logger.debug("OpenCV is unavailable; camera capture disabled.")
             return False
-        except Exception:
+        except Exception as exc:
+            record_degradation("sensory_integration", exc)
+            logger.debug("Camera availability probe failed: %s", exc)
             return False
     
-    async def capture(self, duration: float = 0, save_path: Optional[str] = None) -> Dict[str, Any]:
+    async def capture(self, duration: float = 0, save_path: str | None = None) -> dict[str, Any]:
         """Capture from camera (Async)."""
         if not await self._get_camera_available():
             return {"error": "camera_not_available"}
@@ -172,8 +176,10 @@ class VisionSystem:
                 if duration == 0:
                     ret, frame = cap.read()
                     cap.release()
-                    if not ret: return {"error": "capture_failed"}
-                    if save_path: cv2.imwrite(save_path, frame)
+                    if not ret:
+                        return {"error": "capture_failed"}
+                    if save_path:
+                        cv2.imwrite(save_path, frame)
                     _, buffer = cv2.imencode('.jpg', frame)
                     return {
                         "type": "image",
@@ -188,7 +194,8 @@ class VisionSystem:
                     start = time.time()
                     while time.time() - start < duration:
                         ret, frame = cap.read()
-                        if ret: out.write(frame)
+                        if ret:
+                            out.write(frame)
                     cap.release()
                     out.release()
                     return {"type": "video", "path": path, "duration": duration, "timestamp": time.time()}
@@ -201,7 +208,7 @@ class VisionSystem:
             self.last_capture = result
         return result
     
-    async def analyze(self, capture_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, capture_data: dict[str, Any]) -> dict[str, Any]:
         """Analyze captured visual data via the cognitive engine."""
         if not capture_data or "error" in capture_data:
             return {"error": "invalid_capture"}
@@ -219,8 +226,9 @@ class VisionSystem:
                 image_b64 = None
 
                 if image_path:
-                    from PIL import Image
                     import io
+
+                    from PIL import Image
                     img = Image.open(image_path)
                     img = img.convert("RGB")
                     img.thumbnail((672, 672))
@@ -291,29 +299,33 @@ class HearingSystem:
             devices = sd.query_devices()
             # Look for any input device
             return any(d.get('max_input_channels', 0) > 0 for d in devices)
-        except Exception:
+        except ImportError:
+            logger.debug("sounddevice is unavailable; microphone capture disabled.")
+            return False
+        except Exception as exc:
+            record_degradation("sensory_integration", exc)
+            logger.debug("Microphone availability probe failed: %s", exc)
             return False
     
-    async def listen(self, duration: float = 5.0, save_path: Optional[str] = None) -> Dict[str, Any]:
+    async def listen(self, duration: float = 5.0, save_path: str | None = None) -> dict[str, Any]:
         """Record audio from microphone (Async)."""
         if not await self._get_microphone_available():
             return {"error": "microphone_not_available"}
         
         def _do_listen():
             try:
-                import soundfile as sf
                 import sounddevice as sd
-                import numpy as np
+                import soundfile as sf
                 
                 path = save_path or f"recording_{int(time.time())}.wav"
-                CHANNELS, RATE = 1, 44100
+                channels, rate = 1, 44100
                 
                 # Record as numpy array
-                recording = sd.rec(int(duration * RATE), samplerate=RATE, channels=CHANNELS)
+                recording = sd.rec(int(duration * rate), samplerate=rate, channels=channels)
                 sd.wait() # Wait for recording to finish
                 
                 # Save using soundfile
-                sf.write(path, recording, RATE)
+                sf.write(path, recording, rate)
                 
                 return {"type": "audio", "path": path, "duration": duration, "timestamp": time.time()}
             except Exception as e:
@@ -325,7 +337,7 @@ class HearingSystem:
             self.last_recording = result
         return result
     
-    async def transcribe(self, audio_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def transcribe(self, audio_data: dict[str, Any]) -> dict[str, Any]:
         """Transcribe audio to text (Async)."""
         if not audio_data or "error" in audio_data:
             return {"error": "invalid_audio"}
@@ -370,14 +382,15 @@ class SpeechSystem:
         self.tts_available = self._check_tts()
     def _check_tts(self) -> bool:
         """Check if TTS is available"""
-        try:
-            import pyttsx3
+        import importlib.util
+
+        if importlib.util.find_spec("pyttsx3") is not None:
             return True
-        except ImportError:
+        else:
             logger.warning("pyttsx3 not installed - TTS unavailable")
             return False
     
-    async def speak(self, text: str, rate: int = 150, volume: float = 1.0, save_path: Optional[str] = None) -> Dict[str, Any]:
+    async def speak(self, text: str, rate: int = 150, volume: float = 1.0, save_path: str | None = None) -> dict[str, Any]:
         """Speak text aloud using TTS (Async)."""
         if not self.tts_available:
             return {"error": "tts_not_available", "success": False}
@@ -421,7 +434,7 @@ class AVProductionSystem:
     - Mix audio
     """
     
-    def __init__(self, output_dir: Optional[str] = None):
+    def __init__(self, output_dir: str | None = None):
         base_dir = Path(output_dir) if output_dir else Path.home() / ".aura" / "data" / "media"
         self.output_dir = base_dir
         self.image_dir = base_dir / "generated_images"
@@ -436,12 +449,12 @@ class AVProductionSystem:
             slug = slug.replace("__", "_")
         return (slug or "aura_media")[:limit]
 
-    def _render_local_image(self, description: str, style: str) -> Dict[str, Any]:
+    def _render_local_image(self, description: str, style: str) -> dict[str, Any]:
         """Create a deterministic local visual artifact when no image model is loaded."""
         import hashlib
         import textwrap
 
-        digest = hashlib.sha256(f"{style}:{description}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{style}:{description}".encode()).hexdigest()
         path = self.image_dir / f"{int(time.time())}_{self._slug(description)}.png"
         try:
             from PIL import Image, ImageDraw, ImageFont
@@ -486,7 +499,7 @@ class AVProductionSystem:
                 "timestamp": time.time(),
             }
     
-    async def create_image(self, description: str, style: str = "realistic") -> Dict[str, Any]:
+    async def create_image(self, description: str, style: str = "realistic") -> dict[str, Any]:
         """Generate image via local Stable Diffusion or brain inference."""
         try:
             from core.container import ServiceContainer
@@ -501,7 +514,7 @@ class AVProductionSystem:
 
         return await asyncio.to_thread(self._render_local_image, description, style)
 
-    async def edit_video(self, video_path: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def edit_video(self, video_path: str, edits: list[dict[str, Any]]) -> dict[str, Any]:
         """Apply edits to video via FFmpeg."""
         import shutil
         if not shutil.which("ffmpeg"):

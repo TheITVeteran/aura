@@ -60,10 +60,8 @@ class MetabolicCoordinator:
                         logger.info("🧹 Removed stale lock: %s", lock_file.name)
                     except Exception as _exc:
                         record_degradation('metabolic_coordinator', _exc)
-                        record_degradation('metabolic_coordinator', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
         except Exception as e:
-            record_degradation('metabolic_coordinator', e)
             record_degradation('metabolic_coordinator', e)
             logger.debug("Stale lock cleanup failed: %s", e)
 
@@ -71,7 +69,8 @@ class MetabolicCoordinator:
     def _lock_file_is_stale(lock_file) -> bool:
         try:
             raw = lock_file.read_text(encoding="utf-8").strip()
-        except Exception:
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("Unable to read PID lock %s: %s", lock_file, exc)
             return False
 
         if not raw:
@@ -91,7 +90,8 @@ class MetabolicCoordinator:
             return True
         except PermissionError:
             return False
-        except Exception:
+        except OSError as exc:
+            logger.debug("Unable to inspect PID %s from %s: %s", pid, lock_file, exc)
             return False
         return False
 
@@ -174,8 +174,9 @@ class MetabolicCoordinator:
                 from core.observability.metrics import get_metrics
                 tick_ms = (time.monotonic() - _tick_start) * 1000.0
                 get_metrics().record_tick(tick_ms)
-            except Exception:
-                pass  # Metrics unavailable
+            except Exception as exc:
+                record_degradation("metabolic_coordinator", exc)
+                logger.debug("Metrics tick recording unavailable: %s", exc)
 
             # ── Boring Mode: periodic check ───────────────────────────
             # Every ~100 cycles, check if critical incidents warrant
@@ -198,8 +199,9 @@ class MetabolicCoordinator:
                                 "🧊 Boring Mode ENTERED: %d critical incidents detected.",
                                 critical_count,
                             )
-                except Exception:
-                    pass  # Resilience layer unavailable
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("Boring mode incident probe unavailable: %s", exc)
 
             # ── DB Maintenance: periodic pass ─────────────────────────
             # Run every ~50 cycles (checkpoint, retention, vacuum).
@@ -213,8 +215,9 @@ class MetabolicCoordinator:
                             "🗄️ DB Maintenance: deleted %d expired rows.",
                             maint_result.total_rows_deleted,
                         )
-                except Exception:
-                    pass  # DB maintenance unavailable
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("DB maintenance pass unavailable: %s", exc)
 
             # ── Resource Governor: periodic sample ────────────────────
             if cycle_count > 0 and cycle_count % 10 == 0:
@@ -224,16 +227,18 @@ class MetabolicCoordinator:
                     snap = gov.sample()
                     if snap.eviction_tier.value != "none":
                         gov.execute_eviction(snap.eviction_tier)
-                except Exception:
-                    pass  # Resource governor unavailable
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("Resource governor sample unavailable: %s", exc)
 
             # ── Initiative Overflow: cap adjustment ───────────────────
             if cycle_count > 0 and cycle_count % 60 == 0:
                 try:
                     from core.autonomy.initiative_overflow import get_initiative_overflow
                     get_initiative_overflow().adjust_cap()
-                except Exception:
-                    pass  # Initiative overflow unavailable
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("Initiative overflow cap adjustment unavailable: %s", exc)
 
             return result
         except Exception as e:
@@ -487,8 +492,9 @@ class MetabolicCoordinator:
             try:
                 from core.morphogenesis.hooks import should_suppress_autonomous_initiative
                 _morph_suppress = should_suppress_autonomous_initiative()
-            except Exception:
-                pass  # no-op: intentional
+            except Exception as exc:
+                record_degradation("metabolic_coordinator", exc)
+                logger.debug("Morphogenesis initiative suppression probe failed: %s", exc)
             if self._consume_energy(0.1) and not _morph_suppress:
                 await self.trigger_autonomous_thought(bool(message))
                 await orch._pulse_agency_core()
@@ -514,7 +520,6 @@ class MetabolicCoordinator:
             return bool(message)
         except Exception as e:
             record_degradation('metabolic_coordinator', e)
-            record_degradation('metabolic_coordinator', e)
             logging.getLogger("Aura.Critical").error("Error in process cycle: %s", e)
             # Feed the exception into the morphogenetic field so the cell ecology
             # can react (emit repair signals, trigger immunity bridge, modulate
@@ -522,8 +527,9 @@ class MetabolicCoordinator:
             try:
                 from core.morphogenesis.hooks import observe_orchestrator_exception
                 observe_orchestrator_exception(subsystem="metabolic_coordinator", exc=e)
-            except Exception:
-                pass  # no-op: intentional
+            except Exception as exc:
+                record_degradation("metabolic_coordinator", exc)
+                logger.debug("Morphogenesis exception observer failed: %s", exc)
             return False
 
     # ------------------------------------------------------------------
@@ -1127,6 +1133,7 @@ class MetabolicCoordinator:
                     max_memory_percent=78.0,
                     max_failure_pressure=0.25,
                     require_conversation_ready=False,
+                    allow_no_user_anchor=True,
                 )
                 if policy_reason:
                     logger.debug(
@@ -1158,7 +1165,6 @@ class MetabolicCoordinator:
                         )
         except Exception as e:
             record_degradation('metabolic_coordinator', e)
-            record_degradation('metabolic_coordinator', e)
             try:
                 from core.health.degraded_events import record_degraded_event
 
@@ -1171,7 +1177,6 @@ class MetabolicCoordinator:
                     exc=e,
                 )
             except Exception as _exc:
-                record_degradation('metabolic_coordinator', _exc)
                 record_degradation('metabolic_coordinator', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             logger.debug("Terminal monitor check failed: %s", e)
@@ -1205,11 +1210,12 @@ class MetabolicCoordinator:
             else:
                 try:
                     reflect_task.add_done_callback(_bg_task_exception_handler)
-                except Exception:
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("Background reflection callback registration failed: %s", exc)
                     reflect_task.cancel()
                     raise
         except Exception as e:
-            record_degradation('metabolic_coordinator', e)
             record_degradation('metabolic_coordinator', e)
             if reflect_coro is not None and reflect_task is None:
                 reflect_coro.close()
@@ -1235,13 +1241,14 @@ class MetabolicCoordinator:
             else:
                 try:
                     learn_task.add_done_callback(_bg_task_exception_handler)
-                except Exception:
+                except Exception as exc:
+                    record_degradation("metabolic_coordinator", exc)
+                    logger.debug("Background learning callback registration failed: %s", exc)
                     learn_task.cancel()
                     raise
             if orch.curiosity and hasattr(orch.curiosity, 'extract_curiosity_from_conversation'):
                 orch.curiosity.extract_curiosity_from_conversation(original_msg)
         except Exception as e:
-            record_degradation('metabolic_coordinator', e)
             record_degradation('metabolic_coordinator', e)
             if learn_coro is not None and learn_task is None:
                 learn_coro.close()
@@ -1259,7 +1266,6 @@ class MetabolicCoordinator:
             celery_app.send_task("core.tasks.run_rl_training")
         except Exception as e:
             record_degradation('metabolic_coordinator', e)
-            record_degradation('metabolic_coordinator', e)
             logger.error("RL training trigger failed: %s", e)
 
     async def run_self_update(self):
@@ -1269,6 +1275,5 @@ class MetabolicCoordinator:
             from core.tasks import celery_app
             celery_app.send_task("core.tasks.run_self_update")
         except Exception as e:
-            record_degradation('metabolic_coordinator', e)
             record_degradation('metabolic_coordinator', e)
             logger.error("Self-update trigger failed: %s", e)

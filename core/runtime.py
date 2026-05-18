@@ -1,15 +1,23 @@
-from core.utils.task_tracker import get_task_tracker
 import asyncio
+import logging
+
 import psutil
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
+
 try:
     import mlx.core as mx
 except ImportError:
     mx = None
 from dataclasses import dataclass
+
 from core.agency_bus import AgencyBus
-from core.resilience.state_manager import StateManager
 from core.container import ServiceContainer
 from core.eternal_lifecycle import eternal_lifecycle
+from core.resilience.state_manager import StateManager
+
+logger = logging.getLogger("Aura.CoreRuntime")
 
 @dataclass(frozen=True)
 class CoreRuntime:
@@ -49,12 +57,16 @@ class CoreRuntime:
                         if psutil.sensors_battery() and psutil.sensors_battery().percent < 12:
                             mx.set_default_device(mx.cpu())
                         try:
-                            from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+                            from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
                             sentinel = get_gpu_sentinel()
                             if sentinel.acquire(priority=GPUPriority.REFLEX, timeout=5.0):
-                                try: mx.clear_cache()
-                                finally: sentinel.release()
-                        except Exception: pass
+                                try:
+                                    mx.clear_cache()
+                                finally:
+                                    sentinel.release()
+                        except Exception as exc:
+                            record_degradation("core_runtime", exc)
+                            logger.debug("GPU cache optimization skipped after failure: %s", exc)
                     
                     cls._instance = instance
                     # Start the eternal loop

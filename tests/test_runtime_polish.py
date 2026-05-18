@@ -6,10 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.affect import heartstone_values as heartstone_module
+from core.events import EventPriority, InputBus
+from core.phantom_browser import PhantomBrowser
 from core.world_model import user_model as user_model_module
 from interface import websocket_manager as websocket_module
 from interface.server import MessageBroadcastBus, Response, WebSocketManager, _cache_policy_for_path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -37,6 +38,49 @@ def test_gui_actor_bootstraps_project_venv_for_subprocess_launch():
 
     assert "def _inject_project_venv_site_packages()" in gui_actor
     assert 'site.addsitedir(str(site_packages))' in gui_actor
+
+
+def test_input_bus_normalizes_external_priority_values():
+    bus = InputBus(maxsize=4)
+    try:
+        bus.publish({"type": "system", "topic": "priority", "priority": "critical"})
+        bus.publish({"type": "system", "topic": "fallback", "priority": "not-a-priority"})
+
+        first = bus.next(timeout=0)
+        second = bus.next(timeout=0)
+
+        assert first is not None
+        assert first.priority == EventPriority.CRITICAL
+        assert second is not None
+        assert second.priority == EventPriority.NORMAL
+    finally:
+        bus.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_phantom_browser_close_releases_references_after_close_failures():
+    class BrokenClose:
+        async def close(self):
+            raise RuntimeError("close failed")
+
+    class BrokenStop:
+        async def stop(self):
+            raise RuntimeError("stop failed")
+
+    browser = PhantomBrowser()
+    browser.page = BrokenClose()
+    browser.context = BrokenClose()
+    browser.browser = BrokenClose()
+    browser.playwright = BrokenStop()
+    browser.is_active = True
+
+    await browser.close()
+
+    assert browser.page is None
+    assert browser.context is None
+    assert browser.browser is None
+    assert browser.playwright is None
+    assert browser.is_active is False
 
 
 @pytest.mark.asyncio

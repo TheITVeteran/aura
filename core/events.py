@@ -1,12 +1,14 @@
-from core.runtime.errors import record_degradation
 import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Core.Events")
 
@@ -36,9 +38,25 @@ class Event:
     ts: float = field(default_factory=time.time, compare=True)
     type: EventType = field(default=EventType.SYSTEM, compare=False)
     topic: str = field(default="", compare=False) # Added for v14.1 routing compatibility
-    payload: Dict[str, Any] = field(default_factory=dict, compare=False)
+    payload: dict[str, Any] = field(default_factory=dict, compare=False)
     source: str = field(default="", compare=False)
     retry_count: int = field(default=0, compare=False)
+
+
+def _coerce_priority(value: Any) -> EventPriority:
+    """Normalize external priority values before they reach the queue."""
+    if isinstance(value, EventPriority):
+        return value
+    if isinstance(value, str):
+        key = value.strip().upper()
+        if key in EventPriority.__members__:
+            return EventPriority[key]
+    try:
+        return EventPriority(int(value))
+    except (TypeError, ValueError):
+        logger.debug("Invalid event priority %r; defaulting to NORMAL", value)
+        return EventPriority.NORMAL
+
 
 class InputBus:
     """Thread-safe event multiplexer with pub/sub + priority queue.
@@ -51,25 +69,25 @@ class InputBus:
         # CRITICAL(-3) sort before LOW(0).  Timestamp breaks ties (FIFO within
         # same priority).
         self._q: queue.PriorityQueue = queue.PriorityQueue(maxsize=maxsize)
-        self._dlq: List[Event] = []
-        self._subscribers: Dict[EventType, List[Callable[[Event], None]]] = {}
+        self._dlq: list[Event] = []
+        self._subscribers: dict[EventType, list[Callable[[Event], None]]] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="Aura.Events")
         self._dlq_lock = threading.Lock()
 
-    def publish(self, event: Union[Event, Dict[str, Any], str], block: bool = False, timeout: Optional[float] = None) -> None:
+    def publish(self, event: Event | dict[str, Any] | str, block: bool = False, timeout: float | None = None) -> None:
         """Enqueue an event and notify all typed subscribers synchronously."""
         event_obj = self._normalize_event(event)
         self._notify_subscribers(event_obj)
         self._enqueue(event_obj, block, timeout)
 
-    def publish_async(self, event: Union[Event, Dict[str, Any], str], block: bool = False, timeout: Optional[float] = None) -> None:
+    def publish_async(self, event: Event | dict[str, Any] | str, block: bool = False, timeout: float | None = None) -> None:
         """Enqueue an event and notify subscribers in a background thread."""
         event_obj = self._normalize_event(event)
         self._executor.submit(self._notify_subscribers, event_obj)
         self._enqueue(event_obj, block, timeout)
 
-    def _normalize_event(self, event_input: Union[Event, Dict[str, Any], str, tuple]) -> Event:
+    def _normalize_event(self, event_input: Event | dict[str, Any] | str | tuple) -> Event:
         """v48 Resilience: Ensures all inputs are converted to Event objects.
         Accepts Event | (topic, payload) | str | dict.
         """
@@ -103,9 +121,11 @@ class InputBus:
                     topic=event_input.get("topic", ""),
                     payload=event_input,
                     source=event_input.get("source", "normalized_dict"),
-                    priority=event_input.get("priority", EventPriority.NORMAL)
+                    priority=_coerce_priority(event_input.get("priority", EventPriority.NORMAL))
                 )
-            except Exception:
+            except Exception as exc:
+                record_degradation("events", exc)
+                logger.debug("Event normalization failed for dict input; using fallback event: %s", exc)
                 return Event(payload=event_input, source="fallback_dict")
 
         if isinstance(event_input, str):
@@ -118,14 +138,14 @@ class InputBus:
 
         return Event(payload={"raw_data": str(event_input)}, source="unknown_input")
 
-    def _enqueue(self, event: Event, block: bool = False, timeout: Optional[float] = None) -> None:
+    def _enqueue(self, event: Event, block: bool = False, timeout: float | None = None) -> None:
         """Internal helper — stores (-priority, ts, event) for correct pop order."""
         try:
             self._q.put((-int(event.priority), event.ts, event), block=block, timeout=timeout)
         except queue.Full:
             logger.warning("Event queue full — dropping event type=%s", event.type.name)
 
-    def next(self, timeout: Optional[float] = 0.1) -> Optional[Event]:
+    def next(self, timeout: float | None = 0.1) -> Event | None:
         """Poll the next highest-priority event from the queue."""
         try:
             _, _, event = self._q.get(timeout=timeout)
@@ -141,7 +161,7 @@ class InputBus:
             self._subscribers[event_type].append(callback)
             logger.debug("Subscriber registered for %s", event_type.name)
 
-    def emit(self, event_type: EventType, payload: Dict[str, Any], source: str = "", priority: EventPriority = EventPriority.NORMAL) -> None:
+    def emit(self, event_type: EventType, payload: dict[str, Any], source: str = "", priority: EventPriority = EventPriority.NORMAL) -> None:
         """Convenience: create and publish an Event in one call."""
         event = Event(type=event_type, payload=payload, source=source, priority=priority)
         self.publish(event)
@@ -183,7 +203,7 @@ class InputBus:
         with self._lock:
             return sum(len(cbs) for cbs in self._subscribers.values())
 
-    def get_dlq_stats(self) -> Dict[str, Any]:
+    def get_dlq_stats(self) -> dict[str, Any]:
         """Report on dead events."""
         with self._dlq_lock:
             return {

@@ -13,17 +13,18 @@ Usage:
     browser.type("input[name='q']", "Hello World")
     browser.click("input[name='btnK']")
 """
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
 import asyncio
 import logging
 import random
 import re
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
 
 try:
-    from playwright.async_api import Browser, ElementHandle, Page, async_playwright, Error as PlaywrightError
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import Page, async_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -78,7 +79,7 @@ def _clean_extracted_page_text(raw_text: str) -> str:
     return "\n\n".join(cleaned_lines)
 
 
-def _score_content_block(title: str, block: Dict[str, Any]) -> float:
+def _score_content_block(title: str, block: dict[str, Any]) -> float:
     text = _clean_extracted_page_text(str(block.get("text") or ""))
     if not text:
         return float("-inf")
@@ -116,7 +117,7 @@ class PhantomBrowser:
         self.playwright = None
         self.browser = None
         self.context = None
-        self.page: Optional[Page] = None
+        self.page: Page | None = None
         self.visible = visible
         self.browser_type = browser_type
         self.is_active = False
@@ -238,20 +239,15 @@ class PhantomBrowser:
         
         # Properly close old page and context to prevent resource leaks
         if old_page:
-            try:
-                await old_page.close()
-            except Exception:
-                pass  # no-op: intentional
+            await self._close_resource("old page", old_page.close, close_timeout=3.0)
         if old_context:
-            try:
-                await old_context.close()
-            except Exception:
-                pass  # no-op: intentional
+            await self._close_resource("old context", old_context.close, close_timeout=5.0)
         logger.info("✓ User Agent rotated to: %s...", ua[:30])
 
     async def is_blocked(self) -> bool:
         """Detect if we are hitting a bot-detection page or CAPTCHA."""
-        if not self.page: return False
+        if not self.page:
+            return False
         
         content = (await self.page.content()).lower()
         title = (await self.page.title()).lower()
@@ -399,7 +395,8 @@ class PhantomBrowser:
     async def read_content(self) -> str:
         """Extract page content by scoring likely article/content containers."""
         try:
-            if not self.page: return ""
+            if not self.page:
+                return ""
             
             title = await self.page.title()
 
@@ -483,10 +480,11 @@ class PhantomBrowser:
             logger.error("Read content failed: %s", e)
             return ""
 
-    async def get_links(self) -> List[Dict[str, str]]:
+    async def get_links(self) -> list[dict[str, str]]:
         """Extract all links from page"""
         try:
-            if not self.page: return []
+            if not self.page:
+                return []
             links = await self.page.evaluate("""() => {
                 return Array.from(document.querySelectorAll('a')).map(a => ({
                     text: a.innerText.trim(),
@@ -499,10 +497,11 @@ class PhantomBrowser:
             logger.error("Get links failed: %s", e)
             return []
 
-    async def screenshot(self) -> Optional[str]:
+    async def screenshot(self) -> str | None:
         """Take a screenshot (base64)"""
         try:
-            if not self.page: return None
+            if not self.page:
+                return None
             import base64
             bytes_data = await self.page.screenshot()
             return base64.b64encode(bytes_data).decode('utf-8')
@@ -511,44 +510,23 @@ class PhantomBrowser:
             logger.error("Screenshot failed: %s", e)
             return None
 
+    async def _close_resource(self, label: str, close_factory, *, close_timeout: float) -> None:
+        try:
+            await asyncio.wait_for(close_factory(), timeout=close_timeout)
+        except Exception as exc:
+            record_degradation("phantom_browser", exc)
+            logger.debug("Phantom browser %s close failed: %s", label, exc)
+
     async def close(self):
         """Close browser resources with per-step timeouts to prevent hangs."""
-        try:
-            if self.page:
-                try:
-                    await asyncio.wait_for(self.page.close(), timeout=3.0)
-                except Exception:
-                    pass  # no-op: intentional
-        except Exception as e:
-            record_degradation('phantom_browser', e)
-            logger.debug("Page close error: %s", e)
-        try:
-            if self.context:
-                try:
-                    await asyncio.wait_for(self.context.close(), timeout=5.0)
-                except Exception:
-                    pass  # no-op: intentional
-        except Exception as e:
-            record_degradation('phantom_browser', e)
-            logger.debug("Context close error: %s", e)
-        try:
-            if self.browser:
-                try:
-                    await asyncio.wait_for(self.browser.close(), timeout=5.0)
-                except Exception:
-                    pass  # no-op: intentional
-        except Exception as e:
-            record_degradation('phantom_browser', e)
-            logger.debug("Browser close error: %s", e)
-        try:
-            if self.playwright:
-                try:
-                    await asyncio.wait_for(self.playwright.stop(), timeout=5.0)
-                except Exception:
-                    pass  # no-op: intentional
-        except Exception as e:
-            record_degradation('phantom_browser', e)
-            logger.debug("Playwright stop error: %s", e)
+        if self.page:
+            await self._close_resource("page", self.page.close, close_timeout=3.0)
+        if self.context:
+            await self._close_resource("context", self.context.close, close_timeout=5.0)
+        if self.browser:
+            await self._close_resource("browser", self.browser.close, close_timeout=5.0)
+        if self.playwright:
+            await self._close_resource("playwright", self.playwright.stop, close_timeout=5.0)
         self.page = None
         self.context = None
         self.browser = None
