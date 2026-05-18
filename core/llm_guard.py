@@ -9,7 +9,7 @@ Three concerns:
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("Aura.LLMGuard")
 
@@ -30,7 +30,7 @@ _INJECTION_PATTERNS = [
 _INJECTION_RE = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 
 
-def sanitize_tool_result(result: Any) -> Tuple[Any, bool]:
+def sanitize_tool_result(result: Any) -> tuple[Any, bool]:
     """
     Scan a tool result for prompt injection attempts.
 
@@ -52,7 +52,7 @@ def sanitize_tool_result(result: Any) -> Tuple[Any, bool]:
             "🛡️ Prompt injection detected in tool result. Patterns: %s",
             injections_found,
         )
-        # Return a sanitized placeholder instead of the raw result
+        # Return a sanitized summary instead of the raw result
         return (
             f"[TOOL RESULT SANITIZED — potential injection detected. "
             f"Original length: {len(result_str)} chars]",
@@ -62,7 +62,7 @@ def sanitize_tool_result(result: Any) -> Tuple[Any, bool]:
     return result, False
 
 
-def validate_tool_call(tool_call: Dict[str, Any], registered_skills: List[str]) -> Tuple[bool, str]:
+def validate_tool_call(tool_call: dict[str, Any], registered_skills: list[str]) -> tuple[bool, str]:
     """
     Validate a tool call from the LLM before executing it.
 
@@ -120,7 +120,7 @@ def repair_json(text: str) -> str:
     return text.strip()
 
 
-def validate_json_response(raw: str, expected_keys: Optional[List[str]] = None) -> Tuple[bool, Any, str]:
+def validate_json_response(raw: str, expected_keys: list[str] | None = None) -> tuple[bool, Any, str]:
     """
     Parse and validate an LLM JSON response with multi-stage repair.
 
@@ -157,7 +157,7 @@ def validate_json_response(raw: str, expected_keys: Optional[List[str]] = None) 
     return False, None, "No JSON object or array found in response"
 
 
-def _validate_keys(obj: Any, expected_keys: Optional[List[str]] = None) -> Tuple[bool, Any, str]:
+def _validate_keys(obj: Any, expected_keys: list[str] | None = None) -> tuple[bool, Any, str]:
     """Helper to check for mandatory keys."""
     if expected_keys and isinstance(obj, dict):
         missing = [k for k in expected_keys if k not in obj]

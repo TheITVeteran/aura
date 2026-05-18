@@ -17,6 +17,7 @@ from core.exceptions import (
     LifecycleError,
     ServiceNotFoundError,
 )
+from core.health.degraded_events import record_degraded_event
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.utils.concurrency import RobustLock
@@ -61,6 +62,20 @@ _PROTECTED_CORE_SERVICES = frozenset(
     }
 )
 
+_CONTAINER_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    ImportError,
+    LookupError,
+    TimeoutError,
+)
+_SERVICE_INIT_ERRORS = (*_CONTAINER_RECOVERABLE_ERRORS, LifecycleError)
+_SEAL_IO_ERRORS = (OSError, json.JSONDecodeError, TypeError, ValueError)
+
+
 class ServiceLifetime(Enum):
     SINGLETON = "singleton"
     TRANSIENT = "transient"
@@ -78,6 +93,50 @@ class ServiceDescriptor:
         self.initialized = initialized
         self._async_initialized = False
         self.dependencies = list(dependencies or [])
+
+
+def _callable_attr(instance: Any, attr_name: str) -> Callable[..., Any] | None:
+    """Return a callable instance attribute without treating absence as failure."""
+    try:
+        inspect.getattr_static(instance, attr_name)
+    except (AttributeError, TypeError):
+        return None
+    try:
+        attr = getattr(instance, attr_name)
+    except _CONTAINER_RECOVERABLE_ERRORS as exc:
+        record_degradation("container", exc)
+        logger.debug("Unable to resolve %s on %s: %s", attr_name, type(instance).__name__, exc)
+        return None
+    return attr if callable(attr) else None
+
+
+def _status_from_result(result: Any) -> str:
+    if isinstance(result, dict):
+        return str(result.get("status", "active"))
+    return str(result)
+
+
+def _read_instance_status(name: str, instance: Any) -> str:
+    for attr_name in ("get_status", "status"):
+        status_fn = _callable_attr(instance, attr_name)
+        if status_fn is None:
+            continue
+        if inspect.iscoroutinefunction(status_fn):
+            return "async_status_unread"
+        try:
+            result = status_fn()
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                return "async_status_unread"
+            return _status_from_result(result)
+        except _CONTAINER_RECOVERABLE_ERRORS as exc:
+            record_degradation("container", exc)
+            logger.debug("Status read failed for %s via %s: %s", name, attr_name, exc)
+            return "status_error"
+    return "active_unverified"
+
 
 def zero_sync_guard(func: Callable):
     """Decorator to ensure async methods do not perform synchronous blocking calls."""
@@ -126,34 +185,12 @@ class ServiceContainer:
             statuses = {}
             for name, desc in cls._services.items():
                 if desc.instance is not None:
-                    # Look for explicit status reporting
-                    if hasattr(desc.instance, "get_status") and callable(desc.instance.get_status):
-                        try:
-                            import inspect
-                            if inspect.iscoroutinefunction(desc.instance.get_status):
-                                statuses[name] = "async_status_unread"
-                            else:
-                                st = desc.instance.get_status()
-                                statuses[name] = st.get("status", "active") if isinstance(st, dict) else str(st)
-                        except Exception:
-                            statuses[name] = "status_error"
-                    elif hasattr(desc.instance, "status") and callable(desc.instance.status):
-                        try:
-                            import inspect
-                            if inspect.iscoroutinefunction(desc.instance.status):
-                                statuses[name] = "async_status_unread"
-                            else:
-                                st = desc.instance.status()
-                                statuses[name] = st.get("status", "active") if isinstance(st, dict) else str(st)
-                        except Exception:
-                            statuses[name] = "status_error"
-                    else:
-                        statuses[name] = "active_unverified"
+                    statuses[name] = _read_instance_status(name, desc.instance)
                 else:
                     if desc.required:
                         statuses[name] = "missing"
                     else:
-                        statuses[name] = "stub"
+                        statuses[name] = "optional_missing"
             return statuses
             
     @classmethod
@@ -214,14 +251,10 @@ class ServiceContainer:
             cls._registration_locked = False
             # Log at WARNING to ensure visibility in production logs
             frame_info = ""
-            try:
-                stack = traceback.extract_stack(limit=3)
-                if len(stack) >= 2:
-                    frame = stack[-2]
-                    frame_info = f" (from {frame.filename}:{frame.lineno})"
-            except Exception as exc:
-                record_degradation("container", exc)
-                logger.debug("ServiceContainer unlock stack capture failed: %s", exc)
+            stack = traceback.extract_stack(limit=3)
+            if len(stack) >= 2:
+                frame = stack[-2]
+                frame_info = f" (from {frame.filename}:{frame.lineno})"
             logger.warning(
                 "ServiceContainer registration UNLOCKED by '%s'%s%s",
                 caller,
@@ -265,37 +298,25 @@ class ServiceContainer:
                 and existing_instance is not instance
             ):
                 logger.error("🚫 Protected core service overwrite blocked after lock: '%s'", name)
-                try:
-                    from core.health.degraded_events import record_degraded_event
-
-                    record_degraded_event(
-                        "service_container",
-                        "protected_service_overwrite_blocked",
-                        detail=name,
-                        severity="error",
-                        classification="foreground_blocking",
-                        context={"service": name},
-                    )
-                except Exception as exc:
-                    record_degradation('container', exc)
-                    logger.debug("Protected service overwrite degraded-event logging failed: %s", exc)
+                record_degraded_event(
+                    "service_container",
+                    "protected_service_overwrite_blocked",
+                    detail=name,
+                    severity="error",
+                    classification="foreground_blocking",
+                    context={"service": name},
+                )
                 return
             if not existing and name in _LATE_CAUSAL_SERVICES:
                 logger.warning("⚠️ Late CAUSAL instance registration after lock: '%s'", name)
-                try:
-                    from core.health.degraded_events import record_degraded_event
-
-                    record_degraded_event(
-                        "service_container",
-                        "late_causal_registration",
-                        detail=name,
-                        severity="warning",
-                        classification="background_degraded",
-                        context={"service": name},
-                    )
-                except Exception as exc:
-                    record_degradation('container', exc)
-                    logger.debug("Late causal registration degraded-event logging failed: %s", exc)
+                record_degraded_event(
+                    "service_container",
+                    "late_causal_registration",
+                    detail=name,
+                    severity="warning",
+                    classification="background_degraded",
+                    context={"service": name},
+                )
         with cls._lock:
             cls._services[name] = ServiceDescriptor(
                 name=name,
@@ -346,7 +367,7 @@ class ServiceContainer:
             from core.service_registration import register_all_services
             if hasattr(register_all_services, "_full_run"):
                 register_all_services._full_run = False
-        except Exception as _exc:
+        except (ImportError, AttributeError) as _exc:
             record_degradation('container', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -360,7 +381,7 @@ class ServiceContainer:
         """Resolve an alias chain to its canonical service name."""
         seen: set[str] = set()
         current = name
-        while True:
+        for _ in range(len(cls._aliases) + 1):
             with cls._lock:
                 target = cls._aliases.get(current)
             if not target:
@@ -369,6 +390,7 @@ class ServiceContainer:
                 raise CircularDependencyError(f"Circular dependency detected in aliases for '{name}'")
             seen.add(current)
             current = target
+        raise CircularDependencyError(f"Circular dependency detected in aliases for '{name}'")
 
     @classmethod
     def _infer_dependency_names(cls, desc: ServiceDescriptor) -> list[str]:
@@ -493,8 +515,16 @@ class ServiceContainer:
                 instance = desc.factory(*args, **kwargs)
 
                 # Sync on_start hook (Zenith prefers async, but support for legacy)
-                if hasattr(instance, "on_start") and not desc.initialized:
-                    instance.on_start()
+                start_hook = _callable_attr(instance, "on_start")
+                if start_hook is not None and not desc.initialized:
+                    start_result = start_hook()
+                    if inspect.isawaitable(start_result):
+                        close = getattr(start_result, "close", None)
+                        if callable(close):
+                            close()
+                        raise LifecycleError(
+                            f"Service '{resolved_name}' on_start returned an awaitable; use on_start_async"
+                        )
 
                 if desc.lifetime == ServiceLifetime.SINGLETON:
                     desc.instance = instance
@@ -503,7 +533,7 @@ class ServiceContainer:
                 return instance
             except (CircularDependencyError, ServiceNotFoundError):
                 raise
-            except Exception as exc:
+            except _SERVICE_INIT_ERRORS as exc:
                 record_degradation('container', exc)
                 raise LifecycleError(f"Service '{resolved_name}' failed to initialize: {exc}") from exc
             finally:
@@ -570,11 +600,20 @@ class ServiceContainer:
                 if desc.lifetime == ServiceLifetime.SINGLETON:
                     try:
                         instance = cls.get(name)
-                        if hasattr(instance, "on_start_async") and not desc._async_initialized:
-                            await instance.on_start_async()
+                        start_async = _callable_attr(instance, "on_start_async")
+                        if start_async is not None and not desc._async_initialized:
+                            result = start_async()
+                            if inspect.isawaitable(result):
+                                await result
+                            elif result is not None:
+                                logger.debug(
+                                    "on_start_async for %s returned non-awaitable %r",
+                                    name,
+                                    type(result).__name__,
+                                )
                             desc._async_initialized = True
                         logger.info("   [✓] %s online.", name)
-                    except Exception as e:
+                    except _SERVICE_INIT_ERRORS as e:
                         record_degradation('container', e)
                         logger.critical("   [!] %s FAILED: %s", name, e)
                         raise ContainerError(f"Wake failed for {name}: {e}") from e
@@ -582,7 +621,7 @@ class ServiceContainer:
             try:
                 seal = cls.write_sovereignty_seal()
                 logger.info("🔒 ServiceContainer sovereignty seal written — %s", seal.get("hash", "")[:12])
-            except Exception as seal_exc:
+            except _SEAL_IO_ERRORS as seal_exc:
                 record_degradation('container', seal_exc)
                 logger.warning("ServiceContainer sovereignty seal write failed: %s", seal_exc)
             
@@ -595,17 +634,7 @@ class ServiceContainer:
     async def shutdown(cls) -> None:
         """Cleanup all singleton services in reverse order."""
         def _resolve_hook(instance: Any, hook_name: str) -> Callable[..., Any] | None:
-            try:
-                inspect.getattr_static(instance, hook_name)
-            except AttributeError:
-                return None
-            try:
-                hook = getattr(instance, hook_name)
-            except Exception as exc:
-                record_degradation("container", exc)
-                logger.debug("Unable to resolve %s hook for %s: %s", hook_name, name, exc)
-                return None
-            return hook if callable(hook) else None
+            return _callable_attr(instance, hook_name)
 
         with cls._lock:
             names = list(reversed(list(cls._services.keys())))
@@ -625,7 +654,7 @@ class ServiceContainer:
                         await result
                     elif result is not None:
                         logger.debug("on_stop_async for %s returned non-awaitable %r", name, type(result).__name__)
-                except Exception as e:
+                except _SERVICE_INIT_ERRORS as e:
                     record_degradation('container', e)
                     logger.error("on_stop_async failed for %s: %s", name, e)
             
@@ -637,7 +666,7 @@ class ServiceContainer:
                         result = hook_fn()
                         if inspect.isawaitable(result):
                             await result
-                    except Exception as e:
+                    except _SERVICE_INIT_ERRORS as e:
                         record_degradation('container', e)
                         logger.error("%s failed for %s: %s", hook, name, e)
             
@@ -678,7 +707,7 @@ class ServiceContainer:
             }
             if not seal_valid:
                 report["status"] = "degraded"
-        except Exception as exc:
+        except _SEAL_IO_ERRORS as exc:
             record_degradation('container', exc)
             logger.debug("ServiceContainer health seal verification failed: %s", exc)
         return report
@@ -689,7 +718,7 @@ class ServiceContainer:
             from core.config import config
 
             return config.paths.data_dir / "sovereignty_seal.json"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             record_degradation("container", exc)
             logger.debug("Falling back to default sovereignty seal path after config lookup failed: %s", exc)
             return Path.home() / ".aura" / "data" / "sovereignty_seal.json"
@@ -730,7 +759,7 @@ class ServiceContainer:
             return True
         try:
             stored = json.loads(seal_path.read_text())
-        except Exception as exc:
+        except _SEAL_IO_ERRORS as exc:
             record_degradation("container", exc)
             logger.debug("Sovereignty seal read failed: %s", exc)
             return False
@@ -748,19 +777,14 @@ class ServiceContainer:
         as diagnostic context, not a live degradation, so UI/status probes do not
         pollute the neural feed with false subsystem failures.
         """
-        try:
-            from core.health.degraded_events import record_degraded_event
-            record_degraded_event(
-                "service_container",
-                "SUBSYSTEM_ABSENT",
-                detail=service_name,
-                severity="info",
-                classification="non_critical_fallback",
-                context={"service": service_name},
-            )
-        except Exception as exc:
-            record_degradation("container", exc)
-            logger.debug("Unable to emit absent-service breadcrumb for %s: %s", service_name, exc)
+        record_degraded_event(
+            "service_container",
+            "SUBSYSTEM_ABSENT",
+            detail=service_name,
+            severity="info",
+            classification="non_critical_fallback",
+            context={"service": service_name},
+        )
 
 
 def get_container() -> type[ServiceContainer]:

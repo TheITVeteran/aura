@@ -2,9 +2,11 @@
 Strict Pydantic payloads for all internal state passing in the new Zenith architecture.
 """
 
-from typing import Any, Dict, List, Optional, Union
 import time
-from pydantic import BaseModel, Field, ConfigDict, AliasChoices
+from typing import Any
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
 
 class WebsocketMessage(BaseModel):
     """Base schema for any message sent down the websocket."""
@@ -28,14 +30,14 @@ class TelemetryPayload(WebsocketMessage):
     surprise: float = Field(default=0.0, ge=0.0)
     narrative: str = ""
     
-    consciousness: Dict[str, Any] = Field(default_factory=dict)
-    mycelial: Dict[str, Any] = Field(default_factory=dict)
+    consciousness: dict[str, Any] = Field(default_factory=dict)
+    mycelial: dict[str, Any] = Field(default_factory=dict)
     
 class CognitiveThoughtPayload(WebsocketMessage):
     type: str = "thought"
     content: str
     urgency: str = "NORMAL"
-    cognitive_phase: Optional[str] = None
+    cognitive_phase: str | None = None
 
 class ChatStreamChunkPayload(WebsocketMessage):
     type: str = "chat_stream_chunk"
@@ -49,13 +51,13 @@ class AuraMessagePayload(WebsocketMessage):
     """Used for non-streaming responses, autonomic messages, and reflexes."""
     type: str = "aura_message"
     message: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 class ActionResultPayload(WebsocketMessage):
     type: str = "action_result"
     tool: str
-    result: Optional[Any] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    result: Any | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 class UserMessagePayload(WebsocketMessage):
     type: str = "user_message"
@@ -67,8 +69,8 @@ class ErrorPayload(WebsocketMessage):
 class ChatStreamEvent(BaseModel):
     """Internal event for structured chat streaming."""
     type: str  # "token", "thought", "meta", "error", "end"
-    content: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    content: str | None = None
+    metadata: dict[str, Any] | None = None
 
 class ToolInvocation(BaseModel):
     name: str = Field(..., description="The tool to invoke (python_sandbox, web_search)")
@@ -80,9 +82,9 @@ class ShardResponse(BaseModel):
     
     analysis: str = Field(..., description="Internal cognitive monologue/analysis.", validation_alias=AliasChoices('analysis', 'thought'))
     action_type: str = Field(..., description="One of: 'observation', 'tool_use', 'conclusion', 'thought'")
-    tools: List[ToolInvocation] = Field(default_factory=list, description="Array of tools to execute simultaneously.")
-    tool_name: Optional[str] = Field(None, description="[Legacy] The tool to invoke")
-    tool_payload: Optional[str] = Field(None, description="[Legacy] The script or query for the tool")
+    tools: list[ToolInvocation] = Field(default_factory=list, description="Array of tools to execute simultaneously.")
+    tool_name: str | None = Field(None, description="[Legacy] The tool to invoke")
+    tool_payload: str | None = Field(None, description="[Legacy] The script or query for the tool")
     conclusion: str = Field(..., description="Final takeaway or message.")
 
 class IPCMessage(BaseModel):
@@ -95,7 +97,18 @@ class IPCMessage(BaseModel):
     payload: Any = Field(...)
     origin: str = Field(default="background")
 
-    def __lt__(self, other):
-        if not hasattr(other, 'priority'):
-            return NotImplemented
-        return (self.priority, self.timestamp, self.sequence) < (other.priority, other.timestamp, getattr(other, 'sequence', 0))
+    def __lt__(self, other: object) -> bool:
+        other_key = _ipc_sort_key(other)
+        if other_key is None:
+            return False
+        return _ipc_sort_key(self) < other_key
+
+
+def _ipc_sort_key(message: object) -> tuple[int, float, int] | None:
+    try:
+        priority = int(message.priority)
+        timestamp = float(message.timestamp)
+        sequence = int(getattr(message, "sequence", 0))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return priority, timestamp, sequence
