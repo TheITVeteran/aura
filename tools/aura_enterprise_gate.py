@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
+import io
 import json
 import os
 import py_compile
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tokenize
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -100,8 +102,11 @@ TEXT_PATTERNS = {
         r"(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})"
     ),
     "pytest_skip_xfail": re.compile(r"pytest\.mark\.skip|pytest\.skip|xfail", re.IGNORECASE),
-    "todo_fixme_hack": re.compile(r"\b(TODO|FIXME|XXX|HACK)\b", re.IGNORECASE),
 }
+TODO_MARKER_PATTERN = re.compile(
+    r"^(TODO|FIXME|XXX|HACK)\b(?:\([^)]*\))?\s*(?::|-|\s|$)",
+    re.IGNORECASE,
+)
 
 FAILURE_KINDS = {
     "baseline_regression",
@@ -420,6 +425,25 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
             else:
                 severity = "low"
             report.findings.append(Finding(severity, kind, rel, line_no, line.strip()[:240]))
+
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        for token in tokens:
+            if token.type != tokenize.COMMENT:
+                continue
+            comment = token.string.lstrip("#").strip()
+            if TODO_MARKER_PATTERN.search(comment):
+                report.findings.append(
+                    Finding(
+                        "low",
+                        "todo_fixme_hack",
+                        rel,
+                        token.start[0],
+                        token.string.strip()[:240],
+                    )
+                )
+    except tokenize.TokenError as exc:
+        report.findings.append(Finding("critical", "syntax_error", rel, exc.args[1][0], str(exc)))
 
     try:
         tree = ast.parse(source, filename=rel)
