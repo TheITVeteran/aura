@@ -9,8 +9,6 @@ Integrates with:
   - ReliabilityTracker: records tool outcomes alongside episodes
   - BeliefGraph: episodes can update beliefs
 """
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
 import asyncio
 import json
 import logging
@@ -18,13 +16,15 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
 from core.resilience.state_manager import _SafeEncoder
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Memory.Episodic")
 
@@ -38,22 +38,22 @@ class Episode(BaseModel):
     context: str = ""              # What was happening / user request
     action: str = ""               # What Aura did
     outcome: str = ""              # What happened
-    description: Optional[str] = None # Legacy flat description
+    description: str | None = None # Legacy flat description
     success: bool = True
     emotional_valence: float = 0.0  # -1.0 (distressing) to +1.0 (rewarding)
     arousal: float = 0.5      # 0.0 (calm) to 1.0 (intense)
     importance: float = 0.5   # 0.0–1.0, controls retention priority
     
-    participants: List[str] = Field(default_factory=lambda: ["user", "aura"])
-    tools_used: List[str] = Field(default_factory=list)
-    lessons: List[str] = Field(default_factory=list)
-    tags: List[str] = Field(default_factory=list)
-    linked_semantic_ids: List[str] = Field(default_factory=list)
+    participants: list[str] = Field(default_factory=lambda: ["user", "aura"])
+    tools_used: list[str] = Field(default_factory=list)
+    lessons: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    linked_semantic_ids: list[str] = Field(default_factory=list)
     
     access_count: int = 0
     last_accessed: float = 0.0
     decay_rate: float = 0.01
-    qualia_snapshot: Dict[str, Any] = Field(default_factory=dict, alias="context_snapshot")
+    qualia_snapshot: dict[str, Any] = Field(default_factory=dict, alias="context_snapshot")
 
     model_config = {
         "populate_by_name": True,
@@ -101,7 +101,7 @@ class Episode(BaseModel):
             f"(experienced {valence_desc}, importance: {self.importance:.0%})"
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return self.model_dump()
 
 
@@ -185,7 +185,7 @@ class EpisodicMemory:
             for row in cursor.fetchall():
                 try:
                     existing_columns.add(row["name"])
-                except Exception:
+                except (IndexError, KeyError, TypeError):
                     existing_columns.add(row[1])
             
             for col_name, col_def in columns:
@@ -221,11 +221,11 @@ class EpisodicMemory:
         outcome: str,
         success: bool,
         emotional_valence: float = 0.0,
-        tools_used: Optional[List[str]] = None,
-        lessons: Optional[List[str]] = None,
+        tools_used: list[str] | None = None,
+        lessons: list[str] | None = None,
         importance: float = 0.5,
         source: str = "episodic_memory",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         return await asyncio.to_thread(
             self.record_episode,
@@ -241,22 +241,22 @@ class EpisodicMemory:
             metadata,
         )
 
-    async def recall_recent_async(self, limit: int = 10) -> List[Episode]:
+    async def recall_recent_async(self, limit: int = 10) -> list[Episode]:
         return await asyncio.to_thread(self.recall_recent, limit)
 
-    async def recall_similar_async(self, query: str, limit: int = 5) -> List[Episode]:
+    async def recall_similar_async(self, query: str, limit: int = 5) -> list[Episode]:
         return await asyncio.to_thread(self.recall_similar, query, limit)
 
-    async def recall_failures_async(self, limit: int = 10) -> List[Episode]:
+    async def recall_failures_async(self, limit: int = 10) -> list[Episode]:
         return await asyncio.to_thread(self.recall_failures, limit)
 
-    async def recall_by_tool_async(self, tool_name: str, limit: int = 10) -> List[Episode]:
+    async def recall_by_tool_async(self, tool_name: str, limit: int = 10) -> list[Episode]:
         return await asyncio.to_thread(self.recall_by_tool, tool_name, limit)
 
     async def add_lesson_async(self, episode_id: str, lesson: str):
         return await asyncio.to_thread(self.add_lesson, episode_id, lesson)
 
-    async def delete_episodes_async(self, episode_ids: List[str]):
+    async def delete_episodes_async(self, episode_ids: list[str]):
         """Async wrapper for delete_episodes."""
         return await asyncio.to_thread(self.delete_episodes, episode_ids)
 
@@ -270,7 +270,9 @@ class EpisodicMemory:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except Exception as exc:
+            record_degradation("episodic_memory", exc)
+            logger.debug("Constitutional runtime liveness check failed: %s", exc)
             return False
 
     def _approve_memory_write(
@@ -281,7 +283,7 @@ class EpisodicMemory:
         importance: float,
         *,
         source: str = "episodic_memory",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         return_decision: bool = False,
     ) -> bool | tuple[bool, Any]:
         preview = f"{context} | {action} | {outcome}".strip()[:240]
@@ -336,11 +338,11 @@ class EpisodicMemory:
         outcome: str,
         success: bool,
         emotional_valence: float = 0.0,
-        tools_used: Optional[List[str]] = None,
-        lessons: Optional[List[str]] = None,
+        tools_used: list[str] | None = None,
+        lessons: list[str] | None = None,
         importance: float = 0.5,
         source: str = "episodic_memory",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Record a new episode. Returns the episode_id.
         Importance is auto-boosted for failures (we learn more from mistakes).
@@ -681,7 +683,7 @@ class EpisodicMemory:
 
         return {"compacted": compacted}
 
-    def recall_recent(self, limit: int = 10) -> List[Episode]:
+    def recall_recent(self, limit: int = 10) -> list[Episode]:
         """Retrieve the most recent episodes, ranked by memory strength.
         
         Applies Ebbinghaus decay: old, unimportant, unrehearsed memories
@@ -705,14 +707,14 @@ class EpisodicMemory:
         
         return alive[:limit]
 
-    def recall_similar(self, query: str, limit: int = 5) -> List[Episode]:
+    def recall_similar(self, query: str, limit: int = 5) -> list[Episode]:
         """Hybrid search: combines vector similarity with keyword matching.
 
         Mood-Congruent Recall: Episodes formed in a similar qualia state
         to the current state are boosted in ranking.
         """
         seen_ids: set = set()
-        combined: List[Episode] = []
+        combined: list[Episode] = []
 
         # 1. Vector search (semantic similarity)
         if self._vector_memory:
@@ -755,7 +757,7 @@ class EpisodicMemory:
         )
         return combined[:limit]
 
-    def _apply_qualia_boost(self, episodes: List[Episode]) -> List[Episode]:
+    def _apply_qualia_boost(self, episodes: list[Episode]) -> list[Episode]:
         """Re-rank episodes by qualia congruence with current phenomenal state."""
         try:
             from core.container import ServiceContainer
@@ -782,7 +784,7 @@ class EpisodicMemory:
             capture_and_log(e, {'module': __name__})
         return episodes
 
-    def recall_failures(self, limit: int = 10) -> List[Episode]:
+    def recall_failures(self, limit: int = 10) -> list[Episode]:
         """Retrieve recent failures — the best learning opportunities."""
         with self._get_conn() as conn:
             rows = conn.execute(
@@ -791,7 +793,7 @@ class EpisodicMemory:
             ).fetchall()
         return [self._row_to_episode(r) for r in rows]
 
-    def recall_by_tool(self, tool_name: str, limit: int = 10) -> List[Episode]:
+    def recall_by_tool(self, tool_name: str, limit: int = 10) -> list[Episode]:
         """Retrieve episodes involving a specific tool."""
         with self._get_conn() as conn:
             # tools_used is a JSON array; use LIKE for simple matching
@@ -801,7 +803,7 @@ class EpisodicMemory:
             ).fetchall()
         return [self._row_to_episode(r) for r in rows]
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Introspection summary for self-model."""
         with self._get_conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
@@ -839,10 +841,13 @@ class EpisodicMemory:
     def _row_to_episode(self, row: sqlite3.Row) -> Episode:
         """Convert a sqlite row (Row object) to an Episode."""
         def load_json(val, default):
-            if not val: return default
+            if not val:
+                return default
             try:
                 return json.loads(val)
-            except Exception:
+            except Exception as exc:
+                record_degradation("episodic_memory", exc)
+                logger.debug("Episode JSON field decode failed: %s", exc)
                 return default
 
         # sqlite3.Row doesn't have .get() — use keys() check for optional cols
@@ -871,10 +876,9 @@ class EpisodicMemory:
             qualia_snapshot=load_json(safe_get("qualia_snapshot", "{}"), {}),
         )
 
-    def _fetch_by_ids(self, episode_ids: List[str]) -> List[Episode]:
+    def _fetch_by_ids(self, episode_ids: list[str]) -> list[Episode]:
         """Fetch episodes by ID list and mark as accessed."""
         now = time.time()
-        episodes = []
         with self._get_conn() as conn:
             placeholders = ",".join("?" for _ in episode_ids)
             rows = conn.execute(
@@ -890,7 +894,7 @@ class EpisodicMemory:
             conn.commit()
         return [self._row_to_episode(r) for r in rows]
 
-    def _keyword_search(self, query: str, limit: int) -> List[Episode]:
+    def _keyword_search(self, query: str, limit: int) -> list[Episode]:
         """Keyword search across context + action + outcome.
 
         Strategy (progressive relaxation so natural-language LLM queries can
@@ -923,7 +927,7 @@ class EpisodicMemory:
             "(LOWER(context) LIKE ? OR LOWER(action) LIKE ? OR LOWER(outcome) LIKE ?)"
             for _ in words
         )
-        params: List[str] = []
+        params: list[str] = []
         for w in words:
             pattern = f"%{w}%"
             params.extend([pattern, pattern, pattern])
@@ -1009,7 +1013,7 @@ class EpisodicMemory:
                 conn.commit()
                 logger.info("Pruned %s low-importance episodes", excess)
 
-    def delete_episodes(self, episode_ids: List[str]):
+    def delete_episodes(self, episode_ids: list[str]):
         """Hard delete specific episodes (e.g., after consolidation)."""
         if not episode_ids:
             return
@@ -1037,7 +1041,7 @@ class EpisodicMemory:
 # ---------------------------------------------------------------------------
 # Global Instance (lazy — only set up when imported)
 # ---------------------------------------------------------------------------
-_instance: Optional[EpisodicMemory] = None
+_instance: EpisodicMemory | None = None
 
 
 def get_episodic_memory(vector_memory=None) -> EpisodicMemory:

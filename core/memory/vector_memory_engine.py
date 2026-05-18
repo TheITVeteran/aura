@@ -48,29 +48,29 @@ Wire to orchestrator:
     relevant = await memory_engine.recall(query=user_input, limit=5)
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import hashlib
 import json
 import logging
-import math
 import sqlite3
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
+
 from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
 from core.runtime.effect_boundary import effect_sink
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.VectorMemory")
 
 _VECTOR_SQLITE_ERRORS = (OSError, sqlite3.Error, RuntimeError, TypeError, ValueError)
 
 
-def _loads_list(value: Any) -> List[str]:
+def _loads_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     if not value:
@@ -84,7 +84,7 @@ def _loads_list(value: Any) -> List[str]:
     return []
 
 
-def _metadata_matches_where(metadata: Dict[str, Any], where: Optional[Dict[str, Any]]) -> bool:
+def _metadata_matches_where(metadata: dict[str, Any], where: dict[str, Any] | None) -> bool:
     if not where:
         return True
     for key, expected in where.items():
@@ -115,10 +115,10 @@ class Memory:
     emotional_valence: float = 0.0        # -1.0 (negative) to 1.0 (positive)
     emotional_arousal: float = 0.0        # 0.0 (calm) to 1.0 (intense)
     source: str = "conversation"          # Who/what created this memory
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     access_count: int = 0                 # How many times retrieved
     last_accessed: float = 0.0
-    linked_ids: List[str] = field(default_factory=list)  # Connected memories
+    linked_ids: list[str] = field(default_factory=list)  # Connected memories
 
 
 @dataclass
@@ -201,7 +201,7 @@ class EmbeddingEngine:
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
 
-    def embed_batch(self, texts: List[str]) -> np.ndarray:
+    def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Batch embed for efficiency."""
         self._initialize()
 
@@ -262,8 +262,8 @@ class MemoryVault:
         self.collection_name = collection_name
         self._client = None
         self._collection = None
-        self._fallback_store: Dict[str, Dict] = {}
-        self._fallback_vectors: Dict[str, np.ndarray] = {}
+        self._fallback_store: dict[str, dict] = {}
+        self._fallback_vectors: dict[str, np.ndarray] = {}
         self._sqlite_vectors = None
         self._init_storage()
 
@@ -337,7 +337,7 @@ class MemoryVault:
         self._fallback_store[memory.id] = {"memory": asdict(memory), "metadata": metadata}
         self._fallback_vectors[memory.id] = vector
 
-    def _metadata_from_memory(self, memory: Memory) -> Dict[str, Any]:
+    def _metadata_from_memory(self, memory: Memory) -> dict[str, Any]:
         return {
             "memory_type": memory.memory_type,
             "timestamp": memory.timestamp,
@@ -351,7 +351,7 @@ class MemoryVault:
             "linked_ids": json.dumps(memory.linked_ids),
         }
 
-    def _memory_from_sqlite_record(self, record: Dict[str, Any]) -> Memory:
+    def _memory_from_sqlite_record(self, record: dict[str, Any]) -> Memory:
         metadata = dict(record.get("metadata") or {})
         return Memory(
             id=str(record.get("id") or ""),
@@ -372,8 +372,8 @@ class MemoryVault:
         self,
         query_vector: np.ndarray,
         n_results: int = 10,
-        where: Optional[Dict] = None,
-    ) -> List[Tuple[str, str, Dict, float]]:
+        where: dict | None = None,
+    ) -> list[tuple[str, str, dict, float]]:
         """
         Query by vector similarity.
         Returns list of (id, content, metadata, distance) tuples.
@@ -577,7 +577,7 @@ class ConsolidationEngine:
         logger.info("🌙 Consolidation complete: %d memories merged", consolidated)
         return consolidated
 
-    async def _merge_memories(self, content_a: str, content_b: str, brain) -> Optional[str]:
+    async def _merge_memories(self, content_a: str, content_b: str, brain) -> str | None:
         """Ask the LLM to synthesize two similar memories into a generalized insight."""
         if not brain:
             return None
@@ -595,7 +595,9 @@ Be concise (1-2 sentences). Extract the universal pattern."""
             from core.brain.cognitive_engine import ThinkingMode
             result = await brain.think(prompt, mode=ThinkingMode.FAST, max_tokens=150)
             return result.content if hasattr(result, 'content') else str(result)
-        except Exception:
+        except Exception as exc:
+            record_degradation("vector_memory_engine", exc)
+            logger.debug("Memory merge failed: %s", exc)
             return None
 
 
@@ -620,7 +622,7 @@ class VectorMemoryEngine:
             print(f"{m.relevance:.2f}: {m.memory.content[:80]}")
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         from core.config import config
         self.db_path = str(
             Path(db_path or config.paths.data_dir / "memory" / "vector_store")
@@ -629,11 +631,11 @@ class VectorMemoryEngine:
         self.vault = MemoryVault(self.db_path)
         self.scorer = ImportanceScorer()
         self.consolidator = ConsolidationEngine(self.vault, self.embedder)
-        self._recent_memory_ids: List[str] = []  # For recency weighting
+        self._recent_memory_ids: list[str] = []  # For recency weighting
         
         # --- SPATIAL MEMORY LAYER ---
         # Map: (level, x, y) -> list of feature descriptions
-        self._spatial_registry: Dict[Tuple[int, int, int], List[str]] = {}
+        self._spatial_registry: dict[tuple[int, int, int], list[str]] = {}
         
         logger.info("✅ VectorMemoryEngine initialized. Memories: %d", self.vault.count())
 
@@ -652,7 +654,7 @@ class VectorMemoryEngine:
         memory_type: str,
         importance: float,
         source: str,
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
         return_decision: bool = False,
     ) -> bool | tuple[bool, Any]:
         try:
@@ -702,10 +704,10 @@ class VectorMemoryEngine:
         self,
         content: str,
         memory_type: str = "episodic",
-        emotional_context: Optional[Dict] = None,
-        importance: Optional[float] = None,
+        emotional_context: dict | None = None,
+        importance: float | None = None,
         source: str = "conversation",
-        tags: List[str] = None,
+        tags: list[str] = None,
         explicitly_important: bool = False,
     ) -> str:
         """
@@ -794,11 +796,11 @@ class VectorMemoryEngine:
             tags=["spatial", f"level_{level}"]
         )
 
-    async def recall_spatial(self, level: int, x: int, y: int) -> List[str]:
+    async def recall_spatial(self, level: int, x: int, y: int) -> list[str]:
         """Recall what is at a specific spatial coordinate."""
         return self._spatial_registry.get((level, x, y), [])
 
-    async def find_feature(self, feature_query: str) -> List[Tuple[Tuple[int, int, int], str]]:
+    async def find_feature(self, feature_query: str) -> list[tuple[tuple[int, int, int], str]]:
         """Find the coordinates of a specific feature."""
         results = []
         query_lower = feature_query.lower()
@@ -812,10 +814,10 @@ class VectorMemoryEngine:
         self,
         query: str,
         limit: int = 5,
-        memory_type: Optional[str] = None,
+        memory_type: str | None = None,
         min_importance: float = 0.0,
         recency_weight: float = 0.2,
-    ) -> List[RecalledMemory]:
+    ) -> list[RecalledMemory]:
         """
         Retrieve memories by semantic similarity.
         
@@ -909,7 +911,7 @@ class VectorMemoryEngine:
         """Run memory consolidation (call from sleep/idle cycle)."""
         return await self.consolidator.consolidate(brain=brain)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "total_memories": self.vault.count(),
             "recent_tracked": len(self._recent_memory_ids),

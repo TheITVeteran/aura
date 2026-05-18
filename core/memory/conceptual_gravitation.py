@@ -20,13 +20,13 @@ Algorithm:
      - Alpha decays with distance (far memories attract less)
   3. Re-normalize embeddings after nudging to maintain unit sphere.
 """
-from core.runtime.errors import record_degradation
 import logging
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ConceptualGravitation")
 
@@ -43,8 +43,8 @@ class ConceptualGravitationEngine:
 
     def __init__(self):
         # co_access_counts[(id_a, id_b)] = [(timestamp, strength), ...]
-        self._co_accesses: Dict[Tuple[str, str], List[Tuple[float, float]]] = defaultdict(list)
-        self._current_turn_recalls: Set[str] = set()
+        self._co_accesses: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+        self._current_turn_recalls: set[str] = set()
         self._total_nudges = 0
         self._last_consolidation = 0.0
 
@@ -65,7 +65,7 @@ class ConceptualGravitationEngine:
 
         self._current_turn_recalls.clear()
 
-    def consolidate(self, memory_store) -> Dict[str, int]:
+    def consolidate(self, memory_store) -> dict[str, int]:
         """Apply gravitational nudges during dream consolidation.
 
         Args:
@@ -94,7 +94,9 @@ class ConceptualGravitationEngine:
             try:
                 emb_a = memory_store.get_embedding(id_a)
                 emb_b = memory_store.get_embedding(id_b)
-            except Exception:
+            except Exception as exc:
+                record_degradation("conceptual_gravitation", exc)
+                logger.debug("Gravitation embedding lookup failed for %s: %s", pair, exc)
                 continue
 
             if emb_a is None or emb_b is None:
@@ -152,7 +154,7 @@ class ConceptualGravitationEngine:
         )
         return {"nudged": nudged, "pairs_processed": pairs_processed, "total_historical": self._total_nudges}
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         return {
             "active_pairs": len(self._co_accesses),
             "total_nudges": self._total_nudges,
@@ -160,7 +162,7 @@ class ConceptualGravitationEngine:
         }
 
 
-_instance: Optional[ConceptualGravitationEngine] = None
+_instance: ConceptualGravitationEngine | None = None
 
 
 def get_gravitation_engine() -> ConceptualGravitationEngine:

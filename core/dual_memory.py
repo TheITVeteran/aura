@@ -20,11 +20,14 @@ Architecture:
   DualMemorySystem — unified interface that coordinates both, with cross-linking
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import logging
 import sqlite3
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,9 +39,79 @@ from core.memory.physics import PhysicsEngine
 from core.memory.rag import compute_term_freq, tokenize
 from core.runtime.errors import record_degradation
 from core.utils.concurrency import RobustLock
-from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Core.DualMemory")
+_BLACK_HOLE_PREFIX = "bh:v1:"
+
+
+def _encode_black_hole_value(value: Any, vault_key: str) -> str:
+    if isinstance(value, bytes):
+        raw = value
+    elif isinstance(value, str):
+        raw = value
+    else:
+        raw = json.dumps(value, default=str)
+    return f"{_BLACK_HOLE_PREFIX}{encode_payload(raw, vault_key)['encoded']}"
+
+
+def _decode_black_hole_value(value: Any, vault_key: str) -> str:
+    if not isinstance(value, str) or not value:
+        return "" if value is None else str(value)
+    payload = value
+    prefixed = payload.startswith(_BLACK_HOLE_PREFIX)
+    if prefixed:
+        payload = payload[len(_BLACK_HOLE_PREFIX):]
+    should_try_decode = prefixed
+    if not should_try_decode:
+        try:
+            decoded = base64.b64decode(payload, validate=True)
+            should_try_decode = len(decoded) >= 29
+        except (binascii.Error, ValueError):
+            should_try_decode = False
+    if should_try_decode:
+        decoded = decode_payload(payload, vault_key)
+        if decoded:
+            return str(decoded)
+        if prefixed:
+            logger.warning("Black Hole value could not be decrypted with the active vault key.")
+            return ""
+    return value
+
+
+def _decode_black_hole_json(value: Any, vault_key: str, default: Any) -> Any:
+    decoded = _decode_black_hole_value(value, vault_key)
+    if not decoded:
+        return default
+    try:
+        return json.loads(decoded)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _episode_id(episode: Episode) -> str:
+    return str(getattr(episode, "episode_id", "") or getattr(episode, "id", ""))
+
+
+def _episode_description(episode: Episode) -> str:
+    desc = getattr(episode, "description", None)
+    if desc:
+        return str(desc)
+    full = getattr(episode, "full_description", "")
+    if full:
+        return str(full)
+    parts = [
+        str(getattr(episode, "context", "") or ""),
+        str(getattr(episode, "action", "") or ""),
+        str(getattr(episode, "outcome", "") or ""),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
+def _episode_context_snapshot(episode: Episode) -> dict[str, Any]:
+    snapshot = getattr(episode, "qualia_snapshot", None)
+    if snapshot is None:
+        snapshot = getattr(episode, "context_snapshot", None)
+    return dict(snapshot or {})
 
 
 class EpisodicMemoryStore:
@@ -75,14 +148,16 @@ class EpisodicMemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_valence ON episodes(emotional_valence)")
     
     def store(self, episode: Episode):
-        enc_desc = encode_payload(episode.description, self.vault_key)["encoded"]
-        enc_ctx = encode_payload(episode.context_snapshot, self.vault_key)["encoded"] if episode.context_snapshot else ""
+        enc_desc = _encode_black_hole_value(_episode_description(episode), self.vault_key)
+        snapshot = _episode_context_snapshot(episode)
+        enc_ctx = _encode_black_hole_value(snapshot, self.vault_key) if snapshot else ""
+        episode_id = _episode_id(episode)
         
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO episodes VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                episode.id, episode.timestamp, enc_desc,
+                episode_id, episode.timestamp, enc_desc,
                 json.dumps(episode.participants), episode.emotional_valence,
                 episode.arousal, episode.importance,
                 json.dumps(episode.linked_semantic_ids),
@@ -134,29 +209,16 @@ class EpisodicMemoryStore:
         return [self._row_to_episode(row) for row in rows]
     
     def _row_to_episode(self, row) -> Episode:
-        desc = row[2]
-        try:
-             # Basic heuristic to avoid decoding plaintext legacy entries
-             if isinstance(desc, str) and ("[LZ77]" in desc or desc.startswith("b'")):
-                  res = decode_payload(desc, self.vault_key)
-                  if res and "decoded" in res:
-                        desc = res["decoded"]
-        except Exception as e:
-            record_degradation('dual_memory', e)
-            capture_and_log(e, {"context": "EpisodicMemoryStore.row_to_episode.decode_desc"})
-             
-        ctx = row[8] or ""
-        try:
-             if ctx and isinstance(ctx, str) and ("[LZ77]" in ctx or ctx.startswith("b'")):
-                  res = decode_payload(ctx, self.vault_key)
-                  if res and "decoded" in res:
-                        ctx = res["decoded"]
-        except Exception as e:
-            record_degradation('dual_memory', e)
-            capture_and_log(e, {"context": "EpisodicMemoryStore.row_to_episode.decode_ctx"})
+        desc = _decode_black_hole_value(row[2], self.vault_key)
+        ctx = _decode_black_hole_json(row[8], self.vault_key, {})
 
         return Episode(
-            id=row[0], timestamp=row[1], description=desc,
+            id=row[0],
+            timestamp=row[1],
+            context=desc,
+            action="stored_experience",
+            outcome=desc,
+            description=desc,
             participants=json.loads(row[3] or "[]"),
             emotional_valence=row[4], arousal=row[5], importance=row[6],
             linked_semantic_ids=json.loads(row[7] or "[]"),
@@ -244,7 +306,7 @@ class SemanticMemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domain ON facts(domain)")
     
     def store(self, fact: SemanticFact):
-        enc_val = encode_payload(fact.value, self.vault_key)["encoded"]
+        enc_val = _encode_black_hole_value(fact.value, self.vault_key)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO facts VALUES (?,?,?,?,?,?,?,?,?)
@@ -274,15 +336,7 @@ class SemanticMemoryStore:
 
     
     def _row_to_fact(self, row) -> SemanticFact:
-        val = row[3]
-        try:
-             if isinstance(val, str) and ("[LZ77]" in val or val.startswith("b'")):
-                  res = decode_payload(val, self.vault_key)
-                  if res and "decoded" in res:
-                        val = res["decoded"]
-        except Exception as e:
-            record_degradation('dual_memory', e)
-            capture_and_log(e, {"context": "SemanticMemoryStore.row_to_fact.decode"})
+        val = _decode_black_hole_value(row[3], self.vault_key)
         return SemanticFact(
             id=row[0], concept=row[1], predicate=row[2], value=val,
             confidence=row[4],
@@ -350,18 +404,33 @@ class DualMemorySystem:
         if not base_dir:
             from core.config import config
             base_dir = str(config.paths.data_dir / "memory")
-            
-        self.horcrux = HorcruxManager()
-        self.horcrux.initialize()
-        self.vault_key = self.horcrux.get_key_string() if self.horcrux.master_key else "aura-fallback-key"
+        self.base_dir = Path(base_dir)
+        self.horcrux = HorcruxManager(base_dir=str(self.base_dir / "horcrux"))
+        self.vault_key = self._resolve_vault_key()
         
-        self.episodic = EpisodicMemoryStore(f"{base_dir}/episodic.db", self.vault_key)
-        self.semantic = SemanticMemoryStore(f"{base_dir}/semantic.db", self.vault_key)
+        self.episodic = EpisodicMemoryStore(str(self.base_dir / "episodic.db"), self.vault_key)
+        self.semantic = SemanticMemoryStore(str(self.base_dir / "semantic.db"), self.vault_key)
         self._lock: RobustLock | None = None
         logger.info("DualMemorySystem constructed with Black Hole Vault.")
+
+    def _resolve_vault_key(self) -> str:
+        if getattr(self.horcrux, "derived_key", None):
+            return self.horcrux.get_key_string()
+        return "aura-fallback-key"
     
     async def initialize(self):
         """Initialize async components (Locks, etc.)"""
+        if getattr(self.horcrux, "derived_key", None) is None:
+            try:
+                await self.horcrux.initialize()
+            except Exception as exc:
+                record_degradation("dual_memory", exc)
+                logger.warning("DualMemory Horcrux initialization failed; using fallback vault key: %s", exc)
+        resolved_key = self._resolve_vault_key()
+        if resolved_key != self.vault_key:
+            self.vault_key = resolved_key
+            self.episodic.vault_key = resolved_key
+            self.semantic.vault_key = resolved_key
         if self._lock is None:
             self._lock = RobustLock("Memory.DualMemory")
         logger.info("✓ DualMemorySystem async components initialized")
@@ -372,7 +441,13 @@ class DualMemorySystem:
         """Store a new episodic memory. Returns episode ID.
         High-importance or high-arousal episodes are stored with slower decay.
         """
-        episode = Episode.create(
+        episode_id = f"ep_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+        episode = Episode(
+            id=episode_id,
+            timestamp=time.time(),
+            context=description,
+            action="stored_experience",
+            outcome=description,
             description=description,
             emotional_valence=emotional_valence,
             arousal=arousal,
@@ -380,8 +455,8 @@ class DualMemorySystem:
             tags=tags or []
         )
         self.episodic.store(episode)
-        logger.debug("Episode stored: %s — %s", episode.id, description[:60])
-        return episode.id
+        logger.debug("Episode stored: %s — %s", episode_id, description[:60])
+        return episode_id
     
     def learn_fact(self, concept: str, predicate: str, value: str,
                    confidence: float, domain: str = "general",
@@ -414,7 +489,7 @@ class DualMemorySystem:
             # ISSUE 9 fix: Avoid O(N) scan by using retrieve_recent
             active_episodes = self.episodic.retrieve_recent(limit=max_episodes * 2, min_strength=0.1)
             ep_memories = [
-                {"id": e.id, "obj": e, "vec": compute_term_freq(tokenize(e.description))}
+                {"id": _episode_id(e), "obj": e, "vec": compute_term_freq(tokenize(_episode_description(e)))}
                 for e in active_episodes
             ]
 
@@ -441,11 +516,12 @@ class DualMemorySystem:
                 emotional_episodes = self.episodic.retrieve_by_emotion(
                     emotional_context, limit=2
                 )
-                ep_ids = {e.id for e in episodes}
+                ep_ids = {_episode_id(e) for e in episodes}
                 for ee in emotional_episodes:
-                    if ee.id not in ep_ids:
+                    ee_id = _episode_id(ee)
+                    if ee_id not in ep_ids:
                         episodes.append(ee)
-                        ep_ids.add(ee.id)
+                        ep_ids.add(ee_id)
             
             # Build context block applying Bekenstein Bound (Max ~16000 context characters safely)
             max_context_radius = 16000

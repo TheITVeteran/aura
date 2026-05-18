@@ -25,8 +25,6 @@ Design:
   - Scars publish events so the consciousness stream can reflect on them
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import json
 import logging
@@ -34,12 +32,13 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.memory.scar_court import get_scar_court
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ScarFormation")
 
@@ -54,7 +53,7 @@ _MAX_SCARS = 200
 _DEFAULT_HEAL_RATE = 0.005
 
 
-class ScarDomain(str, Enum):
+class ScarDomain(StrEnum):
     """What category of experience the scar relates to."""
     TOOL_FAILURE = "tool_failure"
     CRASH = "crash"
@@ -89,9 +88,9 @@ class BehavioralScar:
     last_triggered: float         # Last time the threat recurred
     trigger_count: int = 1        # How many times this scar was reinforced
     heal_rate: float = _DEFAULT_HEAL_RATE  # Severity reduction per hour without recurrence
-    context: Dict[str, Any] = field(default_factory=dict)  # Extra data about the event
-    event_ids: List[str] = field(default_factory=list)
-    source_ids: List[str] = field(default_factory=list)
+    context: dict[str, Any] = field(default_factory=dict)  # Extra data about the event
+    event_ids: list[str] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
     evidence_count: int = 3
     source_diversity: int = 2
     confidence: float = 1.0
@@ -100,7 +99,7 @@ class BehavioralScar:
     appeal_status: str = "upheld"
     latent_influence_cap: float = 1.0
     maturity_status: str = "consolidated"
-    benign_alternatives: List[str] = field(default_factory=list)
+    benign_alternatives: list[str] = field(default_factory=list)
     verified_threat: bool = True
 
     def effective_severity(self) -> float:
@@ -116,12 +115,12 @@ class BehavioralScar:
     def reinforce(
         self,
         severity_boost: float = 0.2,
-        context: Optional[Dict] = None,
-        event_id: Optional[str] = None,
-        source_id: Optional[str] = None,
-        confidence: Optional[float] = None,
-        verified_threat: Optional[bool] = None,
-        benign_alternatives: Optional[List[str]] = None,
+        context: dict | None = None,
+        event_id: str | None = None,
+        source_id: str | None = None,
+        confidence: float | None = None,
+        verified_threat: bool | None = None,
+        benign_alternatives: list[str] | None = None,
     ) -> None:
         """The threat recurred -- reinforce the scar."""
         self.severity = min(1.0, self.effective_severity() + severity_boost)
@@ -165,7 +164,7 @@ class BehavioralScar:
         if decision.consolidated:
             self.latent_influence_cap = decision.latent_influence_cap
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "scar_id": self.scar_id,
             "domain": self.domain.value,
@@ -192,7 +191,7 @@ class BehavioralScar:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> BehavioralScar:
+    def from_dict(cls, data: dict[str, Any]) -> BehavioralScar:
         domain_str = data.get("domain", "unknown")
         try:
             domain = ScarDomain(domain_str)
@@ -232,7 +231,7 @@ class ScarFormationSystem:
     """
 
     def __init__(self) -> None:
-        self._scars: Dict[str, BehavioralScar] = {}
+        self._scars: dict[str, BehavioralScar] = {}
         self._started = False
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load()
@@ -260,11 +259,11 @@ class ScarFormationSystem:
         avoidance_tag: str,
         severity: float = 0.5,
         heal_rate: float = _DEFAULT_HEAL_RATE,
-        context: Optional[Dict[str, Any]] = None,
-        event_id: Optional[str] = None,
-        source_id: Optional[str] = None,
+        context: dict[str, Any] | None = None,
+        event_id: str | None = None,
+        source_id: str | None = None,
         verified_threat: bool = False,
-        benign_alternatives: Optional[List[str]] = None,
+        benign_alternatives: list[str] | None = None,
         confidence: float = 0.65,
     ) -> BehavioralScar:
         """Form a new behavioral scar or reinforce an existing one.
@@ -350,18 +349,18 @@ class ScarFormationSystem:
             return False, 0.0
         return True, eff
 
-    def get_active_scars(self) -> List[BehavioralScar]:
+    def get_active_scars(self) -> list[BehavioralScar]:
         """Return all currently active (non-healed) scars."""
         return [s for s in self._scars.values() if s.is_active()]
 
-    def get_scars_for_domain(self, domain: ScarDomain) -> List[BehavioralScar]:
+    def get_scars_for_domain(self, domain: ScarDomain) -> list[BehavioralScar]:
         """Return active scars for a specific domain."""
         return [
             s for s in self._scars.values()
             if s.domain == domain and s.is_active()
         ]
 
-    def get_avoidance_tags(self) -> Dict[str, float]:
+    def get_avoidance_tags(self) -> dict[str, float]:
         """Return a dict of avoidance_tag -> effective_severity for active scars."""
         result = {}
         for scar in self._scars.values():
@@ -443,8 +442,9 @@ class ScarFormationSystem:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except Exception:
-                    pass  # no-op: intentional
+                except Exception as exc:
+                    record_degradation("scar_formation", exc)
+                    logger.debug("Temporary scar persistence cleanup failed: %s", exc)
         except Exception as exc:
             record_degradation('scar_formation', exc)
             logger.debug("Scar persistence failed: %s", exc)
@@ -480,12 +480,13 @@ class ScarFormationSystem:
                 "trigger_count": scar.trigger_count,
                 "description": scar.description[:200],
             })
-        except Exception:
-            pass  # no-op: intentional
+        except Exception as exc:
+            record_degradation("scar_formation", exc)
+            logger.debug("Scar event publish failed for %s: %s", topic, exc)
 
     # ── Status ──────────────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return current system status."""
         active = self.get_active_scars()
         return {
@@ -502,7 +503,7 @@ class ScarFormationSystem:
 
 # ── Singleton ───────────────────────────────────────────────────────────────
 
-_instance: Optional[ScarFormationSystem] = None
+_instance: ScarFormationSystem | None = None
 
 
 def get_scar_formation() -> ScarFormationSystem:

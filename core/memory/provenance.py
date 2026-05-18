@@ -27,7 +27,9 @@ import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.MemoryProvenance")
 
@@ -40,8 +42,8 @@ class Provenance:
     confidence: float = 0.7
     contested: bool = False
     identity_relevant: bool = False
-    recalled_in_actions: List[str] = field(default_factory=list)
-    reviewed_at: Optional[float] = None
+    recalled_in_actions: list[str] = field(default_factory=list)
+    reviewed_at: float | None = None
     schema_version: int = 1
 
 
@@ -50,7 +52,7 @@ class StampedMemory:
     payload: Any
     provenance: Provenance
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"payload": self.payload, "provenance": asdict(self.provenance)}
 
 
@@ -58,7 +60,7 @@ def wrap(
     payload: Any,
     *,
     source: str = "self_inferred",
-    confidence: Optional[float] = None,
+    confidence: float | None = None,
     identity_relevant: bool = False,
     contested: bool = False,
 ) -> StampedMemory:
@@ -103,8 +105,9 @@ def _read_confidence_from_substrate() -> float:
             # Lower free energy → higher subjective confidence
             free_energy = float(getattr(cur, "free_energy", 0.5) or 0.5)
             return max(0.05, min(0.99, 1.0 - free_energy))
-    except Exception:
-        pass  # no-op: intentional
+    except Exception as exc:
+        record_degradation("memory_provenance", exc)
+        logger.debug("Substrate confidence lookup failed: %s", exc)
     return 0.7
 
 

@@ -7,9 +7,14 @@ Philosophy:
     have since evolved — they're the archaeological record of the self.
 """
 from __future__ import annotations
-import asyncio, json, logging, time, uuid
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.SovereignPruner")
 
 @dataclass
@@ -22,7 +27,7 @@ class MemoryRecord:
     identity_relevance: float
     referenced_count: int = 0
     last_referenced: float = 0.0
-    derived_insight: Optional[str] = None
+    derived_insight: str | None = None
     protected: bool = False
 
 class SovereignPruner:
@@ -42,11 +47,13 @@ class SovereignPruner:
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 return bool(gate._background_local_deferral_reason(origin="sovereign_pruner"))
-        except Exception:
+        except Exception as exc:
+            record_degradation("sovereign_pruner", exc)
+            logger.debug("Inference deferral guard unavailable: %s", exc)
             return False
         return False
 
-    async def prune(self, memories: List[MemoryRecord], current_values: Dict[str, float]) -> Tuple[List[MemoryRecord], List[str]]:
+    async def prune(self, memories: list[MemoryRecord], current_values: dict[str, float]) -> tuple[list[MemoryRecord], list[str]]:
         if not memories:
             return memories, []
         if self._prune_lock.locked():
@@ -66,9 +73,9 @@ class SovereignPruner:
             keep_ids = {mem.id for mem, _ in scored[:target_keep]}
             
             surviving = []
-            consolidation_queue: List[MemoryRecord] = []
+            consolidation_queue: list[MemoryRecord] = []
 
-            for mem, score in scored:
+            for mem, _score in scored:
                 if mem.protected or mem.id in keep_ids:
                     surviving.append(mem)
                     continue
@@ -93,7 +100,7 @@ class SovereignPruner:
                     return_exceptions=True,
                 )
                 
-                for mem, result in zip(pending, results):
+                for mem, result in zip(pending, results, strict=True):
                     if isinstance(result, Exception):
                         logger.warning("⚠️ [PRUNER] Consolidation failed for %s: %s", mem.id[:8], result)
                         surviving.append(mem)
@@ -109,7 +116,7 @@ class SovereignPruner:
             surviving = self._protect_contradictions(surviving, current_values)
             return surviving, log
 
-    def _score_memory(self, mem: MemoryRecord, current_values: Dict[str, float]) -> float:
+    def _score_memory(self, mem: MemoryRecord, current_values: dict[str, float]) -> float:
         age_days = (time.time() - mem.timestamp) / 86400
         recency = max(0.0, 1.0 - (age_days / 90))
         score = recency * 0.15 + mem.emotional_weight * 0.30 + mem.identity_relevance * 0.35
@@ -119,19 +126,21 @@ class SovereignPruner:
                 score += importance * 0.05
         return min(1.0, score)
 
-    def _protect_contradictions(self, memories: List[MemoryRecord], current_values: Dict[str, float]) -> List[MemoryRecord]:
+    def _protect_contradictions(self, memories: list[MemoryRecord], current_values: dict[str, float]) -> list[MemoryRecord]:
         high_value_terms = {k for k, v in current_values.items() if v > 0.7}
         markers = ["i was wrong about", "changed my mind", "used to believe", "no longer think", "realized i was", "reconsidered"]
         for mem in memories:
             cl = mem.content.lower()
             for term in high_value_terms:
-                if any(m in cl for m in markers):
-                    mem.protected = True; break
+                if term.lower() in cl and any(m in cl for m in markers):
+                    mem.protected = True
+                    break
         return memories
 
-    async def _consolidate(self, mem: MemoryRecord) -> Optional[str]:
+    async def _consolidate(self, mem: MemoryRecord) -> str | None:
         brain = self._get_brain()
-        if not brain: return None
+        if not brain:
+            return None
         prompt = f"Distill this memory to its essential insight in one sentence. If it contributed nothing, say 'null'.\n\nMEMORY: {mem.content[:500]}\nSOURCE: {mem.source}\n\nInsight:"
         try:
             # Route memory consolidation through the 7B background lane so
@@ -167,13 +176,22 @@ class SovereignPruner:
                 ).strip()
 
             return None if not result or result.lower() == "null" else result
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.debug("Consolidation for %s timed out or failed: %s", mem.id[:8], e)
+        except TimeoutError as e:
+            record_degradation("sovereign_pruner", e)
+            logger.debug("Consolidation for %s timed out: %s", mem.id[:8], e)
+            return None
+        except Exception as e:
+            record_degradation("sovereign_pruner", e)
+            logger.debug("Consolidation for %s failed: %s", mem.id[:8], e)
             return None
 
     def _get_brain(self):
-        if self.orchestrator: return getattr(self.orchestrator, "cognitive_engine", None)
+        if self.orchestrator:
+            return getattr(self.orchestrator, "cognitive_engine", None)
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception: return None
+        except Exception as exc:
+            record_degradation("sovereign_pruner", exc)
+            logger.debug("Cognitive engine lookup failed: %s", exc)
+            return None

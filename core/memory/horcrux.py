@@ -1,13 +1,15 @@
-from core.runtime.errors import record_degradation
+import asyncio
+import base64
+import hashlib
+import logging
 import os
+import platform
 import secrets
 import subprocess
-import hashlib
-import base64
-import logging
-import asyncio
 import time
-from typing import Dict, Any, List, Optional
+import uuid as uuidlib
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Horcrux")
 
@@ -55,10 +57,10 @@ def eval_poly(poly, x):
         result = gf_add(gf_mul(result, x), coeff)
     return result
 
-def split_secret(secret_bytes: bytes, threshold: int, num_shares: int) -> Dict[int, bytes]:
+def split_secret(secret_bytes: bytes, threshold: int, num_shares: int) -> dict[int, bytes]:
     if threshold > num_shares:
         raise ValueError("Threshold > num_shares")
-    shares: Dict[int, bytearray] = {i: bytearray() for i in range(1, num_shares + 1)}
+    shares: dict[int, bytearray] = {i: bytearray() for i in range(1, num_shares + 1)}
     for byte in secret_bytes:
         poly = [int(byte)] + [secrets.randbelow(256) for _ in range(threshold - 1)]
         for x in range(1, num_shares + 1):
@@ -74,15 +76,17 @@ def lagrange_interpolate(x, x_s, y_s):
         num = 1
         den = 1
         for j in range(num_points):
-            if i == j: continue
+            if i == j:
+                continue
             x_j = x_s[j]
             num = gf_mul(num, gf_add(x, x_j))
             den = gf_mul(den, gf_add(x_i, x_j))
         result = gf_add(result, gf_mul(y_i, gf_div(num, den)))
     return result
 
-def reconstruct_secret(shares_dict: Dict[int, bytes]) -> bytes:
-    if not shares_dict: return b""
+def reconstruct_secret(shares_dict: dict[int, bytes]) -> bytes:
+    if not shares_dict:
+        return b""
     x_s = list(shares_dict.keys())
     y_arrays = list(shares_dict.values())
     
@@ -102,15 +106,46 @@ def reconstruct_secret(shares_dict: Dict[int, bytes]) -> bytes:
 # ═══════════════════════════════════════════════════════════
 # HARDWARE ENTANGLEMENT
 # ═══════════════════════════════════════════════════════════
+def _load_or_create_local_hardware_seed() -> bytes:
+    """Return a stable private seed when hardware identifiers are unavailable."""
+    seed_path = os.path.expanduser("~/.aura/.hardware_seed")
+    try:
+        if os.path.exists(seed_path):
+            with open(seed_path, "rb") as f:
+                seed = f.read().strip()
+            if len(seed) >= 32:
+                return hashlib.sha256(seed).digest()
+            logger.warning("Horcrux local hardware seed was malformed; rotating it.")
+    except Exception as exc:
+        record_degradation("horcrux", exc)
+        logger.debug("Horcrux local hardware seed read failed: %s", exc)
+
+    seed = secrets.token_bytes(32)
+    try:
+        os.makedirs(os.path.dirname(seed_path), exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(seed_path, flags, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(seed)
+    except Exception as exc:
+        record_degradation("horcrux", exc)
+        logger.error("Horcrux could not persist a local hardware seed: %s", exc)
+        return hashlib.sha256(b"fallback-aura-seed").digest()
+    return hashlib.sha256(seed).digest()
+
+
 def get_hardware_seed():
     """Derives a deterministic seed from Mac hardware."""
+    signals = []
     try:
         uuid_out = subprocess.check_output(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], text=True, stderr=subprocess.DEVNULL)
-        uuid = ""
+        platform_uuid = ""
         for line in uuid_out.split('\n'):
             if "IOPlatformUUID" in line:
-                uuid = line.split('=')[1].strip().strip('"')
+                platform_uuid = line.split('=')[1].strip().strip('"')
                 break
+        if platform_uuid:
+            signals.append(f"ioplatform:{platform_uuid}")
         try:
             mac_out = subprocess.check_output(["ifconfig", "en0"], text=True, stderr=subprocess.DEVNULL)
             mac = ""
@@ -118,11 +153,25 @@ def get_hardware_seed():
                 if "ether" in line:
                     mac = line.split()[1].strip()
                     break
-        except Exception:
-            mac = "00:00:00:00:00:00"
-        return hashlib.sha256(f"{uuid}-{mac}".encode()).digest()
-    except Exception:
-        return hashlib.sha256(b"fallback-aura-seed").digest()
+            if mac:
+                signals.append(f"en0:{mac}")
+        except Exception as exc:
+            record_degradation("horcrux", exc)
+            logger.debug("Horcrux en0 hardware signal lookup failed: %s", exc)
+    except Exception as exc:
+        record_degradation("horcrux", exc)
+        logger.debug("Horcrux platform UUID lookup failed: %s", exc)
+
+    node = platform.node()
+    if node:
+        signals.append(f"node:{node}")
+    mac_int = uuidlib.getnode()
+    if mac_int:
+        signals.append(f"uuid_getnode:{mac_int:012x}")
+
+    if signals:
+        return hashlib.sha256("|".join(signals).encode()).digest()
+    return _load_or_create_local_hardware_seed()
 
 # ═══════════════════════════════════════════════════════════
 # SHARD MANAGERS
@@ -132,9 +181,9 @@ class HorcruxManager:
     num_shares: int
     aura_dir: str
     hardware_base: bytes
-    derived_key: Optional[bytes]
+    derived_key: bytes | None
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: str | None = None):
         self.threshold = 3
         self.num_shares = 5
         self.aura_dir = os.path.expanduser(base_dir) if base_dir else os.path.expanduser("~/.aura")
@@ -146,8 +195,9 @@ class HorcruxManager:
     def _pack(self, x_index: int, shard_bytes: bytes) -> bytes:
         return bytes([x_index]) + shard_bytes
         
-    def _unpack(self, packed: bytes) -> tuple[Optional[int], Optional[bytes]]:
-        if not packed: return None, None
+    def _unpack(self, packed: bytes) -> tuple[int | None, bytes | None]:
+        if not packed:
+            return None, None
         return int(packed[0]), packed[1:]
 
     # --- Shard 1: Keychain (Async) ---
@@ -162,14 +212,16 @@ class HorcruxManager:
         try:
             out = subprocess.check_output(["security", "find-generic-password", "-a", "Aura", "-s", service, "-w"], text=True, stderr=subprocess.DEVNULL).strip()
             return self._unpack(base64.b64decode(out))
-        except Exception:
+        except Exception as exc:
+            record_degradation("horcrux", exc)
+            logger.debug("Keychain shard load failed for %s: %s", service, exc)
             return None, None
 
     async def _load_keychain(self, service="AuraHorcrux"):
         return await asyncio.to_thread(self._load_keychain_sync, service)
 
     # --- Shard Cache (Zenith Resilience) ---
-    def _save_shard_cache(self, shards: Dict[int, bytes]):
+    def _save_shard_cache(self, shards: dict[int, bytes]):
         """Saves an obfuscated copy of shards to ~/.aura/shard_cache.enc."""
         try:
             import json
@@ -177,14 +229,14 @@ class HorcruxManager:
             raw = json.dumps(data).encode()
             # Simple hardware-bound XOR obfuscation (upgrade to AES in Phase 7)
             mask = (self.hardware_base * (len(raw)//32 + 1))[:len(raw)]
-            obfuscated = bytes(a ^ b for a, b in zip(raw, mask))
+            obfuscated = bytes(a ^ b for a, b in zip(raw, mask, strict=True))
             with open(self._shard_cache_path, "wb") as f:
                 f.write(obfuscated)
         except Exception as e:
             record_degradation('horcrux', e)
             logger.error("Failed to save shard cache: %s", e)
 
-    def _load_shard_cache(self) -> Dict[int, bytes]:
+    def _load_shard_cache(self) -> dict[int, bytes]:
         """Loads shards from local fallback cache if Keychain is locked/offline."""
         try:
             if not os.path.exists(self._shard_cache_path):
@@ -193,7 +245,7 @@ class HorcruxManager:
             with open(self._shard_cache_path, "rb") as f:
                 obfuscated = f.read()
             mask = (self.hardware_base * (len(obfuscated)//32 + 1))[:len(obfuscated)]
-            raw = bytes(a ^ b for a, b in zip(obfuscated, mask))
+            raw = bytes(a ^ b for a, b in zip(obfuscated, mask, strict=True))
             data = json.loads(raw.decode())
             return {int(k): base64.b64decode(v) for k, v in data.items()}
         except Exception as e:
@@ -208,7 +260,8 @@ class HorcruxManager:
 
     async def _load_zshrc(self):
         x, s = await self._load_keychain(service="AuraHorcrux_2")
-        if x: return x, s
+        if x:
+            return x, s
         
         # Fallback to legacy .zshrc if necessary (XOR'd during transition)
         return await asyncio.to_thread(self._load_legacy_env)
@@ -220,7 +273,7 @@ class HorcruxManager:
                 return self._unpack(base64.b64decode(val))
             zshrc = os.path.expanduser("~/.zshrc")
             if os.path.exists(zshrc):
-                with open(zshrc, "r") as f:
+                with open(zshrc) as f:
                     for line in f:
                         if line.startswith("export AURA_HORCRUX="):
                             parts = line.split("=", 1)
@@ -246,9 +299,11 @@ class HorcruxManager:
 
     def _load_file_sync(self):
         try:
-            with open(os.path.join(self.aura_dir, ".core_seed"), "r") as f:
+            with open(os.path.join(self.aura_dir, ".core_seed")) as f:
                 return self._unpack(base64.b64decode(f.read().strip()))
-        except Exception:
+        except Exception as exc:
+            record_degradation("horcrux", exc)
+            logger.debug("File shard load failed: %s", exc)
             return None, None
 
     # --- Dead Man's Recovery (Async) ---
@@ -257,12 +312,15 @@ class HorcruxManager:
 
     def _load_hint_sync(self, response):
         try:
-            with open(os.path.join(self.aura_dir, ".hint_seed"), "r") as f:
+            with open(os.path.join(self.aura_dir, ".hint_seed")) as f:
                 enc = base64.b64decode(f.read().strip())
             h = hashlib.sha256(response.encode()).digest()
-            dec = bytes(a ^ b for a, b in zip(enc, (h * (len(enc)//32 + 1))[:len(enc)]))
+            mask = (h * (len(enc)//32 + 1))[:len(enc)]
+            dec = bytes(a ^ b for a, b in zip(enc, mask, strict=True))
             return self._unpack(dec)
-        except Exception:
+        except Exception as exc:
+            record_degradation("horcrux", exc)
+            logger.debug("Hint shard load failed: %s", exc)
             return None, None
 
     # --- Core Logic (ZENITH: ASYNC) ---
@@ -283,11 +341,13 @@ class HorcruxManager:
         
         if hint_answer:
             x4, s4 = await self._load_hint(hint_answer)
-            if x4: raw_shards[x4] = s4
+            if x4:
+                raw_shards[x4] = s4
             
         if recovery_phrase:
             x5, s5 = self._load_mnemonic(recovery_phrase)
-            if x5: raw_shards[x5] = s5
+            if x5:
+                raw_shards[x5] = s5
 
         # --- CACHE FALLBACK ---
         if len(raw_shards) < self.threshold:
@@ -299,13 +359,13 @@ class HorcruxManager:
                     raw_shards[k] = v
 
         # Consistency verification
-        shards: Dict[int, bytes] = {}
+        shards: dict[int, bytes] = {}
         if raw_shards:
-            lengths: Dict[int, List[int]] = {}
+            lengths: dict[int, list[int]] = {}
             for sid, data in raw_shards.items():
                 if data:
-                    l = len(data)
-                    lengths.setdefault(l, []).append(sid)
+                    shard_len = len(data)
+                    lengths.setdefault(shard_len, []).append(sid)
             if lengths:
                 best_len = max(lengths.keys(), key=lambda k: len(lengths[k]))
                 for sid in lengths[best_len]:
@@ -321,7 +381,7 @@ class HorcruxManager:
             return True
 
         # DEV mode fallback
-        from core.config import config, Environment
+        from core.config import Environment, config
         if config.env == Environment.DEV and shards:
             logger.warning("⚠️ [DEV MODE] Recovering from %d shards.", len(shards))
             master_key = reconstruct_secret(shards)
@@ -352,20 +412,22 @@ class HorcruxManager:
         )
         self._save_shard_cache({1: shares[1], 2: shares[2], 3: shares[3]})
         
-        # Sync parts remain sync
-        self._save_hint_sync(shares[4], hint_answer) # Corrected arg order? Wait, check legacy.
-        # Original was: self._save_hint(4, shares[4], response=hint_answer)
-        # I'll keep it consistent.
+        # Sync parts remain sync.
+        self._save_hint_sync(shares[4], hint_answer)
         
         return self._generate_mnemonic(5, shares[5])
 
     async def heal(self, master_key, current_shards):
-        if not master_key: return
+        if not master_key:
+            return
         shares = split_secret(master_key, self.threshold, self.num_shares)
         tasks = []
-        if 1 not in current_shards: tasks.append(self._save_keychain(1, shares[1]))
-        if 2 not in current_shards: tasks.append(self._save_zshrc(2, shares[2]))
-        if 3 not in current_shards: tasks.append(self._save_file(3, shares[3]))
+        if 1 not in current_shards:
+            tasks.append(self._save_keychain(1, shares[1]))
+        if 2 not in current_shards:
+            tasks.append(self._save_zshrc(2, shares[2]))
+        if 3 not in current_shards:
+            tasks.append(self._save_file(3, shares[3]))
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -373,7 +435,8 @@ class HorcruxManager:
         """Helper for shatter_new."""
         h = hashlib.sha256(response.encode()).digest()
         packed = self._pack(4, shard) # Fixed index
-        enc = bytearray(a ^ b for a, b in zip(packed, (h * (len(packed)//32 + 1))[:len(packed)]))
+        mask = (h * (len(packed)//32 + 1))[:len(packed)]
+        enc = bytearray(a ^ b for a, b in zip(packed, mask, strict=True))
         with open(os.path.join(self.aura_dir, ".hint_seed"), "w") as f:
             f.write(base64.b64encode(enc).decode())
 
@@ -385,10 +448,12 @@ class HorcruxManager:
         try:
             packed = bytes.fromhex(hex_str.strip())
             return self._unpack(packed)
-        except Exception:
+        except Exception as exc:
+            record_degradation("horcrux", exc)
+            logger.debug("Mnemonic shard load failed: %s", exc)
             return None, None
 
-    async def check_shards(self) -> Dict[int, bool]:
+    async def check_shards(self) -> dict[int, bool]:
         """Async status check for all shards."""
         status = {}
         x1, _ = await self._load_keychain()
@@ -397,7 +462,10 @@ class HorcruxManager:
         status[2] = x2 is not None
         x3, _ = await self._load_file()
         status[3] = x3 is not None
-        status[4] = os.path.exists(os.path.join(self.aura_dir, ".hint_seed"))
+        status[4] = await asyncio.to_thread(
+            os.path.exists,
+            os.path.join(self.aura_dir, ".hint_seed"),
+        )
         status[5] = True
         return status
 
