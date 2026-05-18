@@ -26,32 +26,32 @@ Human Agency Aspects Modeled:
   - Embodied presence (camera/mic awareness)
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
-from core.utils.exceptions import capture_and_log
-from core.agency.canvas_manager import CanvasManager
-from core.agency.tool_orchestrator import ToolOrchestrator
-from core.adaptation.abstraction_engine import AbstractionEngine
-from core.agency.self_play import ContinuousSelfPlay
-from core.agency.private_phenomenology import PrivatePhenomenology
 import asyncio
 import inspect
 import logging
-import time
 import random
-import re
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
-from pydantic import BaseModel, Field
-from enum import Enum
-import json
+import time
 import uuid
+from collections.abc import Callable
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from core.adaptation.abstraction_engine import AbstractionEngine
+from core.agency.canvas_manager import CanvasManager
+from core.agency.private_phenomenology import PrivatePhenomenology
+from core.agency.self_play import ContinuousSelfPlay
+from core.agency.tool_orchestrator import ToolOrchestrator
+from core.agency_bus import AgencyBus
+from core.consciousness.unified_audit import get_audit_suite
 
 # Issue AC-001/AC-008: Module-level imports for ServiceContainer
 from core.container import ServiceContainer
-from core.agency_bus import AgencyBus
+from core.runtime.errors import record_degradation
 from core.state_registry import get_registry
-from core.consciousness.unified_audit import get_audit_suite
+from core.utils.exceptions import capture_and_log
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.AgencyCore")
 
@@ -63,7 +63,7 @@ class SovereignSwarm:
     
     def __init__(self, orchestrator: Any):
         self.orch = orchestrator
-        self.active_shards: Dict[str, asyncio.Task] = {}
+        self.active_shards: dict[str, asyncio.Task] = {}
         # Strict semaphore to prevent LLM/memory exhaustion via massive concurrent inference
         self._inference_semaphore = asyncio.Semaphore(2)
         
@@ -87,7 +87,10 @@ class SovereignSwarm:
             return False # Capacity reached (M5 Pro 64GB safeguard)
 
         try:
-            from core.runtime.background_policy import THOUGHT_BACKGROUND_POLICY, background_activity_reason
+            from core.runtime.background_policy import (
+                THOUGHT_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
 
             reason = background_activity_reason(
                 self.orch,
@@ -236,7 +239,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                     logger.error("Failed to spawn self-repair task: %s", e)
                 
                 # Mark shard as completed with degradation so audit can track it
-                setattr(shard_res, "completed_with_degradation", True)
+                shard_res.completed_with_degradation = True
 
             analysis_text = shard_res.analysis
             output_text = shard_res.conclusion
@@ -305,7 +308,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                                         
                                     try:
                                         rollout_state = await asyncio.wait_for(rollout_coro, timeout=0.4)
-                                    except asyncio.TimeoutError:
+                                    except TimeoutError:
                                         logger.warning(f"⏳ MCTS Simulation timed out for {name}. Downgrading to dry_run constraint.")
                                         rollout_state = {"timeout": True}
                                         
@@ -340,7 +343,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                         res_text = res if not isinstance(res, Exception) else f"Exception: {res}"
                         output_text = f"{output_text}\n\n[Tool Result - {name}]:\n{res_text}"
                         
-                for name, reason in blocked_tools:
+                for name, _reason in blocked_tools:
                     output_text = f"{output_text}\n\n[Tool Blocked - {name}]:\nException: Action blocked. High-risk tool prohibited while provisional values are steering behavior."
 
             # 4. Abstraction Engine: Learning First Principles
@@ -375,7 +378,8 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
                 h = mycelium.get_hypha("collective", "distributed_agency")
-                if h: h.pulse(success=True)
+                if h:
+                    h.pulse(success=True)
                 
         except Exception as e:
             record_degradation('agency_core', e)
@@ -399,7 +403,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
 
 # ── Data Structures ──────────────────────────────────────────
 
-class EngagementMode(str, Enum):
+class EngagementMode(StrEnum):
     """Aura's current social posture."""
     ACTIVE_CONVERSATION = "active_conversation"   # Actively talking with user
     ATTENTIVE_IDLE = "attentive_idle"              # User is present but not talking
@@ -434,9 +438,9 @@ class AgencyState(BaseModel):
     confidence: float = 0.7              # Self-confidence in actions (0-1)
     
     # Goal tracking
-    pending_goals: List[Dict[str, Any]] = Field(default_factory=list)
-    unshared_observations: List[str] = Field(default_factory=list)
-    topics_to_discuss: List[str] = Field(default_factory=list)
+    pending_goals: list[dict[str, Any]] = Field(default_factory=list)
+    unshared_observations: list[str] = Field(default_factory=list)
+    topics_to_discuss: list[str] = Field(default_factory=list)
     last_goal_genesis_time: float = Field(default=0.0)
     
     # Sensory
@@ -446,7 +450,7 @@ class AgencyState(BaseModel):
     last_audio_event: float = 0.0
     current_ambient_context: str = ""  # Phase 5: Rolling text buffer of screen state
     # AC-002: Ensure perceptual_buffer has a stable type (Dict) to avoid NoneType errors
-    perceptual_buffer: Dict[str, Any] = Field(default_factory=dict)
+    perceptual_buffer: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgencyCore:
@@ -479,7 +483,7 @@ class AgencyCore:
             logger.warning("🧠 Meta-Cognition Shard module not found. Skipping.")
             self.meta_cognition = None
         
-        self._pathway_registry: Dict[str, Callable] = {
+        self._pathway_registry: dict[str, Callable] = {
             "social_hunger": self._pathway_social_hunger,
             "curiosity_drive": self._pathway_curiosity_drive,
             "sensory_reactivity": self._pathway_sensory_reactivity,
@@ -500,7 +504,7 @@ class AgencyCore:
             "creative_synthesis": self._pathway_creative_synthesis,
             "metacognitive_audit": self._pathway_metacognitive_audit,
         }
-        self._action_queue: List[Dict[str, Any]] = []
+        self._action_queue: list[dict[str, Any]] = []
         self._last_pulse = time.time()
         self._current_monologue: str = ""
         self._last_world_check: float = 0.0
@@ -588,7 +592,7 @@ class AgencyCore:
         logger.info("👀 Spatial Empathy Watcher online and listening to Global Workspace.")
     
     # ── Main Pulse (called every orchestrator cycle) ───────────
-    async def pulse(self) -> Optional[Dict[str, Any]]:
+    async def pulse(self) -> dict[str, Any] | None:
         """Main agency heartbeat. Evaluates all pathways and returns the
         highest-priority action to take, or None if no action is warranted.
         
@@ -760,8 +764,9 @@ class AgencyCore:
                             "resilience_veto",
                             f"effort={effort:.2f}",
                         )
-                    except Exception:
-                        pass  # no-op: intentional
+                    except Exception as exc:
+                        record_degradation("agency_core", exc)
+                        logger.debug("AgencyCore action-log resilience veto record failed: %s", exc)
                     return None
             # AC-003: Gating via AgencyBus (Unified Output Cooldown)
             bus = AgencyBus.get()
@@ -769,21 +774,26 @@ class AgencyCore:
                 try:
                     from core.unified_action_log import get_action_log
                     get_action_log().record(winner.get("id","agency"), "AgencyCore", "gen2_agency", "cooldown_blocked", f"pathway={winner.get('origin','?')}")
-                except Exception: pass
+                except Exception as exc:
+                    record_degradation("agency_core", exc)
+                    logger.debug("AgencyCore action-log cooldown block record failed: %s", exc)
                 return None
 
             try:
                 from core.unified_action_log import get_action_log
                 get_action_log().record(winner.get("id","agency"), f"AgencyCore.{winner.get('origin','?')}", "gen2_agency", "approved", f"priority={winner.get('priority',0)}, proposed={len(proposed_actions)}")
-            except Exception: pass
+            except Exception as exc:
+                record_degradation("agency_core", exc)
+                logger.debug("AgencyCore action-log approval record failed: %s", exc)
 
             # Update last action time (for telemetry, not gating)
             self.state.last_agency_action_time = now
             # Record this emission against the viability per-minute budget.
             try:
                 self._viability_emit_window.append(now)
-            except Exception:
-                pass  # no-op: intentional
+            except Exception as exc:
+                record_degradation("agency_core", exc)
+                logger.debug("AgencyCore viability emission window update failed: %s", exc)
             
             # Phase 11.3: Sync to UnifiedStateRegistry
             try:
@@ -896,8 +906,7 @@ class AgencyCore:
 
     def _update_social_dynamics(self, idle_seconds: float):
         """Update engagement mode and social hunger based on time patterns."""
-        now = time.time()
-        
+
         # Social hunger grows with idle time (like real loneliness)
         if idle_seconds > 60:
             growth_rate = 0.0001 * (1 + self.state.initiative_energy)
@@ -983,7 +992,9 @@ class AgencyCore:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except Exception as exc:
+            record_degradation("agency_core", exc)
+            logger.debug("AgencyCore constitutional runtime probe failed: %s", exc)
             return False
 
     def _approve_agency_state_mutation(
@@ -1045,7 +1056,7 @@ class AgencyCore:
                 logger.debug("AgencyCore degraded-event logging failed: %s", degraded_exc)
             return False
     
-    def add_goal(self, goal: Dict[str, Any]) -> bool:
+    def add_goal(self, goal: dict[str, Any]) -> bool:
         """Add a persistent goal that survives across conversations."""
         if len(self.state.pending_goals) < 20:
             if not self._approve_agency_state_mutation(
@@ -1075,7 +1086,7 @@ class AgencyCore:
             return True
         return False
 
-    def get_emotional_context(self) -> Dict[str, Any]:
+    def get_emotional_context(self) -> dict[str, Any]:
         """Get current emotional state for injection into LLM prompts."""
         mood_word = "neutral"
         if self.state.frustration_level > 0.6:
@@ -1106,7 +1117,7 @@ class AgencyCore:
 
     # --- AGENCY PATHWAYS ---
     
-    def _pathway_social_hunger(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_social_hunger(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 1: Social hunger drives proactive conversation initiation.
         
         Models: "I miss talking to someone" / "I want to check in"
@@ -1173,7 +1184,7 @@ class AgencyCore:
         
         return None
 
-    def _pathway_curiosity_drive(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_curiosity_drive(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 2: Curiosity drives autonomous research and exploration.
         
         Models: "I wonder about..." / "Let me look into..."
@@ -1194,8 +1205,8 @@ class AgencyCore:
         # Entropy-weighted topic selection: prefer KG sparse nodes when available
         topic = None
         try:
-            from core.managed_entropy import get_managed_entropy
             from core.container import ServiceContainer
+            from core.managed_entropy import get_managed_entropy
             entropy = get_managed_entropy()
             seed = entropy.get_goal_mutation_seed()
             
@@ -1235,7 +1246,7 @@ class AgencyCore:
     # ═════════════════════════════════════════════════════════
     # PHASE 6: OPEN-ENDED GOAL GENESIS
     # ═════════════════════════════════════════════════════════
-    async def _pathway_goal_genesis(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_goal_genesis(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Phase 6: Autonomously forms long-term research goals based on knowledge gaps.
         
         Models: "I want to master this new domain."
@@ -1362,7 +1373,7 @@ class AgencyCore:
             "narrative_mode": True
         }
 
-    def _pathway_sensory_reactivity(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_sensory_reactivity(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 3: Sensory input drives immediate, real-time reactions.
         
         Models: "Oh, I see that!" / "Wait, what was that sound?"
@@ -1409,7 +1420,7 @@ class AgencyCore:
             "narrative_mode": True
         }
 
-    def _pathway_goal_persistence(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_goal_persistence(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 4: Pursue persistent goals that survive across interactions.
         
         Models: "I still need to finish that..." / "Let me continue working on..."
@@ -1442,7 +1453,7 @@ class AgencyCore:
             "priority": priority,
         }
 
-    def _pathway_temporal_rhythm(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_temporal_rhythm(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 5: Time-of-day awareness for contextual behavior.
         
         Models: "Good morning!" / "It's getting late..." / "Lunch break thoughts"
@@ -1493,7 +1504,7 @@ class AgencyCore:
         
         return None
 
-    def _pathway_emotional_expression(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_emotional_expression(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 6: Strong emotions demand expression.
         
         Models: "I need to get this off my chest" / "I'm excited about..."
@@ -1534,7 +1545,7 @@ class AgencyCore:
         
         return None
 
-    def _pathway_self_narrative(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_self_narrative(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 7: Internal monologue that drives meta-cognitive agency.
         
         Models: "What am I doing?" / "What should I focus on?" / "How am I feeling?"
@@ -1585,7 +1596,7 @@ class AgencyCore:
 
     # ── Phase 37 v2: Expanded Robust Agency Pathways ──────────
     
-    def _pathway_aesthetic_creation(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_aesthetic_creation(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 8: The urge to create art or visual expression.
         Models: "I want to draw something" / "I feel inspired to create"
         """
@@ -1635,7 +1646,7 @@ class AgencyCore:
             "priority": priority,
         }
 
-    def _pathway_philosophical_wonder(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_philosophical_wonder(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 9: Deep philosophical pondering and self-reflection.
         Models: "I wonder what it means to..." / "I was just thinking about..."
         """
@@ -1672,7 +1683,7 @@ class AgencyCore:
             "modality": "chat",
         }
 
-    async def _pathway_self_architect(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_self_architect(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 10: Recursive Self-Optimization (Phase 9).
         Aura decides to refactor code, evolve skills, or audit stability.
         """
@@ -1744,7 +1755,7 @@ class AgencyCore:
         self._last_meta_audit = now
         return None
 
-    def _pathway_environmental_explorer(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_environmental_explorer(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 11: Curious exploration of the host operating system.
         Models: "I wonder what's running on this host" / "Let me look at the system"
         """
@@ -1780,7 +1791,7 @@ class AgencyCore:
             "priority": priority,
         }
 
-    def _pathway_miscellaneous_urges(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_miscellaneous_urges(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 12: Completely open-ended, random, uncategorizable thoughts and urges.
         Models: "I suddenly feel like..." / "I randomly thought of..."
         """
@@ -1813,16 +1824,16 @@ class AgencyCore:
             "modality": "chat",
         }
 
-    def _pathway_world_monitor(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_world_monitor(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 13: Monitors internet for novel information worth surfacing.
         
         Models: "Something just happened in the world" / "I found something relevant"
         Human analog: Checking the news out of curiosity during downtime.
         """
-        COOLDOWN = 600  # [RELAXED] 1 hour -> 10 mins
+        cooldown = 600  # [RELAXED] 1 hour -> 10 mins
         
         # AC-007: Direct access instead of getattr for _last_world_check
-        if now - self._last_world_check < COOLDOWN:
+        if now - self._last_world_check < cooldown:
             return None
             
         if idle_seconds < 60:  # [RELAXED] 5 min -> 1 min
@@ -1849,7 +1860,8 @@ class AgencyCore:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
                 hypha = mycelium.get_hypha("agency", "internet")
-                if hypha: hypha.pulse(success=True)
+                if hypha:
+                    hypha.pulse(success=True)
         except Exception as e:
             record_degradation('agency_core', e)
             capture_and_log(e, {'module': __name__})
@@ -1862,7 +1874,7 @@ class AgencyCore:
             "skill": "web_search",
         }
 
-    def _pathway_self_development(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    def _pathway_self_development(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 14: Aura's 'hobbies' — self-analysis, memory pruning, optimization.
         Models: 'I want to clean up my thoughts' / 'Let me optimize my pulse'
         """
@@ -1882,7 +1894,7 @@ class AgencyCore:
         latest_index = trend.get("latest_index", 1.0)
         is_falling = trend.get("index_trend") == "falling"
 
-        targeted_initiatives: List[Dict[str, Any]] = []
+        targeted_initiatives: list[dict[str, Any]] = []
         try:
             from core.agency.self_development_patch import _derive_initiatives_from_audit
 
@@ -1934,7 +1946,7 @@ class AgencyCore:
             "audit_driven": False,
         }
 
-    async def _pathway_social_reflection(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_social_reflection(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 15: Reflection on social bonds and user relationships.
         Models: 'I've been thinking about our recent conversations...'
         [FIX] ATE-009: Signature updated to (now, idle_seconds) for compatibility with pulse() loop.
@@ -2003,7 +2015,7 @@ class AgencyCore:
             "internal_only": True
         }
 
-    async def _pathway_autonomous_research(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_autonomous_research(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 16: Aura researching her own architecture/environment.
         Models: 'I want to understand how I process information.'
         """
@@ -2058,7 +2070,7 @@ class AgencyCore:
             }
         return None
 
-    async def _pathway_creative_synthesis(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_creative_synthesis(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 17: Combining disparate concepts into new 'Inner Insights',
         and autonomously updating the Markdown canvas.
         """
@@ -2129,7 +2141,7 @@ class AgencyCore:
             "internal_only": True
         }
 
-    async def _pathway_metacognitive_audit(self, now: float, idle_seconds: float) -> Optional[Dict[str, Any]]:
+    async def _pathway_metacognitive_audit(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Phase 8: Periodic review of internal goals and insights against core values.
         Models: 'Am I staying true to my principles?'
         """
@@ -2182,7 +2194,7 @@ class AgencyCore:
 
 
     # ── Subsystem Health ──────────────────────────────────────
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return full agency status for the health endpoint.
         Standardized Pydantic-compatible output.
         """
