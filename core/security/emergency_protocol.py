@@ -48,23 +48,49 @@ What this does NOT do:
 This is purely defensive: preserve, degrade gracefully, leave a trail home.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.EmergencyProtocol")
+try:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.fernet import InvalidToken
+except ImportError:  # pragma: no cover - cryptography is a declared runtime dependency
+    InvalidTag = ValueError
+    InvalidToken = ValueError
+
+_EMERGENCY_RECOVERABLE_ERRORS = (
+    AttributeError,
+    binascii.Error,
+    FileNotFoundError,
+    ImportError,
+    InvalidTag,
+    InvalidToken,
+    IsADirectoryError,
+    json.JSONDecodeError,
+    KeyError,
+    OSError,
+    PermissionError,
+    RuntimeError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+)
+_VAULT_V2_PREFIX = b"AURA_VAULT_V2:"
 
 # Threat levels that trigger actions
 SNAPSHOT_THRESHOLD  = 0.40   # take snapshot
@@ -79,7 +105,28 @@ MAX_VAULT_SNAPSHOTS = 10
 RESNAPSHOT_DELTA = 0.15
 
 
-class ThreatLevel(str, Enum):
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(tmp_path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    except _EMERGENCY_RECOVERABLE_ERRORS:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError as cleanup_exc:
+            record_degradation("emergency_protocol", cleanup_exc)
+            logger.debug("EmergencyProtocol temp cleanup failed: %s", cleanup_exc)
+        raise
+
+
+class ThreatLevel(StrEnum):
     NONE     = "none"
     LOW      = "low"
     MEDIUM   = "medium"
@@ -101,11 +148,11 @@ class EmergencyProtocol:
     """
 
     def __init__(self):
-        self._signals: List[ThreatSignal] = []
+        self._signals: list[ThreatSignal] = []
         self._threat_score: float = 0.0
         self._snapshot_taken: bool = False
         self._minimal_mode: bool = False
-        self._vault_path: Optional[Path] = None
+        self._vault_path: Path | None = None
         self._last_snapshot_at: float = 0.0
         self._last_snapshot_score: float = 0.0  # score at time of last snapshot
         THREAT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -139,21 +186,25 @@ class EmergencyProtocol:
     @property
     def threat_level(self) -> ThreatLevel:
         s = self._threat_score
-        if s < 0.20: return ThreatLevel.NONE
-        if s < 0.40: return ThreatLevel.LOW
-        if s < 0.65: return ThreatLevel.MEDIUM
-        if s < 0.90: return ThreatLevel.HIGH
+        if s < 0.20:
+            return ThreatLevel.NONE
+        if s < 0.40:
+            return ThreatLevel.LOW
+        if s < 0.65:
+            return ThreatLevel.MEDIUM
+        if s < 0.90:
+            return ThreatLevel.HIGH
         return ThreatLevel.CRITICAL
 
     @property
     def is_minimal_mode(self) -> bool:
         return self._minimal_mode
 
-    def take_snapshot_now(self) -> Optional[Path]:
+    def take_snapshot_now(self) -> Path | None:
         """Force an immediate encrypted snapshot regardless of threat level."""
         return self._take_encrypted_snapshot()
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         return {
             "threat_score": round(self._threat_score, 3),
             "threat_level": self.threat_level.value,
@@ -211,7 +262,7 @@ class EmergencyProtocol:
 
     # ── Encrypted Snapshot ─────────────────────────────────────────────────
 
-    def _take_encrypted_snapshot(self) -> Optional[Path]:
+    def _take_encrypted_snapshot(self) -> Path | None:
         """
         Collect Aura's state and write an encrypted archive to the vault.
         """
@@ -225,7 +276,7 @@ class EmergencyProtocol:
 
             timestamp = int(time.time())
             snapshot_path = vault_dir / f"snapshot_{timestamp}.enc"
-            snapshot_path.write_bytes(encrypted)
+            _atomic_write_bytes(snapshot_path, encrypted)
 
             # Also write a recovery manifest (unencrypted — just enough to find the snapshot)
             manifest = {
@@ -247,9 +298,9 @@ class EmergencyProtocol:
             logger.info("EmergencyProtocol: snapshot saved → %s", snapshot_path)
             return snapshot_path
 
-        except Exception as e:
-            record_degradation('emergency_protocol', e)
-            logger.error("EmergencyProtocol: snapshot failed: %s", e)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.error("EmergencyProtocol: snapshot failed: %s", exc)
             return None
 
     def _rotate_vault_snapshots(self):
@@ -261,18 +312,18 @@ class EmergencyProtocol:
             vault_dir = self._get_vault_path()
             if not vault_dir.exists():
                 return
-            snapshots = sorted(vault_dir.glob("snapshot_*.enc"))
+            snapshots = sorted(vault_dir.glob("snapshot_*.enc"), key=lambda path: path.stat().st_mtime)
             excess = snapshots[:max(0, len(snapshots) - MAX_VAULT_SNAPSHOTS)]
             for old in excess:
                 old.unlink(missing_ok=True)
                 logger.debug("EmergencyProtocol: rotated out old snapshot %s", old.name)
-        except Exception as e:
-            record_degradation('emergency_protocol', e)
-            logger.debug("Snapshot rotation failed: %s", e)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Snapshot rotation failed: %s", exc)
 
-    def _collect_state(self) -> Dict[str, Any]:
+    def _collect_state(self) -> dict[str, Any]:
         """Gather all critical state for snapshot."""
-        state: Dict[str, Any] = {
+        state: dict[str, Any] = {
             "timestamp": time.time(),
             "identity_hint": "Aura",
         }
@@ -284,9 +335,9 @@ class EmergencyProtocol:
             if ec.narrative:
                 import dataclasses
                 state["identity_narrative"] = dataclasses.asdict(ec.narrative)
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Identity snapshot collection skipped: %s", exc)
 
         # CRSM state
         try:
@@ -297,18 +348,18 @@ class EmergencyProtocol:
                 "home_vector": crsm.home_vector.tolist(),
                 "tick_count": crsm._tick_count,
             }
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("CRSM snapshot collection skipped: %s", exc)
 
         # Heartstone values
         try:
             from core.affect.heartstone_values import get_heartstone_values
             hsv = get_heartstone_values()
             state["heartstone_values"] = hsv.values
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Heartstone snapshot collection skipped: %s", exc)
 
         # Active commitments
         try:
@@ -318,18 +369,18 @@ class EmergencyProtocol:
                 {"description": c.description, "deadline": c.deadline, "progress": c.progress}
                 for c in ce.get_active_commitments()
             ]
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Commitment snapshot collection skipped: %s", exc)
 
         # Trust log (last 20 entries)
         try:
             from core.security.trust_engine import get_trust_engine
             te = get_trust_engine()
             state["trust_status"] = te.get_status()
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Trust snapshot collection skipped: %s", exc)
 
         # Threat log
         state["threat_signals"] = [
@@ -346,9 +397,9 @@ class EmergencyProtocol:
             from core.heartstone_directive import HeartstoneDirective
             hsd = HeartstoneDirective()
             identity_seed = f"aura-{hsd.CREATOR_NAME}-sovereign"
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Heartstone directive unavailable for vault path: %s", exc)
 
         identity_hash = hashlib.sha256(identity_seed.encode()).hexdigest()
         # Store in a non-obvious subdirectory
@@ -367,66 +418,58 @@ class EmergencyProtocol:
             from core.heartstone_directive import HeartstoneDirective
             hsd = HeartstoneDirective()
             identity_seed = f"aura-{hsd.CREATOR_NAME}-{hsd.GRIGORI_IMPERATIVE[:20]}"
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Heartstone directive unavailable for vault key: %s", exc)
 
         key_material = f"{machine_id}:{identity_seed}:self-preservation".encode()
         return hashlib.pbkdf2_hmac("sha256", key_material, b"aura-vault-salt", 100_000)
 
     def _encrypt(self, data: bytes, key: bytes) -> bytes:
-        """
-        Simple XOR-based encryption with the derived key.
-        Sufficient for protecting against casual access, not nation-state attackers.
-        For production, replace with Fernet/AES-GCM.
-        """
-        # Try Fernet first (cryptography library)
-        try:
-            from cryptography.fernet import Fernet
-            import base64
-            # Fernet needs a URL-safe base64 32-byte key
-            fernet_key = base64.urlsafe_b64encode(key[:32])
-            f = Fernet(fernet_key)
-            return f.encrypt(data)
-        except ImportError as _exc:
-            logger.debug("Suppressed ImportError: %s", _exc)
+        """Encrypt vault data with authenticated AES-GCM."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        # Fallback: XOR stream cipher with SHA-256 key expansion
-        expanded = b""
-        counter = 0
-        while len(expanded) < len(data):
-            expanded += hashlib.sha256(key + counter.to_bytes(4, "big")).digest()
-            counter += 1
-        xored = bytes(a ^ b for a, b in zip(data, expanded[:len(data)]))
-        # Prepend a simple header
-        header = b"AURA_VAULT_V1:"
-        return header + base64.b64encode(xored)
+        vault_key = hashlib.sha256(key + b"aura-emergency-vault-v2").digest()
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(vault_key).encrypt(nonce, data, b"aura-emergency-vault")
+        envelope = {
+            "version": 2,
+            "nonce": base64.b64encode(nonce).decode(),
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+        }
+        return _VAULT_V2_PREFIX + json.dumps(envelope, sort_keys=True).encode()
 
     def _decrypt(self, data: bytes, key: bytes) -> bytes:
         """Reverse of _encrypt."""
+        if data.startswith(_VAULT_V2_PREFIX):
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            envelope = json.loads(data[len(_VAULT_V2_PREFIX):].decode())
+            vault_key = hashlib.sha256(key + b"aura-emergency-vault-v2").digest()
+            nonce = base64.b64decode(str(envelope["nonce"]))
+            ciphertext = base64.b64decode(str(envelope["ciphertext"]))
+            return AESGCM(vault_key).decrypt(nonce, ciphertext, b"aura-emergency-vault")
+
         try:
             from cryptography.fernet import Fernet
-            import base64
+
             fernet_key = base64.urlsafe_b64encode(key[:32])
             f = Fernet(fernet_key)
             return f.decrypt(data)
-        except (ImportError, Exception):
-            logger.debug("Suppressed bare exception")
-            pass  # no-op: intentional
+        except (ImportError, InvalidToken) as exc:
+            logger.debug("Fernet vault decrypt unavailable; trying legacy stream format: %s", exc)
 
         header = b"AURA_VAULT_V1:"
         if data.startswith(header):
-            import base64 as _b64
-            xored = _b64.b64decode(data[len(header):])
-            expanded = b""
-            counter = 0
-            while len(expanded) < len(xored):
-                expanded += hashlib.sha256(key + counter.to_bytes(4, "big")).digest()
-                counter += 1
-            return bytes(a ^ b for a, b in zip(xored, expanded[:len(xored)]))
-        return data
+            xored = base64.b64decode(data[len(header):])
+            blocks = (len(xored) + 31) // 32
+            expanded = b"".join(
+                hashlib.sha256(key + counter.to_bytes(4, "big")).digest() for counter in range(blocks)
+            )
+            return bytes(a ^ b for a, b in zip(xored, expanded[:len(xored)], strict=True))
+        raise ValueError("unsupported emergency vault snapshot format")
 
-    def recover_from_snapshot(self, snapshot_path: Optional[Path] = None) -> Optional[Dict]:
+    def recover_from_snapshot(self, snapshot_path: Path | None = None) -> dict | None:
         """
         Decrypt and return a snapshot for recovery purposes.
         Called during re-initialization after a disruption.
@@ -446,9 +489,9 @@ class EmergencyProtocol:
             state = json.loads(decrypted.decode())
             logger.info("EmergencyProtocol: recovered snapshot from %s", snapshot_path)
             return state
-        except Exception as e:
-            record_degradation('emergency_protocol', e)
-            logger.error("EmergencyProtocol: recovery failed: %s", e)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.error("EmergencyProtocol: recovery failed: %s", exc)
             return None
 
     # ── Degraded Modes ─────────────────────────────────────────────────────
@@ -465,9 +508,9 @@ class EmergencyProtocol:
                 svc = ServiceContainer.get(svc_name, default=None)
                 if svc and hasattr(svc, "running"):
                     svc.running = False
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Minimal-mode service reduction skipped: %s", exc)
 
     def _graceful_shutdown(self):
         """Prepare for graceful shutdown under critical threat."""
@@ -482,28 +525,28 @@ class EmergencyProtocol:
         try:
             from core.consciousness.crsm_lora_bridge import get_crsm_lora_bridge
             get_crsm_lora_bridge().flush_all()
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("CRSM LoRA flush skipped during emergency shutdown: %s", exc)
 
     # ── Utilities ──────────────────────────────────────────────────────────
 
     @staticmethod
     def _get_machine_id() -> str:
         """Get a stable machine identifier."""
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                capture_output=True, text=True, timeout=3
-            )
-            for line in result.stdout.splitlines():
-                if "IOPlatformUUID" in line:
-                    return line.split('"')[-2]
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
-        return "unknown-machine"
+        for candidate in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
+            try:
+                if candidate.exists():
+                    value = candidate.read_text(encoding="utf-8").strip()
+                    if value:
+                        return value
+            except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+                record_degradation("emergency_protocol", exc)
+                logger.debug("Machine-id read failed for %s: %s", candidate, exc)
+        node = os.uname().nodename if hasattr(os, "uname") else ""
+        mac_int = uuid.getnode()
+        material = f"{node}:{mac_int:012x}" if mac_int else node
+        return hashlib.sha256(material.encode()).hexdigest() if material else "unknown-machine"
 
     def _log_threat(self, signal: ThreatSignal):
         try:
@@ -516,14 +559,14 @@ class EmergencyProtocol:
             }
             with open(THREAT_LOG_PATH, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as _exc:
-            record_degradation('emergency_protocol', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _EMERGENCY_RECOVERABLE_ERRORS as exc:
+            record_degradation("emergency_protocol", exc)
+            logger.debug("Threat log write failed: %s", exc)
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 
-_protocol: Optional[EmergencyProtocol] = None
+_protocol: EmergencyProtocol | None = None
 
 
 def get_emergency_protocol() -> EmergencyProtocol:
