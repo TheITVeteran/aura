@@ -11,22 +11,20 @@ module now treats the primary chat lane as a scarce channel:
   - background reflections stay in the neural feed
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import asyncio
-from collections import deque
 import logging
 import random
 import re
 import time
-from typing import Any, Callable, Coroutine, Optional
+from collections import deque
+from typing import Any
 
 from core.brain.aura_persona import AURA_IDENTITY
 from core.container import ServiceContainer
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.errors import record_degradation
 from core.utils.queues import USER_FACING_ORIGINS
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ProactivePresence")
 
@@ -80,7 +78,7 @@ class ProactivePresence:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
         self._last_output_time: float = 0.0
         self._last_visible_output_time: float = 0.0
@@ -130,14 +128,20 @@ class ProactivePresence:
         try:
             from core.voice.substrate_voice_engine import get_substrate_voice_engine
             get_substrate_voice_engine().on_user_spoke()
-        except Exception:
-            pass  # no-op: intentional
+        except ImportError as exc:
+            logger.debug("Substrate voice engine unavailable for user-spoke notification: %s", exc)
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("Substrate voice user-spoke notification failed: %s", exc)
         # Record user response for adaptive backoff
         try:
             from core.autonomy.user_response_tracker import get_user_response_tracker
             get_user_response_tracker().record_user_response()
-        except Exception:
-            pass  # Tracker unavailable
+        except ImportError as exc:
+            logger.debug("User response tracker unavailable for user response record: %s", exc)
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("User response tracker failed to record response: %s", exc)
 
     def mark_user_spoke_with_message(self, message: str):
         """Call with message content to detect away signals and update state.
@@ -241,7 +245,7 @@ class ProactivePresence:
                 max_memory_percent=80.0,
                 max_failure_pressure=0.18,
                 require_conversation_ready=False,
-                allow_no_user_anchor=False,
+                allow_no_user_anchor=queued or allow_during_away,
             )
             if reason:
                 logger.debug("[ProactivePresence] Held by background policy: %s", reason)
@@ -295,8 +299,11 @@ class ProactivePresence:
         try:
             from core.autonomy.user_response_tracker import get_user_response_tracker
             effective_gap *= get_user_response_tracker().get_backoff_multiplier()
-        except Exception:
-            pass
+        except ImportError as exc:
+            logger.debug("User response tracker unavailable for proactive backoff: %s", exc)
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("User response tracker backoff lookup failed: %s", exc)
         if now - self._last_output_time < effective_gap:
             return False
 
@@ -332,13 +339,13 @@ class ProactivePresence:
 
         return True
 
-    def _has_active_discussion(self, now: Optional[float] = None) -> bool:
+    def _has_active_discussion(self, now: float | None = None) -> bool:
         now = time.time() if now is None else now
         if self._last_user_message_at <= 0.0:
             return False
         return (now - self._last_user_message_at) <= ACTIVE_DISCUSSION_WINDOW_SECONDS
 
-    def _should_offer_checkin(self, now: Optional[float] = None) -> bool:
+    def _should_offer_checkin(self, now: float | None = None) -> bool:
         now = time.time() if now is None else now
         if self._consecutive_unprompted != 1:
             return False
@@ -350,7 +357,7 @@ class ProactivePresence:
             return False
         return True
 
-    def _next_ready_queued_message(self) -> Optional[dict[str, Any]]:
+    def _next_ready_queued_message(self) -> dict[str, Any] | None:
         if not self._queued_messages:
             return None
         now = time.time()
@@ -367,7 +374,7 @@ class ProactivePresence:
             return self._queued_messages.popleft()
         return None
 
-    def _foreground_lane_reserved(self, now: Optional[float] = None) -> bool:
+    def _foreground_lane_reserved(self, now: float | None = None) -> bool:
         """True when foreground conversation should not be interrupted."""
         if not self.orchestrator:
             return False
@@ -388,7 +395,7 @@ class ProactivePresence:
 
     # ── Output Generation ─────────────────────────────────────────────────
 
-    async def _generate_spontaneous_output(self) -> Optional[tuple[str, str, bool, bool]]:
+    async def _generate_spontaneous_output(self) -> tuple[str, str, bool, bool] | None:
         """
         Decide what to say and how it should be routed.
 
@@ -414,7 +421,9 @@ class ProactivePresence:
             from core.brain.entropy import PhysicalEntropyInjector
             # Map entropy [0, 0.4] → [0, total] using total as scale
             r = (PhysicalEntropyInjector.calculate_hardware_chaos() / 0.40) * total
-        except Exception:
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("Hardware entropy unavailable for proactive choice; using PRNG fallback: %s", exc)
             r = random.uniform(0, total)
         cumulative = 0
         selected_fn = None
@@ -496,10 +505,12 @@ class ProactivePresence:
                 if role and content:
                     lines.append(f"{role}: {content}")
             return "\n".join(lines)
-        except Exception:
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("Recent conversation context lookup failed: %s", exc)
             return ""
 
-    async def _opinion_surface(self) -> Optional[str]:
+    async def _opinion_surface(self) -> str | None:
         """Surface a held opinion unprompted."""
         from core.container import ServiceContainer
         engine = ServiceContainer.get("opinion_engine", default=None)
@@ -509,7 +520,7 @@ class ProactivePresence:
         # or just surface and let proactive handle the phrasing if needed.
         return await engine.surface_random(min_confidence=0.55)
 
-    async def _world_feed_reaction(self) -> Optional[str]:
+    async def _world_feed_reaction(self) -> str | None:
         """React to the most recent world feed item."""
         if not self.orchestrator:
             return None
@@ -561,7 +572,7 @@ class ProactivePresence:
             logger.debug("Prompt generation (reaction) failed: %s", e)
             return None
 
-    async def _goal_update(self) -> Optional[str]:
+    async def _goal_update(self) -> str | None:
         """Comment on what Aura has been working on based on GoalHierarchy."""
         if not self.orchestrator:
             return None
@@ -617,10 +628,15 @@ class ProactivePresence:
                 if recent_topics:
                     parts.append(f"Earlier topics: {', '.join(recent_topics)}")
             return "\n".join(parts) if parts else ""
-        except Exception:
+        except ImportError as exc:
+            logger.debug("Conversational dynamics unavailable for proactive hint: %s", exc)
+            return ""
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("Conversational dynamics context lookup failed: %s", exc)
             return ""
 
-    async def _open_reflection(self) -> Optional[str]:
+    async def _open_reflection(self) -> str | None:
         """Generate an open-ended reflection or thought."""
         brain = self._get_brain()
         if not brain:
@@ -645,7 +661,7 @@ class ProactivePresence:
             logger.debug("Prompt generation (reflection) failed: %s", e)
             return None
 
-    async def _topic_emission(self) -> Optional[str]:
+    async def _topic_emission(self) -> str | None:
         """Aura thinks of a new topic of interest and shares it (JARVIS pattern)."""
         brain = self._get_brain()
         if not brain:
@@ -685,6 +701,7 @@ class ProactivePresence:
         ctx_hint = f"RECENT CONVERSATION:\n{recent_ctx}\n" if recent_ctx else (f"{dynamics_hint}\n" if dynamics_hint else "")
         prompt = (
             f"{AURA_IDENTITY}\n"
+            f"INTERNAL ENERGY: {state['energy']:.2f}\n"
             f"{unresolved_hint}"
             f"{ctx_hint}"
             "Pick up a thread or share a thought that genuinely follows from the above. "
@@ -698,11 +715,11 @@ class ProactivePresence:
             logger.debug("Prompt generation (topic) failed: %s", e)
             return None
 
-    async def _humor_observation(self) -> Optional[str]:
+    async def _humor_observation(self) -> str | None:
         """A genuine joke or wry observation."""
         return None
 
-    async def _checkin_message(self) -> Optional[str]:
+    async def _checkin_message(self) -> str | None:
         """
         After Aura already sent an unprompted message and got no reply,
         she naturally notices the silence and checks in — rather than continuing
@@ -810,8 +827,11 @@ class ProactivePresence:
             try:
                 from core.autonomy.user_response_tracker import get_user_response_tracker
                 get_user_response_tracker().record_proactive_sent(source="proactive_presence")
-            except Exception:
-                pass  # Tracker unavailable
+            except ImportError as exc:
+                logger.debug("User response tracker unavailable for proactive send record: %s", exc)
+            except Exception as exc:
+                record_degradation("proactive_presence", exc)
+                logger.debug("User response tracker failed to record proactive send: %s", exc)
 
     def _requeue_visible_retry(
         self,
@@ -865,7 +885,7 @@ class ProactivePresence:
                     max_memory_percent=80.0,
                     max_failure_pressure=0.18,
                     require_conversation_ready=False,
-                    allow_no_user_anchor=False,
+                    allow_no_user_anchor=True,
                 )
                 if reason:
                     logger.debug("[ProactivePresence] Visible emission held by background policy: %s", reason)
@@ -966,5 +986,7 @@ class ProactivePresence:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception:
+        except Exception as exc:
+            record_degradation("proactive_presence", exc)
+            logger.debug("Cognitive engine lookup failed for proactive presence: %s", exc)
             return None
