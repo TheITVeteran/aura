@@ -1,9 +1,12 @@
+import asyncio
+import inspect
+import logging
+import math
+import time
+from typing import TYPE_CHECKING, Any
+
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
-import asyncio
-import logging
-import time
-from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from .attention_schema import AttentionSchema
@@ -12,12 +15,22 @@ if TYPE_CHECKING:
     from .self_prediction import SelfPredictionLoop
     from .temporal_binding import TemporalBindingEngine
 
-from .global_workspace import CognitiveCandidate
 from core.container import ServiceContainer
 from core.event_bus import get_event_bus
 from core.schemas import TelemetryPayload
 
+from .global_workspace import CognitiveCandidate
+
 logger = logging.getLogger("Consciousness.Heartbeat")
+
+_RECOVERABLE_HEARTBEAT_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class CognitiveHeartbeat:
@@ -55,8 +68,8 @@ class CognitiveHeartbeat:
         self._start_time = time.time()
         
         # Noise Reduction
-        self._last_alert_times: Dict[str, float] = {}
-        self._last_alert_urgency: Dict[str, float] = {}
+        self._last_alert_times: dict[str, float] = {}
+        self._last_alert_urgency: dict[str, float] = {}
 
         # Phase II: CEL Bridge (lazy-loaded from ServiceContainer)
         self._cel_bridge = None
@@ -146,14 +159,7 @@ class CognitiveHeartbeat:
                 # Never stop the heartbeat for a subsystem error
 
             # Dynamic interval from TimeDilationEngine (falls back to fixed 1Hz)
-            try:
-                td = self._time_dilation
-                if td:
-                    interval = td.evaluate()
-                else:
-                    interval = 1.0 / self._TICK_RATE_HZ
-            except Exception:
-                interval = 1.0 / self._TICK_RATE_HZ
+            interval = self._evaluate_tick_interval()
 
             # Sleep the remainder of the interval
             elapsed = time.time() - tick_start
@@ -167,6 +173,113 @@ class CognitiveHeartbeat:
 
     def stop(self):
         self._stop_event.set()
+
+    def _evaluate_tick_interval(self) -> float:
+        """Evaluate the next tick interval and surface recoverable failures."""
+        fallback_interval = 1.0 / self._TICK_RATE_HZ
+        try:
+            td = self._time_dilation
+            if td:
+                interval = float(td.evaluate())
+                if math.isfinite(interval) and interval > 0.0:
+                    return interval
+                raise ValueError(f"time dilation returned invalid interval: {interval!r}")
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("Time dilation evaluation failed: %s", e)
+        return fallback_interval
+
+    async def _call_if_available(
+        self,
+        target: Any,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
+        method = getattr(target, method_name, None)
+        if not callable(method):
+            return False
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            await result
+        return True
+
+    async def _sync_mind_model(self, mind_model: Any, tick: int) -> None:
+        """Keep the theory-of-mind layer participating in the heartbeat."""
+        try:
+            if await self._call_if_available(mind_model, "pulse"):
+                return
+            if await self._call_if_available(mind_model, "tick"):
+                return
+            if callable(getattr(mind_model, "get_context_for_brain", None)):
+                mind_model.get_context_for_brain()
+            if tick % self._NARRATIVE_EMIT_TICKS == 0:
+                await self._call_if_available(mind_model, "save")
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("Mind model heartbeat sync failed: %s", e)
+
+    async def _send_predictive_feedback(
+        self,
+        predictive: Any,
+        fe_state: Any,
+        surprise: float,
+    ) -> bool:
+        """Feed free-energy outcome back into the predictive engine."""
+        accept_feedback = getattr(predictive, "accept_feedback", None)
+        if not callable(accept_feedback):
+            return False
+
+        try:
+            feedback = {
+                "free_energy": self._safe_float(
+                    getattr(fe_state, "free_energy", None),
+                    default=surprise,
+                ),
+                "dominant_action": str(
+                    getattr(fe_state, "dominant_action", "maintain")
+                ),
+                "surprise": self._safe_float(surprise),
+                "valence": self._safe_float(getattr(fe_state, "valence", None)),
+            }
+            result = accept_feedback(feedback)
+            if inspect.isawaitable(result):
+                await result
+            return True
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("Predictive engine feedback failed: %s", e)
+            return False
+
+    def _resolve_live_phi(self) -> float:
+        """Read live phi from PhiCore first, then substrate fallback."""
+        try:
+            phi_core = ServiceContainer.get("phi_core", default=None)
+            if phi_core is not None and hasattr(phi_core, "get_live_phi"):
+                return max(0.0, float(phi_core.get_live_phi(include_surrogate=True)))
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("PhiCore live phi read failed: %s", e)
+
+        try:
+            substrate = self._liquid_substrate
+            if substrate and hasattr(substrate, "_current_phi"):
+                return max(0.0, float(getattr(substrate, "_current_phi", 0.0)))
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("Substrate phi fallback read failed: %s", e)
+
+        return 0.0
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        if math.isfinite(result):
+            return result
+        return default
 
     # ------------------------------------------------------------------
     # Single tick
@@ -186,15 +299,18 @@ class CognitiveHeartbeat:
             if mycelium:
                 # 1. Main Consciousness Heartbeat
                 h_con = mycelium.get_hypha("consciousness", "consciousness")
-                if h_con: h_con.pulse(success=True)
+                if h_con:
+                    h_con.pulse(success=True)
                 
                 # 2. Workspace Proof of Life
                 h_ws = mycelium.get_hypha("consciousness", "workspace")
-                if h_ws: h_ws.pulse(success=True)
+                if h_ws:
+                    h_ws.pulse(success=True)
                 
                 # 3. Attention Schema Proof of Life
                 h_att = mycelium.get_hypha("consciousness", "attention")
-                if h_att: h_att.pulse(success=True)
+                if h_att:
+                    h_att.pulse(success=True)
         except Exception as _e:
             record_degradation('heartbeat', _e)
             logger.debug('Ignored Exception in heartbeat.py: %s', _e)
@@ -206,8 +322,7 @@ class CognitiveHeartbeat:
             
         mind_model = self._mind_model
         if mind_model:
-            # Sync pulse for self-reflection/metabolism
-            pass  # no-op: intentional
+            await self._sync_mind_model(mind_model, tick)
 
         state = await self._gather_state()
 
@@ -242,6 +357,7 @@ class CognitiveHeartbeat:
         # for high-fidelity qualia we pull directly from the synthesizer's last state or sub-metrics
         if qualia_synthesizer:
             qualia_norm = qualia_synthesizer.synthesize(substrate_metrics, self.predictor.get_snapshot())
+            state["qualia_norm"] = qualia_norm
 
         await self.predictor.tick(
             actual_valence=actual_valence,
@@ -280,9 +396,8 @@ class CognitiveHeartbeat:
                 )
                 # Push surprise signal back to predictive engine coupling
                 predictive = ServiceContainer.get("predictive_engine", default=None)
-                if predictive and hasattr(predictive, 'accept_feedback'):
-                    # The predictive engine can use FE state as a meta-signal
-                    pass  # Surprise already flows via heartbeat wiring
+                if predictive:
+                    await self._send_predictive_feedback(predictive, fe_state, surprise)
 
                 # ── BOREDOM ACCUMULATOR tick ──────────────────────────
                 # Feed current FE into DriveEngine's boredom tracker.
@@ -304,7 +419,7 @@ class CognitiveHeartbeat:
             try:
                 credit = ServiceContainer.get("credit_assignment", default=None)
                 if credit:
-                    domain_perf = credit.get_all_domain_performance()
+                    credit.get_all_domain_performance()
                     # Feed influence scores to hedonic gradient for resource allocation
                     hg = ServiceContainer.get("hedonic_gradient", default=None)
                     if hg and hasattr(hg, 'accept_credit_signal'):
@@ -349,17 +464,7 @@ class CognitiveHeartbeat:
 
         # ── 8b. Φ → WORKSPACE FEED ────────────────────────────────────
         try:
-            substrate = self._liquid_substrate
-            phi = 0.0
-            try:
-                phi_core = ServiceContainer.get("phi_core", default=None)
-                if phi_core is not None and hasattr(phi_core, "get_live_phi"):
-                    phi = float(phi_core.get_live_phi(include_surrogate=True))
-            except Exception:
-                phi = 0.0
-
-            if phi <= 0.0 and substrate and hasattr(substrate, '_current_phi'):
-                phi = float(getattr(substrate, '_current_phi', 0.0))
+            phi = self._resolve_live_phi()
 
             if hasattr(self.workspace, 'update_phi'):
                 self.workspace.update_phi(phi)
@@ -414,7 +519,7 @@ class CognitiveHeartbeat:
     # Step implementations
     # ------------------------------------------------------------------
 
-    async def _gather_state(self) -> Dict[str, Any]:
+    async def _gather_state(self) -> dict[str, Any]:
         """Gather lightweight state snapshots from existing systems."""
         state = {}
 
@@ -468,14 +573,21 @@ class CognitiveHeartbeat:
         try:
             substrate = ServiceContainer.get("liquid_state", default=None) or ServiceContainer.get("liquid_substrate", default=None)
             if substrate and hasattr(substrate, 'get_state_summary'):
-                sub_summary = await substrate.get_state_summary() if asyncio.iscoroutinefunction(substrate.get_state_summary) else substrate.get_state_summary()
+                summary_result = substrate.get_state_summary()
+                sub_summary = (
+                    await summary_result
+                    if inspect.isawaitable(summary_result)
+                    else summary_result
+                )
                 state["qualia_metrics"] = sub_summary.get("qualia_metrics", {})
-        except Exception:
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            record_degradation("heartbeat", e)
+            logger.debug("Qualia metrics gather failed: %s", e)
             state["qualia_metrics"] = {}
 
         return state
 
-    async def _submit_candidates(self, state: Dict[str, Any], tick: int):
+    async def _submit_candidates(self, state: dict[str, Any], tick: int):
         """Every subsystem submits its candidate for the GWT competition.
         This is the moment of competitive tension — each subsystem is
         essentially "voting" for what should be in consciousness next.
@@ -641,7 +753,7 @@ class CognitiveHeartbeat:
     async def _emit_thought(
         self,
         winner: CognitiveCandidate,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         tick: int,
     ):
         """Emit the winning broadcast to the existing ThoughtStream."""
@@ -664,8 +776,8 @@ class CognitiveHeartbeat:
 
     async def _emit_telemetry(
         self,
-        winner: Optional[CognitiveCandidate],
-        state: Dict[str, Any],
+        winner: CognitiveCandidate | None,
+        state: dict[str, Any],
         tick: int,
         surprise: float
     ):
@@ -792,7 +904,7 @@ class CognitiveHeartbeat:
     def _compute_significance(
         self,
         winner: CognitiveCandidate,
-        state: Dict[str, Any],
+        state: dict[str, Any],
     ) -> float:
         """Compute significance of a winning broadcast for temporal memory.
         High significance events are more likely to survive sleep consolidation.

@@ -1,12 +1,12 @@
 """core/consciousness/system.py — The Consciousness Facade
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-from typing import Optional, Any
+from typing import Any
+
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 from core.runtime.service_access import (
     resolve_attention_schema,
     resolve_conscious_substrate,
@@ -15,6 +15,8 @@ from core.runtime.service_access import (
     resolve_self_prediction,
     resolve_temporal_binding,
 )
+from core.utils.task_tracker import get_task_tracker
+
 from .attention_schema import AttentionSchema
 from .global_workspace import GlobalWorkspace
 from .heartbeat import CognitiveHeartbeat
@@ -22,10 +24,21 @@ from .homeostatic_coupling import HomeostaticCoupling
 from .liquid_substrate import LiquidSubstrate
 from .qualia_synthesizer import QualiaSynthesizer
 from .self_prediction import SelfPredictionLoop
-from .temporal_binding import TemporalBindingEngine
 from .substrate_authority import SubstrateAuthority
+from .temporal_binding import TemporalBindingEngine
 
 logger = logging.getLogger("Consciousness")
+
+_RECOVERABLE_SYSTEM_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 class ConsciousnessSystem:
     def __init__(self, orchestrator):
@@ -43,7 +56,7 @@ class ConsciousnessSystem:
         self.qualia = ServiceContainer.get("qualia_synthesizer", default=None) or QualiaSynthesizer()
         
         # Initialize attributes to avoid NoneType/AttributeError in IDE
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self.phi_core = None
         self.closed_loop = None
         
@@ -61,7 +74,8 @@ class ConsciousnessSystem:
         try:
             from .dreaming import DreamingProcess
             self.dreaming = DreamingProcess(orchestrator)
-        except (ImportError, Exception) as e:
+        except _RECOVERABLE_SYSTEM_ERRORS as e:
+            record_degradation('system', e)
             logger.warning("Could not initialize DreamingProcess: %s", e)
             self.dreaming = None
         
@@ -90,15 +104,21 @@ class ConsciousnessSystem:
         self.stream_of_being = None
         self.closed_loop = None
         self.phi_core = None
-        self.branch_manager: Optional[Any] = None     # ParallelBranches
-        self.aura_protocol: Optional[Any] = None       # AuraProtocolServer
+        self.branch_manager: Any | None = None     # ParallelBranches
+        self.aura_protocol: Any | None = None       # AuraProtocolServer
 
     async def start(self):
         if getattr(self, "_running", False):
             logger.debug("Consciousness system already running. skipping.")
             return
         self._running = True
-        await self.liquid_substrate.start()
+        try:
+            await self.liquid_substrate.start()
+        except _RECOVERABLE_SYSTEM_ERRORS as e:
+            self._running = False
+            record_degradation('system', e)
+            logger.error("Could not start required LiquidSubstrate: %s", e)
+            raise
         
         # --- CONSCIOUSNESS STACK ---
         # Boot in order, each layer depends on those below
@@ -268,17 +288,30 @@ class ConsciousnessSystem:
         # ═══════════════════════════════════════════════════════════════════
 
         if self.dreaming:
-            await self.dreaming.start()
+            try:
+                await self.dreaming.start()
+            except _RECOVERABLE_SYSTEM_ERRORS as e:
+                record_degradation('system', e)
+                logger.warning("Could not start DreamingProcess: %s", e)
 
         self._task = get_task_tracker().create_task(self.heartbeat.run())
         logger.info("🧠 Consciousness System ONLINE — full stack active")
 
     async def stop(self):
+        if self.heartbeat:
+            self.heartbeat.stop()
+
         if self._task:
             self._task.cancel()
-            try: await self._task
+            try:
+                await self._task
             except asyncio.CancelledError as _e:
                 logger.debug("Ignored CancelledError during consciousness system shutdown")
+            except _RECOVERABLE_SYSTEM_ERRORS as _e:
+                record_degradation('system', _e)
+                logger.debug("Heartbeat task shutdown failed: %s", _e)
+            finally:
+                self._task = None
         
         # Stop the consciousness bridge
         if self.bridge:
@@ -312,7 +345,13 @@ class ConsciousnessSystem:
                 record_degradation('system', _e)
                 logger.debug('Ignored Exception stopping aura_protocol: %s', _e)
 
-        await self.liquid_substrate.stop()
+        try:
+            await self.liquid_substrate.stop()
+        except _RECOVERABLE_SYSTEM_ERRORS as _e:
+            record_degradation('system', _e)
+            logger.debug('Ignored Exception stopping liquid_substrate: %s', _e)
+        finally:
+            self._running = False
         logger.info("🧠 Consciousness System OFFLINE")
 
     def get_state(self) -> dict:

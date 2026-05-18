@@ -17,6 +17,7 @@ from core.consciousness import (
     experience_consolidator,
     free_energy,
     global_workspace,
+    heartbeat,
     liquid_substrate,
     loop_monitor,
     mesh_cognition,
@@ -29,6 +30,7 @@ from core.consciousness import (
     resource_stakes,
     stdp_learning,
     substrate_authority,
+    system,
     time_dilation,
     unified_field,
 )
@@ -41,6 +43,7 @@ from core.consciousness.executive_closure import ExecutiveClosureEngine
 from core.consciousness.experience_consolidator import ExperienceConsolidator
 from core.consciousness.free_energy import FreeEnergyEngine
 from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
+from core.consciousness.heartbeat import CognitiveHeartbeat
 from core.consciousness.liquid_substrate import LiquidSubstrate, SubstrateConfig
 from core.consciousness.loop_monitor import ConsciousnessLoopMonitor
 from core.consciousness.mesh_cognition import MeshCognition
@@ -57,6 +60,7 @@ from core.consciousness.substrate_authority import (
     SubstrateAuthority,
     SubstrateVerdict,
 )
+from core.consciousness.system import ConsciousnessSystem
 from core.consciousness.unified_field import FieldConfig, UnifiedField
 
 
@@ -890,7 +894,7 @@ def test_liquid_substrate_affect_and_chaos_recovery_are_visible(monkeypatch, tmp
     ]
 
 
-async def test_liquid_substrate_gate_scar_failures_are_visible(monkeypatch, tmp_path):
+def test_liquid_substrate_gate_scar_failures_are_visible(monkeypatch, tmp_path):
     recorded: list[tuple[str, str]] = []
     monkeypatch.setattr(
         liquid_substrate,
@@ -912,7 +916,7 @@ async def test_liquid_substrate_gate_scar_failures_are_visible(monkeypatch, tmp_
     substrate = LiquidSubstrate(
         SubstrateConfig(neuron_count=4, state_file=tmp_path / "substrate_state.npy")
     )
-    await substrate.inject_stimulus(np.ones(4), weight=1.0)
+    asyncio.run(substrate.inject_stimulus(np.ones(4), weight=1.0))
 
     assert recorded == [
         ("liquid_substrate", "RuntimeError"),
@@ -938,7 +942,7 @@ def test_closed_loop_output_lookup_failure_is_visible(monkeypatch):
     assert recorded == [("closed_loop", "RuntimeError")]
 
 
-async def test_global_workspace_theory_arbitration_failure_is_visible(monkeypatch):
+def test_global_workspace_theory_arbitration_failure_is_visible(monkeypatch):
     recorded: list[tuple[str, str]] = []
     monkeypatch.setattr(
         global_workspace,
@@ -969,9 +973,12 @@ async def test_global_workspace_theory_arbitration_failure_is_visible(monkeypatc
     arbitration_module.get_theory_arbitration = _FailingCallable("arbitration unavailable")
     monkeypatch.setitem(sys.modules, "core.consciousness.theory_arbitration", arbitration_module)
 
-    workspace = GlobalWorkspace()
-    await workspace.submit(CognitiveCandidate(content="ignite", source="unit", priority=1.0))
-    winner = await workspace.run_competition()
+    async def run_workspace():
+        workspace = GlobalWorkspace()
+        await workspace.submit(CognitiveCandidate(content="ignite", source="unit", priority=1.0))
+        return await workspace.run_competition()
+
+    winner = asyncio.run(run_workspace())
 
     assert winner is not None
     assert recorded == [("global_workspace", "RuntimeError")]
@@ -1002,3 +1009,225 @@ def test_loop_monitor_stale_cache_heal_failure_is_visible(monkeypatch):
 
     assert healed is False
     assert recorded == [("loop_monitor", "RuntimeError")]
+
+
+def test_heartbeat_time_dilation_failure_records_and_uses_fixed_interval(monkeypatch):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        heartbeat,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+    monkeypatch.setattr(
+        heartbeat.ServiceContainer,
+        "get",
+        lambda name, default=None: types.SimpleNamespace(
+            evaluate=_FailingCallable("time dilation unavailable")
+        )
+        if name == "time_dilation"
+        else default,
+    )
+
+    hb = CognitiveHeartbeat.__new__(CognitiveHeartbeat)
+
+    assert hb._evaluate_tick_interval() == 1.0
+    assert recorded == [("heartbeat", "RuntimeError")]
+
+
+def test_heartbeat_mind_model_sync_invokes_live_pulse_and_records_failure(
+    monkeypatch,
+):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        heartbeat,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    class _MindModel:
+        def __init__(self):
+            self.calls = 0
+
+        async def pulse(self):
+            self.calls += 1
+
+    hb = CognitiveHeartbeat.__new__(CognitiveHeartbeat)
+    mind_model = _MindModel()
+    asyncio.run(hb._sync_mind_model(mind_model, tick=1))
+    asyncio.run(
+        hb._sync_mind_model(
+            types.SimpleNamespace(pulse=_FailingCallable("mind model unavailable")),
+            tick=1,
+        )
+    )
+
+    assert mind_model.calls == 1
+    assert recorded == [("heartbeat", "RuntimeError")]
+
+
+def test_heartbeat_predictive_feedback_closes_free_energy_loop(monkeypatch):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        heartbeat,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    class _Predictive:
+        def __init__(self):
+            self.feedback = None
+
+        async def accept_feedback(self, feedback):
+            self.feedback = feedback
+
+    hb = CognitiveHeartbeat.__new__(CognitiveHeartbeat)
+    predictive = _Predictive()
+
+    async def send_feedback():
+        delivered = await hb._send_predictive_feedback(
+            predictive,
+            types.SimpleNamespace(
+                free_energy=0.42,
+                dominant_action="explore",
+                valence=-0.2,
+            ),
+            surprise=0.31,
+        )
+        failed = await hb._send_predictive_feedback(
+            types.SimpleNamespace(
+                accept_feedback=_FailingCallable("feedback unavailable")
+            ),
+            types.SimpleNamespace(free_energy=0.1),
+            surprise=0.2,
+        )
+        return delivered, failed
+
+    delivered, failed = asyncio.run(send_feedback())
+
+    assert delivered is True
+    assert predictive.feedback == {
+        "free_energy": 0.42,
+        "dominant_action": "explore",
+        "surprise": 0.31,
+        "valence": -0.2,
+    }
+    assert failed is False
+    assert recorded == [("heartbeat", "RuntimeError")]
+
+
+def test_heartbeat_phi_fallback_records_core_failure_and_uses_substrate(monkeypatch):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        heartbeat,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    def service_get(name, default=None):
+        if name == "phi_core":
+            return types.SimpleNamespace(
+                get_live_phi=_FailingCallable("phi unavailable")
+            )
+        if name == "liquid_substrate":
+            return types.SimpleNamespace(_current_phi=0.37)
+        return default
+
+    monkeypatch.setattr(heartbeat.ServiceContainer, "get", service_get)
+
+    hb = CognitiveHeartbeat.__new__(CognitiveHeartbeat)
+
+    assert hb._resolve_live_phi() == 0.37
+    assert recorded == [("heartbeat", "RuntimeError")]
+
+
+def test_heartbeat_qualia_metrics_failure_records_safe_empty(monkeypatch):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        heartbeat,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+    monkeypatch.setattr(
+        heartbeat.ServiceContainer,
+        "get",
+        _FailingCallable("liquid state unavailable"),
+    )
+
+    hb = CognitiveHeartbeat.__new__(CognitiveHeartbeat)
+    hb.orch = types.SimpleNamespace()
+
+    state = asyncio.run(hb._gather_state())
+
+    assert state["qualia_metrics"] == {}
+    assert recorded == [("heartbeat", "RuntimeError")]
+
+
+def test_consciousness_system_required_substrate_start_failure_allows_retry(
+    monkeypatch,
+):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        system,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    class _BrokenSubstrate:
+        def __init__(self):
+            self.start_calls = 0
+
+        async def start(self):
+            self.start_calls += 1
+            raise RuntimeError("substrate start unavailable")
+
+    substrate = _BrokenSubstrate()
+    cs = ConsciousnessSystem.__new__(ConsciousnessSystem)
+    cs._running = False
+    cs.liquid_substrate = substrate
+
+    try:
+        asyncio.run(cs.start())
+    except RuntimeError as exc:
+        assert str(exc) == "substrate start unavailable"
+    else:
+        raise AssertionError("required substrate start failure was not raised")
+
+    assert cs._running is False
+    assert substrate.start_calls == 1
+    assert recorded == [("system", "RuntimeError")]
+
+
+def test_consciousness_system_stop_records_shutdown_failure_and_resets_running(
+    monkeypatch,
+):
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        system,
+        "record_degradation",
+        lambda module, exc: recorded.append((module, type(exc).__name__)),
+    )
+
+    class _BrokenSubstrate:
+        def __init__(self):
+            self.stop_calls = 0
+
+        async def stop(self):
+            self.stop_calls += 1
+            raise RuntimeError("substrate stop unavailable")
+
+    substrate = _BrokenSubstrate()
+    cs = ConsciousnessSystem.__new__(ConsciousnessSystem)
+    cs._running = True
+    cs._task = None
+    cs.heartbeat = types.SimpleNamespace(stop=lambda: None)
+    cs.bridge = None
+    cs.closed_loop = None
+    cs.branch_manager = None
+    cs.aura_protocol = None
+    cs.liquid_substrate = substrate
+
+    asyncio.run(cs.stop())
+
+    assert cs._running is False
+    assert substrate.stop_calls == 1
+    assert recorded == [("system", "RuntimeError")]
