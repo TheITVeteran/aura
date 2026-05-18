@@ -4,15 +4,15 @@ Every shutdown writes a state. Every boot reads it. Gap > 0 means she was
 somewhere else for a while and knows it.
 """
 
-from core.runtime.errors import record_degradation
 import json
+import logging
 import os
 import time
-import logging
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from dataclasses import dataclass, asdict, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.state.aura_state import (
     _is_background_processing_placeholder,
     _is_speculative_autonomy_label,
@@ -20,13 +20,14 @@ from core.state.aura_state import (
 )
 
 logger = logging.getLogger(__name__)
-_CONTINUITY_PATH: Optional[Path] = None
+_CONTINUITY_PATH: Path | None = None
 
 
 def _clamp01(value: Any) -> float:
     try:
         return max(0.0, min(1.0, float(value)))
-    except Exception:
+    except (TypeError, ValueError) as exc:
+        logger.debug("Invalid continuity scalar %r; clamping to 0.0: %s", value, exc)
         return 0.0
 
 
@@ -37,7 +38,9 @@ def _get_continuity_path() -> Path:
         from core.config import config
 
         return config.paths.data_dir / "continuity.json"
-    except Exception:
+    except Exception as exc:
+        record_degradation("continuity", exc)
+        logger.debug("Continuity path resolution fell back to local data path: %s", exc)
         return Path("data") / "continuity.json"
 
 
@@ -130,8 +133,8 @@ def _sanitize_restored_objective(value: Any) -> str:
     return text
 
 
-def _sanitize_restored_items(values: Optional[List[Any]]) -> List[str]:
-    sanitized: List[str] = []
+def _sanitize_restored_items(values: list[Any] | None) -> list[str]:
+    sanitized: list[str] = []
     for item in list(values or []):
         text = _sanitize_restored_text(item)
         if text:
@@ -139,8 +142,8 @@ def _sanitize_restored_items(values: Optional[List[Any]]) -> List[str]:
     return sanitized[:5]
 
 
-def _sanitize_restored_objective_items(values: Optional[List[Any]]) -> List[str]:
-    sanitized: List[str] = []
+def _sanitize_restored_objective_items(values: list[Any] | None) -> list[str]:
+    sanitized: list[str] = []
     for item in list(values or []):
         text = _sanitize_restored_objective(item)
         if text:
@@ -156,17 +159,17 @@ class ContinuityRecord:
     session_count: int            # How many times she's woken
     last_conversation_summary: str  # Brief summary of last session's last exchange
     identity_hash: str            # Hash of core beliefs at shutdown — detect drift
-    active_commitments: List[str] = field(default_factory=list)
+    active_commitments: list[str] = field(default_factory=list)
     policy_mode: str = "unknown"
     current_objective: str = ""
     pending_initiatives: int = 0
-    health_summary: Dict[str, Any] = field(default_factory=dict)
+    health_summary: dict[str, Any] = field(default_factory=dict)
     rolling_summary: str = ""
     coherence_score: float = 1.0
     contradiction_count: int = 0
     subject_thread: str = ""
-    pending_initiative_details: List[str] = field(default_factory=list)
-    active_goal_details: List[str] = field(default_factory=list)
+    pending_initiative_details: list[str] = field(default_factory=list)
+    active_goal_details: list[str] = field(default_factory=list)
 
 
 class ContinuityEngine:
@@ -178,10 +181,10 @@ class ContinuityEngine:
 
     def __init__(self):
         self._boot_time = time.time()
-        self._record: Optional[ContinuityRecord] = None
-        self._gap_seconds: Optional[float] = None
+        self._record: ContinuityRecord | None = None
+        self._gap_seconds: float | None = None
 
-    def load(self) -> Optional[ContinuityRecord]:
+    def load(self) -> ContinuityRecord | None:
         """Read previous session's record. Returns None on first ever boot."""
         path = _get_continuity_path()
         if not path.exists():
@@ -206,7 +209,7 @@ class ContinuityEngine:
             self._gap_seconds = 0.0
             return None
 
-    def _build_reentry_profile(self) -> Dict[str, Any]:
+    def _build_reentry_profile(self) -> dict[str, Any]:
         if self._record is None:
             return {
                 "gap_seconds": 0.0,
@@ -243,7 +246,7 @@ class ContinuityEngine:
             + (failure_factor * 0.18)
         )
 
-        scar_markers: List[str] = []
+        scar_markers: list[str] = []
         if gap_seconds >= 900:
             scar_markers.append("time_gap")
         if shutdown_factor > 0.0:
@@ -281,17 +284,17 @@ class ContinuityEngine:
         reason: str = "graceful",
         last_exchange: str = "",
         belief_hash: str = "",
-        active_commitments: Optional[List[str]] = None,
-        policy_mode: Optional[str] = None,
-        current_objective: Optional[str] = None,
-        pending_initiatives: Optional[int] = None,
-        pending_initiative_details: Optional[List[str]] = None,
-        health_summary: Optional[Dict[str, Any]] = None,
-        rolling_summary: Optional[str] = None,
-        coherence_score: Optional[float] = None,
-        contradiction_count: Optional[int] = None,
-        subject_thread: Optional[str] = None,
-        active_goal_details: Optional[List[str]] = None,
+        active_commitments: list[str] | None = None,
+        policy_mode: str | None = None,
+        current_objective: str | None = None,
+        pending_initiatives: int | None = None,
+        pending_initiative_details: list[str] | None = None,
+        health_summary: dict[str, Any] | None = None,
+        rolling_summary: str | None = None,
+        coherence_score: float | None = None,
+        contradiction_count: int | None = None,
+        subject_thread: str | None = None,
+        active_goal_details: list[str] | None = None,
     ):
         """Write current session state. Call on graceful shutdown AND
         periodically (every 5 min) so crashes leave a recent record."""
@@ -440,7 +443,7 @@ class ContinuityEngine:
             f"Re-entry burden: {reentry['continuity_scar'] or 'light_trace'}."
         )
 
-    def get_obligations(self) -> Dict[str, Any]:
+    def get_obligations(self) -> dict[str, Any]:
         reentry = self._build_reentry_profile()
         live_identity_hash = self._get_live_identity_hash()
         persisted_identity_hash = self._record.identity_hash if self._record else ""
@@ -550,7 +553,7 @@ class ContinuityEngine:
         meaningful_gap = gap_seconds >= max(0.0, min_reentry_gap_s) or not shutdown_was_graceful
 
         continuity_initiative_enabled = str(
-            os.getenv("AURA_ENABLE_CONTINUITY_REENTRY_INITIATIVE", "0")
+            os.getenv("AURA_ENABLE_CONTINUITY_REENTRY_INITIATIVE", "1")
         ).strip().lower() in {"1", "true", "yes", "on"}
 
         should_inject_reentry_initiative = bool(
@@ -655,12 +658,14 @@ class ContinuityEngine:
             from core.heartstone_directive import AURA_HEARTSTONE
 
             return str(AURA_HEARTSTONE.identity_hash or "")
-        except Exception:
+        except Exception as exc:
+            record_degradation("continuity", exc)
+            logger.debug("Live identity hash lookup failed: %s", exc)
             return ""
 
 
 # Singleton
-_continuity: Optional[ContinuityEngine] = None
+_continuity: ContinuityEngine | None = None
 
 def get_continuity() -> ContinuityEngine:
     global _continuity

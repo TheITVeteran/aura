@@ -1,12 +1,13 @@
-from core.runtime.errors import record_degradation
 import hashlib
 import hmac
 import json
 import logging
 import os
 import time
-from typing import Any, Dict
+from typing import Any
+
 from core.config import config
+from core.runtime.errors import record_degradation
 from core.runtime.service_access import (
     optional_service,
     resolve_canonical_self,
@@ -141,7 +142,7 @@ def _sign_payload(payload_bytes: bytes) -> str:
     sig = hmac.new(key, payload_bytes, hashlib.sha256).hexdigest()
     return sig
 
-def get_runtime_state() -> Dict[str, Any]:
+def get_runtime_state() -> dict[str, Any]:
     """Trusted function that samples live runtime pieces and returns:
     { "state": {...}, "sha256": "...", "signature": "..." }
     """
@@ -155,7 +156,8 @@ def get_runtime_state() -> Dict[str, Any]:
 
         # Helper to safely get status
         def _safe_status(service, fallback_data):
-            if not service: return fallback_data
+            if not service:
+                return fallback_data
             try:
                 if hasattr(service, "get_status"):
                     res = service.get_status()
@@ -164,7 +166,9 @@ def get_runtime_state() -> Dict[str, Any]:
                         return fallback_data
                     return res
                 return fallback_data
-            except Exception:
+            except Exception as exc:
+                record_degradation("runtime_tools", exc)
+                logger.debug("Runtime status sampling failed for %s: %s", type(service).__name__, exc)
                 return fallback_data
 
         drive = optional_service("drive_engine", default=None)

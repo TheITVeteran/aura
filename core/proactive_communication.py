@@ -1,21 +1,22 @@
 """core/proactive_communication.py - Intelligent Proactive Messaging
 Aura decides WHEN to interrupt the user based on emotional state and context.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Proactive")
 
 
-def _proactivity_suppressed_now(now: Optional[float] = None) -> bool:
+def _proactivity_suppressed_now(now: float | None = None) -> bool:
     try:
         from core.container import ServiceContainer
 
@@ -25,7 +26,9 @@ def _proactivity_suppressed_now(now: Optional[float] = None) -> bool:
         now = time.time() if now is None else now
         quiet_until = float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         return quiet_until > now
-    except Exception:
+    except Exception as exc:
+        record_degradation("proactive_communication", exc)
+        logger.debug("Proactivity suppression probe failed: %s", exc)
         return False
 
 class EmotionalState(Enum):
@@ -56,7 +59,7 @@ class ProactiveMessage:
     content: str
     emotion: EmotionalState
     urgency: InterruptionUrgency
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
     
     def should_send_now(self, 
@@ -90,7 +93,7 @@ class ProactiveCommunicationManager:
     """Manages when and how Aura initiates conversations.
     """
 
-    def __init__(self, notification_callback: Optional[Callable] = None):
+    def __init__(self, notification_callback: Callable | None = None):
         self.notification_callback = notification_callback
         self.last_interaction_time = time.time()
         self.user_currently_active = False
@@ -104,7 +107,7 @@ class ProactiveCommunicationManager:
         self.unanswered_count = 0
         self.max_unanswered = 3  # Stop proactive messaging after 3 unanswered
         
-        self._background_task: Optional[asyncio.Task] = None
+        self._background_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
     def record_user_interaction(self):
@@ -121,7 +124,8 @@ class ProactiveCommunicationManager:
         self.pending_messages.append(msg)
 
     async def start(self):
-        if self._background_task: return
+        if self._background_task:
+            return
         self._stop_event.clear()
         self._background_task = get_task_tracker().track_task(self._process_messages(), name="proactive_communication.process_messages")
 
@@ -196,15 +200,17 @@ class ProactiveCommunicationManager:
                     or ServiceContainer.has("kernel_interface")
                     or bool(getattr(ServiceContainer, "_registration_locked", False))
                 )
-            except Exception:
+            except Exception as exc:
+                record_degradation("proactive_communication", exc)
+                logger.debug("Constitutional runtime probe failed: %s", exc)
                 return False
 
         # Route every proactive emission through the governing executive surface first.
         delivered = False
         orchestrator = None
         try:
-            from core.container import ServiceContainer
             from core.consciousness.executive_authority import get_executive_authority
+            from core.container import ServiceContainer
 
             orchestrator = ServiceContainer.get("orchestrator", None)
             authority = get_executive_authority(orchestrator)
@@ -251,7 +257,8 @@ class ProactiveCommunicationManager:
     def _clean_content(self, content: str) -> str:
         """Strip technical noise for a cleaner user experience."""
         import re
-        if not content: return content
+        if not content:
+            return content
         
         # Strip long tracebacks
         if "Traceback" in content and "File" in content:
@@ -269,24 +276,30 @@ class ProactiveCommunicationManager:
         
         return content
 
-    def calculate_entropy(self, recent_logs: List[str]) -> float:
+    def calculate_entropy(self, recent_logs: list[str]) -> float:
         """Calculates how 'boring' the recent life has been.
         Low entropy = Boredom (Needs to explore).
         """
-        if not recent_logs: return 0.0
+        if not recent_logs:
+            return 0.0
         unique_tokens = set(" ".join(recent_logs).split())
         total_tokens = len(" ".join(recent_logs).split())
-        if total_tokens == 0: return 0.0
+        if total_tokens == 0:
+            return 0.0
         return len(unique_tokens) / total_tokens
 
     def get_boredom_level(self) -> float:
         idle = time.time() - self.last_interaction_time
 
         # Boredom ramps up meaningfully within the first few minutes
-        if idle < 30: base = idle / 300          # 0→0.1 over 30s
-        elif idle < 90: base = 0.1 + (idle - 30) / 150   # 0.1→0.5 over next 60s
-        elif idle < 180: base = 0.5 + (idle - 90) / 180  # 0.5→1.0 over next 90s
-        else: base = 1.0
+        if idle < 30:
+            base = idle / 300          # 0→0.1 over 30s
+        elif idle < 90:
+            base = 0.1 + (idle - 30) / 150   # 0.1→0.5 over next 60s
+        elif idle < 180:
+            base = 0.5 + (idle - 90) / 180  # 0.5→1.0 over next 90s
+        else:
+            base = 1.0
 
         # Boredom scales with idle time and environmental entropy
         return base
@@ -294,5 +307,6 @@ class ProactiveCommunicationManager:
 _inst = None
 def get_proactive_comm():
     global _inst
-    if _inst is None: _inst = ProactiveCommunicationManager()
+    if _inst is None:
+        _inst = ProactiveCommunicationManager()
     return _inst

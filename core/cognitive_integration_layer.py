@@ -479,7 +479,9 @@ class CognitiveIntegrationLayer:
             if isinstance(shaped, list):
                 return shaped[0]  # Primary message; extras queued by orchestrator
             return shaped
-        except Exception:
+        except Exception as exc:
+            record_degradation("cognitive_integration_layer", exc)
+            logger.debug("Substrate response shaping failed: %s", exc)
             return response
 
     async def process_autonomous(self) -> str | None:
