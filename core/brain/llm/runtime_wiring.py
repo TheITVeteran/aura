@@ -1,17 +1,27 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import inspect
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.phases.response_contract import ResponseContract, build_response_contract
 from core.runtime import service_access
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
+
+_SOFT_RUNTIME_FAILURES = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 _USER_FACING_ORIGINS = frozenset({
     "user",
@@ -28,16 +38,16 @@ _USER_FACING_ORIGINS = frozenset({
 })
 
 
-def _origin_tokens(origin: Optional[str]) -> set[str]:
+def _origin_tokens(origin: str | None) -> set[str]:
     normalized = str(origin or "").strip().lower().replace("-", "_")
     return {token for token in normalized.split("_") if token}
 
 
-def is_user_facing_origin(origin: Optional[str]) -> bool:
+def is_user_facing_origin(origin: str | None) -> bool:
     return bool(_origin_tokens(origin) & _USER_FACING_ORIGINS)
 
 
-def _objective_from_messages(messages: Optional[List[Dict[str, Any]]]) -> str:
+def _objective_from_messages(messages: list[dict[str, Any]] | None) -> str:
     if not messages:
         return ""
     for msg in reversed(messages):
@@ -49,12 +59,12 @@ def _objective_from_messages(messages: Optional[List[Dict[str, Any]]]) -> str:
     return ""
 
 
-def _coerce_prompt_from_messages(messages: Optional[List[Dict[str, Any]]]) -> Tuple[str, Optional[str]]:
+def _coerce_prompt_from_messages(messages: list[dict[str, Any]] | None) -> tuple[str, str | None]:
     if not messages:
         return "", None
 
-    system_parts: List[str] = []
-    convo_parts: List[str] = []
+    system_parts: list[str] = []
+    convo_parts: list[str] = []
 
     for msg in messages:
         if not isinstance(msg, dict):
@@ -80,7 +90,7 @@ def _coerce_prompt_from_messages(messages: Optional[List[Dict[str, Any]]]) -> Tu
     return prompt, system_prompt
 
 
-def _merge_system_prompt(messages: List[Dict[str, Any]], extra: str) -> List[Dict[str, Any]]:
+def _merge_system_prompt(messages: list[dict[str, Any]], extra: str) -> list[dict[str, Any]]:
     if not extra:
         return messages
 
@@ -99,7 +109,7 @@ def _merge_system_prompt(messages: List[Dict[str, Any]], extra: str) -> List[Dic
 async def resolve_runtime_state(
     explicit_state: Any = None,
     *,
-    origin: Optional[str],
+    origin: str | None,
     is_background: bool,
 ) -> Any:
     if explicit_state is not None and hasattr(explicit_state, "cognition"):
@@ -111,7 +121,7 @@ async def resolve_runtime_state(
         repo = service_access.resolve_state_repository(default=None)
         if repo and hasattr(repo, "get_current"):
             return await repo.get_current()
-    except Exception:
+    except _SOFT_RUNTIME_FAILURES:
         return None
     return None
 
@@ -148,7 +158,7 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
     if payload_state is None or not objective:
         return
 
-    snippets: List[str] = []
+    snippets: list[str] = []
     seen: set[str] = set()
 
     def _push(item: Any) -> None:
@@ -185,7 +195,7 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
             if search_knowledge is not None:
                 for item in list(await _call_memory_method(search_knowledge, objective, limit=3) or []):
                     _push(item)
-    except Exception:
+    except _SOFT_RUNTIME_FAILURES:
         return
 
     if snippets:
@@ -194,16 +204,16 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
 
 async def prepare_runtime_payload(
     *,
-    prompt: Optional[str],
-    system_prompt: Optional[str],
-    messages: Optional[List[Dict[str, Any]]],
+    prompt: str | None,
+    system_prompt: str | None,
+    messages: list[dict[str, Any]] | None,
     state: Any,
-    origin: Optional[str],
+    origin: str | None,
     is_background: bool,
-) -> Tuple[str, Optional[str], Optional[List[Dict[str, Any]]], Optional[ResponseContract], Any]:
+) -> tuple[str, str | None, list[dict[str, Any]] | None, ResponseContract | None, Any]:
     objective = str(prompt or _objective_from_messages(messages) or "").strip()
     runtime_state = await resolve_runtime_state(state, origin=origin, is_background=is_background)
-    contract: Optional[ResponseContract] = None
+    contract: ResponseContract | None = None
     prepared_messages = messages
 
     if runtime_state is not None and objective:
@@ -211,13 +221,13 @@ async def prepare_runtime_payload(
         try:
             if hasattr(runtime_state, "derive"):
                 payload_state = runtime_state.derive("runtime_llm_payload", origin="runtime_wiring")
-        except Exception:
+        except _SOFT_RUNTIME_FAILURES:
             payload_state = runtime_state
 
         try:
             payload_state.cognition.current_objective = objective
             payload_state.cognition.current_origin = str(origin or "system")
-        except Exception as _exc:
+        except _SOFT_RUNTIME_FAILURES as _exc:
             record_degradation('runtime_wiring', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -230,14 +240,14 @@ async def prepare_runtime_payload(
                     user_message=str(objective or "")[:500],
                     origin=str(origin or "system"),
                 )
-            except Exception as exc:
+            except _SOFT_RUNTIME_FAILURES as exc:
                 record_degradation('runtime_wiring', exc)
                 logger.debug("Substrate profile precompile skipped: %s", exc)
 
         if not is_background:
             try:
                 await _hydrate_runtime_memory(payload_state, objective)
-            except Exception as _exc:
+            except _SOFT_RUNTIME_FAILURES as _exc:
                 record_degradation('runtime_wiring', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -252,7 +262,7 @@ async def prepare_runtime_payload(
                 from core.brain.llm.context_assembler import ContextAssembler
 
                 prepared_messages = ContextAssembler.build_messages(payload_state, objective)
-            except Exception:
+            except _SOFT_RUNTIME_FAILURES:
                 prepared_messages = None
 
     if prepared_messages is not None:
@@ -273,9 +283,9 @@ def derive_substrate_generation_overrides(
     *,
     runtime_state: Any,
     objective: str,
-    origin: Optional[str],
+    origin: str | None,
     is_background: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compile substrate-driven sampler overrides for foreground generation."""
     if runtime_state is None or is_background or not objective:
         return {}
@@ -295,18 +305,18 @@ def derive_substrate_generation_overrides(
                 getattr(sve.get_current_profile(), "compilation_source", "") or "substrate_voice"
             )
         return overrides
-    except Exception as exc:
+    except _SOFT_RUNTIME_FAILURES as exc:
         record_degradation('runtime_wiring', exc)
         logger.debug("Substrate generation override skipped: %s", exc)
         return {}
 
 
 def build_agentic_tool_map(
-    required_skill: Optional[str] = None,
+    required_skill: str | None = None,
     *,
-    objective: Optional[str] = None,
+    objective: str | None = None,
     max_tools: int = 8,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     try:
         from core.container import ServiceContainer
 
@@ -322,7 +332,7 @@ def build_agentic_tool_map(
             ) or []
         else:
             tool_defs = cap.get_tool_definitions() or []
-        tools: Dict[str, Any] = {}
+        tools: dict[str, Any] = {}
         for entry in tool_defs:
             fn = entry.get("function", {}) if isinstance(entry, dict) else {}
             name = fn.get("name")
@@ -333,11 +343,11 @@ def build_agentic_tool_map(
                     continue
             tools[name] = fn
         return tools or None
-    except Exception:
+    except _SOFT_RUNTIME_FAILURES:
         return None
 
 
-def should_force_tool_handoff(contract: Optional[ResponseContract], *, is_background: bool) -> bool:
+def should_force_tool_handoff(contract: ResponseContract | None, *, is_background: bool) -> bool:
     if os.environ.get("AURA_EMBODIED_CHALLENGE"):
         return False
     return bool(

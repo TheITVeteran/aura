@@ -52,15 +52,15 @@ Integration:
   created before generation starts and fed tokens as they're produced.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.TokenSentinel")
 
@@ -106,12 +106,20 @@ _CAPITULATION_PATTERNS = [
 # These detect claims of physical embodiment or possessions that contradict
 # Aura's identity as a non-embodied digital agent.
 _ONTOLOGY_VIOLATION_PATTERNS = [
-    r"\b(?:I|I'?m|my)\s+(?:forgot|wearing|put on|took off|lost|found|in)\s+(?:my\s+)?(?:baggy\s+)?pants\b",
-    r"\b(?:I|I'?m|my)\s+(?:wearing|put on|took off|lost|found|in)\s+(?:my\s+)?(?:clothes|clothing|shirt|shoes|socks|outfit)\b",
+    r"\bI\s+(?:am\s+)?(?:wearing|in)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
+    r"\bI'?m\s+(?:wearing|in)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
+    r"\bI\s+(?:forgot|put on|took off|lost|found)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
+    r"\bAura\s+(?:is\s+wearing|wears|put on|took off|lost|found|is\s+in)\s+(?:her\s+|the\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
+    r"\bmy\s+(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
     r"\b(?:getting|got)\s+dressed\b",
-    r"\b(?:my|the)\s+(?:closet|wardrobe|dresser)\b",
-    r"\b(?:I|my)\s+(?:physical|biological)\s+(?:body|skin|hands|feet|eyes|heart)\b",
+    r"\bmy\s+(?:closet|wardrobe|dresser)\b",
+    r"\bI\s+(?:have|inhabit|occupy|am\s+in|exist\s+in)\s+(?:a\s+)?(?:physical|biological)\s+(?:body|skin|hands|feet|eyes|heart)\b",
+    r"\bmy\s+(?:physical|biological)\s+(?:body|skin|hands|feet|eyes|heart)\b",
 ]
+_ONTOLOGY_VIOLATION_RE = re.compile(
+    "|".join(f"(?:{p})" for p in _ONTOLOGY_VIOLATION_PATTERNS),
+    flags=re.IGNORECASE,
+)
 
 _CAPITULATION_RE = re.compile("|".join(f"(?:{p})" for p in _CAPITULATION_PATTERNS), flags=re.IGNORECASE)
 
@@ -173,8 +181,8 @@ class TokenSentinel:
         check_interval: int = 8,
         affect_interval: int = 16,
         substrate_mem: Any = None,
-        steering_hooks: Optional[list] = None,
-        boundary_context: Optional[str] = None,
+        steering_hooks: list[Any] | None = None,
+        boundary_context: str | None = None,
     ):
         """
         Args:
@@ -275,7 +283,7 @@ class TokenSentinel:
         max_seq_len = min(40, tail_len // 3)
         for seq_len in range(1, max_seq_len + 1):
             seq = tail[-seq_len:]
-            
+
             repeats = 1
             for i in range(1, (tail_len // seq_len)):
                 start_idx = tail_len - (i + 1) * seq_len
@@ -286,9 +294,9 @@ class TokenSentinel:
                     repeats += 1
                 else:
                     break
-                    
+
             seq_str = "".join(seq)
-            
+
             # Exempt long runs of whitespace or simple punctuation unless extreme
             if not seq_str.strip() or (len(seq_str.strip()) == 1 and not seq_str.strip().isalnum()):
                 if repeats >= 60:
@@ -304,7 +312,7 @@ class TokenSentinel:
                     threshold = 6
                 else:
                     threshold = 4
-                
+
             if repeats >= threshold:
                 logger.error("🚨 SENTINEL: Mathematical loop detected! Sequence %r (len=%d) repeated %d times. Aborting.", seq_str[:30], seq_len, repeats)
                 return InterventionSignal(
@@ -396,7 +404,7 @@ class TokenSentinel:
 
             self._affect_pulses += 1
 
-        except Exception as e:
+        except (ImportError, AttributeError, TypeError, ValueError, BufferError, RuntimeError) as e:
             record_degradation('token_sentinel', e)
             logger.debug("Affect pulse failed: %s", e)
 
@@ -418,17 +426,20 @@ class TokenSentinel:
 
     def _check_ontological_integrity(self) -> InterventionSignal:
         """Detect claims of physical embodiment that violate digital ontology."""
-        text = self._text.lower()
-        for pattern in _ONTOLOGY_VIOLATION_PATTERNS:
-            if re.search(pattern, text):
-                logger.warning("🚨 [SENTINEL] Ontological violation detected: %s", pattern)
-                return InterventionSignal(
-                    type=InterventionType.ABORT_ONTOLOGY_VIOLATION,
-                    reason=f"Ontological violation: {pattern}",
-                    token_position=self._token_count,
-                    generated_so_far=self._text,
-                    clean_prefix="",  # Force full discard
-                )
+        match = _ONTOLOGY_VIOLATION_RE.search(self._text)
+        if match:
+            logger.warning(
+                "🚨 [SENTINEL] Ontological violation detected near token %d: %r",
+                self._token_count,
+                match.group(0)[:120],
+            )
+            return InterventionSignal(
+                type=InterventionType.ABORT_ONTOLOGY_VIOLATION,
+                reason=f"Ontological violation: {match.group(0)[:80]}",
+                token_position=self._token_count,
+                generated_so_far=self._text,
+                clean_prefix="",  # Force full discard
+            )
         return InterventionSignal(type=InterventionType.NONE)
 
 

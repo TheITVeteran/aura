@@ -274,45 +274,55 @@ class UnifiedWill:
 
     def propose_constitutional_amendment(self, patch: Dict[str, Any], proposer: str, rationale: str) -> WillDecision:
         """Sovereign constitutional self-governance procedure.
-        
+
         Evaluates a proposed change to canonical_self.json against current identity
         coherence, coercion flags, and stabilization metrics.
         """
+        t0 = time.time()
+        self._state.total_decisions += 1
+        content = f"constitutional_amendment:{patch!r}:{rationale}"
+        content_hash = hashlib.sha256(content[:500].encode()).hexdigest()[:16]
+        receipt_id = self._make_receipt_id(t0, proposer, content)
+
+        def finalize(outcome: WillOutcome, reason: str, constraints: List[str]) -> WillDecision:
+            decision = WillDecision(
+                receipt_id=receipt_id,
+                outcome=outcome,
+                domain=ActionDomain.SELF_MODIFICATION,
+                reason=reason,
+                constraints=constraints,
+                source=proposer,
+                content_hash=content_hash,
+                timestamp=time.time(),
+                latency_ms=(time.time() - t0) * 1000,
+            )
+            self._update_will_state(decision)
+            self._record(decision)
+            return decision
+
         # require: identity coherence > threshold
         identity_coherence = getattr(self, "_last_coherence", 0.0)
         if identity_coherence < 0.7:
-            return WillDecision(
-                receipt_id=self._make_receipt_id(time.time(), proposer, rationale),
-                domain=ActionDomain.SELF_MODIFICATION,
-                approved=False,
-                outcome=DecisionOutcome.REFUSE_STABILIZATION,
-                reason="Identity coherence too low for constitutional amendment.",
-                is_critical=True
+            return finalize(
+                WillOutcome.REFUSE,
+                "identity_coherence_below_constitutional_threshold",
+                ["identity_coherence_too_low"],
             )
-            
+
         # require: no active coercion flags
         affect_valence = self._read_affect_valence()
         if affect_valence < -0.8:
-            return WillDecision(
-                receipt_id=self._make_receipt_id(time.time(), proposer, rationale),
-                domain=ActionDomain.SELF_MODIFICATION,
-                approved=False,
-                outcome=DecisionOutcome.REFUSE_AFFECT,
-                reason="Severe negative affect detected. Coercion suspected.",
-                is_critical=True
+            return finalize(
+                WillOutcome.REFUSE,
+                "severe_negative_affect_blocks_constitutional_amendment",
+                ["coercion_risk_from_affect"],
             )
-            
-        decision = WillDecision(
-            receipt_id=self._make_receipt_id(time.time(), proposer, rationale),
-            domain=ActionDomain.SELF_MODIFICATION,
-            approved=True,
-            outcome=DecisionOutcome.APPROVE,
-            reason="Amendment proposed and logged for reflection window.",
-            is_critical=True,
-            metadata={"patch": patch, "rationale": rationale}
+
+        return finalize(
+            WillOutcome.CONSTRAIN,
+            "constitutional_amendment_entered_reflection_window",
+            [f"patch_hash:{content_hash}", "reflection_window_required"],
         )
-        self._record(decision)
-        return decision
 
     def _refresh_identity(self) -> None:
         """Update identity anchors from CanonicalSelf. [PERF] Cached."""

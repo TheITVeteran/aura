@@ -24,9 +24,10 @@ import logging
 import math
 import re
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Callable, Iterable
+from typing import Any
 
 logger = logging.getLogger("Brain.ContextGate")
 
@@ -36,7 +37,7 @@ logger = logging.getLogger("Brain.ContextGate")
 def _clamp01(x: float) -> float:
     try:
         return max(0.0, min(1.0, float(x)))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return 0.0
 
 
@@ -54,7 +55,7 @@ def _optional_tiktoken_encoding() -> Any:
         import tiktoken  # type: ignore
 
         return tiktoken.get_encoding("cl100k_base")
-    except Exception:
+    except (ImportError, LookupError, AttributeError, TypeError, ValueError):
         return None
 
 
@@ -74,7 +75,7 @@ def estimate_tokens(text: str) -> int:
     if encoding is not None:
         try:
             encoded_count = max(1, len(encoding.encode(text)))
-        except Exception:
+        except (TypeError, ValueError, UnicodeError):
             pass
 
     words = re.findall(r"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", text)
@@ -129,7 +130,7 @@ class ContextBlock:
     timestamp: float = field(default_factory=time.time)
     include_if: Callable[[], bool] | None = None
 
-    def compact(self) -> "ContextBlock":
+    def compact(self) -> ContextBlock:
         """Return a copy with content trimmed to max_tokens."""
         text = str(self.content or "").strip()
         if not text:
@@ -250,7 +251,7 @@ class AttentionalContextGate:
             try:
                 if not bool(block.include_if()):
                     return False
-            except Exception:
+            except (AttributeError, TypeError, ValueError, RuntimeError):
                 return False
 
         focus_sources = focus_sources or set()

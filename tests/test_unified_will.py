@@ -217,7 +217,43 @@ class TestCriticalOverride:
 
 
 # ---------------------------------------------------------------------------
-# 6. Audit trail
+# 6. Constitutional amendment governance
+# ---------------------------------------------------------------------------
+
+class TestConstitutionalAmendments:
+    """Constitutional self-modification must return real WillDecision records."""
+
+    def test_low_coherence_refuses_constitutional_amendment(self, will):
+        will._last_coherence = 0.2
+
+        decision = will.propose_constitutional_amendment(
+            {"identity": "rewrite"},
+            proposer="test",
+            rationale="probe refusal path",
+        )
+
+        assert decision.outcome == WillOutcome.REFUSE
+        assert decision.domain == ActionDomain.SELF_MODIFICATION
+        assert decision.source == "test"
+        assert decision in will._audit_trail
+
+    def test_stable_amendment_enters_reflection_window(self, will):
+        will._last_coherence = 0.95
+
+        with patch.object(will, "_read_affect_valence", return_value=0.0):
+            decision = will.propose_constitutional_amendment(
+                {"values": ["evidence"]},
+                proposer="test",
+                rationale="probe approval path",
+            )
+
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert "reflection_window_required" in decision.constraints
+        assert decision.is_approved()
+
+
+# ---------------------------------------------------------------------------
+# 7. Audit trail
 # ---------------------------------------------------------------------------
 
 class TestAuditTrail:
@@ -256,7 +292,7 @@ class TestAuditTrail:
 
 
 # ---------------------------------------------------------------------------
-# 7. Graceful degradation
+# 8. Graceful degradation
 # ---------------------------------------------------------------------------
 
 class TestDegradation:
@@ -281,7 +317,7 @@ class TestDegradation:
 
 
 # ---------------------------------------------------------------------------
-# 8. Singleton behavior
+# 9. Singleton behavior
 # ---------------------------------------------------------------------------
 
 class TestSingleton:
@@ -297,7 +333,7 @@ class TestSingleton:
 
 
 # ---------------------------------------------------------------------------
-# 9. Will state evolution
+# 10. Will state evolution
 # ---------------------------------------------------------------------------
 
 class TestWillState:
@@ -326,7 +362,7 @@ class TestWillState:
 
 
 # ---------------------------------------------------------------------------
-# 10. Wiring verification
+# 11. Wiring verification
 # ---------------------------------------------------------------------------
 
 class TestWiringVerification:
@@ -382,7 +418,7 @@ class TestWiringVerification:
 
 
 # ---------------------------------------------------------------------------
-# 11. Complete action coverage
+# 12. Complete action coverage
 # ---------------------------------------------------------------------------
 
 class TestActionCoverage:

@@ -1333,10 +1333,7 @@ async def run_watchdog(args: Optional[argparse.Namespace] = None):
             logger.warning("Crash detected (Code: %s). Restarting in %ss...", proc.returncode, delay)
             await asyncio.sleep(delay)
     finally:
-        try:
-            lock_file.unlink(missing_ok=True)
-        except Exception:
-            pass
+        release_instance_lock()
 
 # ---------------------------------------------------------------------------
 from core.utils.singleton import acquire_instance_lock, release_instance_lock

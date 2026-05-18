@@ -1,15 +1,15 @@
 import pytest
 
-from core.phases.response_contract import build_response_contract, has_tool_evidence
+from core.brain.llm.runtime_wiring import prepare_runtime_payload
 from core.phases.dialogue_policy import (
     contains_corrupted_language,
     repair_dialogue_surface,
     validate_dialogue_response,
 )
-from core.brain.llm.runtime_wiring import prepare_runtime_payload
+from core.phases.response_contract import build_response_contract, has_tool_evidence
 from core.runtime.turn_analysis import analyze_turn
-from core.synthesis import stabilize_user_facing_response, strip_role_artifacts
 from core.state.aura_state import AuraState
+from core.synthesis import stabilize_user_facing_response, strip_role_artifacts
 
 
 def test_response_contract_requires_search_for_specific_lookup():

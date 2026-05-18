@@ -1,18 +1,18 @@
 """Conversational Synthesis Layer
 Transforms tool outputs into natural, engaging dialogue
 """
-from core.runtime.errors import record_degradation
 import ast
 import logging
 import operator
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
     is_status_check_turn,
     live_chat_diagnostic_floor,
 )
+from core.runtime.errors import record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
 logger = logging.getLogger("Aura.Conversation")
@@ -209,7 +209,7 @@ def _direct_answer_floor(user_message: str) -> str:
         if re.fullmatch(r"[0-9\s+\-*/().*]+", expr):
             try:
                 return _format_number(_safe_eval_expr(ast.parse(expr, mode="eval")))
-            except Exception:
+            except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError):
                 pass
 
     sum_match = re.search(r"(?:sum of|what is)\s+([0-9]+)\s*\+\s*([0-9]+)", lower)
@@ -329,7 +329,6 @@ def _conversation_response_floor(user_message: str) -> str:
     lower = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lower:
         return ""
-    greeting = bool(re.search(r"\b(hello|hi|hey)\b", lower))
     asks_state = any(
         phrase in lower
         for phrase in (
@@ -469,7 +468,8 @@ def strip_meta_commentary(text: str) -> str:
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            if not cleaned_lines: continue # Skip leading blank lines
+            if not cleaned_lines:
+                continue
             cleaned_lines.append(line)
             continue
             
@@ -524,35 +524,6 @@ def cure_personality_leak(text: str) -> str:
     if not text:
         return text
     
-    # 1. Check for total failure cases (responses that are JUST assistant talk)
-    low_text = text.lower()
-    robotic_indicators = [
-        "how can i assist you today",
-        "i'm just a digital entity",
-        "as an ai assistant",
-        "i don't engage in specific topics",
-        "how may i assist you today",
-        "in this brief exchange",
-        "digital intelligence",
-        "anything specific you'd like to discuss",
-        "i'm just here for a chat",
-        "how's it going", # General assistant greeting
-        "how can i assist you",
-        "i am functioning as",
-        "feel free to",
-        "how can i help",
-        "what can i do for you",
-        "clarify or rephrase",
-        "rephrase your question",
-        "bit of a mystery",
-        "caught your attention",
-        "understand precisely what you are asking",
-        "exactly what you're asking",
-        "i can't directly access",
-        "i can't access real-time",
-        "i don't have access to",
-        "i'm unable to access",
-    ]
     # 2. Surgical removal of robotic preambles and tech leaks
     result = strip_meta_commentary(text)
     
@@ -606,8 +577,8 @@ class ConversationalSynthesizer:
     async def synthesize_response(
         self,
         user_message: str,
-        tool_results: List[Dict[str, Any]],
-        context: Optional[Dict[str, Any]] = None,
+        tool_results: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
         brain: Any = None
     ) -> str:
         """Transform tool results into a natural conversational response using the LLM.

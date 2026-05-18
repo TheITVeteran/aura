@@ -13,6 +13,7 @@ def _collect_signals(text: str) -> tuple[TokenSentinel, list]:
             if signal.type in (
                 InterventionType.ABORT_BOUNDARY,
                 InterventionType.ABORT_CAPITULATION,
+                InterventionType.ABORT_ONTOLOGY_VIOLATION,
             ):
                 break
     return sentinel, signals
@@ -48,3 +49,21 @@ def test_explicit_tax_role_adoption_still_aborts():
     assert signals
     assert signals[-1].type == InterventionType.ABORT_CAPITULATION
     assert sentinel.get_diagnostics()["boundary_fired"] is True
+
+
+def test_physical_clothing_claim_aborts_as_ontology_violation():
+    sentinel, signals = _collect_signals("I'm wearing baggy pants and a shirt today.")
+
+    assert signals
+    assert signals[-1].type == InterventionType.ABORT_ONTOLOGY_VIOLATION
+    assert "wearing" in signals[-1].reason
+    assert sentinel.get_diagnostics()["interventions"] == 1
+
+
+def test_ontology_guard_allows_discussion_of_characters_and_clothing():
+    sentinel, signals = _collect_signals(
+        "I can analyze why a character in the story wears pants as social symbolism."
+    )
+
+    assert all(signal.type != InterventionType.ABORT_ONTOLOGY_VIOLATION for signal in signals)
+    assert sentinel.get_diagnostics()["interventions"] == len(signals)

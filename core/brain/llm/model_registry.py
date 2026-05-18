@@ -66,7 +66,7 @@ def _detect_72b_q4() -> bool:
     shard1 = BASE_DIR / "models_gguf" / "qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"
     try:
         return shard1.exists() and shard1.stat().st_size > 3_500_000_000
-    except Exception:
+    except OSError:
         return False
 _72B_READY = _detect_72b_q4()
 
@@ -116,7 +116,7 @@ def _resolve_active_fused_model() -> str | None:
         if not Path(path).exists():
             return None
         return path
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return None
 
 
@@ -287,7 +287,7 @@ def get_model_path(model_name: str | None = None) -> str:
     name = normalize_runtime_model_name(raw_name)
 
     # Mapping of local names to HF repo IDs for auto-download fallback
-    HF_FALLBACKS = {
+    hf_fallbacks = {
         "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
         "Qwen2.5-7B-Instruct-4bit":   "mlx-community/Qwen2.5-7B-Instruct-4bit",
         "Qwen2.5-32B-Instruct-8bit":  "mlx-community/Qwen2.5-32B-Instruct-8bit",
@@ -304,7 +304,7 @@ def get_model_path(model_name: str | None = None) -> str:
         if local_path.exists():
             return str(local_path.resolve())
         # Fallback to repo ID if missing locally
-        return HF_FALLBACKS.get(name, str(local_path))
+        return hf_fallbacks.get(name, str(local_path))
 
     return str(local_path)
 
@@ -472,6 +472,10 @@ def get_endpoint_name_for_model(model_name: str | None) -> str:
         return PRIMARY_ENDPOINT
     if lowered == deep_lower:
         return DEEP_ENDPOINT
+    if lowered == brainstem_lower:
+        return BRAINSTEM_ENDPOINT
+    if lowered == fallback_lower:
+        return FALLBACK_ENDPOINT
 
     return PRIMARY_ENDPOINT
 

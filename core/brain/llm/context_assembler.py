@@ -14,7 +14,7 @@ from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
 from core.runtime.conversation_support import build_conversational_context_blocks
-from core.state.aura_state import AuraState, CognitiveMode, phenomenal_text
+from core.state.aura_state import AuraState, phenomenal_text
 from core.synthesis import IDENTITY_LOCK
 
 logger = logging.getLogger("Brain.Context")
@@ -127,13 +127,6 @@ class ContextAssembler:
         working_memory: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         filtered: list[dict[str, Any]] = []
-        deterministic_skill_results = {
-            "clock",
-            "environment_info",
-            "memory_ops",
-            "system_proprioception",
-            "toggle_senses",
-        }
         live_dialogue_roles = {"user", "assistant", "aura"}
         background_sources = {
             "agency_core",
@@ -176,7 +169,8 @@ class ContextAssembler:
         try:
             from core.conversation.response_reliability import is_non_answer_repair_floor_reply
         except (ImportError, AttributeError):
-            is_non_answer_repair_floor_reply = lambda _text: False
+            def is_non_answer_repair_floor_reply(_text: str) -> bool:
+                return False
         for message in working_memory:
             if not isinstance(message, dict):
                 continue
@@ -695,9 +689,11 @@ class ContextAssembler:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
             # 2. Vital continuity only
-            if rolling_summary: base += rolling_summary
+            if rolling_summary:
+                base += rolling_summary
             # 3. Social/Humor strategy
-            if personhood_context: base += personhood_context
+            if personhood_context:
+                base += personhood_context
         elif is_casual:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -707,8 +703,10 @@ class ContextAssembler:
                 energy = "high" if affect.arousal > 0.7 else "mellow" if affect.arousal < 0.3 else "steady"
                 base += f"## CURRENT VIBE\nYou're feeling {tone} and {energy}.\n\n"
             # 3. Continuity + Personhood
-            if rolling_summary: base += rolling_summary
-            if personhood_context: base += personhood_context
+            if rolling_summary:
+                base += rolling_summary
+            if personhood_context:
+                base += personhood_context
         else:
             # Standard path for non-casual/deliberate turns (Research/Complex tasks)
             base = (
@@ -1202,7 +1200,7 @@ class ContextAssembler:
                     )
                     if goals_text:
                         dynamic_system += f"\nActive Drives: {goals_text}"
-            except Exception as exc:
+            except Exception:
                 dynamic_system = system_prompt
         
         system_msg = {"role": "system", "content": dynamic_system}
