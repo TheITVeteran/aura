@@ -1,24 +1,61 @@
-from core.runtime.errors import record_degradation
+import asyncio
+import inspect
 import logging
 import time
-import asyncio
-from typing import Any, Dict
+from typing import Any
+
 from core.config import config
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 from core.runtime.organism_status import get_organism_status
 
 logger = logging.getLogger(__name__)
+_STATUS_MANAGER_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    Exception,
+)
+
+
+def _record_status_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+) -> None:
+    record_degradation("status_manager", error, severity=severity, action=action)
+
 
 def capture_and_log(e, meta):
     logger.error("Error in status manager: %s | Meta: %s", e, meta)
 
+
+def _dispose_awaitable(result: Any) -> None:
+    if inspect.iscoroutine(result):
+        result.close()
+        return
+    cancel = getattr(result, "cancel", None)
+    if callable(cancel):
+        cancel()
+
+
+def _task_scheduled(result: Any) -> bool:
+    return isinstance(result, asyncio.Task) or asyncio.isfuture(result)
+
+
 class StatusManagerMixin:
     """Mixin for status reporting and telemetry emission."""
-    
+
     # Type hints for attributes provided by RobustOrchestrator
     status: Any
     start_time: float
-    stats: Dict[str, Any]
+    stats: dict[str, Any]
     message_queue: Any
     reply_queue: Any
     liquid_state: Any
@@ -32,7 +69,7 @@ class StatusManagerMixin:
         if getattr(self, "_in_status_call", False):
             return {"status": "recursive_depth_guard", "healthy": False}
         self._in_status_call = True
-        
+
         try:
             if not hasattr(self, "_cached_status") or self._cached_status is None:
                 self._cached_status = {
@@ -44,14 +81,18 @@ class StatusManagerMixin:
                     "initialized": getattr(self.status, "initialized", False),
                     "running": getattr(self.status, "running", False),
                     "cycle_count": getattr(self.status, "cycle_count", 0),
-                    "healthy": True
+                    "healthy": True,
                 }
 
             self._cached_status["uptime"] = time.time() - self.start_time
             self._cached_status["stats"] = self.stats.copy()
-            self._cached_status["message_queue_size"] = self.message_queue.qsize() if hasattr(self, "message_queue") else 0
-            self._cached_status["reply_queue_size"] = self.reply_queue.qsize() if hasattr(self, "reply_queue") else 0
-            
+            self._cached_status["message_queue_size"] = (
+                self.message_queue.qsize() if hasattr(self, "message_queue") else 0
+            )
+            self._cached_status["reply_queue_size"] = (
+                self.reply_queue.qsize() if hasattr(self, "reply_queue") else 0
+            )
+
             status_report = self._cached_status.copy()
             status_report["config"] = config.model_dump() if hasattr(config, "model_dump") else {}
 
@@ -63,16 +104,44 @@ class StatusManagerMixin:
                             self.health_check()
                         m_dump = self.status.model_dump()
                         status_report.update(m_dump)
-                        status_report["status"] = m_dump 
-                        for key in ("initialized", "running", "cycle_count", "is_processing", "mode", "skills_loaded"):
+                        status_report["status"] = m_dump
+                        for key in (
+                            "initialized",
+                            "running",
+                            "cycle_count",
+                            "is_processing",
+                            "mode",
+                            "skills_loaded",
+                        ):
                             if key not in status_report["status"]:
-                                status_report["status"][key] = getattr(self.status, key, True if key in ("initialized", "running") else (0 if key == "cycle_count" else (False if key == "is_processing" else (0 if key == "skills_loaded" else "neutral"))))
-                        
+                                status_report["status"][key] = getattr(
+                                    self.status,
+                                    key,
+                                    True
+                                    if key in ("initialized", "running")
+                                    else (
+                                        0
+                                        if key == "cycle_count"
+                                        else (
+                                            False
+                                            if key == "is_processing"
+                                            else (0 if key == "skills_loaded" else "neutral")
+                                        )
+                                    ),
+                                )
+
                         status_report["initialized"] = status_report["status"]["initialized"]
-                        status_report["cycle_count"] = getattr(self.status, "cycle_count", status_report["status"].get("cycle_count", 0))
-                    except (OSError, ConnectionError, TimeoutError) as e:
-                        record_degradation('status_manager', e)
-                        capture_and_log(e, {'module': __name__})
+                        status_report["cycle_count"] = getattr(
+                            self.status,
+                            "cycle_count",
+                            status_report["status"].get("cycle_count", 0),
+                        )
+                    except _STATUS_MANAGER_ERRORS as e:
+                        _record_status_degradation(
+                            e,
+                            action="returned cached/default status fields after status model dump failed",
+                        )
+                        capture_and_log(e, {"module": __name__})
                 else:
                     status_report["running"] = bool(getattr(self.status, "running", True))
                     status_report["initialized"] = bool(getattr(self.status, "initialized", True))
@@ -84,7 +153,7 @@ class StatusManagerMixin:
                         "cycle_count": status_report["cycle_count"],
                         "is_processing": bool(getattr(self.status, "is_processing", False)),
                         "mode": getattr(self.status, "mode", "neutral"),
-                        "skills_loaded": raw_sk
+                        "skills_loaded": raw_sk,
                     }
                     if hasattr(self, "health_check"):
                         status_report["healthy"] = self.health_check()
@@ -93,30 +162,42 @@ class StatusManagerMixin:
                 evidence = ServiceContainer.get("consciousness_evidence", default=None)
                 if evidence and hasattr(evidence, "snapshot"):
                     status_report["consciousness_evidence"] = evidence.snapshot()
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('status_manager', exc)
+            except _STATUS_MANAGER_ERRORS as exc:
+                _record_status_degradation(
+                    exc,
+                    action="returned status report without consciousness-evidence section",
+                )
                 logger.debug("Consciousness evidence unavailable for status: %s", exc)
 
             try:
                 executive_closure = ServiceContainer.get("executive_closure", default=None)
                 if executive_closure and hasattr(executive_closure, "get_status"):
                     status_report["executive_closure"] = executive_closure.get_status()
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('status_manager', exc)
+            except _STATUS_MANAGER_ERRORS as exc:
+                _record_status_degradation(
+                    exc,
+                    action="returned status report without executive-closure section",
+                )
                 logger.debug("Executive closure unavailable for status: %s", exc)
 
             try:
                 executive_authority = ServiceContainer.get("executive_authority", default=None)
                 if executive_authority and hasattr(executive_authority, "get_status"):
                     status_report["executive_authority"] = executive_authority.get_status()
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('status_manager', exc)
+            except _STATUS_MANAGER_ERRORS as exc:
+                _record_status_degradation(
+                    exc,
+                    action="returned status report without executive-authority section",
+                )
                 logger.debug("Executive authority unavailable for status: %s", exc)
 
             try:
                 status_report["organism"] = get_organism_status(self)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('status_manager', exc)
+            except _STATUS_MANAGER_ERRORS as exc:
+                _record_status_degradation(
+                    exc,
+                    action="returned status report without organism section",
+                )
                 logger.debug("Organism status unavailable for status report: %s", exc)
 
             return status_report
@@ -130,34 +211,67 @@ class StatusManagerMixin:
             ls = getattr(self, "liquid_state", None)
             if ls:
                 ls_status = ls.get_status()
-                monitor_stats = self._integrity_monitor.get_stats() if hasattr(self, '_integrity_monitor') else {}
-                
+                monitor_stats = (
+                    self._integrity_monitor.get_stats()
+                    if hasattr(self, "_integrity_monitor")
+                    else {}
+                )
+
                 if hasattr(self, "_publish_telemetry"):
-                    self._publish_telemetry({
-                        "energy": ls_status.get("energy", 80),
-                        "curiosity": ls_status.get("curiosity", 50),
-                        "frustration": ls_status.get("frustration", 0),
-                        "confidence": ls_status.get("focus", 50),
-                        "mood": ls_status.get("mood", "NEUTRAL"),
-                        "acceleration_factor": getattr(self.status, "acceleration_factor", 1.0),
-                        "singularity_active": getattr(self.status, "singularity_threshold", 0.0),
-                        "cpu_percent": monitor_stats.get("cpu_percent", 0),
-                        "memory_mb": monitor_stats.get("memory_mb", 0),
-                        "link_thickness": 5.0
-                    })
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('status_manager', exc)
+                    self._publish_telemetry(
+                        {
+                            "energy": ls_status.get("energy", 80),
+                            "curiosity": ls_status.get("curiosity", 50),
+                            "frustration": ls_status.get("frustration", 0),
+                            "confidence": ls_status.get("focus", 50),
+                            "mood": ls_status.get("mood", "NEUTRAL"),
+                            "acceleration_factor": getattr(self.status, "acceleration_factor", 1.0),
+                            "singularity_active": getattr(
+                                self.status, "singularity_threshold", 0.0
+                            ),
+                            "cpu_percent": monitor_stats.get("cpu_percent", 0),
+                            "memory_mb": monitor_stats.get("memory_mb", 0),
+                            "link_thickness": 5.0,
+                        }
+                    )
+        except _STATUS_MANAGER_ERRORS as exc:
+            _record_status_degradation(
+                exc,
+                action="scheduled stall recovery after telemetry pulse failed",
+                severity="error",
+            )
             logger.error("Telemetry pulse failure: %s", exc)
             if hasattr(self, "_recover_from_stall"):
                 from core.utils.task_tracker import get_task_tracker
-                get_task_tracker().track(self._recover_from_stall(), name="recover_from_stall")
+
+                recovery_coro = self._recover_from_stall()
+                try:
+                    recovery_task = get_task_tracker().track(
+                        recovery_coro, name="recover_from_stall"
+                    )
+                except _STATUS_MANAGER_ERRORS as recovery_exc:
+                    _dispose_awaitable(recovery_coro)
+                    _record_status_degradation(
+                        recovery_exc,
+                        action="skipped telemetry stall recovery after task tracker rejected recovery coroutine",
+                        severity="error",
+                    )
+                    logger.debug("Telemetry stall recovery scheduling failed: %s", recovery_exc)
+                else:
+                    if not _task_scheduled(recovery_task):
+                        _dispose_awaitable(recovery_coro)
+                        _dispose_awaitable(recovery_task)
 
     def _emit_telemetry(self, flow: str, text: str):
         """Helper to send updates to Thought Stream UI."""
         try:
             from ...thought_stream import get_emitter
-            cycle = self.status.cycle_count if hasattr(self, 'status') else 0
+
+            cycle = self.status.cycle_count if hasattr(self, "status") else 0
             get_emitter().emit(flow, text, level="info", category="Cognition", cycle=cycle)
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('status_manager', e)
+        except _STATUS_MANAGER_ERRORS as e:
+            _record_status_degradation(
+                e,
+                action="dropped cognition telemetry thought-stream update",
+            )
             logger.debug("Telemetry emit failed: %s", e)

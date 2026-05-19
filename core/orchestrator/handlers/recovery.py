@@ -1,21 +1,31 @@
 """core/orchestrator/handlers/recovery.py
 Extracted cognitive recovery and circuit-breaker reset logic.
 """
+
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from core.runtime.errors import record_degradation
 
 if TYPE_CHECKING:
     from core.orchestrator.main import RobustOrchestrator
 
 logger = logging.getLogger("Aura.Core.Orchestrator.Recovery")
+_RECOVERY_ERRORS = (ImportError, AttributeError, RuntimeError, TypeError, ValueError, Exception)
 
 
-async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
+def _record_recovery_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+) -> None:
+    record_degradation("recovery", error, severity=severity, action=action)
+
+
+async def retry_cognitive_connection(orch: RobustOrchestrator) -> bool:
     """Manually retry connecting to the cognitive brain (LLM).
     Forces a full re-wire of the Cognitive Engine AND resets the circuit breaker.
     """
@@ -43,26 +53,34 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
 
         # Also try through the cognitive engine
         ce = getattr(orch, "cognitive_engine", None)
-        if ce and hasattr(ce, 'client') and hasattr(ce.client, '_circuit_open'):
+        if ce and hasattr(ce, "client") and hasattr(ce.client, "_circuit_open"):
             ce.client._circuit_open = False
             ce.client._circuit_open_until = 0.0
             ce.client._consecutive_failures = 0
             logger.info("⚡ Circuit breaker FORCE RESET on CognitiveEngine.client")
 
-    except (ImportError, AttributeError, RuntimeError) as cb_err:
-        record_degradation('recovery', cb_err)
+    except _RECOVERY_ERRORS as cb_err:
+        _record_recovery_degradation(
+            cb_err,
+            action="continued cognitive retry after circuit-breaker reset failed",
+        )
         logger.warning("Circuit breaker/RateLimit reset skipped: %s", cb_err)
 
     try:
         from core.brain.cognitive_engine import CognitiveEngine
+
         ce = getattr(orch, "cognitive_engine", None)
         if ce is None:
             ce = CognitiveEngine()
 
         try:
             ce.setup()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('recovery', exc)
+        except _RECOVERY_ERRORS as exc:
+            _record_recovery_degradation(
+                exc,
+                action="continued cognitive retry after CognitiveEngine setup failed",
+                severity="error",
+            )
             logger.error("Setup failed: %s", exc)
 
         if not ce.lobotomized:
@@ -71,14 +89,18 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
 
             try:
                 from core.thought_stream import get_emitter
+
                 get_emitter().emit(
                     "System",
                     "Cognitive Connection Re-established",
                     level="success",
                     category="Brain",
                 )
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('recovery', exc)
+            except _RECOVERY_ERRORS as exc:
+                _record_recovery_degradation(
+                    exc,
+                    action="returned successful cognitive retry after thought-stream emission failed",
+                )
                 logger.debug("ThoughtStream emit failed during cognitive retry: %s", exc)
 
             return True
@@ -86,7 +108,11 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
             logger.error("❌ Cognitive Retry Failed: Engine still lobotomized after re-wire")
             return False
 
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('recovery', exc)
+    except _RECOVERY_ERRORS as exc:
+        _record_recovery_degradation(
+            exc,
+            action="returned failed cognitive retry after CognitiveEngine reconstruction failed",
+            severity="error",
+        )
         logger.error("Cognitive Retry Exception: %s", exc)
         return False

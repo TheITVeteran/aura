@@ -46,6 +46,17 @@ def _record_message_degradation(
     )
 
 
+async def _resolve_generation_result(result: Any) -> Any:
+    """Resolve sync, async, or nested-awaitable generation adapter results."""
+    depth = 0
+    while inspect.isawaitable(result):
+        result = await result
+        depth += 1
+        if depth >= 5:
+            raise RuntimeError("generation adapter returned too many nested awaitables")
+    return result
+
+
 # ── Response Repetition Detection ────────────────────────────────────────
 # General-purpose mechanism that detects when Aura is stuck in a cognitive
 # loop producing near-identical responses. When detected, injects a
@@ -823,16 +834,18 @@ class MessageHandlingMixin:
                 _brief_text = (
                     brief.to_briefing_text() if hasattr(brief, "to_briefing_text") else str(brief)
                 )
-                response = await self._inference_gate.generate(
-                    message,
-                    context={
-                        "history": history,
-                        "brief": _brief_text,
-                        "origin": origin,
-                        "is_background": False,
-                        "prefer_tier": "primary",
-                        "protected_foreground_lane": True,
-                    },
+                response = await _resolve_generation_result(
+                    self._inference_gate.generate(
+                        message,
+                        context={
+                            "history": history,
+                            "brief": _brief_text,
+                            "origin": origin,
+                            "is_background": False,
+                            "prefer_tier": "primary",
+                            "protected_foreground_lane": True,
+                        },
+                    )
                 )
 
                 # DR-3: InferenceGate.generate() ALWAYS returns a string (error message at worst).
@@ -849,14 +862,16 @@ class MessageHandlingMixin:
                             await gate._respawn_cortex_if_needed()
                             # Wait briefly for cortex to come up
                             await asyncio.sleep(3.0)
-                            response = await gate.generate(
-                                message,
-                                context={
-                                    "history": history,
-                                    "origin": origin,
-                                    "is_background": False,
-                                    "protected_foreground_lane": True,
-                                },
+                            response = await _resolve_generation_result(
+                                gate.generate(
+                                    message,
+                                    context={
+                                        "history": history,
+                                        "origin": origin,
+                                        "is_background": False,
+                                        "protected_foreground_lane": True,
+                                    },
+                                )
                             )
                     except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as retry_err:
                         _record_message_degradation(
@@ -891,16 +906,18 @@ class MessageHandlingMixin:
                         temp_history.append({"role": "assistant", "content": response})
 
                         continue_msg = "[SYSTEM: You hit your output token limit. Continue your exact previous thought seamlessly from where you left off.]"
-                        next_part = await self._inference_gate.generate(
-                            continue_msg,
-                            context={
-                                "history": temp_history,
-                                "brief": _brief_text,
-                                "origin": origin,
-                                "is_background": False,
-                                "prefer_tier": "primary",
-                                "protected_foreground_lane": True,
-                            },
+                        next_part = await _resolve_generation_result(
+                            self._inference_gate.generate(
+                                continue_msg,
+                                context={
+                                    "history": temp_history,
+                                    "brief": _brief_text,
+                                    "origin": origin,
+                                    "is_background": False,
+                                    "prefer_tier": "primary",
+                                    "protected_foreground_lane": True,
+                                },
+                            )
                         )
                         if next_part and next_part != "<|SILENCE|>":
                             # Add a space if it doesn't start with punctuation or space

@@ -1,6 +1,7 @@
 """Context Streaming Mixin for RobustOrchestrator.
 Extracts context gathering, chat streaming, and history management logic.
 """
+
 import asyncio
 import inspect
 import logging
@@ -9,6 +10,23 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
+_CONTEXT_STREAMING_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    Exception,
+)
+
+
+def _record_context_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+) -> None:
+    record_degradation("context_streaming", error, severity=severity, action=action)
 
 
 def _dispose_awaitable(result: Any) -> None:
@@ -26,11 +44,15 @@ class ContextStreamingMixin:
     async def _gather_agentic_context(self, message: str) -> dict[str, Any]:
         """Collect memories, stats, and world state for reasoning."""
         # 0. User Identity Detection
-        user_identity = self._detect_user_identity(message) or {"name": "Stranger", "role": "Unknown", "relation": "Neutral"}
+        user_identity = self._detect_user_identity(message) or {
+            "name": "Stranger",
+            "role": "Unknown",
+            "relation": "Neutral",
+        }
 
         # 1. Meta-Recall & Memory Query (Parallel)
         tasks = []
-        if hasattr(self, 'meta_learning') and self.meta_learning:
+        if hasattr(self, "meta_learning") and self.meta_learning:
             recall_result = self.meta_learning.recall_strategy(message)
             if inspect.isawaitable(recall_result):
                 tasks.append(recall_result)
@@ -40,12 +62,17 @@ class ContextStreamingMixin:
             tasks.append(asyncio.sleep(0, result={}))
 
         # Add Cold/Deep Memory Context (Vector/Graph)
-        if hasattr(self, 'memory') and self.memory:
-            u_name = user_identity.get('name', 'Stranger')
-            cold_memory_result = self.memory.get_cold_memory_context(f"{u_name}: {message}", limit=5)
+        if hasattr(self, "memory") and self.memory:
+            u_name = user_identity.get("name", "Stranger")
+            cold_memory_result = self.memory.get_cold_memory_context(
+                f"{u_name}: {message}", limit=5
+            )
             if inspect.isawaitable(cold_memory_result):
                 from core.utils.task_tracker import get_task_tracker
-                tasks.append(get_task_tracker().track(cold_memory_result, name="cold_memory_result"))
+
+                tasks.append(
+                    get_task_tracker().track(cold_memory_result, name="cold_memory_result")
+                )
             else:
                 tasks.append(asyncio.sleep(0, result=cold_memory_result or ""))
         else:
@@ -66,10 +93,14 @@ class ContextStreamingMixin:
             "world": world_ctx,
             "environment": env_ctx,
             "user": user_identity,
-            "meta_learning": results[0] if len(results) > 0 and not isinstance(results[0], Exception) else {},
-            "unified_memory": f"[INTERNAL RECALL]: {results[1]}" if results[1] and not isinstance(results[1], Exception) else "",
+            "meta_learning": results[0]
+            if len(results) > 0 and not isinstance(results[0], Exception)
+            else {},
+            "unified_memory": f"[INTERNAL RECALL]: {results[1]}"
+            if results[1] and not isinstance(results[1], Exception)
+            else "",
             "inner_monologue": "",
-            "focus": "STAY ON TOPIC. Prioritize the user's latest request above autonomous impulses."
+            "focus": "STAY ON TOPIC. Prioritize the user's latest request above autonomous impulses.",
         }
         if hasattr(self, "substrate"):
             try:
@@ -78,24 +109,30 @@ class ContextStreamingMixin:
                     _dispose_awaitable(inner_monologue)
                 else:
                     ctx["inner_monologue"] = inner_monologue or ""
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('context_streaming', _exc)
+            except _CONTEXT_STREAMING_ERRORS as _exc:
+                _record_context_degradation(
+                    _exc,
+                    action="continued agentic context build without substrate inner monologue",
+                )
                 logger.debug("Suppressed Exception: %s", _exc)
 
         # Sentient Context Injection: Affect & Drives
         ctx["emotional_state"] = "Stable"
-        if getattr(self, 'affect_engine', None):
+        if getattr(self, "affect_engine", None):
             try:
-                if hasattr(self.affect_engine, 'state'):
+                if hasattr(self.affect_engine, "state"):
                     ctx["emotional_state"] = self.affect_engine.state.dominant_emotion
-                elif hasattr(self.affect_engine, 'get_mood'):
+                elif hasattr(self.affect_engine, "get_mood"):
                     mood = self.affect_engine.get_mood()
                     if inspect.isawaitable(mood):
                         _dispose_awaitable(mood)
                     else:
                         ctx["emotional_state"] = mood
-            except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('context_streaming', e)
+            except _CONTEXT_STREAMING_ERRORS as e:
+                _record_context_degradation(
+                    e,
+                    action="continued agentic context build with stable emotional-state fallback",
+                )
                 logger.error("Affect extraction failed: %s", e, exc_info=True)
 
         # Theory of Mind Projection
@@ -112,7 +149,7 @@ class ContextStreamingMixin:
             ctx["theory_of_mind"] = {}
 
         # Social Relationship context
-        if hasattr(self, 'social') and self.social:
+        if hasattr(self, "social") and self.social:
             try:
                 social_context = self.social.get_social_context()
                 if inspect.isawaitable(social_context):
@@ -123,7 +160,10 @@ class ContextStreamingMixin:
                 ctx["social_narrative"] = ""
 
             # Passive depth increase with robust guard for None
-            if hasattr(self.social, "relationship_depth") and self.social.relationship_depth is not None:
+            if (
+                hasattr(self.social, "relationship_depth")
+                and self.social.relationship_depth is not None
+            ):
                 try:
                     # Capture current value safely
                     curr = self.social.relationship_depth
@@ -153,11 +193,14 @@ class ContextStreamingMixin:
                         "project_name": proj.name,
                         "project_goal": proj.goal,
                         "current_task": next_task.description if next_task else "No pending tasks",
-                        "backlog": [f"{t.status.upper()}: {t.description}" for t in all_tasks]
+                        "backlog": [f"{t.status.upper()}: {t.description}" for t in all_tasks],
                     }
                     logger.debug("Strategic context injected for project: %s", proj.name)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('context_streaming', e)
+            except _CONTEXT_STREAMING_ERRORS as e:
+                _record_context_degradation(
+                    e,
+                    action="continued agentic context build without strategic project context",
+                )
                 logger.error("Failed to inject strategic context: %s", e)
 
         # Core Engines
@@ -167,7 +210,7 @@ class ContextStreamingMixin:
 
         self._cognitive_engine = ServiceContainer.get("cognitive_engine", default=None)
         self._memory = ServiceContainer.get("memory_facade", default=None)
-        if self._memory and hasattr(self._memory, 'setup'):
+        if self._memory and hasattr(self._memory, "setup"):
             setup_result = self._memory.setup()
             if inspect.isawaitable(setup_result):
                 _dispose_awaitable(setup_result)
@@ -176,7 +219,7 @@ class ContextStreamingMixin:
         self._scratchpad_engine = ServiceContainer.get("scratchpad_engine", default=None)
 
         self._cognition = ServiceContainer.get("cognitive_integration", default=None)
-        if self._cognition and hasattr(self._cognition, 'setup'):
+        if self._cognition and hasattr(self._cognition, "setup"):
             setup_result = self._cognition.setup()
             if inspect.isawaitable(setup_result):
                 _dispose_awaitable(setup_result)
@@ -187,20 +230,28 @@ class ContextStreamingMixin:
         # to prevent resetting deduplication state on every message.
         if not hasattr(self, "_input_hash_cache"):
             import collections
+
             self._input_hash_cache = collections.deque(maxlen=5)
         if not hasattr(self, "_input_lock"):
             self._input_lock = RobustLock("Orchestrator.InputLock")
 
         self._agency_core = ServiceContainer.get("agency_core", default=None)
-        if getattr(self, 'drive_engine', None):
+        if getattr(self, "drive_engine", None):
             try:
-                drives = self.drive_engine.get_drives() if hasattr(self.drive_engine, 'get_drives') else {"curiosity": 0.5, "energy": 0.8}
+                drives = (
+                    self.drive_engine.get_drives()
+                    if hasattr(self.drive_engine, "get_drives")
+                    else {"curiosity": 0.5, "energy": 0.8}
+                )
                 if inspect.isawaitable(drives):
                     _dispose_awaitable(drives)
                     drives = {"curiosity": 0.5, "energy": 0.8}
                 ctx["metabolic_drives"] = drives
-            except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('context_streaming', e)
+            except _CONTEXT_STREAMING_ERRORS as e:
+                _record_context_degradation(
+                    e,
+                    action="continued agentic context build without metabolic drive vector",
+                )
                 logger.error("Drive extraction failed: %s", e)
 
         # Legacy CognitiveIntegration Integration
@@ -208,19 +259,25 @@ class ContextStreamingMixin:
         if cog_integration and hasattr(cog_integration, "build_enhanced_context"):
             try:
                 emotional_val = 0.5
-                if getattr(self, 'liquid_state', None):
-                     emotional_val = getattr(self.liquid_state, 'intensity', 0.5)
+                if getattr(self, "liquid_state", None):
+                    emotional_val = getattr(self.liquid_state, "intensity", 0.5)
 
-                enhanced_ctx_str = await cog_integration.build_enhanced_context(message, emotional_context=emotional_val)
+                enhanced_ctx_str = await cog_integration.build_enhanced_context(
+                    message, emotional_context=emotional_val
+                )
                 if enhanced_ctx_str:
                     ctx["advanced_cognition"] = enhanced_ctx_str
-            except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('context_streaming', e)
+            except _CONTEXT_STREAMING_ERRORS as e:
+                _record_context_degradation(
+                    e,
+                    action="continued agentic context build without enhanced cognition context",
+                )
                 logger.debug("Enhanced context unavailable: %s", e)
 
         # Tool Recommendation Injection
         try:
             from core.memory.learning.tool_learning import tool_learner
+
             category = tool_learner.classify_task(message)
             if inspect.isawaitable(category):
                 _dispose_awaitable(category)
@@ -232,11 +289,14 @@ class ContextStreamingMixin:
             if recommendations:
                 ctx["tool_recommendations"] = {
                     "category": category,
-                    "recommended_tools": recommendations
+                    "recommended_tools": recommendations,
                 }
                 logger.info("🛠️ Tool Recommendations: %s -> %s", category, recommendations)
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('context_streaming', e)
+        except _CONTEXT_STREAMING_ERRORS as e:
+            _record_context_degradation(
+                e,
+                action="continued agentic context build without tool recommendations",
+            )
             logger.debug("Tool recommendations failed: %s", e)
 
         return ctx
@@ -261,9 +321,13 @@ class ContextStreamingMixin:
             tier = "light"
             try:
                 from core.ops.thinking_mode import ModeRouter
+
                 tier = ModeRouter(self.reflex_engine).route(message).value
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('context_streaming', exc)
+            except _CONTEXT_STREAMING_ERRORS as exc:
+                _record_context_degradation(
+                    exc,
+                    action="continued chat stream with default thinking tier after routing failed",
+                )
                 logger.debug("Suppressed: %s", exc)
             # Build objective
             # Cleaned history for streaming chat speed (Fix: No leaks)
@@ -273,12 +337,16 @@ class ContextStreamingMixin:
             # Inject LiquidState into Tool Execution Context
             try:
                 from core.container import get_container
+
                 container = get_container()
-                ls = container.get('liquid_state')
-                context['liquid_state'] = ls.get_status()
-                logger.debug("TOOL EXECUTION: Injected liquid_state: %s", context['liquid_state'])
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('context_streaming', e)
+                ls = container.get("liquid_state")
+                context["liquid_state"] = ls.get_status()
+                logger.debug("TOOL EXECUTION: Injected liquid_state: %s", context["liquid_state"])
+            except _CONTEXT_STREAMING_ERRORS as e:
+                _record_context_degradation(
+                    e,
+                    action="fell back to maintenance stream after liquid-state context injection failed",
+                )
                 context_injection_error = e
                 logger.warning("TOOL EXECUTION: LiquidState injection failed: %s", e)
 
@@ -286,7 +354,9 @@ class ContextStreamingMixin:
             token_buffer = ""
             payload_context = {}
             if hasattr(self.cognitive_engine, "think_stream"):
-                async for token in self.cognitive_engine.think_stream(message, context=context, tier=tier):
+                async for token in self.cognitive_engine.think_stream(
+                    message, context=context, tier=tier
+                ):
                     if not payload_context.get("stream_started"):
                         payload_context["stream_started"] = True
                     token_buffer += token
@@ -295,12 +365,14 @@ class ContextStreamingMixin:
                 # Fallback for legacy/broken instances
                 if context_injection_error is not None:
                     raise context_injection_error
-                thought = await self.cognitive_engine.think(message, context=context, mode=ThinkingMode.DEEP)
+                thought = await self.cognitive_engine.think(
+                    message, context=context, mode=ThinkingMode.DEEP
+                )
                 # FIX: Defensive content extraction
-                if hasattr(thought, 'content'):
+                if hasattr(thought, "content"):
                     token_buffer = thought.content
                 elif isinstance(thought, dict):
-                    token_buffer = thought.get('content', '')
+                    token_buffer = thought.get("content", "")
                 else:
                     token_buffer = str(thought)
 
@@ -313,15 +385,22 @@ class ContextStreamingMixin:
             self.conversation_history.append({"role": self.AI_ROLE, "content": token_buffer})
 
             # Satisfy drive — robustly
-            if hasattr(self, 'drives') and self.drives and hasattr(self.drives, 'satisfy'):
+            if hasattr(self, "drives") and self.drives and hasattr(self.drives, "satisfy"):
                 try:
                     await self.drives.satisfy("social", 5.0)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _de:
-                    record_degradation('context_streaming', _de)
+                except _CONTEXT_STREAMING_ERRORS as _de:
+                    _record_context_degradation(
+                        _de,
+                        action="completed chat stream after drive satisfaction update failed",
+                    )
                     logger.debug("Drive satisfaction failed in stream: %s", _de)
 
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('context_streaming', e)
+        except _CONTEXT_STREAMING_ERRORS as e:
+            _record_context_degradation(
+                e,
+                action="yielded maintenance stream token after chat streaming failed",
+                severity="error",
+            )
             logger.error("Chat stream failed: %s", e)
             # v10.0 Zenith: Silent failure in stream if header already sent
             # but provide clean error formatting for dev
@@ -368,7 +447,11 @@ class ContextStreamingMixin:
             from core.safe_mode import runtime_feature_enabled, runtime_mode_value
 
             max_history = int(runtime_mode_value(self, "max_conversation_history", 50))
-            history = list(self.conversation_history) if isinstance(self.conversation_history, list) else []
+            history = (
+                list(self.conversation_history)
+                if isinstance(self.conversation_history, list)
+                else []
+            )
 
             if not runtime_feature_enabled(self, "context_pruning", default=True):
                 if len(history) > max_history:
@@ -390,8 +473,11 @@ class ContextStreamingMixin:
                 return
 
             self.conversation_history = pruned_history[-max_history:]
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('context_streaming', e)
+        except _CONTEXT_STREAMING_ERRORS as e:
+            _record_context_degradation(
+                e,
+                action="trimmed conversation history to bounded tail after context pruning failed",
+            )
             logger.debug("History pruning failed: %s", e)
             if isinstance(self.conversation_history, list) and len(self.conversation_history) > 50:
                 self.conversation_history = self.conversation_history[-50:]
@@ -411,13 +497,18 @@ class ContextStreamingMixin:
             logger.info("🧠 Consolidating session highlights to long-term memory...")
 
             # 1. Gather recent dialogue (last 20 messages)
-            recent = self.conversation_history[-20:] if isinstance(self.conversation_history, list) else []
+            recent = (
+                self.conversation_history[-20:]
+                if isinstance(self.conversation_history, list)
+                else []
+            )
             if not recent:
                 return
             chat_text = "\n".join([f"{m['role']}: {m.get('content', '')}" for m in recent])
 
             # 2. Ask the brain to summarize key takeaways/facts
             from core.brain.cognitive_engine import ThinkingMode
+
             summary_prompt = (
                 "Review this recent conversation fragment and extract 3-5 key 'long-term' facts "
                 "or user preferences learned. Format as single-sentence declarations. "
@@ -427,7 +518,7 @@ class ContextStreamingMixin:
 
             summary_thought = await self.cognitive_engine.think(
                 objective=summary_prompt,
-                context={"history": []}, # Clean slate for summary
+                context={"history": []},  # Clean slate for summary
                 mode=ThinkingMode.FAST,
                 origin="memory_consolidation",
                 is_background=True,
@@ -435,14 +526,14 @@ class ContextStreamingMixin:
 
             # FIX: Handle both dict and object returns from cognitive engine
             if summary_thought:
-                if hasattr(summary_thought, 'content'):
+                if hasattr(summary_thought, "content"):
                     highlights = summary_thought.content
                 elif isinstance(summary_thought, dict):
-                    highlights = summary_thought.get('content', '')
+                    highlights = summary_thought.get("content", "")
                 else:
                     highlights = str(summary_thought)
             else:
-                highlights = ''
+                highlights = ""
 
             if highlights:
                 logger.info("✨ Key Highlights Extracted: %s", (highlights or "")[:100])
@@ -452,18 +543,25 @@ class ContextStreamingMixin:
                     await self.memory_manager.log_event(
                         "session_consolidation",
                         highlights,
-                        metadata={"type": "summary", "session_start": self.status.start_time}
+                        metadata={"type": "summary", "session_start": self.status.start_time},
                     )
-                    self._emit_telemetry("Memory", "Session highlights consolidated to long-term storage.")
+                    self._emit_telemetry(
+                        "Memory", "Session highlights consolidated to long-term storage."
+                    )
 
                 # 4. Sentient Unity: Metabolic Archival Compression
                 # Periodically compress raw SQLite and text logs so the engine doesn't bloat over infinite horizons
                 from ...container import ServiceContainer
+
                 archive_eng = ServiceContainer.get("archive_engine", default=None)
-                if archive_eng and hasattr(archive_eng, 'archive_vital_logs'):
+                if archive_eng and hasattr(archive_eng, "archive_vital_logs"):
                     logger.info("📦 Deep Sleep Cycle: Triggering Metabolic Archival Compression...")
                     await archive_eng.archive_vital_logs()
 
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('context_streaming', e)
+        except _CONTEXT_STREAMING_ERRORS as e:
+            _record_context_degradation(
+                e,
+                action="skipped current long-term memory consolidation cycle",
+                severity="error",
+            )
             logger.error("Memory consolidation failed: %s", e)

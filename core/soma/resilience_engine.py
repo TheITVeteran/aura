@@ -19,6 +19,7 @@ Three states:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import math
 import time
@@ -74,11 +75,14 @@ class ResilienceEngine:
     DEPLETION_THRESHOLD = 0.75
     STRAIN_THRESHOLD = 0.45
     FRICTION_THRESHOLD = 0.20
+    SNAPSHOT_CACHE_TTL_S = 0.25
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
         self.profile = ResilienceProfile()
         self._update_task: asyncio.Task | None = None
+        self._snapshot_cache: dict[str, object] | None = None
+        self._snapshot_cache_at = 0.0
 
     async def pulse(self) -> dict[str, float]:
         """Metabolic heartbeat — ensures decay is applied even if loop stalls."""
@@ -141,6 +145,7 @@ class ResilienceEngine:
 
         self._update_state()
         self._update_persistence_drive()
+        self._invalidate_snapshot_cache()
 
         logger.info(
             "💔 [Resilience] Failure recorded [%s] sev=%.2f stakes=%.2f → "
@@ -177,6 +182,7 @@ class ResilienceEngine:
             self.profile.persistence_drive = min(1.0, self.profile.persistence_drive + 0.1)
 
         self._update_state()
+        self._invalidate_snapshot_cache()
 
         logger.info(
             "✅ [Resilience] Success [%s] → frustration=%.2f state=%s",
@@ -192,6 +198,7 @@ class ResilienceEngine:
         self.profile.depletion = max(0.0, self.profile.depletion - rest_effect)
         self.profile.last_rest = time.time()
         self._update_state()
+        self._invalidate_snapshot_cache()
 
     # ── State Queries ─────────────────────────────────────────────────────
 
@@ -240,8 +247,16 @@ class ResilienceEngine:
 
         return ""
 
-    def get_body_snapshot(self) -> dict[str, object]:
+    def get_body_snapshot(self, *, force_refresh: bool = False) -> dict[str, object]:
         """Compatibility snapshot for affect, attention, and precision systems."""
+        now_mono = time.monotonic()
+        if (
+            not force_refresh
+            and self._snapshot_cache is not None
+            and now_mono - self._snapshot_cache_at <= self.SNAPSHOT_CACHE_TTL_S
+        ):
+            return copy.deepcopy(self._snapshot_cache)
+
         self._apply_decay()
         substrate = self._resource_snapshot()
         frustration = max(0.0, min(1.0, self.profile.frustration))
@@ -262,7 +277,7 @@ class ResilienceEngine:
             float(substrate["thermal_load"]),
             max(0.0, min(1.0, 0.15 + 0.5 * frustration + 0.35 * depletion)),
         )
-        return {
+        snapshot = {
             "state": self.profile.state.value,
             "energy": energy,
             "vitality": vitality,
@@ -282,6 +297,9 @@ class ResilienceEngine:
                 "persistence_drive": max(0.0, min(1.0, self.profile.persistence_drive)),
             },
         }
+        self._snapshot_cache = copy.deepcopy(snapshot)
+        self._snapshot_cache_at = time.monotonic()
+        return copy.deepcopy(snapshot)
 
     def get_status(self) -> dict[str, object]:
         """Standard service status used by homeostasis and HUD diagnostics."""
@@ -342,6 +360,11 @@ class ResilienceEngine:
         self.profile.depletion *= depletion_decay
 
         self._update_state()
+        self._invalidate_snapshot_cache()
+
+    def _invalidate_snapshot_cache(self) -> None:
+        self._snapshot_cache = None
+        self._snapshot_cache_at = 0.0
 
     @staticmethod
     def _clamp01(value: float) -> float:
