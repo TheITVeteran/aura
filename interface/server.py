@@ -45,10 +45,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 try:
     from fastapi.responses import ORJSONResponse
-except Exception:
+except ImportError:
     ORJSONResponse = JSONResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -75,6 +76,18 @@ from core.version import VERSION, version_string
 
 PROJECT_ROOT = config.paths.project_root
 _server_task_tracker = TaskTracker(name="AuraServer", max_concurrent=128)
+_SERVER_BOUNDARY_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    KeyError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 def _spawn_server_task(coro, *, name: str) -> asyncio.Task:
@@ -159,14 +172,14 @@ class _QueueHandler(logging.Handler):
                 publish_coro = broadcast_bus.publish(log_entry)
                 try:
                     asyncio.run_coroutine_threadsafe(publish_coro, main_loop)
-                except Exception:
+                except _SERVER_BOUNDARY_ERRORS:
                     try:
                         publish_coro.close()
-                    except Exception as close_exc:
+                    except _SERVER_BOUNDARY_ERRORS as close_exc:
                         print(f"CRITICAL LOG CLOSE FALLBACK: {close_exc}", file=sys.stderr)
                     raise
 
-        except Exception:
+        except _SERVER_BOUNDARY_ERRORS:
             print(f"CRITICAL LOG FALLBACK: {record.levelname} - {record.getMessage()}", file=sys.stderr)
         finally:
             self._recursion_guard.reset(token)
@@ -244,7 +257,7 @@ async def lifespan(app: FastAPI):
                 _LocalBrain = mod.LocalChatBrain
             else:
                 logger.warning("LocalBrain (legacy) unavailable — Fallback mode active")
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -252,7 +265,7 @@ async def lifespan(app: FastAPI):
             mod = await async_safe_import("core.latent.latent_core", optional=True)
             if not is_missing(mod):
                 _LatentCore = mod.LatentCore
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -260,7 +273,7 @@ async def lifespan(app: FastAPI):
             mod = await async_safe_import("core.predictive.predictive_self_model", optional=True)
             if not is_missing(mod):
                 _PredictiveSelf = mod.PredictiveSelfModel
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -268,7 +281,7 @@ async def lifespan(app: FastAPI):
             mod = await async_safe_import("core.senses.tts_stream", optional=True)
             if not is_missing(mod):
                 _FastMouth = mod.FastMouth
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -276,7 +289,7 @@ async def lifespan(app: FastAPI):
             mod = await async_safe_import("core.senses.screen_vision", optional=True)
             if not is_missing(mod):
                 _LocalVision = mod.LocalVision
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -291,11 +304,11 @@ async def lifespan(app: FastAPI):
                         _voice_engine_fn = None
                     else:
                         logger.info("✓ Voice engine health check passed.")
-                except Exception as ve_err:
+                except _SERVER_BOUNDARY_ERRORS as ve_err:
                     record_degradation('server', ve_err)
                     logger.warning("⚠️ Voice engine health check failed: %s — disabling voice.", ve_err)
                     _voice_engine_fn = None
-        except Exception as _exc:
+        except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     else:
@@ -490,7 +503,7 @@ async def global_exception_handler(request: Request, exc: Exception):
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             },
         )
-    except Exception as inner:
+    except _SERVER_BOUNDARY_ERRORS as inner:
         record_degradation('server', inner)
         # Fall back to a structured 500 only when the envelope builder
         # itself crashes — should never happen in practice, but we never
@@ -631,7 +644,7 @@ async def _ws_broadcaster() -> None:
     """Forward messages from broadcast_bus to all WebSocket clients."""
     q = await broadcast_bus.subscribe()
     try:
-        while True:
+        while not is_shutdown_requested():
             try:
                 ptr, ts, msg = await asyncio.wait_for(q.get(), timeout=10.0)
 
@@ -657,7 +670,7 @@ async def _ws_broadcaster() -> None:
                 continue  # Pulsing
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except _SERVER_BOUNDARY_ERRORS as e:
                 record_degradation('server', e)
                 logger.error("WebSocket broadcaster error: %s", e)
                 await asyncio.sleep(1.0)
@@ -758,7 +771,7 @@ async def websocket_endpoint(ws: WebSocket):
         elif is_local and expected:
             await ws.send_text(json.dumps({"type": "auth_success", "note": "local_trust"}))
 
-        while True:
+        while not is_shutdown_requested():
             msg = await ws.receive()
 
             if msg.get("type") == "websocket.disconnect":
@@ -834,14 +847,14 @@ async def websocket_endpoint(ws: WebSocket):
                                                 "content": str(fallback).strip(),
                                             }))
                                             return
-                                except Exception as fallback_exc:
+                                except _SERVER_BOUNDARY_ERRORS as fallback_exc:
                                     record_degradation("server", fallback_exc)
                                     logger.warning("WS: cloud fallback generation failed after local timeout: %s", fallback_exc)
                                 await ws_ref.send_text(json.dumps({
                                     "type": "aura_message",
                                     "content": "The live reasoning lane exceeded its timeout. I logged the timeout and preserved this turn instead of fabricating a recovered answer.",
                                 }))
-                            except Exception as e:
+                            except _SERVER_BOUNDARY_ERRORS as e:
                                 record_degradation('server', e)
                                 logger.error("WS: Message handling failed: %s (%s)", type(e).__name__, e, exc_info=True)
                                 await ws_ref.send_text(json.dumps({
@@ -867,7 +880,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect as _exc:
         logger.debug("Suppressed WebSocketDisconnect: %s", _exc)
-    except Exception as exc:
+    except _SERVER_BOUNDARY_ERRORS as exc:
         record_degradation('server', exc)
         logger.debug("WS error: %s", exc)
     finally:
