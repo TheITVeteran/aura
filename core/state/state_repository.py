@@ -30,7 +30,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _STATE_SUBSYSTEM = "state_repository"
-_STATE_BOUNDARY_ERRORS = (Exception,)
+_STATE_BOUNDARY_ERRORS = (
+    AttributeError, ImportError, LookupError, OSError,
+    RuntimeError, TimeoutError, TypeError, ValueError,
+    asyncio.InvalidStateError,
+)
 
 
 def _record_state_degradation(

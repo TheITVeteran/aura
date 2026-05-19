@@ -46,7 +46,11 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger("Aura.AgencyCore")
 
 _AGENCY_SUBSYSTEM = "agency_core"
-_AGENCY_BOUNDARY_ERRORS = (Exception,)
+_AGENCY_BOUNDARY_ERRORS = (
+    AttributeError, ImportError, LookupError, OSError,
+    RuntimeError, TimeoutError, TypeError, ValueError,
+    asyncio.InvalidStateError,
+)
 _SHARD_CAPACITY = 6
 _SPATIAL_EMPATHY_STARTUP_DELAY_SECONDS = 5.0
 _MAX_OBSERVATION_CHARS = 600

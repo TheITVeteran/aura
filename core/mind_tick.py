@@ -26,7 +26,11 @@ config = get_config()
 logger = logging.getLogger(__name__)
 
 _MIND_SUBSYSTEM = "mind_tick"
-_MIND_BOUNDARY_ERRORS = (Exception,)
+_MIND_BOUNDARY_ERRORS = (
+    AttributeError, ImportError, LookupError, OSError,
+    RuntimeError, TimeoutError, TypeError, ValueError,
+    asyncio.InvalidStateError,
+)
 
 
 def _record_mind_degradation(

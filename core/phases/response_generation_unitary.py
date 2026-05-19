@@ -68,7 +68,6 @@ _RESPONSE_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
     asyncio.InvalidStateError,
-    Exception,
 )
 
 

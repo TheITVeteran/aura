@@ -25,7 +25,11 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger(__name__)
 
 _METABOLIC_SUBSYSTEM = "metabolic_coordinator"
-_METABOLIC_BOUNDARY_ERRORS = (Exception,)
+_METABOLIC_BOUNDARY_ERRORS = (
+    AttributeError, ImportError, LookupError, OSError,
+    RuntimeError, TimeoutError, TypeError, ValueError,
+    asyncio.InvalidStateError,
+)
 _BOOT_WARMUP_CYCLES = 5
 _BCI_EVENT_POLL_SECONDS = 1.0
 _AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS = 120.0

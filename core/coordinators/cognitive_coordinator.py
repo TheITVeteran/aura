@@ -28,7 +28,11 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger(__name__)
 
 _COGNITIVE_SUBSYSTEM = "cognitive_coordinator"
-_COGNITIVE_BOUNDARY_ERRORS = (Exception,)
+_COGNITIVE_BOUNDARY_ERRORS = (
+    AttributeError, ImportError, LookupError, OSError,
+    RuntimeError, TimeoutError, TypeError, ValueError,
+    asyncio.InvalidStateError,
+)
 _RESPONSE_BACKGROUND_DELAY_SECONDS = 0.5
 
 
