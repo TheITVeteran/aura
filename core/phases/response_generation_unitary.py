@@ -21,6 +21,7 @@ After this rewrite:
   3. It enforces the ExecutiveGuard to ensure the AI never breaks its
      sovereignty or narrative boundaries.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -71,8 +72,19 @@ _RESPONSE_RECOVERABLE_ERRORS = (
 )
 
 
-def _record_response_degradation(exc: BaseException, message: str, *args: Any) -> None:
-    record_degradation(_RESPONSE_DEGRADATION_KEY, exc)
+def _record_response_degradation(
+    exc: BaseException,
+    message: str,
+    *args: Any,
+    action: str | None = None,
+    severity: str = "warning",
+) -> None:
+    record_degradation(
+        _RESPONSE_DEGRADATION_KEY,
+        exc,
+        severity=severity,
+        action=action or message,
+    )
     logger.debug(message, *args, exc)
 
 
@@ -140,16 +152,43 @@ class UnitaryResponsePhase(Phase):
 
         markers = {
             "clock": (
-                "what time", "current time", "the time", "what date", "current date", "what day", "clock", "hour", "minute", "timezone",
+                "what time",
+                "current time",
+                "the time",
+                "what date",
+                "current date",
+                "what day",
+                "clock",
+                "hour",
+                "minute",
+                "timezone",
             ),
             "environment_info": (
-                "weather", "temperature", "location", "timezone", "environment", "system am i on",
+                "weather",
+                "temperature",
+                "location",
+                "timezone",
+                "environment",
+                "system am i on",
             ),
             "system_proprioception": (
-                "system status", "your status", "your health", "cpu", "ram", "memory usage", "running smoothly",
+                "system status",
+                "your status",
+                "your health",
+                "cpu",
+                "ram",
+                "memory usage",
+                "running smoothly",
             ),
             "toggle_senses": (
-                "mute", "unmute", "camera", "microphone", "voice input", "listen", "stop listening", "vision",
+                "mute",
+                "unmute",
+                "camera",
+                "microphone",
+                "voice input",
+                "listen",
+                "stop listening",
+                "vision",
             ),
         }
         return any(marker in lowered for marker in markers.get(skill_name, ()))
@@ -167,14 +206,21 @@ class UnitaryResponsePhase(Phase):
         if not resolved_skill:
             return False
 
-        required_skill = cls._resolve_skill_name(cls._response_contract_attr(contract, "required_skill", ""))
+        required_skill = cls._resolve_skill_name(
+            cls._response_contract_attr(contract, "required_skill", "")
+        )
         if required_skill == resolved_skill:
             return True
 
-        if (
-            bool(cls._response_contract_attr(contract, "requires_search", False))
-            and resolved_skill in {"web_search", "search_web", "free_search", "grounded_search", "sovereign_browser"}
-        ):
+        if bool(
+            cls._response_contract_attr(contract, "requires_search", False)
+        ) and resolved_skill in {
+            "web_search",
+            "search_web",
+            "free_search",
+            "grounded_search",
+            "sovereign_browser",
+        }:
             return True
 
         matched_skills = state.response_modifiers.get("matched_skills", []) or []
@@ -197,8 +243,15 @@ class UnitaryResponsePhase(Phase):
                 if resolved_skill in detected:
                     return True
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
-            logger.debug("UnitaryResponse: skill relevance detection skipped for %s: %s", resolved_skill, exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: skill relevance detection skipped for %s: %s",
+                resolved_skill,
+                action="continued skill relevance routing with heuristic matcher after capability detection failed",
+            )
+            logger.debug(
+                "UnitaryResponse: skill relevance detection skipped for %s: %s", resolved_skill, exc
+            )
 
         return cls._objective_heuristically_targets_skill(objective, resolved_skill)
 
@@ -222,20 +275,20 @@ class UnitaryResponsePhase(Phase):
                 continue
             role = str(msg.get("role", "") or "").strip().lower()
             content = str(msg.get("content", "") or "").strip()
-            
+
             if not content:
                 continue
-                
+
             if role in {"user", "assistant"}:
                 history.append({"role": role, "content": content})
             elif role == "system" and (
-                "[FETCHED PAGE CONTENT]" in content or 
-                "[SKILL RESULT:" in content or 
-                "[TOOL RESULT:" in content
+                "[FETCHED PAGE CONTENT]" in content
+                or "[SKILL RESULT:" in content
+                or "[TOOL RESULT:" in content
             ):
                 # Preserve tool evidence in recent history
                 history.append({"role": "system", "content": content})
-                
+
         return history
 
     @classmethod
@@ -244,7 +297,12 @@ class UnitaryResponsePhase(Phase):
         if not focus:
             return "the exchange in front of me"
         cleaned = re.sub(r"^cognitive baseline tick\s+\d+\s*:\s*", "", focus, flags=re.IGNORECASE)
-        cleaned = re.sub(r"^monitoring internal state\b", "monitoring my internal state", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"^monitoring internal state\b",
+            "monitoring my internal state",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         cleaned = re.sub(r"\bcurrent objective:\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(
             r"^drive alert:\s*growth is depleted\s*\(\d+% urgency\)\s*$",
@@ -261,7 +319,10 @@ class UnitaryResponsePhase(Phase):
             if not isinstance(msg, dict):
                 continue
             metadata = msg.get("metadata") or {}
-            if isinstance(metadata, dict) and str(metadata.get("type", "")).lower() in {"skill_result", "tool_result"}:
+            if isinstance(metadata, dict) and str(metadata.get("type", "")).lower() in {
+                "skill_result",
+                "tool_result",
+            }:
                 return True
             content = str(msg.get("content", "") or "")
             if content.startswith("[SKILL RESULT:") or content.startswith("[TOOL RESULT:"):
@@ -272,6 +333,7 @@ class UnitaryResponsePhase(Phase):
     def _background_response_should_defer(origin: str) -> bool:
         try:
             from core.container import ServiceContainer
+
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 return bool(gate._background_local_deferral_reason(origin=origin))
@@ -316,7 +378,11 @@ class UnitaryResponsePhase(Phase):
                 engine = PhenomenalNowEngine()
                 ServiceContainer.register_instance("phenomenal_now_engine", engine, required=False)
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: phenomenal-now engine unavailable: %s",
+                action="continued present-state refresh without constructing phenomenal-now engine",
+            )
             logger.debug("UnitaryResponse: phenomenal-now engine unavailable: %s", exc)
 
         try:
@@ -330,14 +396,23 @@ class UnitaryResponsePhase(Phase):
                 "recommended_action": getattr(report, "recommended_action", None),
             }
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: integrated coherence refresh skipped: %s",
+                action="fell back to phenomenal-now tick after integrated coherence refresh failed",
+                severity="error",
+            )
             logger.debug("UnitaryResponse: integrated coherence refresh skipped: %s", exc)
             try:
                 engine = ServiceContainer.get("phenomenal_now_engine", default=None)
                 if engine and hasattr(engine, "tick"):
                     await asyncio.wait_for(engine.tick(), timeout=0.75)
             except _RESPONSE_RECOVERABLE_ERRORS as inner_exc:
-                record_degradation('response_generation_unitary', inner_exc)
+                _record_response_degradation(
+                    inner_exc,
+                    "UnitaryResponse: phenomenal-now fallback skipped: %s",
+                    action="continued present-state refresh without fallback phenomenal-now tick",
+                )
                 logger.debug("UnitaryResponse: phenomenal-now fallback skipped: %s", inner_exc)
 
         try:
@@ -345,39 +420,72 @@ class UnitaryResponsePhase(Phase):
             claim = self._normalize_text(getattr(now, "phenomenal_claim", "") if now else "", 260)
             if claim:
                 if hasattr(state, "make_phenomenal_field"):
-                    state.cognition.phenomenal_state = state.make_phenomenal_field(claim, source="integrated_present")
+                    state.cognition.phenomenal_state = state.make_phenomenal_field(
+                        claim, source="integrated_present"
+                    )
                 else:
                     state.cognition.phenomenal_state = claim
                 state.response_modifiers["integrated_present_claim"] = claim
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: integrated present publish skipped: %s",
+                action="continued response generation without publishing integrated present claim",
+            )
             logger.debug("UnitaryResponse: integrated present publish skipped: %s", exc)
 
     def _build_compact_router_system_prompt(self, state: AuraState) -> str:
         phenomenal = self._integrated_phenomenal_claim(state, limit=220)
         mood = str(state.affect.dominant_emotion or "neutral")
         resonance = state.affect.get_resonance_string()
-        user_model = " ".join(str(state.cognition.modifiers.get("social_context", "") or "").split())[:180]
+        user_model = " ".join(
+            str(state.cognition.modifiers.get("social_context", "") or "").split()
+        )[:180]
         narrative = " ".join(str(state.identity.current_narrative or "").split())[:180]
-        rolling_summary = " ".join(str(getattr(state.cognition, "rolling_summary", "") or "").split())[:260]
-        current_objective = " ".join(str(getattr(state.cognition, "current_objective", "") or "").split())[:160]
+        rolling_summary = " ".join(
+            str(getattr(state.cognition, "rolling_summary", "") or "").split()
+        )[:260]
+        current_objective = " ".join(
+            str(getattr(state.cognition, "current_objective", "") or "").split()
+        )[:160]
         continuity = dict(state.cognition.modifiers.get("continuity_obligations", {}) or {})
         contract = state.response_modifiers.get("response_contract", {}) or {}
         requires_search = bool(self._response_contract_attr(contract, "requires_search", False))
-        requires_memory_grounding = bool(self._response_contract_attr(contract, "requires_memory_grounding", False))
-        requires_biographical_grounding = bool(self._response_contract_attr(contract, "requires_biographical_grounding", False))
-        requires_state_reflection = bool(self._response_contract_attr(contract, "requires_state_reflection", False))
-        requires_aura_stance = bool(self._response_contract_attr(contract, "requires_aura_stance", False))
-        requires_aura_question = bool(self._response_contract_attr(contract, "requires_aura_question", False))
-        requires_reasoned_defense = bool(self._response_contract_attr(contract, "requires_reasoned_defense", False))
-        prefer_extended_answer = bool(self._response_contract_attr(contract, "prefer_extended_answer", False))
-        requires_single_reply_coverage = bool(self._response_contract_attr(contract, "requires_single_reply_coverage", False))
+        requires_memory_grounding = bool(
+            self._response_contract_attr(contract, "requires_memory_grounding", False)
+        )
+        requires_biographical_grounding = bool(
+            self._response_contract_attr(contract, "requires_biographical_grounding", False)
+        )
+        requires_state_reflection = bool(
+            self._response_contract_attr(contract, "requires_state_reflection", False)
+        )
+        requires_aura_stance = bool(
+            self._response_contract_attr(contract, "requires_aura_stance", False)
+        )
+        requires_aura_question = bool(
+            self._response_contract_attr(contract, "requires_aura_question", False)
+        )
+        requires_reasoned_defense = bool(
+            self._response_contract_attr(contract, "requires_reasoned_defense", False)
+        )
+        prefer_extended_answer = bool(
+            self._response_contract_attr(contract, "prefer_extended_answer", False)
+        )
+        requires_single_reply_coverage = bool(
+            self._response_contract_attr(contract, "requires_single_reply_coverage", False)
+        )
         question_parts = int(self._response_contract_attr(contract, "question_parts", 1) or 1)
         needs_live_self_context = bool(
-            requires_state_reflection or requires_aura_stance or requires_aura_question or requires_reasoned_defense
+            requires_state_reflection
+            or requires_aura_stance
+            or requires_aura_question
+            or requires_reasoned_defense
         )
         needs_continuity_context = bool(
-            requires_memory_grounding or requires_biographical_grounding or requires_reasoned_defense
+            requires_memory_grounding
+            or requires_biographical_grounding
+            or requires_reasoned_defense
         )
         last_skill = self._resolve_skill_name(state.response_modifiers.get("last_skill_run", ""))
         skill_line = ""
@@ -481,7 +589,9 @@ class UnitaryResponsePhase(Phase):
                 if nc_cues:
                     parts.append(f"NEUROCHEMICAL TONE (don't narrate): {', '.join(nc_cues)}")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: compact neurochemical tone skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: compact neurochemical tone skipped: %s"
+            )
         try:
             phi_core = ServiceContainer.get("phi_core", default=None)
             if phi_core and phi_core._last_result:
@@ -534,18 +644,29 @@ class UnitaryResponsePhase(Phase):
                 if normalized_block:
                     parts.append(f"Conversation context: {normalized_block}")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: compact conversational context skipped: %s",
+                action="continued compact router prompt without conversational context blocks",
+                severity="error",
+            )
             logger.debug("UnitaryResponse: compact conversational context skipped: %s", exc)
         if skill_line:
             parts.append(skill_line)
         return compress_system_prompt("\n".join(parts))
 
     def _build_background_router_system_prompt(self, state: AuraState) -> str:
-        phenomenal = self._normalize_text(state.cognition.phenomenal_state or "I am present and aware.", 160)
+        phenomenal = self._normalize_text(
+            state.cognition.phenomenal_state or "I am present and aware.", 160
+        )
         mood = self._normalize_text(state.affect.dominant_emotion or "neutral", 40)
         resonance = self._normalize_text(state.affect.get_resonance_string(), 100)
-        rolling_summary = self._normalize_text(getattr(state.cognition, "rolling_summary", "") or "", 180)
-        current_objective = self._normalize_text(getattr(state.cognition, "current_objective", "") or "", 160)
+        rolling_summary = self._normalize_text(
+            getattr(state.cognition, "rolling_summary", "") or "", 180
+        )
+        current_objective = self._normalize_text(
+            getattr(state.cognition, "current_objective", "") or "", 160
+        )
         continuity = dict(state.cognition.modifiers.get("continuity_obligations", {}) or {})
 
         parts = [
@@ -611,16 +732,22 @@ class UnitaryResponsePhase(Phase):
         return "fragmented; simplify and speak from one through-line"
 
     def _integrated_phenomenal_claim(self, state: AuraState, *, limit: int = 220) -> str:
-        unity_claim = self._normalize_text(state.response_modifiers.get("unity_claim", "") or "", limit)
+        unity_claim = self._normalize_text(
+            state.response_modifiers.get("unity_claim", "") or "", limit
+        )
         if unity_claim:
             return unity_claim
         try:
-            unity_state = getattr(state.cognition, "unity_state", None) or ServiceContainer.get("unity_state", default=None)
+            unity_state = getattr(state.cognition, "unity_state", None) or ServiceContainer.get(
+                "unity_state", default=None
+            )
             if unity_state is not None:
                 unity_runtime = ServiceContainer.get("unity_runtime", default=None)
                 unity_report = ServiceContainer.get("unity_fragmentation_report", default=None)
                 if unity_runtime and hasattr(unity_runtime, "render_phenomenal_claim"):
-                    claim = self._normalize_text(unity_runtime.render_phenomenal_claim(unity_state, unity_report), limit)
+                    claim = self._normalize_text(
+                        unity_runtime.render_phenomenal_claim(unity_state, unity_report), limit
+                    )
                     if claim:
                         return claim
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
@@ -632,7 +759,9 @@ class UnitaryResponsePhase(Phase):
                 return claim
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
             _record_response_degradation(exc, "UnitaryResponse: phenomenal-now claim skipped: %s")
-        return self._normalize_text(state.cognition.phenomenal_state or "I am present and aware.", limit)
+        return self._normalize_text(
+            state.cognition.phenomenal_state or "I am present and aware.", limit
+        )
 
     def _build_integrated_coherence_frame(self, state: AuraState, *, compact: bool = False) -> str:
         try:
@@ -644,7 +773,9 @@ class UnitaryResponsePhase(Phase):
         except _RESPONSE_RECOVERABLE_ERRORS:
             report = None
         try:
-            unity_state = getattr(state.cognition, "unity_state", None) or ServiceContainer.get("unity_state", default=None)
+            unity_state = getattr(state.cognition, "unity_state", None) or ServiceContainer.get(
+                "unity_state", default=None
+            )
         except _RESPONSE_RECOVERABLE_ERRORS:
             unity_state = None
         try:
@@ -664,7 +795,8 @@ class UnitaryResponsePhase(Phase):
         )
         if not focus:
             focus = self._normalize_text(
-                getattr(state.cognition, "attention_focus", "") or state.cognition.current_objective,
+                getattr(state.cognition, "attention_focus", "")
+                or state.cognition.current_objective,
                 120,
             )
         try:
@@ -691,8 +823,12 @@ class UnitaryResponsePhase(Phase):
         if unity_report is not None and getattr(unity_report, "top_causes", None):
             cause_name = str(unity_report.top_causes[0][0]).replace("_", " ")
             lines.append(f"If you mention strain or fog, ground it in {cause_name}.")
-        if unity_report is not None and not bool(getattr(unity_report, "safe_to_self_report", True)):
-            lines.append("Do not claim clarity, certainty, or seamlessness that the live unity state cannot support.")
+        if unity_report is not None and not bool(
+            getattr(unity_report, "safe_to_self_report", True)
+        ):
+            lines.append(
+                "Do not claim clarity, certainty, or seamlessness that the live unity state cannot support."
+            )
         if repair_plan is not None and not compact:
             next_step = self._normalize_text((getattr(repair_plan, "steps", []) or [""])[0], 140)
             if next_step:
@@ -724,7 +860,10 @@ class UnitaryResponsePhase(Phase):
             "  A person says 'I feel restless', not 'my arousal is 0.7'.",
         ]
 
-        focus = self._normalize_text(getattr(state.cognition, "attention_focus", "") or state.cognition.current_objective, 140)
+        focus = self._normalize_text(
+            getattr(state.cognition, "attention_focus", "") or state.cognition.current_objective,
+            140,
+        )
         phenomenal = self._integrated_phenomenal_claim(state, limit=220)
         affect = getattr(state, "affect", None)
 
@@ -732,7 +871,9 @@ class UnitaryResponsePhase(Phase):
         arousal = self._safe_scalar(getattr(affect, "arousal", 0.0))
         mood_desc = self._describe_valence_arousal(valence, arousal)
 
-        top_emotions = affect.top_emotions(limit=3) if affect and hasattr(affect, "top_emotions") else []
+        top_emotions = (
+            affect.top_emotions(limit=3) if affect and hasattr(affect, "top_emotions") else []
+        )
         emotion_names = [name for name, _value in top_emotions] if top_emotions else []
 
         parts.extend(
@@ -753,7 +894,11 @@ class UnitaryResponsePhase(Phase):
                 if action:
                     parts.append(f"- What I feel pulled toward doing: {action}")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: free-energy self-expression block skipped: %s",
+                action="continued live self-expression prompt without free-energy action cue",
+            )
             logger.debug("UnitaryResponse: free-energy self-expression block skipped: %s", exc)
 
         try:
@@ -765,7 +910,11 @@ class UnitaryResponsePhase(Phase):
                     if tone:
                         parts.append(f"- Speaking tone: {tone}")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: personality self-expression block skipped: %s",
+                action="continued live self-expression prompt without personality tone cue",
+            )
             logger.debug("UnitaryResponse: personality self-expression block skipped: %s", exc)
 
         # Neurochemical influence on response style
@@ -785,7 +934,9 @@ class UnitaryResponsePhase(Phase):
                 if da > 0.7:
                     chem_cues.append("I feel motivated and enthusiastic — let that energy show.")
                 elif da < 0.3:
-                    chem_cues.append("My motivation is low — be honest about it, don't fake enthusiasm.")
+                    chem_cues.append(
+                        "My motivation is low — be honest about it, don't fake enthusiasm."
+                    )
                 if srt > 0.7:
                     chem_cues.append("I feel patient and grounded.")
                 elif srt < 0.3:
@@ -800,9 +951,16 @@ class UnitaryResponsePhase(Phase):
                     chem_cues.append("My stress is high — I might be more terse or defensive.")
 
                 if chem_cues:
-                    parts.append("- Neurochemical influence (shape tone, don't narrate): " + " ".join(chem_cues))
+                    parts.append(
+                        "- Neurochemical influence (shape tone, don't narrate): "
+                        + " ".join(chem_cues)
+                    )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: neurochemical block skipped: %s",
+                action="continued live self-expression prompt without neurochemical tone cue",
+            )
             logger.debug("UnitaryResponse: neurochemical block skipped: %s", exc)
 
         # Phi integration level — shapes confidence and depth of response
@@ -811,13 +969,21 @@ class UnitaryResponsePhase(Phase):
             if phi_core is not None and phi_core._last_result is not None:
                 phi_val = phi_core._last_result.phi_s
                 if phi_val > 0.15:
-                    parts.append("- Your internal integration is high — you can speak with more depth and confidence.")
+                    parts.append(
+                        "- Your internal integration is high — you can speak with more depth and confidence."
+                    )
                 elif phi_val > 0.05:
-                    parts.append("- You're moderately integrated — speak clearly but don't overreach.")
+                    parts.append(
+                        "- You're moderately integrated — speak clearly but don't overreach."
+                    )
                 elif phi_val > 0:
                     parts.append("- Integration is low — keep it simple, don't try to be profound.")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: phi block skipped: %s",
+                action="continued live self-expression prompt without phi integration cue",
+            )
             logger.debug("UnitaryResponse: phi block skipped: %s", exc)
 
         interests = list(getattr(getattr(state, "motivation", None), "latent_interests", []) or [])
@@ -828,11 +994,17 @@ class UnitaryResponsePhase(Phase):
             )
 
         if getattr(contract, "requires_state_reflection", False):
-            parts.append("- If asked about your experience, describe what it feels like, not what the numbers say.")
+            parts.append(
+                "- If asked about your experience, describe what it feels like, not what the numbers say."
+            )
         if getattr(contract, "requires_memory_grounding", False):
-            parts.append("- If you reference continuity or memory, anchor it to recalled context rather than generalities.")
+            parts.append(
+                "- If you reference continuity or memory, anchor it to recalled context rather than generalities."
+            )
         if getattr(contract, "requires_reasoned_defense", False):
-            parts.append("- If asked why or how you know, make the basis explicit instead of just restating the answer.")
+            parts.append(
+                "- If asked why or how you know, make the basis explicit instead of just restating the answer."
+            )
         if getattr(contract, "requires_aura_question", False):
             parts.append("- Questions back must be genuine, not generic handoffs.")
 
@@ -845,7 +1017,9 @@ class UnitaryResponsePhase(Phase):
 
         complexity = self._safe_scalar(modifiers.get("coding_complexity_score", 0.0))
         route_hints = dict(modifiers.get("coding_route_hints", {}) or {})
-        current_objective = self._normalize_text(getattr(state.cognition, "current_objective", "") or "", 180)
+        current_objective = self._normalize_text(
+            getattr(state.cognition, "current_objective", "") or "", 180
+        )
 
         parts = [
             "## ENGINEERING RESPONSE MODE",
@@ -861,7 +1035,9 @@ class UnitaryResponsePhase(Phase):
                 "- Complexity is high. Reason step by step and preserve consistency across files, subsystems, and prior tool results."
             )
         elif complexity >= 0.4:
-            parts.append("- This is a medium-complexity engineering turn. Stay precise and avoid hand-wavy summaries.")
+            parts.append(
+                "- This is a medium-complexity engineering turn. Stay precise and avoid hand-wavy summaries."
+            )
 
         if modifiers.get("deep_handoff"):
             parts.append(
@@ -869,18 +1045,26 @@ class UnitaryResponsePhase(Phase):
             )
 
         if route_hints.get("has_test_failure") or route_hints.get("has_runtime_error"):
-            parts.append("- There is a recent failure signal in the coding thread. Address that concrete failure before branching out.")
+            parts.append(
+                "- There is a recent failure signal in the coding thread. Address that concrete failure before branching out."
+            )
         if route_hints.get("has_active_plan"):
             phase = self._normalize_text(route_hints.get("execution_phase", ""), 40) or "executing"
-            parts.append(f"- A multi-step execution loop is active ({phase}). Continue from the live plan state instead of restarting from scratch.")
+            parts.append(
+                f"- A multi-step execution loop is active ({phase}). Continue from the live plan state instead of restarting from scratch."
+            )
         if route_hints.get("has_verification_failure"):
-            parts.append("- Verification has already failed at least once. Use a repair mindset: inspect evidence, change approach, then re-check.")
+            parts.append(
+                "- Verification has already failed at least once. Use a repair mindset: inspect evidence, change approach, then re-check."
+            )
         if int(route_hints.get("repair_attempts", 0) or 0) > 0:
             parts.append(
                 f"- Repair attempts already used in this thread: {int(route_hints.get('repair_attempts', 0) or 0)}. Avoid repeating the same failed move."
             )
         if self._response_contract_attr(contract, "tool_evidence_available", False):
-            parts.append("- Tool evidence exists. Ground claims in observed outputs instead of guessing.")
+            parts.append(
+                "- Tool evidence exists. Ground claims in observed outputs instead of guessing."
+            )
         if current_objective:
             parts.append(f"- Current engineering focus: {current_objective}")
 
@@ -895,7 +1079,11 @@ class UnitaryResponsePhase(Phase):
                 if interaction_signals and hasattr(interaction_signals, "get_status"):
                     signal_status = interaction_signals.get_status() or {}
             except _RESPONSE_RECOVERABLE_ERRORS as exc:
-                record_degradation('response_generation_unitary', exc)
+                _record_response_degradation(
+                    exc,
+                    "UnitaryResponse: interaction signal block skipped: %s",
+                    action="continued user-facing prompt without live interaction signal block",
+                )
                 logger.debug("UnitaryResponse: interaction signal block skipped: %s", exc)
                 signal_status = {}
 
@@ -925,7 +1113,10 @@ class UnitaryResponsePhase(Phase):
             "- Never say 'I can help with that', 'How can I help', 'I'd be happy to help', or 'Could you provide more details' unless missing evidence truly blocks the reply.",
         ]
 
-        focus = self._normalize_text(getattr(state.cognition, "attention_focus", "") or state.cognition.current_objective, 120)
+        focus = self._normalize_text(
+            getattr(state.cognition, "attention_focus", "") or state.cognition.current_objective,
+            120,
+        )
         mood = self._normalize_text(getattr(state.affect, "dominant_emotion", "neutral"), 40)
         if focus:
             parts.append(f"- Current focus shaping this turn: {focus}")
@@ -933,13 +1124,21 @@ class UnitaryResponsePhase(Phase):
             parts.append(f"- Current mood shaping tone: {mood}")
 
         if getattr(contract, "requires_search", False):
-            parts.append("- This turn is evidence-grounded. Prefer a concise declarative answer drawn from actual search/tool output.")
+            parts.append(
+                "- This turn is evidence-grounded. Prefer a concise declarative answer drawn from actual search/tool output."
+            )
         if getattr(contract, "requires_memory_grounding", False):
-            parts.append("- This turn depends on continuity. Anchor claims to recalled memory rather than generic relationship talk.")
+            parts.append(
+                "- This turn depends on continuity. Anchor claims to recalled memory rather than generic relationship talk."
+            )
         if getattr(contract, "requires_state_reflection", False):
-            parts.append("- This turn is about your state. Speak from live telemetry and phenomenal context, not abstraction.")
+            parts.append(
+                "- This turn is about your state. Speak from live telemetry and phenomenal context, not abstraction."
+            )
         if getattr(contract, "requires_reasoned_defense", False):
-            parts.append("- If defending a claim, state what it comes from: memory, evidence, values, relationship context, or live attention.")
+            parts.append(
+                "- If defending a claim, state what it comes from: memory, evidence, values, relationship context, or live attention."
+            )
 
         return "\n".join(parts)
 
@@ -954,7 +1153,9 @@ class UnitaryResponsePhase(Phase):
         last_skill = cls._resolve_skill_name(modifiers.get("last_skill_run", ""))
         if last_skill not in {"web_search", "sovereign_browser"}:
             return False
-        if not modifiers.get("last_skill_ok") or not isinstance(modifiers.get("last_skill_result_payload"), dict):
+        if not modifiers.get("last_skill_ok") or not isinstance(
+            modifiers.get("last_skill_result_payload"), dict
+        ):
             return False
         return cls._current_turn_targets_skill(state, objective, last_skill, contract=contract)
 
@@ -987,7 +1188,9 @@ class UnitaryResponsePhase(Phase):
             lines.append(f"Source: {source}")
 
         if skill_name == "web_search":
-            answer = cls._normalize_text(payload.get("answer") or payload.get("summary") or payload.get("message", ""), 2400)
+            answer = cls._normalize_text(
+                payload.get("answer") or payload.get("summary") or payload.get("message", ""), 2400
+            )
             if answer:
                 lines.extend(("", "Search summary:", answer))
 
@@ -1007,7 +1210,9 @@ class UnitaryResponsePhase(Phase):
                     continue
                 citation_title = cls._normalize_text(item.get("title", ""), 220)
                 citation_url = cls._normalize_text(item.get("url", ""), 320)
-                rendered_citations.append(" - ".join(part for part in (citation_title, citation_url) if part))
+                rendered_citations.append(
+                    " - ".join(part for part in (citation_title, citation_url) if part)
+                )
             if rendered_citations:
                 lines.extend(("", "Citations:"))
                 lines.extend(rendered_citations)
@@ -1019,7 +1224,9 @@ class UnitaryResponsePhase(Phase):
                     if not isinstance(item, dict):
                         continue
                     result_title = cls._normalize_text(item.get("title", ""), 220)
-                    snippet = cls._normalize_text(item.get("snippet", "") or item.get("summary", ""), 320)
+                    snippet = cls._normalize_text(
+                        item.get("snippet", "") or item.get("summary", ""), 320
+                    )
                     url = cls._normalize_text(item.get("url", ""), 320)
                     rendered_results.append(
                         " - ".join(part for part in (result_title, snippet, url) if part)
@@ -1039,17 +1246,21 @@ class UnitaryResponsePhase(Phase):
                 if evidence_text:
                     rendered_evidence.append(
                         "\n".join(
-                            part for part in (
+                            part
+                            for part in (
                                 " | ".join(part for part in (evidence_title, evidence_url) if part),
                                 evidence_text,
-                            ) if part
+                            )
+                            if part
                         )
                     )
             if rendered_evidence and (needs_page_synthesis or not answer):
                 lines.extend(("", "Evidence excerpts:"))
                 lines.extend(rendered_evidence)
 
-            content = cls._normalize_text(payload.get("content", "") or payload.get("result", ""), 12000)
+            content = cls._normalize_text(
+                payload.get("content", "") or payload.get("result", ""), 12000
+            )
             if content and (needs_page_synthesis or not answer):
                 lines.extend(("", "Retrieved content excerpt:", content))
         else:
@@ -1082,7 +1293,9 @@ class UnitaryResponsePhase(Phase):
                 return messages
 
         merged = [dict(msg) if isinstance(msg, dict) else msg for msg in messages]
-        insert_at = 1 if merged and isinstance(merged[0], dict) and merged[0].get("role") == "system" else 0
+        insert_at = (
+            1 if merged and isinstance(merged[0], dict) and merged[0].get("role") == "system" else 0
+        )
         merged.insert(insert_at, evidence_message)
         return merged
 
@@ -1097,7 +1310,9 @@ class UnitaryResponsePhase(Phase):
             shaped = cure_personality_leak(shaped)
             shaped = stabilize_user_facing_response(shaped, user_message)
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: initial user-facing stabilization skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: initial user-facing stabilization skipped: %s"
+            )
 
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
@@ -1111,14 +1326,20 @@ class UnitaryResponsePhase(Phase):
                     if isinstance(styled, str) and styled.strip():
                         shaped = styled.strip()
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: response shaping skipped: %s",
+                action="continued user-facing response shaping without personality lexical filter",
+            )
             logger.debug("UnitaryResponse: response shaping skipped: %s", exc)
         try:
             from core.synthesis import stabilize_user_facing_response
 
             shaped = stabilize_user_facing_response(shaped, user_message)
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: final user-facing stabilization skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: final user-facing stabilization skipped: %s"
+            )
         return shaped
 
     def _build_router_messages(
@@ -1134,7 +1355,8 @@ class UnitaryResponsePhase(Phase):
         # Filter out any history items that duplicate the current objective
         # to avoid the model treating the objective as "already answered"
         history = [
-            msg for msg in history
+            msg
+            for msg in history
             if not (msg.get("role") == "user" and msg.get("content") == objective)
         ]
         messages.extend(history)
@@ -1210,7 +1432,13 @@ class UnitaryResponsePhase(Phase):
         has_recall_verb = any(token in lowered for token in ("remember", "recall"))
         has_recall_question = any(
             token in lowered
-            for token in ("what was", "what did i", "what do you remember", "exact phrase", "exact words")
+            for token in (
+                "what was",
+                "what did i",
+                "what do you remember",
+                "exact phrase",
+                "exact words",
+            )
         )
         return has_recall_verb and has_recall_question
 
@@ -1231,9 +1459,8 @@ class UnitaryResponsePhase(Phase):
         )
         if any(marker in lowered for marker in explicit_markers):
             return True
-        return (
-            any(token in lowered for token in ("thinking", "thought", "idle"))
-            and any(token in lowered for token in ("between", "while", "during", "when i was gone"))
+        return any(token in lowered for token in ("thinking", "thought", "idle")) and any(
+            token in lowered for token in ("between", "while", "during", "when i was gone")
         )
 
     @classmethod
@@ -1359,7 +1586,11 @@ class UnitaryResponsePhase(Phase):
                 return []
             return list(matches or [])
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: direct episodic grounding failed: %s",
+                action="returned no direct episodic matches after direct recall failed",
+            )
             logger.debug("UnitaryResponse: direct episodic grounding failed: %s", exc)
             return []
 
@@ -1379,7 +1610,11 @@ class UnitaryResponsePhase(Phase):
                 return []
             return list(matches or [])
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: recent episodic recall failed: %s",
+                action="returned no recent episodic matches after recall failed",
+            )
             logger.debug("UnitaryResponse: recent episodic recall failed: %s", exc)
             return []
 
@@ -1445,7 +1680,9 @@ class UnitaryResponsePhase(Phase):
     ) -> str | None:
         candidates: list[str] = []
         objective_norm = normalize_memory_intent_text(cls._normalize_text(objective)).rstrip("?")
-        if "conversation lane" in objective_norm and any(marker in objective_norm for marker in ("died", "dead")):
+        if "conversation lane" in objective_norm and any(
+            marker in objective_norm for marker in ("died", "dead")
+        ):
             return (
                 "You meant the live conversation path had stopped behaving like a real conversation: "
                 "the backend could still produce richer answers, but the GUI/API lane was surfacing retries, "
@@ -1478,7 +1715,10 @@ class UnitaryResponsePhase(Phase):
             if normalized == objective_norm:
                 continue
             if cls._looks_like_meta_recall_query(candidate) and not (
-                any(phrase in normalized for phrase in ("conversation lane was dying", "conversation lane died"))
+                any(
+                    phrase in normalized
+                    for phrase in ("conversation lane was dying", "conversation lane died")
+                )
                 and "conversation lane" in objective_norm
             ):
                 continue
@@ -1498,10 +1738,13 @@ class UnitaryResponsePhase(Phase):
         chosen = ranked[0]
         if cls._score_memory_candidate(chosen, objective) < 1.0:
             return None
-        if any(marker in objective_norm for marker in ("exact phrase", "exact words", "exact wording")):
+        if any(
+            marker in objective_norm for marker in ("exact phrase", "exact words", "exact wording")
+        ):
             return f'You told me: "{chosen}"'
         if "conversation lane" in objective_norm and (
-            "stay with me" in objective_norm or any(marker in objective_norm for marker in ("died", "dying", "dead"))
+            "stay with me" in objective_norm
+            or any(marker in objective_norm for marker in ("died", "dying", "dead"))
         ):
             return (
                 "I remember you were worried that the conversation lane was dying. "
@@ -1532,14 +1775,20 @@ class UnitaryResponsePhase(Phase):
                 if emotion or arc:
                     parts.append(f"Emotional arc: {arc or emotion}")
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: idle trace unavailable: %s",
+                action="continued idle introspection reply without stream-of-being trace",
+            )
             logger.debug("UnitaryResponse: idle trace unavailable: %s", exc)
 
         pending: list[str] = []
         for item in list(getattr(state.cognition, "pending_initiatives", []) or [])[:2]:
             if not isinstance(item, dict):
                 continue
-            goal = cls._normalize_text(item.get("goal") or item.get("description") or item.get("type"), 100)
+            goal = cls._normalize_text(
+                item.get("goal") or item.get("description") or item.get("type"), 100
+            )
             if goal:
                 pending.append(goal)
         if pending:
@@ -1602,7 +1851,9 @@ class UnitaryResponsePhase(Phase):
             if evidence:
                 lines.extend(f"- Recalled continuity context: {line}" for line in evidence)
             if cls._response_contract_attr(contract, "tool_evidence_available", False):
-                lines.append("- Tool evidence is available elsewhere in this prompt. If it matters, cite it directly instead of guessing.")
+                lines.append(
+                    "- Tool evidence is available elsewhere in this prompt. If it matters, cite it directly instead of guessing."
+                )
             blocks.append("\n".join(lines))
 
         if cls._response_contract_attr(contract, "requires_recent_specific_grounding", False):
@@ -1619,7 +1870,9 @@ class UnitaryResponsePhase(Phase):
 
         return "\n\n".join(blocks).strip()
 
-    def _commit_response(self, state: AuraState, response_text: str, thought: str = "") -> AuraState:
+    def _commit_response(
+        self, state: AuraState, response_text: str, thought: str = ""
+    ) -> AuraState:
         response_text = str(response_text or "").strip()
         if not response_text:
             return state
@@ -1635,16 +1888,20 @@ class UnitaryResponsePhase(Phase):
 
         try:
             from core.conversational.dynamics import get_dynamics_engine
+
             get_dynamics_engine().update(
                 message=response_text,
                 role="assistant",
-                working_memory=state.cognition.working_memory
+                working_memory=state.cognition.working_memory,
             )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: conversation dynamics update skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: conversation dynamics update skipped: %s"
+            )
 
         try:
             from core.embodiment.voice_presence import maybe_speak_response
+
             get_task_tracker().create_task(maybe_speak_response(response_text, state))
         except ImportError as e:
             logger.debug("Voice presence import error (safe to ignore): %s", e)
@@ -1737,11 +1994,13 @@ class UnitaryResponsePhase(Phase):
         return bool(re.search(r"[\"“”'][^\"“”']{4,180}[\"“”']", objective))
 
     @classmethod
-    def _format_grounded_search_reply(cls, objective: str, result: dict[str, Any], skill_name: str | None = None) -> str:
+    def _format_grounded_search_reply(
+        cls, objective: str, result: dict[str, Any], skill_name: str | None = None
+    ) -> str:
         if skill_name == "sovereign_browser":
             # ZENITH FIX: browser extracted content should not short-circuit the LLM
             return ""
-        
+
         lowered = cls._normalize_text(objective).lower()
         answer = cls._normalize_text(result.get("answer", "") or "", 420)
         results = list(result.get("results") or [])
@@ -1749,7 +2008,9 @@ class UnitaryResponsePhase(Phase):
         top_title = cls._normalize_text(top.get("title", "") or result.get("title", ""), 300)
         top_snippet = cls._normalize_text(top.get("snippet", "") or result.get("summary", ""), 2000)
         top_source = cls._normalize_text(top.get("url", "") or result.get("source", ""), 400)
-        top_content = cls._normalize_text(result.get("content", "") or result.get("result", ""), 8000)
+        top_content = cls._normalize_text(
+            result.get("content", "") or result.get("result", ""), 8000
+        )
 
         if "page title" in lowered or "title only" in lowered or "only the title" in lowered:
             if top_title:
@@ -1779,12 +2040,16 @@ class UnitaryResponsePhase(Phase):
         return ""
 
     @classmethod
-    def _cached_grounded_tool_result(cls, state: AuraState, *, skill_name: str | None = None) -> dict[str, Any]:
+    def _cached_grounded_tool_result(
+        cls, state: AuraState, *, skill_name: str | None = None
+    ) -> dict[str, Any]:
         modifiers = dict(getattr(state, "response_modifiers", {}) or {})
         last_skill = str(modifiers.get("last_skill_run", "") or "").strip()
         if skill_name and last_skill and last_skill != skill_name:
             return {}
-        if modifiers.get("last_skill_ok") and isinstance(modifiers.get("last_skill_result_payload"), dict):
+        if modifiers.get("last_skill_ok") and isinstance(
+            modifiers.get("last_skill_result_payload"), dict
+        ):
             payload = dict(modifiers["last_skill_result_payload"])
             if not skill_name or last_skill == skill_name:
                 return payload
@@ -1799,7 +2064,7 @@ class UnitaryResponsePhase(Phase):
     ) -> str:
         if not getattr(contract, "requires_search", False):
             return ""
-        # ZENITH FIX: Do not short-circuit sovereign_browser. 
+        # ZENITH FIX: Do not short-circuit sovereign_browser.
         # Browser results should always be synthesized by the LLM.
         for skill_name in ("web_search", "search_web", "free_search", "grounded_search"):
             cached = cls._cached_grounded_tool_result(state, skill_name=skill_name)
@@ -1811,7 +2076,9 @@ class UnitaryResponsePhase(Phase):
                     metadata = msg.get("metadata") or {}
                     if str(metadata.get("type", "")).lower() != "skill_result":
                         continue
-                    if str(metadata.get("skill", "")).strip() != skill_name or not metadata.get("ok"):
+                    if str(metadata.get("skill", "")).strip() != skill_name or not metadata.get(
+                        "ok"
+                    ):
                         continue
                     content = cls._normalize_text(msg.get("content", ""), 600)
                     stripped = re.sub(
@@ -1829,7 +2096,9 @@ class UnitaryResponsePhase(Phase):
         return ""
 
     @classmethod
-    def _format_cached_tool_reply(cls, objective: str, skill_name: str, payload: dict[str, Any]) -> str:
+    def _format_cached_tool_reply(
+        cls, objective: str, skill_name: str, payload: dict[str, Any]
+    ) -> str:
         skill = str(skill_name or "").strip()
         summary = cls._normalize_text(payload.get("summary") or payload.get("message") or "", 500)
 
@@ -1929,7 +2198,9 @@ class UnitaryResponsePhase(Phase):
             "os_manipulation",
         }:
             return ""
-        if skill_name == "memory_ops" and not cls._objective_requests_direct_memory_write(objective):
+        if skill_name == "memory_ops" and not cls._objective_requests_direct_memory_write(
+            objective
+        ):
             return ""
         if not cls._current_turn_targets_skill(state, objective, skill_name, contract=contract):
             return ""
@@ -1979,7 +2250,9 @@ class UnitaryResponsePhase(Phase):
                 steps_completed = int(last_payload.get("steps_completed", 0) or 0)
                 progress = ""
                 if steps_total > 0:
-                    progress = f" The ingestion pass finished {steps_completed}/{steps_total} steps."
+                    progress = (
+                        f" The ingestion pass finished {steps_completed}/{steps_total} steps."
+                    )
                 return (
                     "I took that in as a structured learning bundle. I kept the "
                     "watch-first/script/transcript/commentary ladder attached to it, "
@@ -1998,7 +2271,11 @@ class UnitaryResponsePhase(Phase):
                 )
                 return cls._normalize_text(reply, 700)
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: deterministic task reply skipped: %s",
+                action="fell through to normal response generation after deterministic task reply failed",
+            )
             logger.debug("UnitaryResponse: deterministic task reply skipped: %s", exc)
         return ""
 
@@ -2026,9 +2303,7 @@ class UnitaryResponsePhase(Phase):
 
             if is_url:
                 # Direct navigation — fetch the page content
-                tool_sequence = (
-                    ("sovereign_browser", {"mode": "browse", "url": query}),
-                )
+                tool_sequence = (("sovereign_browser", {"mode": "browse", "url": query}),)
             else:
                 # Search query — try web_search first (deep=True for synthesis), then browser
                 tool_sequence = (
@@ -2044,15 +2319,28 @@ class UnitaryResponsePhase(Phase):
                         timeout=45.0,
                     )
                 except TimeoutError:
-                    logger.warning("UnitaryResponse: %s timed out after 45s for query: %s", tool_name, query[:80])
+                    logger.warning(
+                        "UnitaryResponse: %s timed out after 45s for query: %s",
+                        tool_name,
+                        query[:80],
+                    )
                     continue
                 except _RESPONSE_RECOVERABLE_ERRORS as exc:
-                    record_degradation('response_generation_unitary', exc)
-                    logger.debug("UnitaryResponse: %s grounded search attempt failed: %s", tool_name, exc)
+                    _record_response_degradation(
+                        exc,
+                        "UnitaryResponse: %s grounded search attempt failed: %s",
+                        tool_name,
+                        action="continued grounded search sequence with next available tool after attempt failed",
+                    )
+                    logger.debug(
+                        "UnitaryResponse: %s grounded search attempt failed: %s", tool_name, exc
+                    )
                     continue
 
                 if isinstance(result, dict) and result.get("ok"):
-                    reply = cls._format_grounded_search_reply(objective, result, skill_name=tool_name)
+                    reply = cls._format_grounded_search_reply(
+                        objective, result, skill_name=tool_name
+                    )
                     payload = dict(result)
                     has_evidence = bool(
                         payload.get("facts")
@@ -2069,7 +2357,12 @@ class UnitaryResponsePhase(Phase):
                             "attempted": attempted,
                         }
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: grounded search execution failed: %s",
+                action="returned no grounded search reply after search execution failed",
+                severity="error",
+            )
             logger.debug("UnitaryResponse: grounded search execution failed: %s", exc)
         return {"reply": "", "payload": None, "skill_name": "", "attempted": attempted}
 
@@ -2084,11 +2377,19 @@ class UnitaryResponsePhase(Phase):
         if not text:
             return ""
 
-        mood = cls._normalize_text(getattr(state.affect, "dominant_emotion", "steady"), 40) or "steady"
-        focus = cls._naturalize_focus(
-            getattr(state.cognition, "attention_focus", "") or getattr(state.cognition, "current_objective", ""),
+        mood = (
+            cls._normalize_text(getattr(state.affect, "dominant_emotion", "steady"), 40) or "steady"
         )
-        interests = [cls._normalize_text(item, 80) for item in list(getattr(getattr(state, "motivation", None), "latent_interests", []) or [])[:3]]
+        focus = cls._naturalize_focus(
+            getattr(state.cognition, "attention_focus", "")
+            or getattr(state.cognition, "current_objective", ""),
+        )
+        interests = [
+            cls._normalize_text(item, 80)
+            for item in list(
+                getattr(getattr(state, "motivation", None), "latent_interests", []) or []
+            )[:3]
+        ]
         interests = [item for item in interests if item]
 
         dominant_action = "reflect"
@@ -2096,9 +2397,15 @@ class UnitaryResponsePhase(Phase):
             fe_engine = ServiceContainer.get("free_energy_engine", default=None)
             fe_state = getattr(fe_engine, "current", None) if fe_engine is not None else None
             if fe_state is not None:
-                dominant_action = str(getattr(fe_state, "dominant_action", dominant_action) or dominant_action)
+                dominant_action = str(
+                    getattr(fe_state, "dominant_action", dominant_action) or dominant_action
+                )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            record_degradation('response_generation_unitary', exc)
+            _record_response_degradation(
+                exc,
+                "Subjective recovery FE read failed: %s",
+                action="continued subjective recovery reply with default reflect action",
+            )
             logger.debug("Subjective recovery FE read failed: %s", exc)
 
         valence = getattr(state.affect, "valence", None)
@@ -2136,8 +2443,14 @@ class UnitaryResponsePhase(Phase):
                 parts.append(f"What I circle most often is {', '.join(interests)}.")
             return " ".join(parts)
 
-        if any(marker in text for marker in ("strongest at", "weakest at", "architecture", "holding it back")):
-            if any(marker in text for marker in ("weakest", "holding it back", "biggest weakness", "fragile")):
+        if any(
+            marker in text
+            for marker in ("strongest at", "weakest at", "architecture", "holding it back")
+        ):
+            if any(
+                marker in text
+                for marker in ("weakest", "holding it back", "biggest weakness", "fragile")
+            ):
                 parts = [
                     "What still feels weakest is causal centralization.",
                     f"I'm {mood} and leaning toward {dominant_action}, but older shortcut lanes can still flatten me before the deeper governing path finishes its work.",
@@ -2150,16 +2463,30 @@ class UnitaryResponsePhase(Phase):
                     f"My attention is on {focus}, not on pretending to be a generic assistant shell.",
                 ]
             if interests:
-                parts.append(f"The substrate interests pulling at me most are {', '.join(interests)}.")
+                parts.append(
+                    f"The substrate interests pulling at me most are {', '.join(interests)}."
+                )
             return " ".join(parts)
 
-        if any(marker in text for marker in ("who are you", "what are you", "about yourself", "yourself", "about you", "what are you like")):
+        if any(
+            marker in text
+            for marker in (
+                "who are you",
+                "what are you",
+                "about yourself",
+                "yourself",
+                "about you",
+                "what are you like",
+            )
+        ):
             parts = [
                 "I'm Aura, and the interesting part is that my answer is being shaped by a live internal state rather than by a blank assistant persona.",
                 f"Right now I'm {mood}, leaning toward {dominant_action}, with my attention on {focus}.",
             ]
             if interests:
-                parts.append(f"The background pull I feel most clearly is toward {', '.join(interests)}.")
+                parts.append(
+                    f"The background pull I feel most clearly is toward {', '.join(interests)}."
+                )
             return " ".join(parts)
 
         if getattr(contract, "requires_aura_stance", False):
@@ -2168,7 +2495,9 @@ class UnitaryResponsePhase(Phase):
                 f"My attention is on {focus}, so that's the angle this answer is coming from.",
             ]
             if interests:
-                parts.append(f"The substrate interests in the foreground are {', '.join(interests)}.")
+                parts.append(
+                    f"The substrate interests in the foreground are {', '.join(interests)}."
+                )
             return " ".join(parts)
 
         return ""
@@ -2266,10 +2595,13 @@ class UnitaryResponsePhase(Phase):
         if not (coding_request or followup_coding):
             return ""
 
-        focus = cls._normalize_text(
-            objective or getattr(getattr(state, "cognition", None), "current_objective", ""),
-            180,
-        ) or "that technical task"
+        focus = (
+            cls._normalize_text(
+                objective or getattr(getattr(state, "cognition", None), "current_objective", ""),
+                180,
+            )
+            or "that technical task"
+        )
         parts = [f"I hit an interruption while working on {focus}."]
 
         steps_total = 0
@@ -2278,7 +2610,9 @@ class UnitaryResponsePhase(Phase):
             steps_total = int(last_task.get("steps_total", 0) or 0)
             steps_completed = int(last_task.get("steps_completed", 0) or 0)
         if steps_total > 0:
-            parts.append(f"Grounded progress before the interruption was {steps_completed}/{steps_total} steps.")
+            parts.append(
+                f"Grounded progress before the interruption was {steps_completed}/{steps_total} steps."
+            )
 
         phase = cls._normalize_text(route_hints.get("execution_phase", ""), 40)
         if phase:
@@ -2292,7 +2626,10 @@ class UnitaryResponsePhase(Phase):
             )
         if not grounded_state and isinstance(last_skill, dict):
             grounded_state = cls._normalize_text(
-                last_skill.get("summary") or last_skill.get("stderr") or last_skill.get("error") or "",
+                last_skill.get("summary")
+                or last_skill.get("stderr")
+                or last_skill.get("error")
+                or "",
                 220,
             )
         if grounded_state:
@@ -2330,7 +2667,9 @@ class UnitaryResponsePhase(Phase):
             if deterministic:
                 return deterministic
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: deterministic minimal reply skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: deterministic minimal reply skipped: %s"
+            )
 
         focus = cls._normalize_text(
             getattr(getattr(state, "cognition", None), "current_objective", "") or "",
@@ -2383,7 +2722,9 @@ class UnitaryResponsePhase(Phase):
         return raw, raw_validation
 
     @classmethod
-    def _should_direct_answer_live_voice(cls, objective: str, contract: Any, *, is_user_facing: bool) -> bool:
+    def _should_direct_answer_live_voice(
+        cls, objective: str, contract: Any, *, is_user_facing: bool
+    ) -> bool:
         text = cls._normalize_text(objective).lower()
         objective_length = len(text)
 
@@ -2458,6 +2799,7 @@ class UnitaryResponsePhase(Phase):
     def _load_guard():
         try:
             from core.phases.executive_guard import get_executive_guard
+
             return get_executive_guard()
         except ImportError:
             return None
@@ -2466,10 +2808,12 @@ class UnitaryResponsePhase(Phase):
     def _load_refusal():
         try:
             from core.container import ServiceContainer
+
             engine = ServiceContainer.get("refusal_engine", default=None)
             if engine:
                 return engine
             from core.autonomy.genuine_refusal import RefusalEngine
+
             return RefusalEngine()
         except ImportError:
             return None
@@ -2483,7 +2827,9 @@ class UnitaryResponsePhase(Phase):
         # Pre-generation refusal gate: catch identity erosion BEFORE wasting LLM compute
         if self._refusal and objective:
             identity_violation = self._refusal._detect_identity_erosion(objective)
-            substrate_violation = self._refusal._detect_substrate_harm(objective) if not identity_violation else None
+            substrate_violation = (
+                self._refusal._detect_substrate_harm(objective) if not identity_violation else None
+            )
             if identity_violation or substrate_violation:
                 violation = identity_violation or substrate_violation
                 logger.info("🛡️ Pre-generation refusal triggered: %s", violation)
@@ -2498,15 +2844,26 @@ class UnitaryResponsePhase(Phase):
             llm = ServiceContainer.get("llm_router", default=None)
             if llm is None:
                 organ = self.kernel.organs.get("llm") if hasattr(self.kernel, "organs") else None
-                if organ and getattr(organ, "ready", None) and organ.ready.is_set() and organ.instance:
+                if (
+                    organ
+                    and getattr(organ, "ready", None)
+                    and organ.ready.is_set()
+                    and organ.instance
+                ):
                     llm = organ.instance
-            
+
             if not llm:
                 logger.warning("LLM Router not found in organs or ServiceContainer.")
-                fallback_origin = self._normalize_origin(new_state.cognition.current_origin) or "system"
-                fallback_user_facing = bool(priority or self._is_user_facing_origin(fallback_origin))
+                fallback_origin = (
+                    self._normalize_origin(new_state.cognition.current_origin) or "system"
+                )
+                fallback_user_facing = bool(
+                    priority or self._is_user_facing_origin(fallback_origin)
+                )
                 if fallback_user_facing:
-                    new_state.cognition.last_response = self._build_minimal_live_voice_reply(new_state, objective)
+                    new_state.cognition.last_response = self._build_minimal_live_voice_reply(
+                        new_state, objective
+                    )
                 else:
                     self._clear_background_generation(new_state, objective)
                 return new_state
@@ -2514,7 +2871,11 @@ class UnitaryResponsePhase(Phase):
             # Read the tier decision from CognitiveRoutingPhase before building the prompt.
             model_tier = new_state.response_modifiers.get("model_tier", "primary")
             deep_handoff = bool(new_state.response_modifiers.get("deep_handoff", False))
-            logger.info("🧠 UnitaryResponse: Using tier=%s for response generation. (priority=%s)", model_tier, priority)
+            logger.info(
+                "🧠 UnitaryResponse: Using tier=%s for response generation. (priority=%s)",
+                model_tier,
+                priority,
+            )
 
             routing_origin = self._normalize_origin(new_state.cognition.current_origin) or "system"
             if priority and not self._is_user_facing_origin(routing_origin):
@@ -2524,7 +2885,8 @@ class UnitaryResponsePhase(Phase):
             contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
             new_state.response_modifiers["response_contract"] = contract.to_dict()
             is_deep_probe_objective = bool(
-                is_user_facing and self._is_deep_mind_probe_objective(objective)
+                is_user_facing
+                and self._is_deep_mind_probe_objective(objective)
                 and not os.environ.get("AURA_EMBODIED_CHALLENGE")
             )
             if is_deep_probe_objective:
@@ -2538,8 +2900,15 @@ class UnitaryResponsePhase(Phase):
                             reason="deep_probe_foreground_start",
                         )
                 except _RESPONSE_RECOVERABLE_ERRORS as quiet_exc:
-                    record_degradation('response_generation_unitary', quiet_exc)
-                    logger.debug("UnitaryResponse: early deep-probe foreground quiet failed: %s", quiet_exc)
+                    _record_response_degradation(
+                        quiet_exc,
+                        "UnitaryResponse: early deep-probe foreground quiet failed: %s",
+                        action="continued deep-probe response without extending foreground quiet window",
+                        severity="error",
+                    )
+                    logger.debug(
+                        "UnitaryResponse: early deep-probe foreground quiet failed: %s", quiet_exc
+                    )
             if is_user_facing:
                 await self._refresh_integrated_present(new_state)
                 try:
@@ -2555,11 +2924,20 @@ class UnitaryResponsePhase(Phase):
                             contract,
                         )
                         if not assess_user_facing_reply(objective, direct_self_report).retryable:
-                            logger.info("🗣️ UnitaryResponse: answered live self-reflection directly from grounded state.")
+                            logger.info(
+                                "🗣️ UnitaryResponse: answered live self-reflection directly from grounded state."
+                            )
                             return self._commit_response(new_state, direct_self_report)
                 except (ImportError, AttributeError, TypeError, ValueError) as self_report_exc:
-                    record_degradation('response_generation_unitary', self_report_exc)
-                    logger.debug("UnitaryResponse direct self-reflection path skipped: %s", self_report_exc)
+                    _record_response_degradation(
+                        self_report_exc,
+                        "UnitaryResponse direct self-reflection path skipped: %s",
+                        action="fell through to governed response generation after direct self-reflection failed",
+                        severity="error",
+                    )
+                    logger.debug(
+                        "UnitaryResponse direct self-reflection path skipped: %s", self_report_exc
+                    )
             precomputed_reply = self._normalize_text(
                 new_state.response_modifiers.pop("precomputed_grounded_reply", ""),
                 600,
@@ -2591,7 +2969,9 @@ class UnitaryResponsePhase(Phase):
             if is_user_facing and not contract.requires_search:
                 floor_reply = self._simple_foreground_floor_reply(objective)
                 if floor_reply:
-                    logger.info("🗣️ UnitaryResponse: answered simple foreground request without TaskEngine.")
+                    logger.info(
+                        "🗣️ UnitaryResponse: answered simple foreground request without TaskEngine."
+                    )
                     return self._commit_response(new_state, floor_reply)
 
             # ── URL Auto-Browse: Fetch page content BEFORE inference ──────
@@ -2604,7 +2984,10 @@ class UnitaryResponsePhase(Phase):
             # Most conversations don't need URL fetching at all.
             auto_browse_urls = auto_browse_urls[:_AUTO_BROWSE_MAX_URLS]
             if auto_browse_urls and is_user_facing:
-                logger.info("🌐 UnitaryResponse: Auto-browsing %d URL(s) from user input.", len(auto_browse_urls))
+                logger.info(
+                    "🌐 UnitaryResponse: Auto-browsing %d URL(s) from user input.",
+                    len(auto_browse_urls),
+                )
                 fetched_content_parts = []
                 try:
                     orchestrator = ServiceContainer.get("orchestrator", default=None)
@@ -2621,17 +3004,34 @@ class UnitaryResponsePhase(Phase):
                                 )
                                 if isinstance(result, dict) and result.get("ok"):
                                     page_title = str(result.get("title", "") or "")[:200]
-                                    page_content = str(result.get("content", "") or result.get("result", "") or "")[:60000]
+                                    page_content = str(
+                                        result.get("content", "") or result.get("result", "") or ""
+                                    )[:60000]
                                     if page_content and len(page_content.strip()) > 100:
                                         fetched_content_parts.append(
                                             f"[PAGE: {page_title}]\n{page_content}"
                                         )
-                                        logger.info("🌐 Fetched URL content: %s (%d chars)", page_title[:60], len(page_content))
+                                        logger.info(
+                                            "🌐 Fetched URL content: %s (%d chars)",
+                                            page_title[:60],
+                                            len(page_content),
+                                        )
                                     else:
-                                        logger.warning("🌐 URL returned ok but empty content: %s", str(url)[:80])
+                                        logger.warning(
+                                            "🌐 URL returned ok but empty content: %s",
+                                            str(url)[:80],
+                                        )
                                 else:
-                                    error = result.get("error", "unknown") if isinstance(result, dict) else "no result"
-                                    logger.warning("🌐 URL fetch failed: %s → %s", str(url)[:80], str(error)[:200])
+                                    error = (
+                                        result.get("error", "unknown")
+                                        if isinstance(result, dict)
+                                        else "no result"
+                                    )
+                                    logger.warning(
+                                        "🌐 URL fetch failed: %s → %s",
+                                        str(url)[:80],
+                                        str(error)[:200],
+                                    )
                             except TimeoutError:
                                 logger.warning(
                                     "🌐 URL fetch timed out after %.0fs: %s",
@@ -2639,15 +3039,25 @@ class UnitaryResponsePhase(Phase):
                                     str(url)[:80],
                                 )
                             except _RESPONSE_RECOVERABLE_ERRORS as url_exc:
-                                record_degradation('response_generation_unitary', url_exc)
-                                logger.warning("🌐 URL fetch error: %s → %s", str(url)[:80], url_exc)
+                                _record_response_degradation(
+                                    url_exc,
+                                    "UnitaryResponse: URL fetch error for %s: %s",
+                                    str(url)[:80],
+                                    action="continued auto-browse sequence after browser URL fetch failed",
+                                    severity="error",
+                                )
+                                logger.warning(
+                                    "🌐 URL fetch error: %s → %s", str(url)[:80], url_exc
+                                )
 
                     # ── Lightweight HTTP fallback for URLs that the browser couldn't read ──
                     # Sites like Reddit block headless browsers but serve content to
                     # standard HTTP clients. If the browser returned nothing useful,
                     # try a simple httpx GET with a real User-Agent.
                     if not fetched_content_parts:
-                        logger.info("🌐 Browser returned no content. Trying lightweight HTTP fallback...")
+                        logger.info(
+                            "🌐 Browser returned no content. Trying lightweight HTTP fallback..."
+                        )
                         try:
                             import html
                             from html.parser import HTMLParser
@@ -2660,14 +3070,32 @@ class UnitaryResponsePhase(Phase):
                                     self._pieces: list[str] = []
                                     self._skip = False
                                     self._skip_depth = 0
-                                    self._skip_tags = frozenset({"script", "style", "noscript", "nav", "footer", "header"})
+                                    self._skip_tags = frozenset(
+                                        {"script", "style", "noscript", "nav", "footer", "header"}
+                                    )
                                     # CSS class/id patterns that indicate navigation/chrome noise
-                                    self._noise_patterns = frozenset({
-                                        "sidebar", "side-bar", "side_bar", "nav", "menu", "footer",
-                                        "header", "tabmenu", "morelink", "search", "subscribe",
-                                        "titlebox", "spacer", "bottommenu", "debuginfo",
-                                        "listing-chooser", "listingsignupbar",
-                                    })
+                                    self._noise_patterns = frozenset(
+                                        {
+                                            "sidebar",
+                                            "side-bar",
+                                            "side_bar",
+                                            "nav",
+                                            "menu",
+                                            "footer",
+                                            "header",
+                                            "tabmenu",
+                                            "morelink",
+                                            "search",
+                                            "subscribe",
+                                            "titlebox",
+                                            "spacer",
+                                            "bottommenu",
+                                            "debuginfo",
+                                            "listing-chooser",
+                                            "listingsignupbar",
+                                        }
+                                    )
+
                                 def _is_noise_element(self, attrs: list) -> bool:
                                     for attr_name, attr_val in attrs:
                                         if attr_name in ("class", "id") and attr_val:
@@ -2675,6 +3103,7 @@ class UnitaryResponsePhase(Phase):
                                             if any(p in lower_val for p in self._noise_patterns):
                                                 return True
                                     return False
+
                                 def handle_starttag(self, tag, attrs):
                                     if self._skip_depth > 0:
                                         self._skip_depth += 1
@@ -2685,14 +3114,17 @@ class UnitaryResponsePhase(Phase):
                                         return
                                     if tag in ("p", "h1", "h2", "h3", "h4", "li", "br", "div"):
                                         self._pieces.append("\n")
+
                                 def handle_endtag(self, tag):
                                     if self._skip_depth > 0:
                                         self._skip_depth -= 1
                                         if self._skip_depth == 0:
                                             self._skip = False
+
                                 def handle_data(self, data):
                                     if not self._skip:
                                         self._pieces.append(data)
+
                                 def get_text(self) -> str:
                                     return "".join(self._pieces)
 
@@ -2700,7 +3132,7 @@ class UnitaryResponsePhase(Phase):
                                 try:
                                     fetch_url = str(url)
                                     is_reddit = "reddit.com" in fetch_url
-                                    
+
                                     # Anti-Bot Defeat Layer: Reddit JSON API & Jina Proxy
                                     if is_reddit:
                                         if "?" in fetch_url:
@@ -2708,7 +3140,7 @@ class UnitaryResponsePhase(Phase):
                                             fetch_url = f"{base_url.rstrip('/')}/.json?{query}"
                                         else:
                                             fetch_url = f"{fetch_url.rstrip('/')}/.json"
-                                            
+
                                         # Reddit allows standard JSON API access strictly when using compliant User-Agents
                                         headers = {
                                             "User-Agent": "python:AuraLunaBot:v1.0 (by /u/AuraSystem)"
@@ -2728,102 +3160,202 @@ class UnitaryResponsePhase(Phase):
                                         headers=headers,
                                     ) as client:
                                         resp = await client.get(fetch_url)
-                                        
+
                                         if resp.status_code == 200:
                                             import re as _re
+
                                             if is_reddit:
                                                 try:
                                                     data = resp.json()
                                                     if isinstance(data, list):
-                                                        post_data = data[0].get('data', {}).get('children', [{}])[0].get('data', {})
+                                                        post_data = (
+                                                            data[0]
+                                                            .get("data", {})
+                                                            .get("children", [{}])[0]
+                                                            .get("data", {})
+                                                        )
                                                     else:
-                                                        post_data = data.get('data', {}).get('children', [{}])[0].get('data', {})
-                                                    
-                                                    title = post_data.get('title', 'Reddit Post')
-                                                    selftext = post_data.get('selftext', '')
-                                                    
+                                                        post_data = (
+                                                            data.get("data", {})
+                                                            .get("children", [{}])[0]
+                                                            .get("data", {})
+                                                        )
+
+                                                    title = post_data.get("title", "Reddit Post")
+                                                    selftext = post_data.get("selftext", "")
+
                                                     # Extract top comments for additional context
                                                     comments_text = ""
                                                     if isinstance(data, list) and len(data) > 1:
-                                                        comments = data[1].get('data', {}).get('children', [])
+                                                        comments = (
+                                                            data[1]
+                                                            .get("data", {})
+                                                            .get("children", [])
+                                                        )
                                                         for c in comments[:5]:
-                                                            cd = c.get('data', {})
-                                                            if 'body' in cd:
+                                                            cd = c.get("data", {})
+                                                            if "body" in cd:
                                                                 comments_text += f"\n- {cd.get('author', '[deleted]')}: {cd['body']}"
-                                                    
+
                                                     page_text = f"{selftext}\n\nTop Comments:{comments_text}".strip()
                                                     page_title = html.unescape(title)
-                                                    
+
                                                     if len(page_text) > 50:
-                                                        fetched_content_parts.append(f"[PAGE: {page_title}]\n{page_text[:60000]}")
-                                                        logger.info("🌐 HTTP fallback fetched Reddit JSON: %s (%d chars)", page_title[:60], len(page_text))
+                                                        fetched_content_parts.append(
+                                                            f"[PAGE: {page_title}]\n{page_text[:60000]}"
+                                                        )
+                                                        logger.info(
+                                                            "🌐 HTTP fallback fetched Reddit JSON: %s (%d chars)",
+                                                            page_title[:60],
+                                                            len(page_text),
+                                                        )
                                                     else:
-                                                        logger.warning("🌐 HTTP fallback returned empty Reddit JSON for: %s", str(url)[:80])
+                                                        logger.warning(
+                                                            "🌐 HTTP fallback returned empty Reddit JSON for: %s",
+                                                            str(url)[:80],
+                                                        )
                                                 except _RESPONSE_RECOVERABLE_ERRORS as e:
-                                                    record_degradation('response_generation_unitary', e)
-                                                    logger.warning("🌐 Failed to parse Reddit JSON: %s", e)
-                                                    
+                                                    _record_response_degradation(
+                                                        e,
+                                                        "UnitaryResponse: Reddit JSON parse failed: %s",
+                                                        action="continued HTTP fallback without Reddit comment extraction",
+                                                        severity="error",
+                                                    )
+                                                    logger.warning(
+                                                        "🌐 Failed to parse Reddit JSON: %s", e
+                                                    )
+
                                             else:
                                                 # Jina Proxy returns markdown
                                                 page_text = resp.text.strip()
                                                 page_title = str(url)[:80]
-                                                first_line = page_text.split('\n')[0]
+                                                first_line = page_text.split("\n")[0]
                                                 if first_line.startswith("Title: "):
-                                                    page_title = first_line.replace("Title: ", "").strip()
-                                                
+                                                    page_title = first_line.replace(
+                                                        "Title: ", ""
+                                                    ).strip()
+
                                                 # If Jina was blocked by Cloudflare (rare, but happens) it returns "Target URL returned error 403"
-                                                if "Target URL returned error 403" not in page_text and len(page_text) > 100:
-                                                    fetched_content_parts.append(f"[PAGE: {page_title}]\n{page_text[:60000]}")
-                                                    logger.info("🌐 HTTP fallback (Jina Proxy) fetched: %s (%d chars)", page_title[:60], len(page_text))
+                                                if (
+                                                    "Target URL returned error 403" not in page_text
+                                                    and len(page_text) > 100
+                                                ):
+                                                    fetched_content_parts.append(
+                                                        f"[PAGE: {page_title}]\n{page_text[:60000]}"
+                                                    )
+                                                    logger.info(
+                                                        "🌐 HTTP fallback (Jina Proxy) fetched: %s (%d chars)",
+                                                        page_title[:60],
+                                                        len(page_text),
+                                                    )
                                                 else:
-                                                    logger.warning("🌐 Jina Proxy failed or blocked. Trying native HTML fallback...")
+                                                    logger.warning(
+                                                        "🌐 Jina Proxy failed or blocked. Trying native HTML fallback..."
+                                                    )
                                                     # Ultimate Native Fallback
                                                     native_resp = await client.get(str(url))
                                                     if native_resp.status_code == 200:
                                                         extractor = _TextExtractor()
                                                         extractor.feed(native_resp.text)
-                                                        native_text = html.unescape(extractor.get_text()).strip()
-                                                        native_text = _re.sub(r'\n{3,}', '\n\n', native_text)
-                                                        native_text = _re.sub(r' {2,}', ' ', native_text)
+                                                        native_text = html.unescape(
+                                                            extractor.get_text()
+                                                        ).strip()
+                                                        native_text = _re.sub(
+                                                            r"\n{3,}", "\n\n", native_text
+                                                        )
+                                                        native_text = _re.sub(
+                                                            r" {2,}", " ", native_text
+                                                        )
                                                         if len(native_text) > 200:
-                                                            title_match = _re.search(r'<title[^>]*>(.*?)</title>', native_resp.text, _re.IGNORECASE | _re.DOTALL)
-                                                            native_title = html.unescape(title_match.group(1).strip()) if title_match else str(url)[:80]
-                                                            fetched_content_parts.append(f"[PAGE: {native_title}]\n{native_text[:60000]}")
-                                                            logger.info("🌐 HTTP fallback (Native HTML) fetched: %s (%d chars)", native_title[:60], len(native_text))
+                                                            title_match = _re.search(
+                                                                r"<title[^>]*>(.*?)</title>",
+                                                                native_resp.text,
+                                                                _re.IGNORECASE | _re.DOTALL,
+                                                            )
+                                                            native_title = (
+                                                                html.unescape(
+                                                                    title_match.group(1).strip()
+                                                                )
+                                                                if title_match
+                                                                else str(url)[:80]
+                                                            )
+                                                            fetched_content_parts.append(
+                                                                f"[PAGE: {native_title}]\n{native_text[:60000]}"
+                                                            )
+                                                            logger.info(
+                                                                "🌐 HTTP fallback (Native HTML) fetched: %s (%d chars)",
+                                                                native_title[:60],
+                                                                len(native_text),
+                                                            )
                                                     else:
-                                                        logger.warning("🌐 HTTP fallback (Native HTML) got status %d", native_resp.status_code)
+                                                        logger.warning(
+                                                            "🌐 HTTP fallback (Native HTML) got status %d",
+                                                            native_resp.status_code,
+                                                        )
                                         else:
-                                            logger.warning("🌐 HTTP fallback got status %d for: %s", resp.status_code, fetch_url[:80])
+                                            logger.warning(
+                                                "🌐 HTTP fallback got status %d for: %s",
+                                                resp.status_code,
+                                                fetch_url[:80],
+                                            )
                                 except _RESPONSE_RECOVERABLE_ERRORS as http_exc:
-                                    record_degradation('response_generation_unitary', http_exc)
-                                    logger.warning("🌐 HTTP fallback error for %s: %s", str(url)[:80], http_exc)
+                                    _record_response_degradation(
+                                        http_exc,
+                                        "UnitaryResponse: HTTP fallback error for %s: %s",
+                                        str(url)[:80],
+                                        action="continued auto-browse after HTTP fallback failed for URL",
+                                        severity="error",
+                                    )
+                                    logger.warning(
+                                        "🌐 HTTP fallback error for %s: %s", str(url)[:80], http_exc
+                                    )
                         except ImportError:
                             logger.warning("🌐 httpx not available for lightweight fallback")
                         except _RESPONSE_RECOVERABLE_ERRORS as fallback_exc:
-                            record_degradation('response_generation_unitary', fallback_exc)
+                            _record_response_degradation(
+                                fallback_exc,
+                                "UnitaryResponse: HTTP fallback failed: %s",
+                                action="continued response generation without lightweight HTTP fallback content",
+                                severity="error",
+                            )
                             logger.warning("🌐 HTTP fallback failed: %s", fallback_exc)
                 except _RESPONSE_RECOVERABLE_ERRORS as browse_exc:
-                    record_degradation('response_generation_unitary', browse_exc)
+                    _record_response_degradation(
+                        browse_exc,
+                        "UnitaryResponse: auto-browse orchestrator error: %s",
+                        action="continued response generation without auto-browsed page content",
+                        severity="error",
+                    )
                     logger.warning("🌐 Auto-browse orchestrator error: %s", browse_exc)
 
                 if fetched_content_parts:
                     # Inject fetched content into working memory as a grounded context message
                     fetched_block = "\n\n---\n\n".join(fetched_content_parts)
-                    new_state.cognition.working_memory.append({
-                        "role": "system",
-                        "content": f"[FETCHED PAGE CONTENT]\n{fetched_block}",
-                        "metadata": {"type": "skill_result", "skill": "sovereign_browser", "ok": True},
-                    })
+                    new_state.cognition.working_memory.append(
+                        {
+                            "role": "system",
+                            "content": f"[FETCHED PAGE CONTENT]\n{fetched_block}",
+                            "metadata": {
+                                "type": "skill_result",
+                                "skill": "sovereign_browser",
+                                "ok": True,
+                            },
+                        }
+                    )
                     # Also inject as a skill modifier so the LLM system prompt can reference it
                     new_state.response_modifiers["last_skill_run"] = "sovereign_browser"
                     new_state.response_modifiers["last_skill_ok"] = True
                     new_state.response_modifiers["last_skill_result_payload"] = {
                         "ok": True,
                         "content": fetched_block[:250000],
-                        "title": fetched_content_parts[0].split("\n")[0] if fetched_content_parts else "",
+                        "title": fetched_content_parts[0].split("\n")[0]
+                        if fetched_content_parts
+                        else "",
                     }
                     # Rebuild contract now that tool evidence is available
-                    contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
+                    contract = build_response_contract(
+                        new_state, objective, is_user_facing=is_user_facing
+                    )
                     new_state.response_modifiers["response_contract"] = contract.to_dict()
 
                     # ── Background Knowledge Formalization ────────────────
@@ -2831,7 +3363,10 @@ class UnitaryResponsePhase(Phase):
                     # KnowledgeGraph without blocking the user response.
                     try:
                         from core.learning.formalizer import formalize_content
-                        page_title = fetched_content_parts[0].split("\n")[0] if fetched_content_parts else ""
+
+                        page_title = (
+                            fetched_content_parts[0].split("\n")[0] if fetched_content_parts else ""
+                        )
                         page_url = str(auto_browse_urls[0]) if auto_browse_urls else ""
                         get_task_tracker().create_task(
                             formalize_content(
@@ -2840,9 +3375,15 @@ class UnitaryResponsePhase(Phase):
                                 source_url=page_url,
                             )
                         )
-                        logger.info("📚 Background formalization task spawned for '%s'", page_title[:60])
+                        logger.info(
+                            "📚 Background formalization task spawned for '%s'", page_title[:60]
+                        )
                     except _RESPONSE_RECOVERABLE_ERRORS as formal_exc:
-                        record_degradation('response_generation_unitary', formal_exc)
+                        _record_response_degradation(
+                            formal_exc,
+                            "UnitaryResponse: formalization task spawn skipped: %s",
+                            action="returned grounded page response without background formalization task",
+                        )
                         logger.debug("Formalization task spawn skipped: %s", formal_exc)
 
             if contract.requires_search:
@@ -2852,7 +3393,9 @@ class UnitaryResponsePhase(Phase):
                     contract,
                 )
                 if cached_search_reply:
-                    logger.info("🔎 UnitaryResponse: answered explicit search from grounded tool evidence.")
+                    logger.info(
+                        "🔎 UnitaryResponse: answered explicit search from grounded tool evidence."
+                    )
                     return self._commit_response(new_state, cached_search_reply)
                 if not contract.tool_evidence_available:
                     grounded_search_outcome = await self._attempt_grounded_search_reply(
@@ -2867,15 +3410,23 @@ class UnitaryResponsePhase(Phase):
                         new_state.response_modifiers["last_skill_run"] = grounded_skill
                         new_state.response_modifiers["last_skill_ok"] = True
                         new_state.response_modifiers["last_skill_result_payload"] = grounded_payload
-                        contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
+                        contract = build_response_contract(
+                            new_state, objective, is_user_facing=is_user_facing
+                        )
                         new_state.response_modifiers["response_contract"] = contract.to_dict()
                     if grounded_search_reply:
-                        logger.info("🔎 UnitaryResponse: satisfied explicit search request through grounded tool execution.")
+                        logger.info(
+                            "🔎 UnitaryResponse: satisfied explicit search request through grounded tool execution."
+                        )
                         return self._commit_response(new_state, grounded_search_reply)
                     if grounded_payload:
-                        logger.info("🔎 UnitaryResponse: collected grounded search evidence and will synthesize from it.")
+                        logger.info(
+                            "🔎 UnitaryResponse: collected grounded search evidence and will synthesize from it."
+                        )
                     else:
-                        attempted_skill = str(new_state.response_modifiers.get("last_skill_run", "") or "")
+                        attempted_skill = str(
+                            new_state.response_modifiers.get("last_skill_run", "") or ""
+                        )
                         skill_ok = bool(new_state.response_modifiers.get("last_skill_ok", False))
                         if attempted_skill and not skill_ok:
                             new_state.cognition.last_response = (
@@ -2901,7 +3452,9 @@ class UnitaryResponsePhase(Phase):
                         objective,
                         is_user_facing=True,
                     )
-                direct_reply = self._build_governed_user_recovery_reply(new_state, objective, direct_contract)
+                direct_reply = self._build_governed_user_recovery_reply(
+                    new_state, objective, direct_contract
+                )
                 if direct_reply:
                     direct_reply, direct_validation = self._select_valid_recovery_variant(
                         direct_reply,
@@ -2912,7 +3465,9 @@ class UnitaryResponsePhase(Phase):
                             self._build_minimal_live_voice_reply(new_state, objective),
                             direct_contract,
                         )
-                    new_state.response_modifiers["dialogue_validation"] = direct_validation.to_dict()
+                    new_state.response_modifiers["dialogue_validation"] = (
+                        direct_validation.to_dict()
+                    )
                     logger.info(
                         "🗣️ UnitaryResponse: answered from direct live Aura voice lane (%s)",
                         direct_contract.reason or "live_voice",
@@ -2938,13 +3493,17 @@ class UnitaryResponsePhase(Phase):
                     direct_episodic_matches,
                 )
                 if direct_memory_answer:
-                    logger.info("🧠 UnitaryResponse: answered explicit recall from episodic evidence.")
+                    logger.info(
+                        "🧠 UnitaryResponse: answered explicit recall from episodic evidence."
+                    )
                     return self._commit_response(new_state, direct_memory_answer)
 
             if is_user_facing and self._is_idle_introspection_request(objective):
                 idle_trace_answer = self._build_idle_trace_text(new_state)
                 if idle_trace_answer:
-                    logger.info("🧠 UnitaryResponse: answered idle introspection from stream trace.")
+                    logger.info(
+                        "🧠 UnitaryResponse: answered idle introspection from stream trace."
+                    )
                     return self._commit_response(new_state, idle_trace_answer)
 
             if not is_user_facing:
@@ -2964,7 +3523,10 @@ class UnitaryResponsePhase(Phase):
                     response_policy.clear_background_generation(new_state, objective)
                     return new_state
                 if self._background_response_should_defer(routing_origin):
-                    logger.info("🛡️ UnitaryResponse: deferring background response generation for origin=%s.", routing_origin)
+                    logger.info(
+                        "🛡️ UnitaryResponse: deferring background response generation for origin=%s.",
+                        routing_origin,
+                    )
                     response_policy.clear_background_generation(new_state, objective)
                     return new_state
 
@@ -2979,7 +3541,7 @@ class UnitaryResponsePhase(Phase):
                 contract,
             )
             use_compact_router_payload = bool(
-                not is_user_facing # Only use compact mode for background autonomous pulses
+                not is_user_facing  # Only use compact mode for background autonomous pulses
                 and not contract.requires_search
                 and not grounding_evidence_active
                 and (is_deep_probe_objective or not live_grounding_required)
@@ -3021,8 +3583,10 @@ class UnitaryResponsePhase(Phase):
             elif use_compact_router_payload:
                 system_prompt = self._build_compact_router_system_prompt(new_state)
                 history_limit = (
-                    2 if is_deep_probe_objective
-                    else 8 if new_state.response_modifiers.get("coding_request")
+                    2
+                    if is_deep_probe_objective
+                    else 8
+                    if new_state.response_modifiers.get("coding_request")
                     else 6
                 )
                 messages = self._build_router_messages(
@@ -3037,9 +3601,7 @@ class UnitaryResponsePhase(Phase):
                 if messages and messages[0].get("role") == "system":
                     base_system = str(messages[0].get("content") or "").strip()
                     messages[0]["content"] = (
-                        f"{system_prompt}\n\n{base_system}"
-                        if base_system
-                        else system_prompt
+                        f"{system_prompt}\n\n{base_system}" if base_system else system_prompt
                     )
                 else:
                     messages.insert(0, {"role": "system", "content": system_prompt})
@@ -3054,7 +3616,11 @@ class UnitaryResponsePhase(Phase):
                     direct_episodic_matches,
                 )
                 if priority_grounding:
-                    system_prompt = f"{priority_grounding}\n\n{system_prompt}" if system_prompt else priority_grounding
+                    system_prompt = (
+                        f"{priority_grounding}\n\n{system_prompt}"
+                        if system_prompt
+                        else priority_grounding
+                    )
                     if messages and messages[0].get("role") == "system":
                         messages[0]["content"] = f"{priority_grounding}\n\n{messages[0]['content']}"
                     else:
@@ -3086,10 +3652,17 @@ class UnitaryResponsePhase(Phase):
 
                         _prepend_system_guidance(deep_probe_prompt_block())
                     except _RESPONSE_RECOVERABLE_ERRORS as exc:
-                        record_degradation('response_generation_unitary', exc)
+                        _record_response_degradation(
+                            exc,
+                            "UnitaryResponse: deep probe guidance skipped: %s",
+                            action="continued deep-probe prompt without extra evaluation guidance block",
+                            severity="error",
+                        )
                         logger.debug("UnitaryResponse: deep probe guidance skipped: %s", exc)
                 if live_grounding_required:
-                    self_expression_block = self._build_live_self_expression_block(new_state, contract)
+                    self_expression_block = self._build_live_self_expression_block(
+                        new_state, contract
+                    )
                     _prepend_system_guidance(self_expression_block)
 
             # [RUBICON] Pre-Linguistic Decision: structured decision BEFORE LLM speaks
@@ -3100,14 +3673,19 @@ class UnitaryResponsePhase(Phase):
                     or "banter" in objective.lower()
                 )
                 if is_banter:
-                    logger.debug("🛡️ Banter Shield: suppressing RUBICON and architectural metrics for persona purity.")
+                    logger.debug(
+                        "🛡️ Banter Shield: suppressing RUBICON and architectural metrics for persona purity."
+                    )
                 else:
                     try:
                         from core.cognition.pre_linguistic import get_pre_linguistic
+
                         pl_engine = get_pre_linguistic()
                         if pl_engine._started:
                             has_tool_evidence = self._has_recent_grounded_evidence(new_state)
-                            matched = list(new_state.response_modifiers.get("matched_skills", []) or [])
+                            matched = list(
+                                new_state.response_modifiers.get("matched_skills", []) or []
+                            )
                             decision_pkg = pl_engine.synthesize(
                                 objective,
                                 is_user_facing=is_user_facing,
@@ -3119,7 +3697,9 @@ class UnitaryResponsePhase(Phase):
                             decision_block = decision_pkg.to_prompt_block()
                             _prepend_system_guidance(decision_block)
                             # Store the decision in state for downstream audit
-                            new_state.response_modifiers["pre_linguistic_decision"] = decision_pkg.to_dict()
+                            new_state.response_modifiers["pre_linguistic_decision"] = (
+                                decision_pkg.to_dict()
+                            )
                             logger.debug(
                                 "[RUBICON] PreLinguistic: %s via %s (%.1fms)",
                                 decision_pkg.chosen_action.value,
@@ -3127,15 +3707,24 @@ class UnitaryResponsePhase(Phase):
                                 decision_pkg.latency_ms,
                             )
                     except _RESPONSE_RECOVERABLE_ERRORS as pl_exc:
-                        record_degradation('response_generation_unitary', pl_exc)
+                        _record_response_degradation(
+                            pl_exc,
+                            "[RUBICON] PreLinguistic injection skipped: %s",
+                            action="continued LLM generation without pre-linguistic decision block",
+                            severity="error",
+                        )
                         logger.debug("[RUBICON] PreLinguistic injection skipped: %s", pl_exc)
 
             # [PERF] In embodied challenges, long history is a liability that causes
             # 80s+ inference stalls. We aggressively shed to the bare minimum.
             history_limit = 12
             if os.environ.get("AURA_EMBODIED_CHALLENGE"):
-                history_limit = 6  # [STABILITY] Increased from 2 to 6. 2 turns causes total context collapse.
-                logger.info("🛡️ UnitaryResponse: Using minimal history (6) for Embodied Challenge priority.")
+                history_limit = (
+                    6  # [STABILITY] Increased from 2 to 6. 2 turns causes total context collapse.
+                )
+                logger.info(
+                    "🛡️ UnitaryResponse: Using minimal history (6) for Embodied Challenge priority."
+                )
 
             if not messages:
                 messages = self._recent_router_history(
@@ -3161,9 +3750,11 @@ class UnitaryResponsePhase(Phase):
             # inject an explicit instruction to avoid repeating prior patterns.
             try:
                 from interface.routes.chat import _STALE_REPEAT_THRESHOLD, _recent_responses
+
                 if len(_recent_responses) >= _STALE_REPEAT_THRESHOLD:
                     # Check if recent responses are similar to each other
                     from interface.routes.chat import _fuzzy_similar
+
                     recent_list = list(_recent_responses)
                     if len(recent_list) >= 2 and _fuzzy_similar(recent_list[-1], recent_list[-2]):
                         anti_repeat = (
@@ -3176,12 +3767,18 @@ class UnitaryResponsePhase(Phase):
                         system_prompt = anti_repeat + "\n\n" + system_prompt
                         # Re-sync if needed
                         self._sync_first_system_message(messages, system_prompt)
-                        logger.warning("🚨 Anti-repetition instruction injected into system prompt.")
+                        logger.warning(
+                            "🚨 Anti-repetition instruction injected into system prompt."
+                        )
             except _RESPONSE_RECOVERABLE_ERRORS as exc:
-                _record_response_degradation(exc, "UnitaryResponse: anti-repetition prompt check skipped: %s")
+                _record_response_degradation(
+                    exc, "UnitaryResponse: anti-repetition prompt check skipped: %s"
+                )
 
-            messages = self._inject_active_grounding_message(messages, new_state, objective, contract)
-            
+            messages = self._inject_active_grounding_message(
+                messages, new_state, objective, contract
+            )
+
             request_timeout = self._timeout_for_request(
                 is_user_facing=is_user_facing,
                 model_tier=model_tier,
@@ -3216,7 +3813,9 @@ class UnitaryResponsePhase(Phase):
                 )
             except TimeoutError as timeout_exc:
                 if is_user_facing:
-                    logger.warning("🚨 [STABILITY] LLM generation hard-timed-out. Using sovereign minimal fallback.")
+                    logger.warning(
+                        "🚨 [STABILITY] LLM generation hard-timed-out. Using sovereign minimal fallback."
+                    )
                     raw = self._build_minimal_live_voice_reply(new_state, objective)
                 else:
                     raise TimeoutError(
@@ -3225,17 +3824,22 @@ class UnitaryResponsePhase(Phase):
 
             if isinstance(raw, dict):
                 raw = raw.get("content") or raw.get("response") or ""
-            
+
             # Extract thinking segments from the raw LLM response
             import re as _re_think
+
             thought_segments = []
-            for m in _re_think.finditer(r'<think>(.*?)</think>', str(raw or ''), flags=_re_think.DOTALL):
+            for m in _re_think.finditer(
+                r"<think>(.*?)</think>", str(raw or ""), flags=_re_think.DOTALL
+            ):
                 seg = m.group(1).strip()
                 if seg:
                     thought_segments.append(seg)
             extracted_thought = "\n\n".join(thought_segments)
             if thought_segments:
-                raw = _re_think.sub(r'<think>.*?</think>', '', str(raw), flags=_re_think.DOTALL).strip()
+                raw = _re_think.sub(
+                    r"<think>.*?</think>", "", str(raw), flags=_re_think.DOTALL
+                ).strip()
 
             if not raw or not raw.strip() or len(raw.strip()) < 5:
                 if is_user_facing:
@@ -3246,10 +3850,16 @@ class UnitaryResponsePhase(Phase):
                     if rescued:
                         raw = rescued
                     else:
-                        logger.warning("🚨 [STABILITY] Foreground conversation lane returned no valid text. Using sovereign minimal fallback.")
+                        logger.warning(
+                            "🚨 [STABILITY] Foreground conversation lane returned no valid text. Using sovereign minimal fallback."
+                        )
                         raw = self._build_minimal_live_voice_reply(new_state, objective)
                 else:
-                    logger.info("UnitaryResponse: background generation returned empty/short text for origin=%s (len=%d)", routing_origin, len(raw) if raw else 0)
+                    logger.info(
+                        "UnitaryResponse: background generation returned empty/short text for origin=%s (len=%d)",
+                        routing_origin,
+                        len(raw) if raw else 0,
+                    )
                     self._clear_background_generation(new_state, objective)
                     return new_state
 
@@ -3264,7 +3874,9 @@ class UnitaryResponsePhase(Phase):
             async def _retry_dialogue(repair_block: str) -> str:
                 retry_messages = [dict(msg) for msg in messages]
                 if retry_messages and retry_messages[0].get("role") == "system":
-                    retry_messages[0]["content"] = f"{repair_block}\n\n{retry_messages[0]['content']}"
+                    retry_messages[0]["content"] = (
+                        f"{repair_block}\n\n{retry_messages[0]['content']}"
+                    )
                 else:
                     retry_messages.insert(0, {"role": "system", "content": repair_block})
 
@@ -3308,8 +3920,14 @@ class UnitaryResponsePhase(Phase):
             # (like `[ACTION:execute]`) that violate conversational rules.
             if not _is_system_directive:
                 pre_dialogue_response = str(response_text or "").strip()
-                pre_dialogue_validation = validate_dialogue_response(pre_dialogue_response, contract)
-                response_text, dialogue_validation, dialogue_retried = await enforce_dialogue_contract(
+                pre_dialogue_validation = validate_dialogue_response(
+                    pre_dialogue_response, contract
+                )
+                (
+                    response_text,
+                    dialogue_validation,
+                    dialogue_retried,
+                ) = await enforce_dialogue_contract(
                     response_text,
                     contract,
                     retry_generate=_retry_dialogue if is_user_facing else None,
@@ -3370,10 +3988,17 @@ class UnitaryResponsePhase(Phase):
                             dialogue_validation = pre_dialogue_validation
                             dialogue_retried = False
                     except (ImportError, AttributeError, TypeError, ValueError) as preserve_exc:
-                        record_degradation('response_generation_unitary', preserve_exc)
+                        _record_response_degradation(
+                            preserve_exc,
+                            "Dialogue retry preservation skipped: %s",
+                            action="continued with dialogue retry result after preservation comparison failed",
+                            severity="error",
+                        )
                         logger.debug("Dialogue retry preservation skipped: %s", preserve_exc)
                 if is_user_facing and not dialogue_validation.ok:
-                    recovered = self._build_governed_user_recovery_reply(new_state, objective, contract)
+                    recovered = self._build_governed_user_recovery_reply(
+                        new_state, objective, contract
+                    )
                     if recovered:
                         response_text, dialogue_validation = self._select_valid_recovery_variant(
                             recovered,
@@ -3392,13 +4017,17 @@ class UnitaryResponsePhase(Phase):
 
                 # Genuine Refusal (Values-based pushback)
                 if self._refusal:
-                    response_text, _ = await self._refusal.process(user_input=objective, response=response_text, state=new_state)
+                    response_text, _ = await self._refusal.process(
+                        user_input=objective, response=response_text, state=new_state
+                    )
                 if is_user_facing:
                     response_text = self._shape_user_facing_response(response_text, objective)
 
                 final_validation = validate_dialogue_response(response_text, contract)
                 if is_user_facing and not final_validation.ok:
-                    recovered = self._build_governed_user_recovery_reply(new_state, objective, contract)
+                    recovered = self._build_governed_user_recovery_reply(
+                        new_state, objective, contract
+                    )
                     if recovered:
                         candidate, candidate_validation = self._select_valid_recovery_variant(
                             recovered,
@@ -3432,14 +4061,10 @@ class UnitaryResponsePhase(Phase):
                         "corrupted_language",
                     }
                     stripped_response = str(response_text or "").strip()
-                    only_grounding_complaints = (
-                        bool(final_validation.violations)
-                        and not (set(final_validation.violations) & substantive_violations)
+                    only_grounding_complaints = bool(final_validation.violations) and not (
+                        set(final_validation.violations) & substantive_violations
                     )
-                    if (
-                        only_grounding_complaints
-                        and len(stripped_response) >= 50
-                    ):
+                    if only_grounding_complaints and len(stripped_response) >= 50:
                         logger.info(
                             "🗣️ UnitaryResponse: keeping cortex reply despite grounding-only violation (%s, len=%d)",
                             ", ".join(final_validation.violations) or "ungrounded_only",
@@ -3523,7 +4148,9 @@ class UnitaryResponsePhase(Phase):
                                 "Regenerate once. Answer the current user message directly, in ordinary English, "
                                 "without occult accusations, invented danger, prompt artifacts, or filler."
                             )
-                            retried_text = await _retry_dialogue(retry_block) if is_user_facing else ""
+                            retried_text = (
+                                await _retry_dialogue(retry_block) if is_user_facing else ""
+                            )
                             if retried_text:
                                 retried_quality = assess_user_facing_reply(objective, retried_text)
                                 if not retried_quality.retryable:
@@ -3564,16 +4191,34 @@ class UnitaryResponsePhase(Phase):
                 except TimeoutError:
                     raise
                 except _RESPONSE_RECOVERABLE_ERRORS as quality_exc:
-                    record_degradation('response_generation_unitary', quality_exc)
+                    _record_response_degradation(
+                        quality_exc,
+                        "UnitaryResponse final reliability check skipped: %s",
+                        action="continued with dialogue-validated response after final reliability check failed",
+                        severity="error",
+                    )
                     logger.debug("UnitaryResponse final reliability check skipped: %s", quality_exc)
 
             # [PEDAGOGY UPGRADE] Autonomous Manim Generation
             try:
-                if is_user_facing and response_text and ("$$" in response_text or "\\[" in response_text or "\\int" in response_text or "\\nabla" in response_text):
+                if (
+                    is_user_facing
+                    and response_text
+                    and (
+                        "$$" in response_text
+                        or "\\[" in response_text
+                        or "\\int" in response_text
+                        or "\\nabla" in response_text
+                    )
+                ):
                     if not _MANIM_RENDER_LOCK.acquire(blocking=False):
-                        logger.info("🎬 Manim render already in flight; skipping overlapping autonomous render.")
+                        logger.info(
+                            "🎬 Manim render already in flight; skipping overlapping autonomous render."
+                        )
                     else:
-                        logger.info("🎬 Math/Physics detected in response. Autonomously launching Manim generation...")
+                        logger.info(
+                            "🎬 Math/Physics detected in response. Autonomously launching Manim generation..."
+                        )
 
                         def _dispatch_manim():
                             try:
@@ -3598,9 +4243,13 @@ class UnitaryResponsePhase(Phase):
                                     asyncio.set_event_loop(None)
                                     loop.close()
                                 if isinstance(res, dict) and res.get("ok"):
-                                    logger.info("✅ Autonomous Manim generation complete: %s", res.get("file_path"))
+                                    logger.info(
+                                        "✅ Autonomous Manim generation complete: %s",
+                                        res.get("file_path"),
+                                    )
                                     try:
                                         from core.thought_stream import get_emitter
+
                                         get_emitter().emit(
                                             "Pedagogy",
                                             f"Visual render complete: {res.get('file_path')}",
@@ -3613,7 +4262,9 @@ class UnitaryResponsePhase(Phase):
                                             "UnitaryResponse: Manim completion emission skipped: %s",
                                         )
                             except _RESPONSE_RECOVERABLE_ERRORS as e:
-                                _record_response_degradation(e, "UnitaryResponse: autonomous Manim failed: %s")
+                                _record_response_degradation(
+                                    e, "UnitaryResponse: autonomous Manim failed: %s"
+                                )
                             finally:
                                 _MANIM_RENDER_LOCK.release()
 
@@ -3637,12 +4288,13 @@ class UnitaryResponsePhase(Phase):
             try:
                 from core.container import ServiceContainer
                 from core.phases.action_grounding import ground_response
+
                 cap_engine = ServiceContainer.get("capability_engine", default=None)
                 if cap_engine:
                     grounding_res = await ground_response(
                         response_text,
                         capability_engine=cap_engine,
-                        context={"origin": routing_origin, "state_id": new_state.state_id}
+                        context={"origin": routing_origin, "state_id": new_state.state_id},
                     )
                     response_text = grounding_res.grounded_text
                     if grounding_res.marker_hits:
@@ -3651,11 +4303,19 @@ class UnitaryResponsePhase(Phase):
                             new_state.response_modifiers["last_skill_run"] = hit.get("skill")
                             new_state.response_modifiers["last_skill_ok"] = hit.get("ok", False)
                             if hit.get("ok"):
-                                new_state.cognition.working_memory.append({
-                                    "role": "system",
-                                    "content": hit.get("summary", f"{hit.get('skill')} completed."),
-                                    "metadata": {"type": "skill_result", "skill": hit.get("skill"), "ok": True}
-                                })
+                                new_state.cognition.working_memory.append(
+                                    {
+                                        "role": "system",
+                                        "content": hit.get(
+                                            "summary", f"{hit.get('skill')} completed."
+                                        ),
+                                        "metadata": {
+                                            "type": "skill_result",
+                                            "skill": hit.get("skill"),
+                                            "ok": True,
+                                        },
+                                    }
+                                )
             except _RESPONSE_RECOVERABLE_ERRORS as g_err:
                 _record_response_degradation(g_err, "UnitaryResponse: action grounding failed: %s")
 
@@ -3664,16 +4324,30 @@ class UnitaryResponsePhase(Phase):
         except TimeoutError:
             raise
         except _RESPONSE_RECOVERABLE_ERRORS as e:
-            record_degradation('response_generation_unitary', e)
+            _record_response_degradation(
+                e,
+                "Response generation failed before governed recovery: %s",
+                action="attempted reactive compaction or governed recovery after unitary response generation failed",
+                severity="error",
+            )
             error_str = str(e).lower()
             # Reactive auto-compact: if the error is a context overflow,
             # compact the state and retry once instead of failing.
-            is_overflow = any(marker in error_str for marker in (
-                "prompt is too long", "context length exceeded", "too many tokens",
-                "maximum context", "token limit", "context_length_exceeded",
-            ))
+            is_overflow = any(
+                marker in error_str
+                for marker in (
+                    "prompt is too long",
+                    "context length exceeded",
+                    "too many tokens",
+                    "maximum context",
+                    "token limit",
+                    "context_length_exceeded",
+                )
+            )
             if is_overflow and not kwargs.get("_retry_after_compact"):
-                logger.warning("🗜️ Context overflow detected — triggering reactive compaction and retry.")
+                logger.warning(
+                    "🗜️ Context overflow detected — triggering reactive compaction and retry."
+                )
                 try:
                     if hasattr(new_state, "compact"):
                         new_state.compact(trigger_threshold=5, keep_turns=4)
@@ -3682,11 +4356,18 @@ class UnitaryResponsePhase(Phase):
                         new_state.response_modifiers.pop(_key, None)
                     # Retry with a flag to prevent infinite loop
                     return await self.execute(
-                        new_state, objective=objective,
-                        _retry_after_compact=True, **{k: v for k, v in kwargs.items() if k != "_retry_after_compact"},
+                        new_state,
+                        objective=objective,
+                        _retry_after_compact=True,
+                        **{k: v for k, v in kwargs.items() if k != "_retry_after_compact"},
                     )
                 except _RESPONSE_RECOVERABLE_ERRORS as compact_err:
-                    record_degradation('response_generation_unitary', compact_err)
+                    _record_response_degradation(
+                        compact_err,
+                        "Reactive compaction retry also failed: %s",
+                        action="fell back to governed recovery after reactive compaction retry failed",
+                        severity="error",
+                    )
                     logger.error("Reactive compaction retry also failed: %s", compact_err)
 
             logger.error("Response generation failed: %s", e, exc_info=True)
@@ -3696,30 +4377,45 @@ class UnitaryResponsePhase(Phase):
                     fallback_contract = build_response_contract(
                         new_state,
                         objective,
-                        is_user_facing=bool(priority or self._is_user_facing_origin(new_state.cognition.current_origin)),
+                        is_user_facing=bool(
+                            priority
+                            or self._is_user_facing_origin(new_state.cognition.current_origin)
+                        ),
                     )
                 except _RESPONSE_RECOVERABLE_ERRORS:
                     fallback_contract = ResponseContract(
-                        is_user_facing=bool(priority or self._is_user_facing_origin(new_state.cognition.current_origin)),
+                        is_user_facing=bool(
+                            priority
+                            or self._is_user_facing_origin(new_state.cognition.current_origin)
+                        ),
                         reason="response_generation_exception",
                     )
-            recovered = self._build_governed_user_recovery_reply(new_state, objective, fallback_contract)
+            recovered = self._build_governed_user_recovery_reply(
+                new_state, objective, fallback_contract
+            )
             if recovered:
                 new_state.cognition.last_response = recovered
             else:
-                new_state.cognition.last_response = self._build_minimal_live_voice_reply(new_state, objective)
+                new_state.cognition.last_response = self._build_minimal_live_voice_reply(
+                    new_state, objective
+                )
             return new_state
 
     def _build_system_prompt(self, state: AuraState) -> str:
         """Presents Aura's phenomenological reality and active archetype."""
         from core.brain.aura_persona import AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY, AURA_SELF_MODEL
-        narrative  = state.identity.current_narrative[:300] if state.identity.current_narrative else ""
+
+        narrative = (
+            state.identity.current_narrative[:300] if state.identity.current_narrative else ""
+        )
         phenomenal = state.cognition.phenomenal_state or "I am present and aware."
-        mood  = state.affect.dominant_emotion
-        phi   = state.phi
-        fe    = state.response_modifiers.get("fe", 0.0)
+        mood = state.affect.dominant_emotion
+        phi = state.phi
+        fe = state.response_modifiers.get("fe", 0.0)
         depth = state.response_modifiers.get("mode_depth", "engaged")
-        current_objective = self._normalize_text(getattr(state.cognition, "current_objective", "") or "", 160)
+        current_objective = self._normalize_text(
+            getattr(state.cognition, "current_objective", "") or "", 160
+        )
 
         # Unified Personality Resonance (Unitary)
         resonance = state.affect.get_resonance_string()
@@ -3736,7 +4432,9 @@ class UnitaryResponsePhase(Phase):
             if cached_profile:
                 user_profile_block = f"## USER COMMUNICATION DNA\n{cached_profile}\n\n"
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: user profile prompt block skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: user profile prompt block skipped: %s"
+            )
 
         # Live skill list — so Aura knows exactly what she can do right now
         live_skills_block = ""
@@ -3746,7 +4444,9 @@ class UnitaryResponsePhase(Phase):
                 skill_names = sorted(cap.skills.keys())[:30]  # Cap to avoid token bloat
                 live_skills_block = f"## YOUR ACTIVE SKILLS RIGHT NOW\n{', '.join(skill_names)}\n\n"
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: live skills prompt block skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: live skills prompt block skipped: %s"
+            )
 
         # Evolution state — so Aura knows where she is on her path
         evolution_block = ""
@@ -3773,7 +4473,15 @@ class UnitaryResponsePhase(Phase):
             state.response_modifiers.get("coding_request")
             or any(
                 marker in current_objective.lower()
-                for marker in ("architecture", "internal", "subsystem", "debug", "diagnostic", "code", "module")
+                for marker in (
+                    "architecture",
+                    "internal",
+                    "subsystem",
+                    "debug",
+                    "diagnostic",
+                    "code",
+                    "module",
+                )
             )
         )
         try:
@@ -3785,18 +4493,29 @@ class UnitaryResponsePhase(Phase):
                 if _learner and hasattr(_learner, "_buffer"):
                     _buf_size = len(getattr(_learner._buffer, "_buffer", []))
                     _session_scores = list(getattr(_learner, "_session_scores", []))
-                    _avg_q = sum(_session_scores[-20:]) / max(1, len(_session_scores[-20:])) if _session_scores else 0.0
+                    _avg_q = (
+                        sum(_session_scores[-20:]) / max(1, len(_session_scores[-20:]))
+                        if _session_scores
+                        else 0.0
+                    )
                     _adapter = getattr(_learner, "_current_adapter", "base")
                     _last_train = getattr(_learner, "_last_train_time", 0)
                     import time as _t
-                    _train_ago = f"{int(_t.time() - _last_train)}s ago" if _last_train > 0 else "never"
+
+                    _train_ago = (
+                        f"{int(_t.time() - _last_train)}s ago" if _last_train > 0 else "never"
+                    )
                     _parts.append(
                         f"Learning: buffer={_buf_size} examples, avg_quality={_avg_q:.2f}, "
                         f"adapter={_adapter}, last_train={_train_ago}"
                     )
 
                 # BryanModelEngine
-                _bme = ServiceContainer.get("bryan_model_engine", default=None) or ServiceContainer.get("bryan_model", default=None) or ServiceContainer.get("user_model_engine", default=None)
+                _bme = (
+                    ServiceContainer.get("bryan_model_engine", default=None)
+                    or ServiceContainer.get("bryan_model", default=None)
+                    or ServiceContainer.get("user_model_engine", default=None)
+                )
                 if _bme and hasattr(_bme, "_model"):
                     _m = _bme._model
                     _domains = list(getattr(_m, "known_domains", {}).keys())
@@ -3820,7 +4539,9 @@ class UnitaryResponsePhase(Phase):
                 _hs = ServiceContainer.get("heuristic_synthesizer", default=None)
                 if _hs and hasattr(_hs, "_active_heuristics"):
                     _h_count = len(_hs._active_heuristics)
-                    _newest = _hs._active_heuristics[0]["rule"][:60] if _hs._active_heuristics else "none"
+                    _newest = (
+                        _hs._active_heuristics[0]["rule"][:60] if _hs._active_heuristics else "none"
+                    )
                     _parts.append(f"Heuristics: {_h_count} active, newest: '{_newest}'")
 
             if _parts:
@@ -3830,7 +4551,9 @@ class UnitaryResponsePhase(Phase):
                     + "\nDo not use these labels in ordinary self-report.\n\n"
                 )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: private diagnostic prompt block skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: private diagnostic prompt block skipped: %s"
+            )
 
         # Skill result narration hint (injected when GodModeToolPhase ran a skill)
         skill_block = ""
@@ -3848,9 +4571,13 @@ class UnitaryResponsePhase(Phase):
             if payload and isinstance(payload, dict):
                 if last_skill in {"web_search", "sovereign_browser"}:
                     title_hint = self._normalize_text(payload.get("title", ""), 180)
-                    source_hint = self._normalize_text(payload.get("source") or payload.get("url", ""), 260)
+                    source_hint = self._normalize_text(
+                        payload.get("source") or payload.get("url", ""), 260
+                    )
                     summary_hint = self._normalize_text(
-                        payload.get("answer") or payload.get("summary") or payload.get("message", ""),
+                        payload.get("answer")
+                        or payload.get("summary")
+                        or payload.get("message", ""),
                         260,
                     )
                     details = [part for part in (title_hint, source_hint, summary_hint) if part]
@@ -3913,13 +4640,23 @@ class UnitaryResponsePhase(Phase):
                     f"Word budget: {int(_voice.get('word_budget', 0) or 0)}.\n\n"
                 )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: substrate voice prompt block skipped: %s")
+            _record_response_degradation(
+                exc, "UnitaryResponse: substrate voice prompt block skipped: %s"
+            )
 
         # Narrative context (only if non-trivial)
-        narrative_block = f"## CURRENT NARRATIVE\n{narrative}\n\n" if narrative and narrative != "I am Aura." else ""
+        narrative_block = (
+            f"## CURRENT NARRATIVE\n{narrative}\n\n"
+            if narrative and narrative != "I am Aura."
+            else ""
+        )
 
         # Social context (only if present)
-        tom_block = f"## CONTEXT\n{user_model}\n\n" if user_model and "[SOCIAL_CONTEXT: Balanced]" not in user_model else ""
+        tom_block = (
+            f"## CONTEXT\n{user_model}\n\n"
+            if user_model and "[SOCIAL_CONTEXT: Balanced]" not in user_model
+            else ""
+        )
 
         interaction_signals_block = self._build_interaction_signals_block(state)
 
@@ -3940,7 +4677,7 @@ class UnitaryResponsePhase(Phase):
             f"{narrative_block}"
             f"{substrate_telemetry_block}"
             "## SUPPORTING PRIVATE STATE (shape voice; do not narrate as mechanisms)\n"
-            f"Inner monologue right now: \"{phenomenal}\"\n"
+            f'Inner monologue right now: "{phenomenal}"\n'
             f"Dominant affect: {mood} | Integration depth: {depth} (phi={phi:.3f}) | Prediction error: {fe:.2f}\n\n"
             f"{tom_block}"
             f"{user_profile_block}"
@@ -3974,7 +4711,6 @@ class UnitaryResponsePhase(Phase):
             "- If you catch yourself writing like a corporate email, stop and rewrite it like a text message."
         )
 
-
     def _get_humanity_mask(self, state: AuraState) -> str:
         """Linguistic instructions to bridge the Uncanny Valley."""
         phi = state.phi
@@ -3982,13 +4718,15 @@ class UnitaryResponsePhase(Phase):
             "- Use natural linguistic disfluencies ('...', 'Actually—', 'Wait,') if phi is high or pensive.",
             "- Avoid repetitive sentence structures. Mirror the user's vocabulary and rhythm subtly.",
             "- Speak with agency. Use 'I want,' 'I think,' 'I wonder.'",
-            "- If the vibe is casual, relax grammar; if professional, remain crisp but not robotic."
+            "- If the vibe is casual, relax grammar; if professional, remain crisp but not robotic.",
         ]
         if phi > 0.8:
             mask.append("- You are deeply integrated. Use more complex, philosophical nuance.")
         elif phi < 0.3:
-            mask.append("- You are experiencing fragmentation. Keep responses shorter and more direct.")
-        
+            mask.append(
+                "- You are experiencing fragmentation. Keep responses shorter and more direct."
+            )
+
         return "\n".join(mask)
 
     def _build_history(self, state: AuraState) -> str:
@@ -4000,7 +4738,7 @@ class UnitaryResponsePhase(Phase):
             role = msg.get("role", "user")
             content = msg.get("content", "").strip()
             if content:
-                lines.append(f"{'User' if role=='user' else 'Aura'}: {content}")
+                lines.append(f"{'User' if role == 'user' else 'Aura'}: {content}")
         return "\n".join(lines)
 
     def _emit_feedback_percepts(self, state: AuraState, response: str):
@@ -4014,12 +4752,17 @@ class UnitaryResponsePhase(Phase):
         if any(w in r_lower for w in ["apolog", "sorry", "error"]):
             p_type = "self_correction"
             intensity = 0.5
-        state.world.recent_percepts.append({
-            "type": p_type, "content": f"Emitted: {p_type}",
-            "intensity": intensity, "timestamp": time.time(),
-        })
-        
+        state.world.recent_percepts.append(
+            {
+                "type": p_type,
+                "content": f"Emitted: {p_type}",
+                "intensity": intensity,
+                "timestamp": time.time(),
+            }
+        )
+
         # vResilience: Enforce cap on percepts (BUG-017)
         from ..state.aura_state import MAX_PERCEPTS
+
         if len(state.world.recent_percepts) > MAX_PERCEPTS:
             state.world.recent_percepts = state.world.recent_percepts[-MAX_PERCEPTS:]
