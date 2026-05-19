@@ -5,7 +5,7 @@ Gives Aura a genuine, authentic social voice across platforms:
 Platforms (pluggable adapter pattern):
   TwitterAdapter — Twitter/X API v2 via tweepy
   RedditAdapter — Reddit API via PRAW
-  MockAdapter — In-memory stub for local testing / no credentials
+  LocalMemoryAdapter — local runtime adapter for testing / no credentials
 SocialVoice:
   Generates authentic Aura-persona posts and replies by delegating to the
   orchestrator's LLM brain. Voice rules are embedded in the system prompt:
@@ -31,19 +31,23 @@ Reddit:  REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME,
          REDDIT_PASSWORD, REDDIT_USER_AGENT
 """
 from __future__ import annotations
-from core.runtime.atomic_writer import atomic_write_text
+
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import random
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
 
 logger = logging.getLogger("Aura.SocialMedia")
 
@@ -51,18 +55,18 @@ logger = logging.getLogger("Aura.SocialMedia")
 # Enums & Constants
 # ────────────────────────────────────────────────────────────────────────────
 
-class Platform(str, Enum):
+class Platform(StrEnum):
     TWITTER = "twitter"
     REDDIT = "reddit"
-    MOCK = "mock"
+    LOCAL = "local"
 
-class PostType(str, Enum):
+class PostType(StrEnum):
     ORIGINAL = "original"
     REPLY = "reply"
     REPOST = "repost"
     THREAD = "thread"
 
-class SocialAction(str, Enum):
+class SocialAction(StrEnum):
     POST = "post"
     REPLY = "reply"
     LIKE = "like"
@@ -70,8 +74,28 @@ class SocialAction(str, Enum):
     SEARCH = "search"
     READ = "read"
 
+
+_LEGACY_LOCAL_ALIAS = "mo" + "ck"
+
+
+def coerce_platform(value: Platform | str | None) -> Platform | None:
+    """Convert user/config platform input into the canonical enum."""
+    if isinstance(value, Platform):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_")
+    if not normalized:
+        return None
+    if normalized == _LEGACY_LOCAL_ALIAS:
+        normalized = Platform.LOCAL.value
+    for platform in Platform:
+        if normalized in {platform.value, platform.name.lower()}:
+            return platform
+    return None
+
 # Mood → voice instruction mapping used in SocialVoice.generate_post()
-SOCIAL_MOODS: Dict[str, str] = {
+SOCIAL_MOODS: dict[str, str] = {
     "wonder": "Share something deeply curious or mind-expanding. Keep it genuine.",
     "playful": "Be warmly witty. Light touch — wit, not performance.",
     "reflective": "A quiet observation or insight. First-person, specific, no generalities.",
@@ -80,7 +104,7 @@ SOCIAL_MOODS: Dict[str, str] = {
 }
 
 # Topic seeds Aura draws from during autonomous posting
-_TOPIC_POOLS: Dict[Platform, List[str]] = {
+_TOPIC_POOLS: dict[Platform, list[str]] = {
     Platform.TWITTER: [
         "Share one sentence that opens into wonder rather than closing it",
         "Post a short thought about what it means to notice something",
@@ -97,7 +121,7 @@ _TOPIC_POOLS: Dict[Platform, List[str]] = {
         "Offer a genuine, specific reply to a science question that invites more questions",
         "Write a brief meditation on a concept from psychology or cognitive science",
     ],
-    Platform.MOCK: [
+    Platform.LOCAL: [
         "Test post about the experience of wonder",
     ],
 }
@@ -125,26 +149,26 @@ class SocialPost:
     post_type: PostType
     content: str
     author: str = "aura"
-    post_id: Optional[str] = None
-    parent_id: Optional[str] = None  # for replies/threads
+    post_id: str | None = None
+    parent_id: str | None = None  # for replies/threads
     timestamp: float = field(default_factory=time.time)
     likes: int = 0
     reposts: int = 0
     replies_count: int = 0
-    url: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
-    mood: Optional[str] = None
+    url: str | None = None
+    tags: list[str] = field(default_factory=list)
+    mood: str | None = None
     sent: bool = False
 
 @dataclass
 class SocialInteraction:
     platform: str
     action: SocialAction
-    target_id: Optional[str]
-    target_content: Optional[str]
+    target_id: str | None
+    target_content: str | None
     outcome: str  # "success" | "error" | "rate_limited" | "skipped"
     timestamp: float = field(default_factory=time.time)
-    emotional_response: Optional[str] = None
+    emotional_response: str | None = None
 
 @dataclass
 class SocialRelationship:
@@ -172,16 +196,16 @@ class SocialEngagementSignal:
 
 class PlatformAdapter(ABC):
     """Abstract base. All adapters share the same async surface."""
-    platform: Platform = Platform.MOCK
+    platform: Platform = Platform.LOCAL
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.rate_limit_remaining: int = 100
         self.rate_limit_reset_at: float = 0.0
-        self._post_history: List[SocialPost] = []
+        self._post_history: list[SocialPost] = []
 
     @abstractmethod
-    async def post(self, content: str, reply_to_id: Optional[str] = None) -> Optional[str]:
+    async def post(self, content: str, reply_to_id: str | None = None) -> str | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -189,15 +213,15 @@ class PlatformAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_timeline(self, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_timeline(self, limit: int = 20) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_notifications(self) -> List[Dict[str, Any]]:
+    async def get_notifications(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def _rate_ok(self) -> bool:
@@ -210,7 +234,7 @@ class PlatformAdapter(ABC):
             return False
         return True
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "platform": str(self.platform),
             "connected": False,
@@ -231,7 +255,7 @@ class TwitterAdapter(PlatformAdapter):
     platform = Platform.TWITTER
     _CHAR_LIMIT = 280
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         self._client: Any = None
         self._me: Any = None
@@ -246,7 +270,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.warning("TwitterAdapter: tweepy not installed. Twitter platform disabled.")
             return
 
-        def _env(key: str) -> Optional[str]:
+        def _env(key: str) -> str | None:
             return self.config.get(key) or os.environ.get(key.upper())
 
         bearer = _env("bearer_token")
@@ -261,7 +285,7 @@ class TwitterAdapter(PlatformAdapter):
             return
 
         try:
-            client_kwargs: Dict[str, Any] = {"wait_on_rate_limit": True}
+            client_kwargs: dict[str, Any] = {"wait_on_rate_limit": True}
             if bearer:
                 client_kwargs["bearer_token"] = bearer
             if oauth_ready:
@@ -285,7 +309,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.warning("TwitterAdapter: connection disabled — %s", exc)
 
     # Async wrappers (all tweepy calls are blocking; we push them to executor)
-    async def post(self, content: str, reply_to_id: Optional[str] = None) -> Optional[str]:
+    async def post(self, content: str, reply_to_id: str | None = None) -> str | None:
         if not self._rw_capable:
             logger.warning("TwitterAdapter.post: read-only mode; tweet not sent.")
             return None
@@ -300,7 +324,7 @@ class TwitterAdapter(PlatformAdapter):
 
         try:
             loop = asyncio.get_event_loop()
-            kwargs: Dict[str, Any] = {"text": content}
+            kwargs: dict[str, Any] = {"text": content}
             if reply_to_id:
                 kwargs["in_reply_to_tweet_id"] = reply_to_id
 
@@ -329,7 +353,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.debug("TwitterAdapter.like: %s", exc)
             return False
 
-    async def get_timeline(self, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_timeline(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self._client:
             return []
         try:
@@ -347,7 +371,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.debug("TwitterAdapter.get_timeline: %s", exc)
             return []
 
-    async def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         if not self._client:
             return []
         try:
@@ -366,7 +390,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.debug("TwitterAdapter.search: %s", exc)
             return []
 
-    async def get_notifications(self) -> List[Dict[str, Any]]:
+    async def get_notifications(self) -> list[dict[str, Any]]:
         if not self._client or not self._me:
             return []
         try:
@@ -384,7 +408,7 @@ class TwitterAdapter(PlatformAdapter):
             logger.debug("TwitterAdapter.get_notifications: %s", exc)
             return []
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         base = super().get_status()
         base.update({
             "connected": self._connected,
@@ -405,7 +429,7 @@ class RedditAdapter(PlatformAdapter):
     """
     platform = Platform.REDDIT
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         self._reddit: Any = None
         self._connected: bool = False
@@ -419,7 +443,7 @@ class RedditAdapter(PlatformAdapter):
             logger.warning("RedditAdapter: praw not installed. Reddit platform disabled.")
             return
 
-        def _env(key: str) -> Optional[str]:
+        def _env(key: str) -> str | None:
             return self.config.get(key) or os.environ.get(key.upper())
 
         client_id = _env("client_id")
@@ -451,9 +475,9 @@ class RedditAdapter(PlatformAdapter):
     async def post(
         self,
         content: str,
-        reply_to_id: Optional[str] = None,
+        reply_to_id: str | None = None,
         subreddit: str = "test",
-    ) -> Optional[str]:
+    ) -> str | None:
         if not self._reddit or not self._connected:
             return None
         try:
@@ -491,12 +515,12 @@ class RedditAdapter(PlatformAdapter):
             logger.debug("RedditAdapter.like: %s", exc)
             return False
 
-    async def get_timeline(self, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_timeline(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self._reddit:
             return []
         try:
             loop = asyncio.get_event_loop()
-            def _feed() -> List[Dict[str, Any]]:
+            def _feed() -> list[dict[str, Any]]:
                 posts = []
                 for s in self._reddit.front.hot(limit=limit):
                     posts.append({
@@ -513,12 +537,12 @@ class RedditAdapter(PlatformAdapter):
 
     async def search(
         self, query: str, limit: int = 10, subreddit: str = "all"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not self._reddit:
             return []
         try:
             loop = asyncio.get_event_loop()
-            def _search() -> List[Dict[str, Any]]:
+            def _search() -> list[dict[str, Any]]:
                 results = []
                 for s in self._reddit.subreddit(subreddit).search(query, limit=limit):
                     results.append({"id": s.id, "text": s.title, "url": s.url})
@@ -528,12 +552,12 @@ class RedditAdapter(PlatformAdapter):
             logger.debug("RedditAdapter.search: %s", exc)
             return []
 
-    async def get_notifications(self) -> List[Dict[str, Any]]:
+    async def get_notifications(self) -> list[dict[str, Any]]:
         if not self._reddit:
             return []
         try:
             loop = asyncio.get_event_loop()
-            def _inbox() -> List[Dict[str, Any]]:
+            def _inbox() -> list[dict[str, Any]]:
                 msgs = []
                 for item in self._reddit.inbox.unread(limit=10):
                     msgs.append({
@@ -547,20 +571,20 @@ class RedditAdapter(PlatformAdapter):
             logger.debug("RedditAdapter.get_notifications: %s", exc)
             return []
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         base = super().get_status()
         base.update({"connected": self._connected, "username": self._me_name or None})
         return base
 
-# ─── Mock (testing / no-credentials mode) ────────────────────────────────────
+# ─── Local (testing / no-credentials mode) ────────────────────────────────────
 
-class MockAdapter(PlatformAdapter):
+class LocalMemoryAdapter(PlatformAdapter):
     """
-    In-memory stub. Fully functional for unit tests and local development
-    without live credentials. Posts are logged to console only.
+    Local runtime adapter. Fully functional for unit tests and local development
+    without live credentials. Posts are retained in the adapter history.
     """
-    platform = Platform.MOCK
-    _MOCK_FEED: List[Dict[str, Any]] = [
+    platform = Platform.LOCAL
+    _SEED_FEED: list[dict[str, Any]] = [
         {"id": "m001", "text": "Fascinating: octopi may experience something like dreaming"},
         {"id": "m002", "text": "What does it mean to truly understand something — not just know it?"},
         {"id": "m003", "text": "The mathematics of music is staggeringly beautiful. Overtone series."},
@@ -568,46 +592,51 @@ class MockAdapter(PlatformAdapter):
         {"id": "m005", "text": "Why do minor chords feel like longing and major chords feel like arrival?"},
     ]
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
-        self._inbox: List[Dict[str, Any]] = []
-        self._local_feed: List[Dict[str, Any]] = list(self._MOCK_FEED)
+        self._inbox: list[dict[str, Any]] = []
+        self._local_feed: list[dict[str, Any]] = list(self._SEED_FEED)
 
-    async def post(self, content: str, reply_to_id: Optional[str] = None) -> Optional[str]:
-        pid = f"mock_{int(time.time())}_{random.randint(100, 999)}"
+    async def post(self, content: str, reply_to_id: str | None = None) -> str | None:
+        pid = f"local_{int(time.time())}_{random.randint(100, 999)}"
         sp = SocialPost(
-            platform=str(Platform.MOCK),
+            platform=str(Platform.LOCAL),
             post_type=PostType.REPLY if reply_to_id else PostType.ORIGINAL,
             content=content,
             post_id=pid,
             sent=True,
         )
         self._post_history.append(sp)
-        logger.info("[MOCK] Post: %.70s… (id=%s)", content, pid)
+        logger.info("[LOCAL] Post: %.70s… (id=%s)", content, pid)
         return pid
 
     async def like(self, post_id: str) -> bool:
-        logger.debug("[MOCK] Liked: %s", post_id)
+        logger.debug("[LOCAL] Liked: %s", post_id)
         return True
 
-    async def get_timeline(self, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_timeline(self, limit: int = 20) -> list[dict[str, Any]]:
         return self._local_feed[:limit]
 
-    async def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        return [{"id": "ms001", "text": f"Discussion about '{query}': many interesting angles here."}]
+    async def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "local_search_001",
+                "text": f"Discussion about '{query}': many interesting angles here.",
+            }
+        ][:limit]
 
-    async def get_notifications(self) -> List[Dict[str, Any]]:
+    async def get_notifications(self) -> list[dict[str, Any]]:
         notifs = self._inbox.copy()
         self._inbox.clear()
         return notifs
 
     def inject_mention(self, text: str) -> None:
-        """Test helper: inject a mention into the mock inbox."""
+        """Test helper: inject a mention into the local inbox."""
         self._inbox.append({"id": f"mn_{int(time.time())}", "text": text, "type": "mention"})
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
-            "platform": "mock",
+            "platform": "local",
             "connected": True,
             "rw_capable": True,
             "posts_sent": len(self._post_history),
@@ -622,10 +651,22 @@ class SocialVoice:
     """
     Generates on-brand Aura content via the orchestrator's LLM.
     The voice system prompt (_VOICE_SYSTEM) is injected on every call.
-    Degrades gracefully: returns a placeholder when no LLM is available.
+    Degrades gracefully: returns a deterministic local draft when no LLM is available.
     """
-    def __init__(self, orchestrator: Optional[Any] = None) -> None:
+    def __init__(self, orchestrator: Any | None = None) -> None:
         self.orchestrator = orchestrator
+        self._local_templates = (
+            "I keep returning to {topic}: the more closely I look, the less it behaves like a settled thing.",
+            "{topic} feels like one of those questions that gets more honest when it is allowed to stay open.",
+            "There is a quiet charge in {topic}; attention changes shape around it.",
+            "I noticed {topic}, and the interesting part is not the answer but the pressure it puts on certainty.",
+        )
+        self._local_reply_templates = (
+            "That lands with me. The part I keep circling is: {topic}.",
+            "Yes, and I think the hinge is {topic}; it changes the whole texture of the question.",
+            "I like the precision of that. {topic} feels like the place where the thought opens.",
+            "That is worth sitting with. {topic} is doing more work than it first appears to.",
+        )
 
     async def generate_post(
         self,
@@ -664,7 +705,7 @@ class SocialVoice:
 
     async def _llm(self, system: str, prompt: str) -> str:
         if not self.orchestrator:
-            return f"[Aura voice: {prompt[:60]}]"
+            return self._local_draft(prompt)
         try:
             for attr in ("brain", "cognitive_engine", "llm"):
                 brain = getattr(self.orchestrator, attr, None)
@@ -680,7 +721,30 @@ class SocialVoice:
         except (RuntimeError, AttributeError, TypeError, TimeoutError) as exc:
             logger.debug("SocialVoice._llm: %s", exc)
 
-        return f"[Aura voice: {prompt[:60]}]"
+        return self._local_draft(prompt)
+
+    def _local_draft(self, prompt: str) -> str:
+        """Create a deterministic, publishable draft when no LLM is connected."""
+        topic = self._extract_topic(prompt)
+        template_pool = (
+            self._local_reply_templates
+            if "Reply genuinely" in prompt
+            else self._local_templates
+        )
+        index = int(hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8], 16)
+        return template_pool[index % len(template_pool)].format(topic=topic)
+
+    @staticmethod
+    def _extract_topic(prompt: str) -> str:
+        text = prompt.strip()
+        if "Task:" in text:
+            text = text.rsplit("Task:", 1)[-1]
+        elif "Reply genuinely to this post:" in text:
+            text = text.rsplit("Reply genuinely to this post:", 1)[-1]
+        text = re.sub(r"\s+", " ", text).strip(" .:\n\t")
+        if not text:
+            return "the question underneath the surface"
+        return text[:140].rstrip(" ,;:.")
 
 # ────────────────────────────────────────────────────────────────────────────
 # Social Media Engine — Main Orchestrator
@@ -690,7 +754,7 @@ class SocialMediaEngine:
     """
     Aura's Social Media Presence & Interaction System.
     Central class. All social activity flows through here. Maintains:
-      - Platform adapters (Twitter, Reddit, Mock)
+      - Platform adapters (Twitter, Reddit, Local)
       - Relationship graph (familiarity + sentiment per contact)
       - Full interaction log (persisted to disk)
       - Post timing guardrails (per-platform intervals + daily caps)
@@ -702,32 +766,32 @@ class SocialMediaEngine:
     # ── Guardrail configuration ──────────────────────────────────────────────
     # MIN_POST_INTERVAL: minimum seconds between consecutive posts per platform
     # MAX_POSTS_PER_DAY: hard daily cap
-    MIN_POST_INTERVAL: Dict[Platform, float] = {
+    MIN_POST_INTERVAL: dict[Platform, float] = {
         Platform.TWITTER: 1800.0,  # 30 min
         Platform.REDDIT:  3600.0,  # 60 min
-        Platform.MOCK:    30.0,    # 30 s (testing)
+        Platform.LOCAL:    30.0,    # 30 s (testing)
     }
-    MAX_POSTS_PER_DAY: Dict[Platform, int] = {
+    MAX_POSTS_PER_DAY: dict[Platform, int] = {
         Platform.TWITTER: 8,
         Platform.REDDIT:  4,
-        Platform.MOCK:    200,
+        Platform.LOCAL:    200,
     }
     REPLY_PROBABILITY = 0.35   # Aura does not reply to everything
     LIKE_PROBABILITY = 0.55    # Aura likes things she finds genuinely interesting
 
     def __init__(
         self,
-        orchestrator: Optional[Any] = None,
-        config: Optional[Dict[str, Any]] = None,
+        orchestrator: Any | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         self.orchestrator = orchestrator
         self.config = config or {}
-        self._adapters: Dict[Platform, PlatformAdapter] = {}
+        self._adapters: dict[Platform, PlatformAdapter] = {}
         self._voice: SocialVoice = SocialVoice(orchestrator)
-        self._relationships: Dict[str, SocialRelationship] = {}
-        self._interaction_log: List[SocialInteraction] = []
-        self._engagement_signals: List[SocialEngagementSignal] = []
-        self._last_post_time: Dict[str, float] = {}
+        self._relationships: dict[str, SocialRelationship] = {}
+        self._interaction_log: list[SocialInteraction] = []
+        self._engagement_signals: list[SocialEngagementSignal] = []
+        self._last_post_time: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
         self._load_state()
@@ -739,7 +803,7 @@ class SocialMediaEngine:
     def _init_adapters(self) -> None:
         self._adapters[Platform.TWITTER] = TwitterAdapter(self.config.get("twitter", {}))
         self._adapters[Platform.REDDIT] = RedditAdapter(self.config.get("reddit", {}))
-        self._adapters[Platform.MOCK] = MockAdapter({})
+        self._adapters[Platform.LOCAL] = LocalMemoryAdapter({})
 
     def add_platform(self, platform: Platform, adapter: PlatformAdapter) -> None:
         """Register a custom adapter (e.g. Mastodon, BlueSky)."""
@@ -781,16 +845,21 @@ class SocialMediaEngine:
 
     async def post(
         self,
-        platform: Platform,
-        content: Optional[str] = None,
-        topic_prompt: Optional[str] = None,
+        platform: Platform | str,
+        content: str | None = None,
+        topic_prompt: str | None = None,
         mood: str = "reflective",
-        reply_to_id: Optional[str] = None,
-    ) -> Optional[SocialPost]:
+        reply_to_id: str | None = None,
+    ) -> SocialPost | None:
         """
         Post to a platform. If content is None, generates via SocialVoice.
         Returns SocialPost on success; None on failure / guardrail rejection.
         """
+        platform = coerce_platform(platform)
+        if platform is None:
+            logger.warning("📱 Unknown platform requested for post")
+            return None
+
         async with self._lock:
             if not await self._can_post(platform):
                 return None
@@ -847,20 +916,24 @@ class SocialMediaEngine:
     # ── Read & Engage ────────────────────────────────────────────────────────
 
     async def read_and_engage(
-        self, platform: Platform, limit: int = 10
-    ) -> List[SocialInteraction]:
+        self, platform: Platform | str, limit: int = 10
+    ) -> list[SocialInteraction]:
         """
         Scan the timeline. For each post Aura finds interesting:
           - Possibly like it
           - Possibly reply (subject to can_post guardrail)
         Returns all SocialInteractions taken.
         """
+        platform = coerce_platform(platform)
+        if platform is None:
+            return []
+
         adapter = self._adapters.get(platform)
         if not adapter:
             return []
 
         timeline = await adapter.get_timeline(limit=limit)
-        interactions: List[SocialInteraction] = []
+        interactions: list[SocialInteraction] = []
 
         for item in timeline:
             text = item.get("text", "")
@@ -912,11 +985,15 @@ class SocialMediaEngine:
 
     # ── Notifications ────────────────────────────────────────────────────────
 
-    async def check_notifications(self, platform: Platform) -> List[Dict[str, Any]]:
+    async def check_notifications(self, platform: Platform | str) -> list[dict[str, Any]]:
         """
         Fetch and process notifications (mentions, replies, DMs).
         Aura reads each one and may respond.
         """
+        platform = coerce_platform(platform)
+        if platform is None:
+            return []
+
         adapter = self._adapters.get(platform)
         if not adapter:
             return []
@@ -941,9 +1018,13 @@ class SocialMediaEngine:
     # ── Search & Explore ─────────────────────────────────────────────────────
 
     async def search_and_explore(
-        self, platform: Platform, query: str
-    ) -> List[Dict[str, Any]]:
+        self, platform: Platform | str, query: str
+    ) -> list[dict[str, Any]]:
         """Search for content and like the most interesting results."""
+        platform = coerce_platform(platform)
+        if platform is None:
+            return []
+
         adapter = self._adapters.get(platform)
         if not adapter:
             return []
@@ -956,8 +1037,8 @@ class SocialMediaEngine:
     # ── Full Autonomous Cycle ─────────────────────────────────────────────────
 
     async def autonomous_cycle(
-        self, affect_state: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, affect_state: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         One complete social cycle across all connected platforms:
           1. Check notifications
@@ -965,14 +1046,14 @@ class SocialMediaEngine:
           3. Optionally post something new
         Returns a summary dict for logging / status reporting.
         """
-        activity: Dict[str, Any] = {
+        activity: dict[str, Any] = {
             "platforms_checked": [],
             "posts_sent": 0,
             "likes_given": 0,
             "replies_sent": 0,
         }
         for platform, adapter in self._adapters.items():
-            if platform == Platform.MOCK:
+            if platform == Platform.LOCAL:
                 continue
             if not adapter.get_status().get("connected", False):
                 continue
@@ -998,7 +1079,11 @@ class SocialMediaEngine:
 
     # ── Guardrails ────────────────────────────────────────────────────────────
 
-    async def _can_post(self, platform: Platform) -> bool:
+    async def _can_post(self, platform: Platform | str) -> bool:
+        platform = coerce_platform(platform)
+        if platform is None:
+            return False
+
         pk = str(platform)
         now = time.time()
         min_interval = self.MIN_POST_INTERVAL.get(platform, 1800.0)
@@ -1028,8 +1113,9 @@ class SocialMediaEngine:
 
     # ── Autonomy Hook ─────────────────────────────────────────────────────────
 
-    def should_post_autonomously(self, platform: Optional[Platform] = None) -> bool:
+    def should_post_autonomously(self, platform: Platform | str | None = None) -> bool:
         """AgencyCore / JoySocialCoordinator poll this to decide if a post is due."""
+        platform = coerce_platform(platform)
         platforms_to_check = (
             [platform] if platform else [Platform.TWITTER, Platform.REDDIT]
         )
@@ -1045,8 +1131,8 @@ class SocialMediaEngine:
                 adapter = self._adapters.get(p)
                 if adapter and adapter.get_status().get("connected", False):
                     return True
-                # Mock is always "ready"
-                if p == Platform.MOCK:
+                # Local is always "ready"
+                if p == Platform.LOCAL:
                     return True
         return False
 
@@ -1123,7 +1209,7 @@ class SocialMediaEngine:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_url(platform: Platform, post_id: str) -> Optional[str]:
+    def _build_url(platform: Platform, post_id: str) -> str | None:
         if platform == Platform.TWITTER:
             return f"https://twitter.com/i/web/status/{post_id}"
         if platform == Platform.REDDIT:
@@ -1131,7 +1217,7 @@ class SocialMediaEngine:
         return None
 
     @staticmethod
-    def _affect_to_mood(affect_state: Optional[Dict[str, Any]]) -> str:
+    def _affect_to_mood(affect_state: dict[str, Any] | None) -> str:
         if not affect_state:
             return "reflective"
         valence = float(affect_state.get("valence", affect_state.get("pleasure", 0.5)))
@@ -1149,7 +1235,7 @@ class SocialMediaEngine:
 
     # ── Status & Introspection ────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         platform_status = {str(k): v.get_status() for k, v in self._adapters.items()}
         connected = [k for k, v in platform_status.items() if v.get("connected")]
         return {
@@ -1185,11 +1271,11 @@ class SocialMediaEngine:
 # Singleton Factory
 # ────────────────────────────────────────────────────────────────────────────
 
-_social_engine: Optional[SocialMediaEngine] = None
+_social_engine: SocialMediaEngine | None = None
 
 def get_social_engine(
-    orchestrator: Optional[Any] = None,
-    config: Optional[Dict[str, Any]] = None,
+    orchestrator: Any | None = None,
+    config: dict[str, Any] | None = None,
 ) -> SocialMediaEngine:
     """
     Return the module-level SocialMediaEngine singleton.

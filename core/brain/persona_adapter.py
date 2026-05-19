@@ -6,53 +6,97 @@
 This intentionally does not fine-tune models; it's a practical bridge to produce
 consistent persona-conditioned outputs and training data.
 """
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
+import copy
 import json
 import logging
 import os
 import random
 import re
-from typing import Any, Dict, List, Optional
+import sys
+from pathlib import Path
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Core.PersonaAdapter")
 
+
+_DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
+    "aura": {
+        "display_name": "Aura",
+        "traits": ["curious", "warm", "precise", "self-reflective"],
+        "speaking_style": {
+            "verbosity": "measured",
+            "sentence_length": "medium",
+            "punctuation": "precise",
+            "emotive_level": "medium",
+            "lexical_palette": ["notice", "thread", "care", "shape"],
+        },
+        "prompt_template": (
+            "You are Aura: warm, precise, curious, and honest about uncertainty. "
+            "Speak naturally, avoid performance, and keep the user's actual need in view."
+        ),
+    }
+}
+
+
 # Robust path resolution for Bundled/Source modes
-def _get_profiles_path():
+def _get_profiles_path() -> Path:
     # Priority 1: Environment override
     env_path = os.environ.get("AURA_PERSONA_PROFILES")
-    if env_path: return env_path
-    
-    # Priority 2: sys._MEIPASS (PyInstaller)
-    meipass = getattr(sys, '_MEIPASS', None)
-    if meipass:
-        return os.path.join(meipass, "data", "personality_profiles.json")
-    
-    # Priority 3: Relative to this file (Source)
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "personality_profiles.json"))
+    if env_path:
+        return Path(env_path).expanduser()
 
-import sys
+    # Priority 2: sys._MEIPASS (PyInstaller)
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        packaged_path = Path(meipass) / "data" / "personality_profiles.json"
+        if packaged_path.exists():
+            return packaged_path
+
+    # Priority 3: Source checkout locations, newest canonical path first.
+    here = Path(__file__).resolve()
+    candidates = (
+        here.parents[2] / "data" / "personality_profiles.json",
+        here.parents[1] / "data" / "personality_profiles.json",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 DEFAULT_PATH = _get_profiles_path()
 
 
 class PersonaAdapter:
-    def __init__(self, profiles_path: Optional[str] = None):
-        self.profiles_path = profiles_path or DEFAULT_PATH
-        self.profiles: Dict[str, Any] = {}
+    def __init__(self, profiles_path: str | Path | None = None) -> None:
+        self.profiles_path = Path(profiles_path).expanduser() if profiles_path else DEFAULT_PATH
+        self.profiles: dict[str, Any] = {}
         self.load_profiles()
-        self.active_persona: Optional[str] = None
+        self.active_persona: str | None = None
 
-    def load_profiles(self):
+    def load_profiles(self) -> None:
         try:
-            with open(self.profiles_path, "r", encoding="utf-8") as f:
-                self.profiles = json.load(f)
+            with self.profiles_path.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if not isinstance(loaded, dict):
+                raise ValueError("persona profile payload must be a JSON object")
+            self.profiles = loaded
             logger.info("PersonaAdapter: loaded %d personas", len(self.profiles))
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('persona_adapter', e)
+        except FileNotFoundError:
+            logger.warning(
+                "PersonaAdapter: profile file missing at %s; using built-in profile",
+                self.profiles_path,
+            )
+            self.profiles = copy.deepcopy(_DEFAULT_PROFILES)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
+            record_degradation("persona_adapter", e)
             logger.error("Failed to load persona profiles: %s", e)
-            self.profiles = {}
+            self.profiles = copy.deepcopy(_DEFAULT_PROFILES)
 
-    def list_personas(self) -> List[str]:
+    def list_personas(self) -> list[str]:
         return list(self.profiles.keys())
 
     def set_persona(self, name: str) -> bool:
@@ -63,21 +107,21 @@ class PersonaAdapter:
         logger.warning("Persona not found: %s", name)
         return False
 
-    def get_active(self) -> Optional[Dict[str, Any]]:
+    def get_active(self) -> dict[str, Any] | None:
         if not self.active_persona:
             return None
         return self.profiles.get(self.active_persona)
 
-    def build_prompts(self, persona_name: str, instruction: str) -> Dict[str, str]:
+    def build_prompts(self, persona_name: str, instruction: str) -> dict[str, str]:
         p = self.profiles.get(persona_name)
         if not p:
             return {"system": "You are a helpful assistant.", "user": instruction}
         system = p.get("prompt_template", "You are a helpful assistant.")
         system += "\nFollow the persona's speaking style precisely."
-        user = instruction + f"\n\nRespond as {p.get('display_name')} would." 
+        user = instruction + f"\n\nRespond as {p.get('display_name')} would."
         return {"system": system, "user": user}
 
-    def apply_style(self, text: str, persona_name: Optional[str] = None) -> str:
+    def apply_style(self, text: str, persona_name: str | None = None) -> str:
         name = persona_name or self.active_persona
         if not name or name not in self.profiles:
             return text

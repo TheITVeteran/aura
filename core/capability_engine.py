@@ -4,6 +4,7 @@ import inspect
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -958,7 +959,7 @@ class CapabilityEngine(AuraBaseModule):
                                     module_path=f"{module_prefix}.{filename[:-3]}",
                                     class_name=node.name
                                 )
-                except (OSError, IOError) as e:
+                except OSError as e:
                     record_degradation('capability_engine', e)
                     self.logger.error("AST fail for %s: %s", filename, e)
 
@@ -1887,7 +1888,7 @@ class CapabilityEngine(AuraBaseModule):
                 if gov:
                     gov.check()
                 orm = rt.container.get("persistent_state")
-            except (OSError, ConnectionError, TimeoutError) as exc:
+            except (RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("capability_engine", exc)
                 self.logger.debug("Core runtime memory governance unavailable: %s", exc)
                 rt = None

@@ -1,20 +1,18 @@
-from core.runtime.errors import record_degradation
 import logging
-import os
-from typing import Any, Dict, Optional
+from typing import Any
 
+from pydantic import BaseModel, Field
+
+from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.personality_skill")
 
 
-from pydantic import BaseModel, Field
-
-
 class PersonalityInput(BaseModel):
     action: str = Field(..., description="Action to perform: 'set', 'get', 'list', or 'speak'.")
-    persona: Optional[str] = Field(None, description="The persona ID to set (required for 'set' action).")
-    text: Optional[str] = Field(None, description="The text to speak or style (required for 'speak' action).")
+    persona: str | None = Field(None, description="The persona ID to set (required for 'set' action).")
+    text: str | None = Field(None, description="The text to speak or style (required for 'speak' action).")
 
 class PersonalitySkill(BaseSkill):
     name = "personality"
@@ -32,11 +30,15 @@ class PersonalitySkill(BaseSkill):
             self.logger.error("Failed to load PersonaAdapter: %s", e)
             self.adapter = None
 
-    def match(self, goal: Dict[str, Any]) -> bool:
+    def match(self, goal: dict[str, Any]) -> bool:
         obj = goal.get("objective", "").lower()
         return "persona" in obj or "speak as" in obj or "set persona" in obj
 
-    async def execute(self, params: PersonalityInput, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def execute(
+        self,
+        params: PersonalityInput,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not self.adapter:
             return {"ok": False, "error": "Persona system not available"}
 

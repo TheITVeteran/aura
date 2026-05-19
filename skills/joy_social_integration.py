@@ -32,18 +32,21 @@ orchestrator.joy_social.get_status()
 orchestrator.joy_social.run_hobby_session("philosophy")
 orchestrator.joy_social.post_to_social("twitter", mood="wonder")
 For testing without live credentials:
-    coordinator = integrate_joy_social(orchestrator)  # uses MockAdapter
+    coordinator = integrate_joy_social(orchestrator)  # uses the local adapter
     await coordinator.run_hobby_session()
-    await coordinator.post_to_social("mock")
+    await coordinator.post_to_social("local")
 """
 from __future__ import annotations
-from core.utils.task_tracker import get_task_tracker
+
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
-from skills.hobbies import get_hobby_engine, HobbyEngine
-from skills.social_media import get_social_engine, SocialMediaEngine, Platform
+from typing import Any
+
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
+from skills.hobbies import get_hobby_engine
+from skills.social_media import SocialMediaEngine, coerce_platform, get_social_engine
 
 logger = logging.getLogger("Aura.JoySocialCoordinator")
 
@@ -72,8 +75,8 @@ class JoySocialCoordinator:
 
     def __init__(
         self,
-        orchestrator: Optional[Any] = None,
-        social_config: Optional[Dict[str, Any]] = None,
+        orchestrator: Any | None = None,
+        social_config: dict[str, Any] | None = None,
     ) -> None:
         self.orchestrator = orchestrator
         self._hobby_engine = get_hobby_engine(orchestrator)
@@ -84,7 +87,7 @@ class JoySocialCoordinator:
         self._last_hobby_check = now
         self._last_social_check = now
         self._last_decay = now
-        self._tick_task: Optional[asyncio.Task] = None
+        self._tick_task: asyncio.Task | None = None
 
         logger.info("🌟 JoySocialCoordinator initialised")
 
@@ -136,7 +139,7 @@ class JoySocialCoordinator:
             return  # Already running
 
         async def _loop() -> None:
-            while True:
+            while not is_shutdown_requested():
                 try:
                     await self.tick()
                 except asyncio.CancelledError:
@@ -190,8 +193,8 @@ class JoySocialCoordinator:
     # ── External API — Hobby ─────────────────────────────────────────────────
 
     async def run_hobby_session(
-        self, hobby_name: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, hobby_name: str | None = None
+    ) -> dict[str, Any] | None:
         """
         Execute a hobby session.
         Called by AgencyCore when it commits to an aesthetic/curiosity proposal,
@@ -222,10 +225,10 @@ class JoySocialCoordinator:
             logger.error("JoySocial.run_hobby_session: %s", exc, exc_info=True)
             return None
 
-    def get_hobby_status(self) -> Dict[str, Any]:
+    def get_hobby_status(self) -> dict[str, Any]:
         return self._hobby_engine.get_status()
 
-    def get_entertainment_queue(self, limit: int = 8) -> List[Dict[str, Any]]:
+    def get_entertainment_queue(self, limit: int = 8) -> list[dict[str, Any]]:
         items = self._hobby_engine.get_entertainment_queue(limit=limit)
         return [
             {
@@ -244,10 +247,10 @@ class JoySocialCoordinator:
     async def post_to_social(
         self,
         platform_name: str,
-        content: Optional[str] = None,
-        topic_prompt: Optional[str] = None,
+        content: str | None = None,
+        topic_prompt: str | None = None,
         mood: str = "reflective",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Post to a named platform.
         Called by AgencyCore when it commits to a social_hunger proposal,
@@ -255,9 +258,8 @@ class JoySocialCoordinator:
         Returns:
             {"platform": str, "content": str, "post_id": str, "url": str | None}
         """
-        try:
-            platform = Platform[platform_name.upper()]
-        except KeyError:
+        platform = coerce_platform(platform_name)
+        if platform is None:
             logger.warning("JoySocial.post_to_social: unknown platform '%s'", platform_name)
             return None
 
@@ -270,7 +272,7 @@ class JoySocialCoordinator:
             )
             if post:
                 return {
-                    "platform": platform_name,
+                    "platform": platform.value,
                     "content": post.content,
                     "post_id": post.post_id,
                     "url": post.url,
@@ -281,12 +283,11 @@ class JoySocialCoordinator:
             return None
 
     async def read_social_feed(
-        self, platform_name: str = "mock", limit: int = 10
-    ) -> List[Dict[str, Any]]:
+        self, platform_name: str = "local", limit: int = 10
+    ) -> list[dict[str, Any]]:
         """Read timeline and engage. Returns interaction summaries."""
-        try:
-            platform = Platform[platform_name.upper()]
-        except KeyError:
+        platform = coerce_platform(platform_name)
+        if platform is None:
             return []
         interactions = await self._social_engine.read_and_engage(platform, limit=limit)
         return [
@@ -298,7 +299,7 @@ class JoySocialCoordinator:
             for i in interactions
         ]
 
-    def get_social_status(self) -> Dict[str, Any]:
+    def get_social_status(self) -> dict[str, Any]:
         return self._social_engine.get_status()
 
     # ── Context Injection ────────────────────────────────────────────────────
@@ -315,7 +316,7 @@ class JoySocialCoordinator:
 
     # ── AgencyCore Pathway Proposals ─────────────────────────────────────────
 
-    def propose_hobby_action(self) -> Optional[Dict[str, Any]]:
+    def propose_hobby_action(self) -> dict[str, Any] | None:
         """
         Return an AgencyCore-compatible proposal dict if a hobby session is due.
         AgencyCore submits this through AgencyBus.
@@ -336,7 +337,7 @@ class JoySocialCoordinator:
             "kwargs": {"hobby_name": None},  # None = auto-select
         }
 
-    def propose_social_action(self) -> Optional[Dict[str, Any]]:
+    def propose_social_action(self) -> dict[str, Any] | None:
         """Return a social-posting proposal if posting is due."""
         if not self._social_engine.should_post_autonomously():
             return None
@@ -355,7 +356,7 @@ class JoySocialCoordinator:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _get_affect_state(self) -> Optional[Dict[str, Any]]:
+    def _get_affect_state(self) -> dict[str, Any] | None:
         if not self.orchestrator:
             return None
         try:
@@ -378,7 +379,7 @@ class JoySocialCoordinator:
 
     # ── Status ────────────────────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         now = time.time()
         return {
             "hobby_engine": self._hobby_engine.get_status(),
@@ -396,7 +397,7 @@ class JoySocialCoordinator:
 
 def integrate_joy_social(
     orchestrator: Any,
-    social_config: Optional[Dict[str, Any]] = None,
+    social_config: dict[str, Any] | None = None,
     tick_interval: float = 30.0,
 ) -> JoySocialCoordinator:
     """
