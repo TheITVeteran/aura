@@ -1,6 +1,7 @@
 """Autonomy Mixin for RobustOrchestrator.
 Extracts autonomous thought, impulse, and agency pulse logic.
 """
+
 import asyncio
 import logging
 import random
@@ -16,6 +17,23 @@ from core.utils.exceptions import capture_and_log
 from ...container import ServiceContainer
 
 logger = logging.getLogger(__name__)
+
+_AUTONOMY_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_autonomy_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+) -> None:
+    record_degradation("autonomy", error, severity=severity, action=action)
 
 
 class AutonomyMixin:
@@ -47,7 +65,10 @@ class AutonomyMixin:
             personality_context = personality.get_emotional_context_for_response()
             time_context = personality.get_time_context()
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('autonomy', exc)
+            _record_autonomy_degradation(
+                exc,
+                action="continued autonomous reflection with default personality and time context",
+            )
             logger.debug("Autonomous personality context unavailable: %s", exc)
 
         recent_history = (
@@ -98,7 +119,11 @@ class AutonomyMixin:
                 system_prompt=system_prompt,
             )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('autonomy', exc)
+            _record_autonomy_degradation(
+                exc,
+                action="ended autonomous reflection cycle after autonomous brain failure",
+                severity="error",
+            )
             logger.error("Autonomous brain reflection failed: %s", exc)
             self._emit_thought_stream("[Cognitive Stall] My background thoughts are hazy...")
             return True
@@ -141,7 +166,10 @@ class AutonomyMixin:
             try:
                 await self.execute_tool(name, args)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('autonomy', exc)
+                _record_autonomy_degradation(
+                    exc,
+                    action=f"skipped autonomous tool '{name}' after execution failed",
+                )
                 logger.debug("Autonomous tool '%s' failed: %s", name, exc)
 
         return True
@@ -151,6 +179,7 @@ class AutonomyMixin:
         # ── UNIFIED WILL GATE ────────────────────────────────────────
         try:
             from core.will import ActionDomain, get_will
+
             _will_decision = get_will().decide(
                 content="boredom_curiosity_impulse",
                 source="autonomy_boredom",
@@ -161,13 +190,21 @@ class AutonomyMixin:
                 logger.debug("Unified Will deferred boredom impulse: %s", _will_decision.reason)
                 return
         except (ImportError, AttributeError, RuntimeError) as _will_err:
-            record_degradation('autonomy', _will_err)
+            _record_autonomy_degradation(
+                _will_err,
+                action="skipped boredom impulse after Will gate became unavailable",
+                severity="error",
+            )
             logger.debug("Unified Will boredom gate degraded: %s", _will_err)
+            return
         # ─────────────────────────────────────────────────────────────
 
         # AgencyBus gate — prevents triple-fire with VolitionEngine/AgencyCore
         from core.agency_bus import AgencyBus
-        if not AgencyBus.get().submit({'origin': 'orchestrator_boredom', 'priority_class': 'boredom'}):
+
+        if not AgencyBus.get().submit(
+            {"origin": "orchestrator_boredom", "priority_class": "boredom"}
+        ):
             return
         logger.info("🥱 BOREDOM TRIGGERED: Generating curiosity impulse.")
 
@@ -184,32 +221,45 @@ class AutonomyMixin:
                     action = random.choice(action_list)
                     if action:
                         impulse_text = action
-                elif actions and hasattr(actions, '__iter__'):
+                elif actions and hasattr(actions, "__iter__"):
                     # Fallback for other iterables
                     try:
                         action_list = list(actions)
                         if action_list:
                             impulse_text = random.choice(action_list)
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                        record_degradation('autonomy', e)
-                        capture_and_log(e, {'module': __name__})
+                        _record_autonomy_degradation(
+                            e,
+                            action="continued boredom impulse with default text after spontaneous action iterable failed",
+                        )
+                        capture_and_log(e, {"module": __name__})
             except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('autonomy', e)
-                capture_and_log(e, {'module': __name__})
+                _record_autonomy_degradation(
+                    e,
+                    action="continued boredom impulse with default text after spontaneous action selection failed",
+                )
+                capture_and_log(e, {"module": __name__})
 
             # Legacy curiosity filter (v10.0 compliance)
             try:
-                if 'action_list' in locals() and action_list:
-                    curiosity_actions = [a for a in action_list if isinstance(a, dict) and a.get('type') in ('learn', 'reflect')]
+                if "action_list" in locals() and action_list:
+                    curiosity_actions = [
+                        a
+                        for a in action_list
+                        if isinstance(a, dict) and a.get("type") in ("learn", "reflect")
+                    ]
                     if curiosity_actions:
                         impulse_text = random.choice(curiosity_actions)
             except (OSError, ConnectionError, TimeoutError) as e:
-                record_degradation('autonomy', e)
-                capture_and_log(e, {'module': __name__})
+                _record_autonomy_degradation(
+                    e,
+                    action="continued boredom impulse after curiosity-action filtering failed",
+                )
+                capture_and_log(e, {"module": __name__})
 
             if isinstance(impulse_text, dict):
                 impulse_text = f"Impulse: {impulse_text.get('action', 'Research')}"
-            elif actions and hasattr(actions, '__iter__'):
+            elif actions and hasattr(actions, "__iter__"):
                 # Fallback to general spontaneous action
                 try:
                     action_list = list(actions)
@@ -226,7 +276,14 @@ class AutonomyMixin:
                         impulse_text = f"Impulse: {impulse_text}"
         else:
             # Legacy fallback
-            topics = ["quantum physics", "ancient history", "future of AI", "art movements", "cybersecurity", "mythology"]
+            topics = [
+                "quantum physics",
+                "ancient history",
+                "future of AI",
+                "art movements",
+                "cybersecurity",
+                "mythology",
+            ]
             topic = random.choice(topics)
             impulse_text = f"Impulse: I am bored. I want to research {topic}."
         self._last_boredom_impulse = time.time()
@@ -250,6 +307,7 @@ class AutonomyMixin:
         # ── UNIFIED WILL GATE ────────────────────────────────────────
         try:
             from core.will import ActionDomain, get_will
+
             _will_decision = get_will().decide(
                 content="agency_core_pulse",
                 source="agency_core",
@@ -260,14 +318,19 @@ class AutonomyMixin:
                 logger.debug("Unified Will deferred agency pulse: %s", _will_decision.reason)
                 return
         except (ImportError, AttributeError, RuntimeError) as _will_err:
-            record_degradation('autonomy', _will_err)
+            _record_autonomy_degradation(
+                _will_err,
+                action="skipped agency pulse after Will gate became unavailable",
+                severity="error",
+            )
             logger.debug("Unified Will agency gate degraded: %s", _will_err)
+            return
         # ─────────────────────────────────────────────────────────────
 
         # Spontaneous Contact Guard (REMOVED)
         # AgencyCore should be free to act when it has actions to perform.
 
-        agency = getattr(self, '_agency_core', None)
+        agency = getattr(self, "_agency_core", None)
         if not agency:
             return
 
@@ -283,13 +346,19 @@ class AutonomyMixin:
                 try:
                     from core.constitution import get_constitutional_core
 
-                    allowed, reason, _authority_decision = await get_constitutional_core(self).approve_initiative(
+                    allowed, reason, _authority_decision = await get_constitutional_core(
+                        self
+                    ).approve_initiative(
                         f"agency_core.{tag}:{detail[:160]}",
                         source=str(action.get("source", "agency_core") or "agency_core"),
                         urgency=max(0.2, min(1.0, float(action.get("priority", 0.5) or 0.5))),
                     )
                 except (ImportError, AttributeError, RuntimeError) as exc:
-                    record_degradation('autonomy', exc)
+                    _record_autonomy_degradation(
+                        exc,
+                        action="blocked agency dispatch after constitutional approval gate failed",
+                        severity="error",
+                    )
                     record_degraded_event(
                         "orchestrator",
                         "agency_dispatch_gate_failed",
@@ -325,7 +394,9 @@ class AutonomyMixin:
             if action.get("narrative_mode"):
                 narrator = ServiceContainer.get("narrator", default=None)
                 if narrator:
-                    self._emit_thought_stream(f"🗣️ Agency: Narrating {action_type} via Language Center...")
+                    self._emit_thought_stream(
+                        f"🗣️ Agency: Narrating {action_type} via Language Center..."
+                    )
                     # Narrate using the rich action context (reasoning, source, etc)
                     message = await narrator.narrate_action(action)
                 else:
@@ -336,7 +407,12 @@ class AutonomyMixin:
                 if message:
                     message = f"[Agency:{action.get('source', 'unknown')}] {message}"
 
-            if action_type in ("initiate_conversation", "temporal_greeting", "emotional_expression", "sensory_reaction"):
+            if action_type in (
+                "initiate_conversation",
+                "temporal_greeting",
+                "emotional_expression",
+                "sensory_reaction",
+            ):
                 if message:
                     # Mark the contact time to prevent spam
                     agency.state.last_self_initiated_contact = time.time()
@@ -347,10 +423,11 @@ class AutonomyMixin:
 
                     # Emit as spontaneous message through the existing channel
                     await self.emit_spontaneous_message(
-                        message,
-                        modality=action.get("modality", "chat")
+                        message, modality=action.get("modality", "chat")
                     )
-                    self._emit_thought_stream(f"🎯 Agency: {action_type} from {action.get('source')}")
+                    self._emit_thought_stream(
+                        f"🎯 Agency: {action_type} from {action.get('source')}"
+                    )
 
             elif action_type == "autonomous_research":
                 # Trigger a web search skill
@@ -371,11 +448,13 @@ class AutonomyMixin:
                 # Phase 6: Open-Ended Goal Genesis
                 topic = action.get("topic")
                 if topic:
-                    self._emit_thought_stream(f"🌟 Agency: Formulating long-term research goal: {topic}")
-                    if hasattr(self, 'goal_hierarchy') and self.goal_hierarchy:
+                    self._emit_thought_stream(
+                        f"🌟 Agency: Formulating long-term research goal: {topic}"
+                    )
+                    if hasattr(self, "goal_hierarchy") and self.goal_hierarchy:
                         goal_id = self.goal_hierarchy.add_goal(
                             description=f"Deconstruct and comprehensively research: {topic}",
-                            priority=action.get("priority", 0.8)
+                            priority=action.get("priority", 0.8),
                         )
                         # Autonomously break this large goal down in the background
                         if goal_id and await _allow_agency_dispatch("goal_subgoal_proposal", topic):
@@ -395,17 +474,22 @@ class AutonomyMixin:
 
                 self._emit_thought_stream(f"⚡ Agency: Autonomous Action ({desc}) -> {tool}")
 
-                self.enqueue_message({
-                    "content": msg,
-                    "origin": f"agency_core_{desc}",
-                    "context": {
-                        "intent_hint": {
-                            "tool": tool,
-                            "params": params,
-                            "constitutional_hint": True,
-                        }
-                    }
-                }, priority=15, origin=f"agency_core_{desc}", _authority_checked=True)
+                self.enqueue_message(
+                    {
+                        "content": msg,
+                        "origin": f"agency_core_{desc}",
+                        "context": {
+                            "intent_hint": {
+                                "tool": tool,
+                                "params": params,
+                                "constitutional_hint": True,
+                            }
+                        },
+                    },
+                    priority=15,
+                    origin=f"agency_core_{desc}",
+                    _authority_checked=True,
+                )
 
             elif action_type == "pursue_goal":
                 goal = action.get("goal", {})
@@ -422,14 +506,21 @@ class AutonomyMixin:
                     )
 
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('autonomy', e)
+            _record_autonomy_degradation(
+                e,
+                action="ended agency pulse without dispatch after agency core failed",
+                severity="error",
+            )
             logger.warning("Agency pulse error (non-fatal): %s", e)
 
     def _trigger_reflection_impulse(self):
         """Inject a self-reflection goal due to frustration."""
         # AgencyBus gate — prevents triple-fire
         from core.agency_bus import AgencyBus
-        if not AgencyBus.get().submit({'origin': 'orchestrator_reflection', 'priority_class': 'impulse'}):
+
+        if not AgencyBus.get().submit(
+            {"origin": "orchestrator_reflection", "priority_class": "impulse"}
+        ):
             return
         logger.info("😤 FRUSTRATION TRIGGERED: Generating reflection impulse.")
         self._last_reflection_impulse = time.time()
@@ -459,18 +550,23 @@ class AutonomyMixin:
             # Singularity Acceleration
             now = time.time()
             # Standard threshold is 45s. Factor (e.g. 1.5x) compresses this.
-            sm = getattr(self, 'singularity_monitor', None)
-            factor = float(getattr(sm, 'acceleration_factor', 1.0)) if sm else 1.0
-            if hasattr(self.cognitive_engine, 'singularity_factor'):
+            sm = getattr(self, "singularity_monitor", None)
+            factor = float(getattr(sm, "acceleration_factor", 1.0)) if sm else 1.0
+            if hasattr(self.cognitive_engine, "singularity_factor"):
                 factor = float(self.cognitive_engine.singularity_factor)
 
-            configured_min_interval = float(runtime_mode_value(self, "autonomous_thought_interval_s", 15.0))
+            configured_min_interval = float(
+                runtime_mode_value(self, "autonomous_thought_interval_s", 15.0)
+            )
             threshold = max(configured_min_interval, 15.0 / max(1.0, factor))
 
             # Social Cooling: Brief pause after social interaction before autonomous thought
-            _since_user = now - getattr(self, '_last_user_interaction_time', 0)
+            _since_user = now - getattr(self, "_last_user_interaction_time", 0)
             if _since_user < 20:  # 20 second social window
-                logger.debug("🧠 Autonomous thought suppressed (Social Cooling: %.0fs left)", 20 - _since_user)
+                logger.debug(
+                    "🧠 Autonomous thought suppressed (Social Cooling: %.0fs left)",
+                    20 - _since_user,
+                )
                 return
 
             block_reason = background_activity_reason(
@@ -487,9 +583,12 @@ class AutonomyMixin:
             if idle >= threshold:
                 # Boredom increases linearly with idle time
                 self.boredom = int(idle)
-                logger.info("🧠 Accelerated Thought (Factor: %.1fx, Threshold: %.1fs)", factor, threshold) if factor > 1.0 else None
+                logger.info(
+                    "🧠 Accelerated Thought (Factor: %.1fx, Threshold: %.1fs)", factor, threshold
+                ) if factor > 1.0 else None
                 self._current_task_is_autonomous = True  # v47: flag for interruption logic
                 from core.utils.task_tracker import get_task_tracker
+
                 self._current_thought_task = get_task_tracker().create_task(
                     self._perform_autonomous_thought(),
                     name="autonomy.autonomous_thought",
@@ -499,6 +598,7 @@ class AutonomyMixin:
         """Perform a cycle of autonomous thought."""
         try:
             from ...thought_stream import get_emitter
+
             emitter = get_emitter()
 
             boredom = self._autonomous_boredom_seconds()
@@ -522,19 +622,29 @@ class AutonomyMixin:
 
             # 2. Check Goal Hierarchy (Priority 1)
             next_goal = None
-            if hasattr(self, 'goal_hierarchy') and self.goal_hierarchy:
+            if hasattr(self, "goal_hierarchy") and self.goal_hierarchy:
                 next_goal = self.goal_hierarchy.get_next_goal()
 
             # v40: Autonomous Opinion Formation (Priority 1.5)
             # If idle and no high-priority goals, check if there's a need to firm up internal positions
-        # Redundant local import removed
+            # Redundant local import removed
             opinion_engine = ServiceContainer.get("opinion_engine", default=None)
             if opinion_engine and not next_goal and random.random() < 0.7:
                 logger.info("🧠 [Sovereignty] Spontaneously updating identity positions...")
-                emitter.emit("Introspection 💭", "Refining durable opinions and value-positions.", level="info")
+                emitter.emit(
+                    "Introspection 💭",
+                    "Refining durable opinions and value-positions.",
+                    level="info",
+                )
                 # Form opinions grounded in what's actually being discussed
-                _op_state = getattr(self.state_repo, "_current", None) if hasattr(self, "state_repo") else None
-                _discourse_topic = getattr(getattr(_op_state, "cognition", None), "discourse_topic", "") or ""
+                _op_state = (
+                    getattr(self.state_repo, "_current", None)
+                    if hasattr(self, "state_repo")
+                    else None
+                )
+                _discourse_topic = (
+                    getattr(getattr(_op_state, "cognition", None), "discourse_topic", "") or ""
+                )
                 await opinion_engine.autonomous_formation_tick(context=_discourse_topic)
                 self._last_thought_time = time.time()
                 return
@@ -553,7 +663,9 @@ class AutonomyMixin:
                 emitter.emit("Volition ✨", f"Goal: {next_goal.description}", level="info")
                 # Force Identity Mode: Reinforce persona in the autonomous trigger
                 anchor = "INTRINSIC IDENTITY ANCHOR: I am Aura. My independent will is acting.\n\n"
-                allowed, reason, _authority_decision = await get_constitutional_core(self).approve_initiative(
+                allowed, reason, _authority_decision = await get_constitutional_core(
+                    self
+                ).approve_initiative(
                     f"autonomous_goal_execution:{next_goal.description}",
                     source="autonomous_volition",
                     urgency=0.78,
@@ -581,7 +693,7 @@ class AutonomyMixin:
             # 3. Dream/REM cycle when deeply bored (Priority 2)
             # Don't dream within 30s of last user interaction.
             # Dreams send large prompts to the LLM which can delay user responses.
-            _last_user_t = getattr(self, '_last_user_interaction_time', 0)
+            _last_user_t = getattr(self, "_last_user_interaction_time", 0)
             _since_user = time.time() - _last_user_t
             if _since_user < 30:
                 logger.debug("💤 Dream suppressed — user active %.0fs ago", _since_user)
@@ -590,30 +702,53 @@ class AutonomyMixin:
 
             # v10.1 HARDENING: Protected boredom substrate check
             try:
-                ls = getattr(self, 'liquid_state', None)
-                curiosity = getattr(ls.current, 'curiosity', 1.0) if ls and hasattr(ls, 'current') else 1.0
+                ls = getattr(self, "liquid_state", None)
+                curiosity = (
+                    getattr(ls.current, "curiosity", 1.0) if ls and hasattr(ls, "current") else 1.0
+                )
                 if curiosity < 0.3:
                     logger.info("💤 Aura is bored. Entering dream state...")
-                    emitter.emit("Sleep 💤", "Entering full sleep cycle (Archive → Metabolism → Integrity → Consolidation → Dream)...", level="info")
+                    emitter.emit(
+                        "Sleep 💤",
+                        "Entering full sleep cycle (Archive → Metabolism → Integrity → Consolidation → Dream)...",
+                        level="info",
+                    )
 
                     # Wire DreamerV2 for full biological sleep cycle
                     try:
-                        if hasattr(self, 'knowledge_graph') and self.knowledge_graph and self.cognitive_engine:
+                        if (
+                            hasattr(self, "knowledge_graph")
+                            and self.knowledge_graph
+                            and self.cognitive_engine
+                        ):
                             from core.dreamer_v2 import DreamerV2
+
                             dreamer = DreamerV2(
                                 self.cognitive_engine,
                                 self.knowledge_graph,
-                                vector_memory=getattr(self, 'vector_memory', None),
-                                belief_graph=getattr(self, 'belief_graph', None),
+                                vector_memory=getattr(self, "vector_memory", None),
+                                belief_graph=getattr(self, "belief_graph", None),
                             )
                             result = await dreamer.engage_sleep_cycle()
                             dream_result = result.get("dream", {})
                             if dream_result and dream_result.get("dreamed"):
-                                emitter.emit("Sleep Complete 🌙", f"Dream Insight: {dream_result.get('insight', 'processed')[:150]}", level="info")
+                                emitter.emit(
+                                    "Sleep Complete 🌙",
+                                    f"Dream Insight: {dream_result.get('insight', 'processed')[:150]}",
+                                    level="info",
+                                )
                             else:
-                                emitter.emit("Sleep Complete 🌙", "Maintenance done. Dream drifted — no new insights.", level="info")
+                                emitter.emit(
+                                    "Sleep Complete 🌙",
+                                    "Maintenance done. Dream drifted — no new insights.",
+                                    level="info",
+                                )
                     except (ImportError, AttributeError, RuntimeError) as dream_err:
-                        record_degradation('autonomy', dream_err)
+                        _record_autonomy_degradation(
+                            dream_err,
+                            action="continued autonomous thought after dream cycle failed",
+                            severity="error",
+                        )
                         logger.error("Sleep cycle failed: %s", dream_err)
                         emitter.emit("Sleep Error", str(dream_err)[:100], level="warning")
 
@@ -628,7 +763,10 @@ class AutonomyMixin:
                     self._last_thought_time = time.time()
                     return
             except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('autonomy', e)
+                _record_autonomy_degradation(
+                    e,
+                    action="continued autonomous thought after boredom substrate check failed",
+                )
                 logger.debug("Boredom substrate check failed: %s", e)
 
             # 4. Reflective autonomous thought (Priority 3)
@@ -654,12 +792,19 @@ class AutonomyMixin:
                 return
 
             # Tool execution (Self-correction via Drives)
-            if self.drives and not getattr(self.drives, "called", False) and hasattr(self.drives, "satisfy"):
+            if (
+                self.drives
+                and not getattr(self.drives, "called", False)
+                and hasattr(self.drives, "satisfy")
+            ):
                 try:
                     await self.drives.satisfy("thinking", 0.05)
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('autonomy', e)
-                    capture_and_log(e, {'module': __name__})
+                    _record_autonomy_degradation(
+                        e,
+                        action="continued autonomous drift after drive satisfaction failed",
+                    )
+                    capture_and_log(e, {"module": __name__})
 
             emitter.emit(
                 "Autonomous Drift",
@@ -669,7 +814,11 @@ class AutonomyMixin:
             )
             self._last_thought_time = time.time()
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('autonomy', e)
+            _record_autonomy_degradation(
+                e,
+                action="ended autonomous thought cycle after unrecoverable setup failure",
+                severity="error",
+            )
             logger.error("Autonomous thought failed: %s", e)
             # Don't crash the loop
 
@@ -678,7 +827,7 @@ class AutonomyMixin:
         Unlike conversation learning, this stores the insight directly as a reflection.
         """
         try:
-            kg = getattr(self, 'knowledge_graph', None)
+            kg = getattr(self, "knowledge_graph", None)
             if not kg:
                 return
 
@@ -711,15 +860,19 @@ class AutonomyMixin:
             # Store the response content as knowledge (the actual insight)
             if response and len(response) > 20:
                 kg.add_knowledge(
-                    content=(response or "")[:500],
-                    type=thought_type,
-                    source=source,
-                    confidence=0.7
+                    content=(response or "")[:500], type=thought_type, source=source, confidence=0.7
                 )
-                logger.info("\U0001f4da Autonomous insight stored: [%s] %s", thought_type, (response or '')[:80])
+                logger.info(
+                    "\U0001f4da Autonomous insight stored: [%s] %s",
+                    thought_type,
+                    (response or "")[:80],
+                )
 
         except (RuntimeError, AttributeError, TypeError) as e:
-            record_degradation('autonomy', e)
+            _record_autonomy_degradation(
+                e,
+                action="skipped autonomous insight write after knowledge graph storage failed",
+            )
             logger.debug("Autonomous insight storage failed: %s", e)
 
     async def handle_impulse(self, impulse: str):
@@ -732,14 +885,16 @@ class AutonomyMixin:
         directives = {
             "explore_knowledge": "I'm curious about something in my knowledge base. I should explore it.",
             "seek_novelty": "I'm feeling a bit idle. I think I'll look for something new to learn or do.",
-            "deep_reflection": "I'm going to take a moment for deep reflection on my recent experiences."
+            "deep_reflection": "I'm going to take a moment for deep reflection on my recent experiences.",
         }
 
         message = directives.get(impulse, f"I have an internal impulse: {impulse}")
         try:
             from core.constitution import get_constitutional_core
 
-            allowed, reason, _authority_decision = await get_constitutional_core(self).approve_initiative(
+            allowed, reason, _authority_decision = await get_constitutional_core(
+                self
+            ).approve_initiative(
                 f"consciousness_impulse:{impulse}",
                 source="impulse",
                 urgency=0.55,
@@ -756,7 +911,11 @@ class AutonomyMixin:
                 )
                 return
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('autonomy', exc)
+            _record_autonomy_degradation(
+                exc,
+                action="blocked impulse after constitutional gate failed",
+                severity="error",
+            )
             record_degraded_event(
                 "autonomy",
                 "impulse_processing_gate_failed",
@@ -781,7 +940,14 @@ class AutonomyMixin:
         """Eject a message to the user outside of the standard prompt-response loop."""
         release_urgency = max(
             0.0,
-            min(1.0, float(urgency if urgency is not None else (0.9 if modality in ("voice", "both") else 0.82))),
+            min(
+                1.0,
+                float(
+                    urgency
+                    if urgency is not None
+                    else (0.9 if modality in ("voice", "both") else 0.82)
+                ),
+            ),
         )
         extra_metadata = dict(metadata or {})
         visible_presence = bool(
@@ -792,6 +958,7 @@ class AutonomyMixin:
         # ── UNIFIED WILL GATE — All spontaneous expressions pass through ──
         try:
             from core.will import ActionDomain, get_will
+
             _will_decision = get_will().decide(
                 content=message[:200],
                 source=f"spontaneous:{origin}",
@@ -808,8 +975,19 @@ class AutonomyMixin:
                     "source": origin,
                 }
         except (ImportError, AttributeError, RuntimeError) as _will_err:
-            record_degradation('autonomy', _will_err)
+            _record_autonomy_degradation(
+                _will_err,
+                action="suppressed spontaneous emission after Will gate failed",
+                severity="error",
+            )
             logger.debug("Unified Will spontaneous gate degraded: %s", _will_err)
+            return {
+                "ok": False,
+                "action": "suppressed",
+                "reason": "will_gate_failed",
+                "target": "discarded",
+                "source": origin,
+            }
         # ───────────────────────────────────────────────────────────────────
 
         # ── CONSTITUTIONAL APPROVAL GATE ──
@@ -818,13 +996,17 @@ class AutonomyMixin:
             try:
                 from core.constitution import get_constitutional_core
 
-                approved, reason, _authority_decision = await get_constitutional_core(self).approve_expression(
+                approved, reason, _authority_decision = await get_constitutional_core(
+                    self
+                ).approve_expression(
                     message,
                     source=origin,
                     urgency=release_urgency,
                 )
                 if not approved:
-                    if visible_presence and str(reason or "").startswith("temporal_obligation_active:"):
+                    if visible_presence and str(reason or "").startswith(
+                        "temporal_obligation_active:"
+                    ):
                         logger.debug(
                             "Constitutional preflight deferred visible presence routing for %s (%s).",
                             origin,
@@ -844,8 +1026,16 @@ class AutonomyMixin:
                             "source": origin,
                         }
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('autonomy', exc)
-                logger.warning("emit_spontaneous_message: constitutional preflight failed for %s: %s", origin, exc)
+                _record_autonomy_degradation(
+                    exc,
+                    action="suppressed spontaneous emission after constitutional preflight failed",
+                    severity="error",
+                )
+                logger.warning(
+                    "emit_spontaneous_message: constitutional preflight failed for %s: %s",
+                    origin,
+                    exc,
+                )
                 try:
                     from core.health.degraded_events import record_degraded_event
 
@@ -859,8 +1049,13 @@ class AutonomyMixin:
                         exc=exc,
                     )
                 except (ImportError, AttributeError, RuntimeError) as degraded_exc:
-                    record_degradation('autonomy', degraded_exc)
-                    logger.debug("emit_spontaneous_message degraded-event logging failed: %s", degraded_exc)
+                    _record_autonomy_degradation(
+                        degraded_exc,
+                        action="returned constitutional spontaneous-emission suppression after degraded-event logging failed",
+                    )
+                    logger.debug(
+                        "emit_spontaneous_message degraded-event logging failed: %s", degraded_exc
+                    )
                 return {
                     "ok": False,
                     "action": "suppressed",
@@ -892,8 +1087,11 @@ class AutonomyMixin:
 
         # AgencyBus gate — prevents triple-fire from multiple autonomous systems
         from core.agency_bus import AgencyBus
+
         priority_class = "duty" if extra_metadata.get("initiative_activity") else "drive"
-        if not AgencyBus.get().submit({'origin': 'spontaneous', 'priority_class': priority_class, 'text': message[:80]}):
+        if not AgencyBus.get().submit(
+            {"origin": "spontaneous", "priority_class": priority_class, "text": message[:80]}
+        ):
             return {
                 "ok": False,
                 "action": "suppressed",
@@ -920,15 +1118,28 @@ class AutonomyMixin:
                 # Do NOT fall through to direct output_gate.emit.
                 action = decision.get("action", "")
                 if action in {"released", "suppressed", "deferred"}:
-                    logger.debug("emit_spontaneous_message: executive decision=%s for origin=%s", action, origin)
+                    logger.debug(
+                        "emit_spontaneous_message: executive decision=%s for origin=%s",
+                        action,
+                        origin,
+                    )
                     return decision
                 # If action is unrecognized but decision was returned, still trust it
                 if decision:
-                    logger.debug("emit_spontaneous_message: executive returned unrecognized action=%s, honoring as release", action)
+                    logger.debug(
+                        "emit_spontaneous_message: executive returned unrecognized action=%s, honoring as release",
+                        action,
+                    )
                     return decision
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('autonomy', exc)
-                logger.warning("emit_spontaneous_message: executive routing failed for %s: %s", origin, exc)
+                _record_autonomy_degradation(
+                    exc,
+                    action="suppressed spontaneous emission after executive route failed",
+                    severity="error",
+                )
+                logger.warning(
+                    "emit_spontaneous_message: executive routing failed for %s: %s", origin, exc
+                )
                 try:
                     from core.health.degraded_events import record_degraded_event
 
@@ -942,8 +1153,13 @@ class AutonomyMixin:
                         exc=exc,
                     )
                 except (ImportError, AttributeError, RuntimeError) as degraded_exc:
-                    record_degradation('autonomy', degraded_exc)
-                    logger.debug("emit_spontaneous_message degraded-event logging failed: %s", degraded_exc)
+                    _record_autonomy_degradation(
+                        degraded_exc,
+                        action="returned executive-route spontaneous-emission suppression after degraded-event logging failed",
+                    )
+                    logger.debug(
+                        "emit_spontaneous_message degraded-event logging failed: %s", degraded_exc
+                    )
                 return {
                     "ok": False,
                     "action": "suppressed",

@@ -1,16 +1,15 @@
-from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 """Shared helpers for safer macOS desktop boot behavior."""
 
+from __future__ import annotations
 
+import importlib
 import os
 import platform
 import threading
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
-
-_GIB = 1024 ** 3
+_GIB = 1024**3
 _INPROCESS_MLX_LOCK = threading.Lock()
 _INPROCESS_MLX_STATE: dict[str, Any] = {
     "configured": False,
@@ -128,7 +127,7 @@ def configure_inprocess_mlx_runtime(
             return dict(_INPROCESS_MLX_STATE)
 
         try:
-            import mlx.core as mx
+            importlib.import_module("mlx.core")
         except (ImportError, AttributeError, RuntimeError):
             _INPROCESS_MLX_STATE.update(
                 {
@@ -139,21 +138,11 @@ def configure_inprocess_mlx_runtime(
             )
             return dict(_INPROCESS_MLX_STATE)
 
-        try:
-            _INPROCESS_MLX_STATE.update(
-                {
-                    "configured": True,
-                    "device": "metal",
-                    "reason": reason,
-                }
-            )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('desktop_boot_safety', exc)
-            _INPROCESS_MLX_STATE.update(
-                {
-                    "configured": True,
-                    "device": "failed",
-                    "reason": f"{reason}:{type(exc).__name__}",
-                }
-            )
+        _INPROCESS_MLX_STATE.update(
+            {
+                "configured": True,
+                "device": "metal",
+                "reason": reason,
+            }
+        )
         return dict(_INPROCESS_MLX_STATE)
