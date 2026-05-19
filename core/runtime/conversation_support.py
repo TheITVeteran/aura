@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import time
@@ -11,9 +9,19 @@ from core.runtime.coding_session_memory import (
     build_coding_context_block,
     get_coding_session_memory,
 )
+from core.runtime.errors import record_degradation
 from core.runtime.turn_analysis import analyze_turn
 
 logger = logging.getLogger("Aura.ConversationSupport")
+
+
+def _record_conversation_degradation(
+    exc: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+) -> None:
+    record_degradation("conversation_support", exc, severity=severity, action=action)
 
 
 def _is_task_context_priority(objective: str) -> bool:
@@ -77,7 +85,10 @@ def resolve_primary_user_id(state: Any) -> str:
                 if normalized:
                     return normalized
     except (RuntimeError, AttributeError, TypeError) as _exc:
-        record_degradation('conversation_support', _exc)
+        _record_conversation_degradation(
+            _exc,
+            action="fell back to default primary user id after relationship lookup failed",
+        )
         logger.debug("Suppressed Exception: %s", _exc)
     return "bryan"
 
@@ -98,7 +109,10 @@ async def record_shared_ground_callbacks(response_text: str) -> None:
                 shared_ground.record_callback(entry.reference)
                 logger.debug("SharedGround callback recorded: %s", entry.reference)
     except (ImportError, AttributeError, RuntimeError) as _exc:
-        record_degradation('conversation_support', _exc)
+        _record_conversation_degradation(
+            _exc,
+            action="skipped shared-ground callback recording after shared-ground store failed",
+        )
         logger.debug("Suppressed Exception: %s", _exc)
 
 
@@ -114,13 +128,18 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if profile_block:
                 blocks.append(profile_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without conversational profile block",
+        )
         logger.debug("ConversationalProfile injection failed: %s", exc)
 
     try:
         dialogue = service_access.resolve_dialogue_cognition(default=None)
         if dialogue and hasattr(dialogue, "get_context_injection"):
-            source_ids = dialogue.default_source_ids() if hasattr(dialogue, "default_source_ids") else None
+            source_ids = (
+                dialogue.default_source_ids() if hasattr(dialogue, "default_source_ids") else None
+            )
             dialogue_block = dialogue.get_context_injection(
                 user_id,
                 current_text=objective or "",
@@ -129,7 +148,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if dialogue_block:
                 blocks.append(dialogue_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without dialogue cognition block",
+        )
         logger.debug("DialogueCognition injection failed: %s", exc)
 
     try:
@@ -142,7 +164,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if banter:
                 blocks.append(banter)
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without humor guidance block",
+        )
         logger.debug("HumorEngine injection failed: %s", exc)
 
     try:
@@ -152,7 +177,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if ci_block:
                 blocks.append(ci_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without conversation intelligence block",
+        )
         logger.debug("ConversationIntelligence injection failed: %s", exc)
 
     try:
@@ -162,7 +190,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if ri_block:
                 blocks.append(ri_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without relational intelligence block",
+        )
         logger.debug("RelationalIntelligence injection failed: %s", exc)
 
     try:
@@ -175,7 +206,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if si_block:
                 blocks.append(si_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without social imagination block",
+        )
         logger.debug("SocialImagination injection failed: %s", exc)
 
     try:
@@ -183,7 +217,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
         if coding_block:
             priority_blocks.append(coding_block)
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without coding session context block",
+        )
         logger.debug("Coding session context injection failed: %s", exc)
 
     try:
@@ -195,7 +232,10 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             if task_block and _is_task_context_priority(objective or ""):
                 priority_blocks.append(task_block)
     except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without task verifier context block",
+        )
         logger.debug("Task verifier context injection failed: %s", exc)
 
     try:
@@ -208,13 +248,18 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
                 else:
                     blocks.append(goal_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without goal engine context block",
+        )
         logger.debug("Goal engine context injection failed: %s", exc)
 
     return priority_blocks + blocks
 
 
-async def update_conversational_intelligence(user_input: str, aura_response: str, state: Any) -> None:
+async def update_conversational_intelligence(
+    user_input: str, aura_response: str, state: Any
+) -> None:
     user_id = resolve_primary_user_id(state)
 
     try:
@@ -222,7 +267,10 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
         if profiler:
             await profiler.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped conversational profile update for this exchange",
+        )
         logger.debug("ConversationalProfile update skipped: %s", exc)
 
     try:
@@ -230,7 +278,10 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
         if dialogue:
             await dialogue.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped dialogue cognition update for this exchange",
+        )
         logger.debug("DialogueCognition update skipped: %s", exc)
 
     try:
@@ -241,7 +292,10 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
             if dynamics:
                 humor.update_banter_state(user_input, dynamics.get_current_state())
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped humor and banter state update for this exchange",
+        )
         logger.debug("HumorEngine update skipped: %s", exc)
 
     try:
@@ -249,15 +303,22 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
         if conv_intel:
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             dynamics_state = dynamics.get_current_state() if dynamics else None
-            discourse_state = {
-                "topic": getattr(state.cognition, "discourse_topic", None),
-                "depth": getattr(state.cognition, "discourse_depth", 0),
-                "energy": getattr(state.cognition, "conversation_energy", 0.5),
-                "trend": getattr(state.cognition, "user_emotional_trend", "neutral"),
-            } if state else {}
+            discourse_state = (
+                {
+                    "topic": getattr(state.cognition, "discourse_topic", None),
+                    "depth": getattr(state.cognition, "discourse_depth", 0),
+                    "energy": getattr(state.cognition, "conversation_energy", 0.5),
+                    "trend": getattr(state.cognition, "user_emotional_trend", "neutral"),
+                }
+                if state
+                else {}
+            )
             await conv_intel.update(user_input, aura_response, dynamics_state, discourse_state)
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped conversation intelligence update for this exchange",
+        )
         logger.debug("ConversationIntelligence update skipped: %s", exc)
 
     try:
@@ -265,9 +326,14 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
         if rel_intel:
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             dynamics_state = dynamics.get_current_state() if dynamics else None
-            await rel_intel.update_from_interaction(user_id, user_input, aura_response, dynamics_state)
+            await rel_intel.update_from_interaction(
+                user_id, user_input, aura_response, dynamics_state
+            )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped relational intelligence update for this exchange",
+        )
         logger.debug("RelationalIntelligence update skipped: %s", exc)
 
     try:
@@ -275,7 +341,10 @@ async def update_conversational_intelligence(user_input: str, aura_response: str
         if social_imagination:
             await social_imagination.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped social imagination update for this exchange",
+        )
         logger.debug("SocialImagination update skipped: %s", exc)
 
 
@@ -300,7 +369,9 @@ def _conversation_importance(user_input: str) -> float:
     return min(0.95, importance)
 
 
-async def record_conversation_experience(user_input: str, aura_response: str, state: Any = None) -> None:
+async def record_conversation_experience(
+    user_input: str, aura_response: str, state: Any = None
+) -> None:
     if not str(user_input or "").strip() or not str(aura_response or "").strip():
         return
     try:
@@ -310,7 +381,10 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
             logger.debug("Skipping non-answer repair floor in conversational learning.")
             return
     except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="continued conversational learning without non-answer floor filter",
+        )
         logger.debug("Non-answer learning filter skipped: %s", exc)
 
     state_obj = state
@@ -333,7 +407,10 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
             analysis=analysis,
         )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped coding session turn recording for this exchange",
+        )
         logger.debug("Coding session turn recording skipped: %s", exc)
 
     used_memory_facade = False
@@ -359,7 +436,10 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
                 },
             )
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="fell back from memory facade to episodic conversation recording",
+        )
         logger.debug("Conversation memory facade commit skipped: %s", exc)
 
     if not used_memory_facade:
@@ -380,27 +460,44 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
                     importance=importance,
                 )
         except (RuntimeError, AttributeError, TypeError) as exc:
-            record_degradation('conversation_support', exc)
+            _record_conversation_degradation(
+                exc,
+                action="skipped episodic conversation recording after memory facade was unavailable",
+            )
             logger.debug("Episodic conversation recording skipped: %s", exc)
 
     try:
-        entity_graph = service_access.optional_service("entity_graph", "relationship_graph", default=None)
+        entity_graph = service_access.optional_service(
+            "entity_graph", "relationship_graph", default=None
+        )
         if entity_graph and hasattr(entity_graph, "register_interaction"):
-            await entity_graph.register_interaction("aura_self", user_id, "conversation", "self", "person")
+            await entity_graph.register_interaction(
+                "aura_self", user_id, "conversation", "self", "person"
+            )
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped relationship graph update for this exchange",
+        )
         logger.debug("Relationship graph update skipped: %s", exc)
 
     try:
-        user_model = service_access.optional_service("user_model", "theory_of_mind_user_model", default=None)
+        user_model = service_access.optional_service(
+            "user_model", "theory_of_mind_user_model", default=None
+        )
         if user_model and hasattr(user_model, "update_from_interaction"):
             user_model.update_from_interaction(user_input, aura_response, {"source": "chat_api"})
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped user model update for this exchange",
+        )
         logger.debug("User model update skipped: %s", exc)
 
     try:
-        learner = service_access.optional_service("continuous_learning", "continuous_learning_engine", default=None)
+        learner = service_access.optional_service(
+            "continuous_learning", "continuous_learning_engine", default=None
+        )
         if learner and hasattr(learner, "record_interaction"):
             await learner.record_interaction(
                 user_input=user_input,
@@ -410,7 +507,10 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
                 strategy="dialogic_exchange",
             )
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped continuous learning update for this exchange",
+        )
         logger.debug("Continuous learning update skipped: %s", exc)
 
     try:
@@ -432,5 +532,8 @@ async def record_conversation_experience(user_input: str, aura_response: str, st
             if hasattr(bryan_model, "save"):
                 bryan_model.save()
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('conversation_support', exc)
+        _record_conversation_degradation(
+            exc,
+            action="skipped Bryan model counters update for this exchange",
+        )
         logger.debug("Bryan model update skipped: %s", exc)
