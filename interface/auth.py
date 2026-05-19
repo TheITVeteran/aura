@@ -136,7 +136,8 @@ def _get_cheat_code_cookie_secret() -> bytes:
             from core.zenith_secrets import get_secret
 
             secret_value = get_secret("AURA_CHEAT_CODE_COOKIE_SECRET")
-        except Exception:
+        except Exception as exc:
+            record_degradation('auth', exc)
             secret_value = None
         secret_value = secret_value or config.api_token or secrets.token_urlsafe(32)
         _CHEAT_CODE_COOKIE_SECRET = secret_value.encode("utf-8")
@@ -191,7 +192,8 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
     if cookies is not None:
         try:
             token = cookies.get(CHEAT_CODE_COOKIE_NAME)
-        except Exception:
+        except Exception as exc:
+            record_degradation('auth', exc)
             token = None
     if not token:
         headers = getattr(request, "headers", None) or {}
@@ -200,7 +202,8 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
             parsed = SimpleCookie()
             try:
                 parsed.load(cookie_header)
-            except Exception:
+            except Exception as exc:
+                record_degradation('auth', exc)
                 parsed = SimpleCookie()
             morsel = parsed.get(CHEAT_CODE_COOKIE_NAME)
             if morsel is not None:
