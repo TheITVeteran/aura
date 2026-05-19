@@ -15,91 +15,98 @@ Three states:
     STRAIN     — Sustained frustration, requires strategy change.
     DEPLETION  — Deep exhaustion, requires rest, not more effort.
 """
-from __future__ import annotations
 
-from core.utils.task_tracker import get_task_tracker
+from __future__ import annotations
 
 import asyncio
 import logging
 import math
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, List, Optional
+from enum import StrEnum
+
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ResilienceEngine")
 
-class ResilienceState(str, Enum):
-    RESTED     = "rested"      
-    FRICTION   = "friction"    
-    STRAIN     = "strain"      
-    DEPLETION  = "depletion"   
+
+class ResilienceState(StrEnum):
+    RESTED = "rested"
+    FRICTION = "friction"
+    STRAIN = "strain"
+    DEPLETION = "depletion"
+
 
 @dataclass
 class FailureEvent:
     timestamp: float
-    domain: str          # "planning", "tool_execution", "social", "self_modification"
-    severity: float      # 0.0–1.0
-    stakes: float        # 0.0–1.0
+    domain: str  # "planning", "tool_execution", "social", "self_modification"
+    severity: float  # 0.0–1.0
+    stakes: float  # 0.0–1.0
     recovered: bool = False
-    recovery_time: Optional[float] = None
+    recovery_time: float | None = None
 
-@dataclass 
+
+@dataclass
 class ResilienceProfile:
     state: ResilienceState = ResilienceState.RESTED
-    frustration: float = 0.0        # current frustration level 0–1
-    depletion: float = 0.0          # accumulated exhaustion 0–1 (slower decay)
+    frustration: float = 0.0  # current frustration level 0–1
+    depletion: float = 0.0  # accumulated exhaustion 0–1 (slower decay)
     persistence_drive: float = 0.5  # motivation to continue despite failure
-    failure_history: List[FailureEvent] = field(default_factory=list)
+    failure_history: list[FailureEvent] = field(default_factory=list)
     last_rest: float = field(default_factory=time.time)
     last_update: float = field(default_factory=time.time)
+
 
 class ResilienceEngine:
     """
     Manages Aura's emotional resilience.
-    
+
     Key design decisions:
     - Frustration decays on a 30-minute half-life.
     - Depletion decays on a 4-hour half-life.
     - DEPLETION state hard-blocks autonomous task initiation.
     """
 
-    FRUSTRATION_HALF_LIFE = 1800    # 30 minutes
-    DEPLETION_HALF_LIFE   = 14400   # 4 hours
-    DEPLETION_THRESHOLD   = 0.75
-    STRAIN_THRESHOLD      = 0.45
-    FRICTION_THRESHOLD    = 0.20
+    FRUSTRATION_HALF_LIFE = 1800  # 30 minutes
+    DEPLETION_HALF_LIFE = 14400  # 4 hours
+    DEPLETION_THRESHOLD = 0.75
+    STRAIN_THRESHOLD = 0.45
+    FRICTION_THRESHOLD = 0.20
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
         self.profile = ResilienceProfile()
-        self._update_task: Optional[asyncio.Task] = None
+        self._update_task: asyncio.Task | None = None
 
-    async def pulse(self) -> Dict[str, float]:
+    async def pulse(self) -> dict[str, float]:
         """Metabolic heartbeat — ensures decay is applied even if loop stalls."""
-        self._apply_decay()
-        # Returns current health metrics to the affect engine
+        snapshot = self.get_body_snapshot()
+        soma = snapshot["soma"]
         return {
-            "thermal_load": 0.0,    # Placeholder for actual hardware telemetry
-            "resource_anxiety": 0.0, # Placeholder for actual hardware telemetry
+            "thermal_load": float(soma["thermal_load"]),
+            "resource_anxiety": float(soma["resource_anxiety"]),
+            "cpu_pressure": float(soma["cpu_pressure"]),
+            "ram_pressure": float(soma["ram_pressure"]),
             "frustration": self.profile.frustration,
-            "depletion": self.profile.depletion
+            "depletion": self.profile.depletion,
         }
 
-    async def start(self):
+    async def start(self) -> None:
         self._update_task = get_task_tracker().create_task(
             self._decay_loop(), name="resilience_decay"
         )
         logger.info("💪 [Resilience] Spinal cord online.")
 
-    async def stop(self):
+    async def stop(self) -> None:
         task = self._update_task
         if task is not None:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError as _e:
-                logger.debug('Ignored asyncio.CancelledError in resilience_engine.py: %s', _e)
+                logger.debug("Ignored asyncio.CancelledError in resilience_engine.py: %s", _e)
 
     # ── Event Ingestion ───────────────────────────────────────────────────
 
@@ -111,6 +118,8 @@ class ResilienceEngine:
     ) -> ResilienceState:
         """Record a failure event and update the resilience profile."""
         now = time.time()
+        severity = self._clamp01(severity)
+        stakes = self._clamp01(stakes)
 
         event = FailureEvent(
             timestamp=now,
@@ -136,7 +145,9 @@ class ResilienceEngine:
         logger.info(
             "💔 [Resilience] Failure recorded [%s] sev=%.2f stakes=%.2f → "
             "frustration=%.2f depletion=%.2f state=%s",
-            domain, severity, stakes,
+            domain,
+            severity,
+            stakes,
             self.profile.frustration,
             self.profile.depletion,
             self.profile.state.value,
@@ -144,14 +155,12 @@ class ResilienceEngine:
 
         return self.profile.state
 
-    def record_success(self, domain: str, stakes: float = 0.5):
+    def record_success(self, domain: str, stakes: float = 0.5) -> None:
         """Success reduces frustration more than it reduces depletion."""
+        stakes = self._clamp01(stakes)
         history = self.profile.failure_history
         recent = history[-20:]
-        recent_failures_in_domain = sum(
-            1 for e in recent
-            if e.domain == domain and not e.recovered
-        )
+        recent_failures_in_domain = sum(1 for e in recent if e.domain == domain and not e.recovered)
 
         for event in reversed(recent):
             if event.domain == domain and not event.recovered:
@@ -165,19 +174,20 @@ class ResilienceEngine:
         self.profile.frustration = max(0.0, self.profile.frustration - frustration_release)
 
         if self.profile.state in (ResilienceState.STRAIN, ResilienceState.FRICTION):
-            self.profile.persistence_drive = min(
-                1.0, self.profile.persistence_drive + 0.1
-            )
+            self.profile.persistence_drive = min(1.0, self.profile.persistence_drive + 0.1)
 
         self._update_state()
 
         logger.info(
             "✅ [Resilience] Success [%s] → frustration=%.2f state=%s",
-            domain, self.profile.frustration, self.profile.state.value
+            domain,
+            self.profile.frustration,
+            self.profile.state.value,
         )
 
-    def record_rest(self, duration_seconds: float):
+    def record_rest(self, duration_seconds: float) -> None:
         """Explicit rest event — reduces depletion more than passive decay."""
+        duration_seconds = max(0.0, float(duration_seconds))
         rest_effect = min(0.4, duration_seconds / 3600 * 0.2)
         self.profile.depletion = max(0.0, self.profile.depletion - rest_effect)
         self.profile.last_rest = time.time()
@@ -191,15 +201,11 @@ class ResilienceEngine:
             return False
 
         recent = self.profile.failure_history[-10:]
-        recent_domain_failures = sum(
-            1 for e in recent
-            if e.domain == domain and not e.recovered
-        )
+        recent_domain_failures = sum(1 for e in recent if e.domain == domain and not e.recovered)
 
         if self.profile.state == ResilienceState.STRAIN and recent_domain_failures >= 3:
             logger.info(
-                "⚠️ [Resilience] STRAIN + 3 failures in '%s' — strategy change required.", 
-                domain
+                "⚠️ [Resilience] STRAIN + 3 failures in '%s' — strategy change required.", domain
             )
             return False
 
@@ -208,9 +214,9 @@ class ResilienceEngine:
     def get_effort_modifier(self) -> float:
         """Returns a multiplier for initiative energy."""
         state_modifiers = {
-            ResilienceState.RESTED:    1.0,
-            ResilienceState.FRICTION:  0.85,
-            ResilienceState.STRAIN:    0.5,
+            ResilienceState.RESTED: 1.0,
+            ResilienceState.FRICTION: 0.85,
+            ResilienceState.STRAIN: 0.5,
             ResilienceState.DEPLETION: 0.0,
         }
         return state_modifiers.get(self.profile.state, 1.0)
@@ -234,17 +240,28 @@ class ResilienceEngine:
 
         return ""
 
-    def get_body_snapshot(self) -> Dict[str, object]:
+    def get_body_snapshot(self) -> dict[str, object]:
         """Compatibility snapshot for affect, attention, and precision systems."""
         self._apply_decay()
+        substrate = self._resource_snapshot()
         frustration = max(0.0, min(1.0, self.profile.frustration))
         depletion = max(0.0, min(1.0, self.profile.depletion))
         stress = max(frustration, 0.35 * depletion)
         fatigue = depletion
-        vitality = max(0.0, min(1.0, 1.0 - (0.45 * frustration + 0.55 * depletion)))
-        energy = max(0.0, min(1.0, 1.0 - depletion))
-        resource_anxiety = max(stress, fatigue)
-        thermal_load = max(0.0, min(1.0, 0.15 + 0.5 * frustration + 0.35 * depletion))
+        substrate_pressure = max(
+            float(substrate["thermal_load"]),
+            float(substrate["resource_anxiety"]),
+        )
+        vitality = max(
+            0.0,
+            min(1.0, 1.0 - (0.45 * frustration + 0.35 * depletion + 0.20 * substrate_pressure)),
+        )
+        energy = max(0.0, min(1.0, 1.0 - max(depletion, substrate_pressure * 0.5)))
+        resource_anxiety = max(stress, fatigue, float(substrate["resource_anxiety"]))
+        thermal_load = max(
+            float(substrate["thermal_load"]),
+            max(0.0, min(1.0, 0.15 + 0.5 * frustration + 0.35 * depletion)),
+        )
         return {
             "state": self.profile.state.value,
             "energy": energy,
@@ -254,6 +271,8 @@ class ResilienceEngine:
                 "resource_anxiety": resource_anxiety,
                 "vitality": vitality,
                 "energy": energy,
+                "cpu_pressure": substrate["cpu_pressure"],
+                "ram_pressure": substrate["ram_pressure"],
             },
             "affects": {
                 "stress": stress,
@@ -264,7 +283,7 @@ class ResilienceEngine:
             },
         }
 
-    def get_status(self) -> Dict[str, object]:
+    def get_status(self) -> dict[str, object]:
         """Standard service status used by homeostasis and HUD diagnostics."""
         snapshot = self.get_body_snapshot()
         return {
@@ -280,7 +299,7 @@ class ResilienceEngine:
 
     # ── Internal ──────────────────────────────────────────────────────────
 
-    def _update_state(self):
+    def _update_state(self) -> None:
         d = self.profile.depletion
         f = self.profile.frustration
 
@@ -293,22 +312,24 @@ class ResilienceEngine:
         else:
             self.profile.state = ResilienceState.RESTED
 
-    def _update_persistence_drive(self):
+    def _update_persistence_drive(self) -> None:
         base = 0.5
         frustration_effect = self.profile.frustration * 0.3
-        depletion_penalty  = self.profile.depletion * 0.6
-        self.profile.persistence_drive = max(0.0, min(1.0, base + frustration_effect - depletion_penalty))
+        depletion_penalty = self.profile.depletion * 0.6
+        self.profile.persistence_drive = max(
+            0.0, min(1.0, base + frustration_effect - depletion_penalty)
+        )
 
-    async def _decay_loop(self):
+    async def _decay_loop(self) -> None:
         """Natural emotional decay over time."""
         try:
-            while True:
+            while not is_shutdown_requested():
                 await asyncio.sleep(60)
                 self._apply_decay()
         except asyncio.CancelledError as _e:
-            logger.debug('Ignored asyncio.CancelledError in resilience_engine.py: %s', _e)
+            logger.debug("Ignored asyncio.CancelledError in resilience_engine.py: %s", _e)
 
-    def _apply_decay(self):
+    def _apply_decay(self) -> None:
         """Apply one tick of emotional decay."""
         now = time.time()
         dt = now - self.profile.last_update
@@ -318,6 +339,56 @@ class ResilienceEngine:
         depletion_decay = math.exp(-dt * math.log(2) / self.DEPLETION_HALF_LIFE)
 
         self.profile.frustration *= frustration_decay
-        self.profile.depletion   *= depletion_decay
+        self.profile.depletion *= depletion_decay
 
         self._update_state()
+
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if math.isnan(scalar):
+            return 0.0
+        return max(0.0, min(1.0, scalar))
+
+    def _resource_snapshot(self) -> dict[str, float]:
+        cpu_pressure = 0.0
+        ram_pressure = 0.0
+        thermal_pressure = 0.0
+        try:
+            import psutil
+
+            cpu_pressure = self._clamp01(psutil.cpu_percent(interval=None) / 100.0)
+            ram_pressure = self._clamp01(psutil.virtual_memory().percent / 100.0)
+            thermal_pressure = self._thermal_pressure(psutil)
+        except (ImportError, AttributeError, OSError, RuntimeError, ValueError) as exc:
+            logger.debug("Resource telemetry unavailable: %s", exc)
+
+        return {
+            "cpu_pressure": cpu_pressure,
+            "ram_pressure": ram_pressure,
+            "thermal_load": self._clamp01(
+                max(thermal_pressure, 0.45 * cpu_pressure + 0.35 * ram_pressure)
+            ),
+            "resource_anxiety": self._clamp01(
+                max(ram_pressure, thermal_pressure, 0.65 * cpu_pressure)
+            ),
+        }
+
+    def _thermal_pressure(self, psutil_module) -> float:
+        sensors = getattr(psutil_module, "sensors_temperatures", None)
+        if not callable(sensors):
+            return 0.0
+        readings = sensors() or {}
+        temperatures: list[float] = []
+        for entries in readings.values():
+            for entry in entries or []:
+                current = getattr(entry, "current", None)
+                if current is not None:
+                    temperatures.append(float(current))
+        if not temperatures:
+            return 0.0
+        hottest_c = max(temperatures)
+        return self._clamp01((hottest_c - 45.0) / 55.0)
