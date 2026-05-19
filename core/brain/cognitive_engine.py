@@ -1,15 +1,16 @@
-"""Refactored CognitiveEngine - Now a thin facade over modular phases.
-"""
-from core.runtime.errors import record_degradation
+"""Refactored CognitiveEngine - Now a thin facade over modular phases."""
+
 import asyncio
 import logging
+import sqlite3
 import time
 import uuid
 from collections import deque
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
 from core.runtime import background_policy
+from core.runtime.errors import record_degradation
 from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
 from core.state.aura_state import AuraState
 from core.utils.concurrency import RobustLock
@@ -22,24 +23,30 @@ from .types import ThinkingMode, Thought
 
 logger = logging.getLogger(__name__)
 
-_BACKGROUND_REFLECTIVE_MODES = frozenset({
-    ThinkingMode.REFLECTIVE,
-    ThinkingMode.CREATIVE,
-})
-_USER_FACING_ORIGINS = frozenset({
-    "user",
-    "voice",
-    "admin",
-    "api",
-    "gui",
-    "ws",
-    "websocket",
-    "direct",
-    "external",
-})
+_BACKGROUND_REFLECTIVE_MODES = frozenset(
+    {
+        ThinkingMode.REFLECTIVE,
+        ThinkingMode.CREATIVE,
+    }
+)
+_USER_FACING_ORIGINS = frozenset(
+    {
+        "user",
+        "voice",
+        "admin",
+        "api",
+        "gui",
+        "ws",
+        "websocket",
+        "direct",
+        "external",
+    }
+)
 
 
-def _record_objective_binding(state: AuraState, objective: str, *, source: str, mode: Any, reason: str) -> None:
+def _record_objective_binding(
+    state: AuraState, objective: str, *, source: str, mode: Any, reason: str
+) -> None:
     try:
         mode_value = getattr(mode, "value", mode)
         get_executive_authority().record_objective_binding(
@@ -50,29 +57,40 @@ def _record_objective_binding(state: AuraState, objective: str, *, source: str, 
             reason=reason,
         )
     except (RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation('cognitive_engine', exc)
+        record_degradation(
+            "cognitive_engine",
+            exc,
+            severity="warning",
+            action="skipped executive objective audit and continued cognition",
+        )
         logger.debug("Executive objective audit skipped for %s: %s", source, exc)
+
 
 class CognitiveEngine:
     """
     Cognitive Engine facade.
     Now delegates to modular phases for structured thinking.
     """
-    
+
     def __init__(self, backend: Any = None):
         self.backend = backend
-        self.thoughts: deque = deque(maxlen=500)  # QUAL-04: bounded to prevent memory leak (BUG-017)
+        self.thoughts: deque = deque(
+            maxlen=500
+        )  # QUAL-04: bounded to prevent memory leak (BUG-017)
         self._phases = []
         self._augmentors = []
         self.state_repository = None
         self.autopoiesis = AutopoieticGraph()
-        self._recovery_lock = RobustLock("CognitiveEngine.RecoveryLock")  # Audit Fix: Mutex for recovery
-        self._reasoning: Optional[ReasoningStrategies] = None  # Lazy-init
-        
+        self._recovery_lock = RobustLock(
+            "CognitiveEngine.RecoveryLock"
+        )  # Audit Fix: Mutex for recovery
+        self._reasoning: ReasoningStrategies | None = None  # Lazy-init
+
     @property
     def consciousness(self) -> Any:
         """Unified access to the consciousness layer for metric aggregation."""
         from ..container import get_container
+
         return get_container().get("consciousness_core", default=None)
 
     @property
@@ -88,7 +106,7 @@ class CognitiveEngine:
     def lobotomized(self) -> bool:
         """True if the engine has no usable cognitive pathway."""
         return self.state_repository is None and len(self._phases) == 0
-        
+
     def setup(self, registry=None, router=None, event_bus=None):
         """Initialize components and phases."""
         container = get_container()
@@ -101,15 +119,20 @@ class CognitiveEngine:
             include_executive_closure=False,
         )
         self._phases = [phase for _, phase in phase_entries]
-        
+
         # ISSUE-97: AuraPipeline Awareness
         required_phases = len(phase_entries)
         if len(self._phases) != required_phases:
-            logger.warning("⚠️ AuraPipeline: Incomplete cognitive pipeline (%d/%d phases).", 
-                           len(self._phases), required_phases)
+            logger.warning(
+                "⚠️ AuraPipeline: Incomplete cognitive pipeline (%d/%d phases).",
+                len(self._phases),
+                required_phases,
+            )
         else:
-            logger.info("🧠 AuraPipeline: Full cognitive spectrum online (%d phases).", required_phases)
-        
+            logger.info(
+                "🧠 AuraPipeline: Full cognitive spectrum online (%d phases).", required_phases
+            )
+
         self.phase_map = {phase.__class__.__name__: phase for _, phase in phase_entries}
 
     async def on_start_async(self):
@@ -117,13 +140,13 @@ class CognitiveEngine:
         self.setup()
         logger.info("⚡ CognitiveEngine active.")
 
-    async def check_health(self) -> Dict[str, Any]:
+    async def check_health(self) -> dict[str, Any]:
         """Health check."""
         return {
             "status": "healthy",
             "modular": True,
             "phases_count": len(self._phases),
-            "augmentors_count": len(self._augmentors)
+            "augmentors_count": len(self._augmentors),
         }
 
     def register_augmentor(self, augmentor: Any):
@@ -133,7 +156,7 @@ class CognitiveEngine:
             logger.info("🧠 CognitiveEngine: Registered augmentor %s", type(augmentor).__name__)
 
     @staticmethod
-    def _normalize_mode(mode: Union[ThinkingMode, str, Any]) -> ThinkingMode:
+    def _normalize_mode(mode: ThinkingMode | str | Any) -> ThinkingMode:
         if isinstance(mode, ThinkingMode):
             return mode
         if isinstance(mode, str):
@@ -145,7 +168,9 @@ class CognitiveEngine:
 
     @classmethod
     def _is_background_request(cls, origin: str, explicit_background: bool) -> bool:
-        return background_policy.is_background_origin(origin, explicit_background=explicit_background)
+        return background_policy.is_background_origin(
+            origin, explicit_background=explicit_background
+        )
 
     @staticmethod
     def _empty_thought(mode: ThinkingMode, reason: str) -> Thought:
@@ -158,7 +183,9 @@ class CognitiveEngine:
             metadata={"suppressed": True},
         )
 
-    def _should_suppress_background_reflection(self, mode: ThinkingMode, is_background: bool) -> bool:
+    def _should_suppress_background_reflection(
+        self, mode: ThinkingMode, is_background: bool
+    ) -> bool:
         if not is_background or mode not in _BACKGROUND_REFLECTIVE_MODES:
             return False
 
@@ -174,7 +201,12 @@ class CognitiveEngine:
                 if last_user and (time.time() - last_user) < 180.0:
                     return True
         except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('cognitive_engine', exc)
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued without orchestration-based background suppression",
+            )
             logger.debug("Background reflection suppression check failed: %s", exc)
 
         try:
@@ -183,7 +215,12 @@ class CognitiveEngine:
             if psutil.virtual_memory().percent >= 80.0:
                 return True
         except (ImportError, AttributeError, RuntimeError) as _exc:
-            record_degradation('cognitive_engine', _exc)
+            record_degradation(
+                "cognitive_engine",
+                _exc,
+                severity="warning",
+                action="continued without memory-pressure background suppression",
+            )
             logger.debug("Suppressed Exception: %s", _exc)
 
         return False
@@ -202,7 +239,12 @@ class CognitiveEngine:
                 or ""
             )
         except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('cognitive_engine', exc)
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="returned empty background suppression reason",
+            )
             logger.debug("Background thought policy check failed: %s", exc)
             return ""
 
@@ -237,7 +279,7 @@ class CognitiveEngine:
         return bool(tokens & _USER_FACING_ORIGINS)
 
     @classmethod
-    def _resolve_origin(cls, origin: Any, context: Optional[Dict[str, Any]] = None) -> str:
+    def _resolve_origin(cls, origin: Any, context: dict[str, Any] | None = None) -> str:
         normalized = cls._normalize_origin(origin)
         if normalized:
             return normalized
@@ -251,7 +293,9 @@ class CognitiveEngine:
         try:
             container = get_container()
             orchestrator = container.get("orchestrator", default=None)
-            orchestrator_origin = cls._normalize_origin(getattr(orchestrator, "_current_origin", ""))
+            orchestrator_origin = cls._normalize_origin(
+                getattr(orchestrator, "_current_origin", "")
+            )
             if orchestrator_origin:
                 return orchestrator_origin
 
@@ -263,24 +307,33 @@ class CognitiveEngine:
             if state_origin:
                 return state_origin
         except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('cognitive_engine', exc)
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="defaulted unresolved cognitive origin to system",
+            )
             logger.debug("CognitiveEngine origin resolution degraded: %s", exc)
 
         return "system"
 
-    async def think(self,
-                    objective: str,
-                    context: Dict[str, Any] = None,
-                    mode: ThinkingMode = ThinkingMode.FAST,
-                    origin: Optional[str] = None,
-                    **kwargs) -> Thought:
+    async def think(
+        self,
+        objective: str,
+        context: dict[str, Any] = None,
+        mode: ThinkingMode = ThinkingMode.FAST,
+        origin: str | None = None,
+        **kwargs,
+    ) -> Thought:
         """
         Execute a cognitive cycle to produce a thought.
         This now drives the 8 phases to transform state.
         """
         origin = self._resolve_origin(origin, context)
         mode = self._normalize_mode(mode)
-        is_background = self._is_background_request(origin, bool(kwargs.get("is_background", False)))
+        is_background = self._is_background_request(
+            origin, bool(kwargs.get("is_background", False))
+        )
 
         if is_background:
             suppression_reason = self._background_suppression_reason()
@@ -290,35 +343,44 @@ class CognitiveEngine:
                     origin,
                     suppression_reason,
                 )
-                return self._empty_thought(mode, f"background_thought_suppressed:{suppression_reason}")
+                return self._empty_thought(
+                    mode, f"background_thought_suppressed:{suppression_reason}"
+                )
 
         if self._should_suppress_background_reflection(mode, is_background):
-            logger.debug("🛡️ CognitiveEngine: Suppressing background %s thought during active service window.", mode.name)
+            logger.debug(
+                "🛡️ CognitiveEngine: Suppressing background %s thought during active service window.",
+                mode.name,
+            )
             return self._empty_thought(mode, "background_reflection_suppressed")
 
-        logger.info("🧠 CognitiveEngine.think: %s... (%s) Origin: %s", objective[:50], mode.name, origin)
-        
+        logger.info(
+            "🧠 CognitiveEngine.think: %s... (%s) Origin: %s", objective[:50], mode.name, origin
+        )
+
         # 1. Get current state (BUG-12 Fix: handle None state on first boot)
         repo = self.state_repository
         if repo is None:
             container = get_container()
             repo = container.get("state_repository")
             self.state_repository = repo
-            
+
         if repo is None:
             from core.state.aura_state import AuraState
+
             state = AuraState.default()
         else:
             state = await repo.get_current()
-            
+
         if state is None:
             from core.state.aura_state import AuraState
+
             state = AuraState.default()
-        
+
         # 2. Derive base state for this cognitive cycle (Zenith-HF12 Fix)
         # This ensures every cycle starts with a unique version to prevent Atomic Guard rejections.
         state = state.derive(f"cognitive_intent: {origin}")
-        
+
         # 3. Hardening: Set Current Objective & Origin
         # This prevents the race condition where ResponseGeneration would pick up
         # a background motivation message instead of the user's input.
@@ -337,17 +399,23 @@ class CognitiveEngine:
         # v40: Spiritual Spine - Prior Position Injection
         # The ordering is critical: injection -> system prompt -> user message.
         from core.container import ServiceContainer
+
         spine = ServiceContainer.get("spine", default=None)
         if spine and origin in ("user", "voice", "admin"):
             # Extract topic: look for nouns or use the first sentence.
             # v40: Improved topic extraction
             import re
+
             # Extract first sentence, then remove common filler
-            raw = re.split(r'[.?!]', objective)[0].strip()
+            raw = re.split(r"[.?!]", objective)[0].strip()
             # Remove "Tell me about", "What is", etc.
-            topic = re.sub(r'(?i)^(tell me about|what is|what are|do you think about|give me|how does)\s+', '', raw)
+            topic = re.sub(
+                r"(?i)^(tell me about|what is|what are|do you think about|give me|how does)\s+",
+                "",
+                raw,
+            )
             topic = topic[:60] if topic else "general"
-            
+
             check = await spine.pre_response_check(objective, topic=topic)
             if check.injection:
                 logger.info("⚡ [Spine] Injecting prior position into cognitive objective.")
@@ -366,14 +434,16 @@ class CognitiveEngine:
         # If history is too long and burying identity, we "refresh" by reminding Aura who she is.
         drift = ServiceContainer.get("drift_monitor", default=None)
         orchestrator = ServiceContainer.get("orchestrator", default=None)
-        
+
         if drift:
             # Check for a specific pending correction from the last turn
             pending = getattr(orchestrator, "_pending_correction", "")
             if pending:
                 # v40: Cast to str to satisfy weird type checker slice error
                 pending_str = str(pending)
-                logger.warning("🩹 [Drift] Applying pending identity correction: %s...", pending_str[:50])
+                logger.warning(
+                    "🩹 [Drift] Applying pending identity correction: %s...", pending_str[:50]
+                )
                 objective = f"{pending_str}\n\n{objective}"
                 state.cognition.current_objective = objective
                 _record_objective_binding(
@@ -387,8 +457,12 @@ class CognitiveEngine:
                 # Estimate general context health if no specific correction
                 hist_len = len(str(state.cognition.working_memory))
                 sys_len = len(ContextAssembler.build_system_prompt(state))
-                if background_policy.is_user_facing_origin(origin) and drift.needs_context_refresh(hist_len, sys_len):
-                    logger.warning("🔄 [Drift] Identity anchor buried. Triggering cognitive refresh.")
+                if background_policy.is_user_facing_origin(origin) and drift.needs_context_refresh(
+                    hist_len, sys_len
+                ):
+                    logger.warning(
+                        "🔄 [Drift] Identity anchor buried. Triggering cognitive refresh."
+                    )
                     objective = "[IDENTITY REFRESH: REMEMBER WHO YOU ARE]\n" + objective
                     state.cognition.current_objective = objective
                     _record_objective_binding(
@@ -409,7 +483,12 @@ class CognitiveEngine:
                     if aug_data:
                         augmentor_context[type(aug).__name__] = aug_data
             except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('cognitive_engine', e)
+                record_degradation(
+                    "cognitive_engine",
+                    e,
+                    severity="warning",
+                    action="skipped failed augmentor and continued cognitive loop",
+                )
                 logger.warning("Augmentor %s failed: %s", type(aug).__name__, e)
 
         if augmentor_context:
@@ -427,21 +506,23 @@ class CognitiveEngine:
             context,
             **loop_kwargs,
         )
-        
+
         # v40: Clear drift correction after use
         orchestrator = ServiceContainer.get("orchestrator", default=None)
         if orchestrator and hasattr(orchestrator, "_pending_correction"):
             orchestrator._pending_correction = ""
-            
+
         return thought
 
-    async def _run_thinking_loop(self, 
-                                 state: AuraState, 
-                                 objective: str, 
-                                 mode: ThinkingMode, 
-                                 origin: str, 
-                                 context: Dict[str, Any] = None, 
-                                 **kwargs) -> Thought:
+    async def _run_thinking_loop(
+        self,
+        state: AuraState,
+        objective: str,
+        mode: ThinkingMode,
+        origin: str,
+        context: dict[str, Any] = None,
+        **kwargs,
+    ) -> Thought:
         """
         Internal method to execute the core cognitive phase loop.
         Extracted from `think` to allow pre/post-processing in `think`.
@@ -451,31 +532,34 @@ class CognitiveEngine:
             # vResilience: Workaround for Pyre2 slice limitations
             history = state.cognition.working_memory
             recent_count = min(5, len(history))
-            recent = [history[i] for i in range(len(history)-recent_count, len(history))]
+            recent = [history[i] for i in range(len(history) - recent_count, len(history))]
             is_duplicate = any(m.get("content") == objective for m in recent)
             if not is_duplicate:
                 # We already derived at the start of the cycle, so we just append here.
-                state.cognition.working_memory.append({
-                    "role": "user",
-                    "content": objective,
-                    "timestamp": time.time(),
-                    "origin": origin
-                })
-        
+                state.cognition.working_memory.append(
+                    {
+                        "role": "user",
+                        "content": objective,
+                        "timestamp": time.time(),
+                        "origin": origin,
+                    }
+                )
+
         # 4. Phase Execution Loop with Watchdog
         import copy
+
         backup_state = copy.deepcopy(state)
         temp_state = state
         success = False
         is_background = bool(kwargs.get("is_background", False))
-        
+
         try:
             # v26.3 HARDENING: 400s Cognitive Watchdog (accommodates 360s Phase/MLX timeouts)
             async with asyncio.timeout(400.0):
                 for phase in self._phases:
                     # Pass through kwargs like is_background if phases support it
                     temp_state = await phase.execute(temp_state, objective=objective, **kwargs)
-                
+
                 state = temp_state
                 success = True
         except TimeoutError:
@@ -483,53 +567,71 @@ class CognitiveEngine:
             # Immediate Reactive Recovery
             return await self._reactive_recovery(objective, mode, origin, "timeout")
         except (sqlite3.Error, OSError) as e:
-            record_degradation('cognitive_engine', e)
+            record_degradation(
+                "cognitive_engine",
+                e,
+                severity="critical",
+                action="downshifted or entered reactive recovery after phase failure",
+            )
             logger.error("🚨 [COGNITION] Fatal error in phase logic: %s", e)
             # v14.1 HARDENING: Rollback & Downshift
             if mode == ThinkingMode.DEEP:
-                logger.warning("🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure...")
+                logger.warning(
+                    "🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure..."
+                )
                 return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
-            
+
             return await self._reactive_recovery(objective, mode, origin, f"crash: {e}")
         finally:
             try:
                 # vResilience: Avoid locals().get() for type stability
-                if not success and 'backup_state' in locals():
+                if not success and "backup_state" in locals():
                     state = backup_state
             except (OSError, ConnectionError, TimeoutError) as _e:
-                record_degradation('cognitive_engine', _e)
-                logger.debug('Ignored Exception in cognitive_engine.py: %s', _e)
+                record_degradation(
+                    "cognitive_engine",
+                    _e,
+                    severity="warning",
+                    action="continued with current state after backup restore check failed",
+                )
+                logger.debug("Ignored Exception in cognitive_engine.py: %s", _e)
 
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
         # HF12: Handle concurrent version conflicts with a mini-retry loop
         from core.state.state_repository import StateVersionConflictError
-        
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 # v14.2: Ensure the repository reference is correct (self.state_repository)
                 await self.state_repository.commit(state, "cognitive_cycle")
-                break # Success!
+                break  # Success!
             except StateVersionConflictError as v_err:
                 if attempt == max_retries - 1:
-                    logger.error("Final state commit failed after %d retries: %s", max_retries, v_err)
+                    logger.error(
+                        "Final state commit failed after %d retries: %s", max_retries, v_err
+                    )
                     break
-                
-                logger.warning("🔄 [STATE] Version conflict (attempt %d/%d). Re-deriving from latest...", attempt+1, max_retries)
+
+                logger.warning(
+                    "🔄 [STATE] Version conflict (attempt %d/%d). Re-deriving from latest...",
+                    attempt + 1,
+                    max_retries,
+                )
                 # Preserve the cognitive work completed in this cycle
                 preserved_memory = list(state.cognition.working_memory)
                 preserved_objective = state.cognition.current_objective
                 preserved_origin = state.cognition.current_origin
-                
+
                 latest = await self.state_repository.get_current()
-                state = latest.derive(f"rebase_retry_{attempt+1}: {origin}")
-                
+                state = latest.derive(f"rebase_retry_{attempt + 1}: {origin}")
+
                 # Apply preserved cognitive context onto the newly derived state
                 state.cognition.working_memory = preserved_memory
                 state.cognition.current_objective = preserved_objective
                 state.cognition.current_origin = preserved_origin
-                
+
                 # HF12 Extension: Preserve additional cognitive labor
                 # These might have been updated by InitiativeGeneration or Consciousness phases
                 state.cognition.active_goals = list(temp_state.cognition.active_goals)
@@ -538,18 +640,27 @@ class CognitiveEngine:
                 state.cognition.phenomenal_state = temp_state.cognition.phenomenal_state
                 # Audit Fix: Preserve modifiers (CIL-injected fields)
                 if hasattr(temp_state.cognition, "modifiers"):
-                    state.cognition.modifiers = dict(getattr(temp_state.cognition, "modifiers", {}) or {})
+                    state.cognition.modifiers = dict(
+                        getattr(temp_state.cognition, "modifiers", {}) or {}
+                    )
             except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('cognitive_engine', e)
+                record_degradation(
+                    "cognitive_engine",
+                    e,
+                    severity="degraded",
+                    action="stopped commit retry loop and preserved in-memory cognitive result",
+                )
                 logger.error("Failed to commit final cognitive state: %s", e)
                 break
-        
+
         # 6. Extract Response
         # 6. Extract Response
         # [v49 Fix] Capture Action Imperative status before clearing state
         routed_obj = str(getattr(state.cognition, "current_objective", "") or "")
-        is_action_imperative = "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
-        
+        is_action_imperative = (
+            "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
+        )
+
         # Clear state to prevent redundant background re-triggering
         state.cognition.current_objective = None
         state.cognition.current_origin = None
@@ -557,29 +668,31 @@ class CognitiveEngine:
         last_msg = state.cognition.working_memory[-1] if state.cognition.working_memory else None
         if last_msg and last_msg.get("role") == "assistant":
             self.autopoiesis.experience_friction(objective[:20], 0.05)
-            
+
             thought = Thought(
                 id=str(uuid.uuid4()),
                 content=last_msg["content"],
                 mode=mode,
                 confidence=0.9,
-                reasoning=["Phase-based cognitive cycle completed successfully."]
+                reasoning=["Phase-based cognitive cycle completed successfully."],
             )
             self.thoughts.append(thought)
             return thought
-            
+
         # Experience friction for unresolved objectives
         self.autopoiesis.experience_friction(objective[:20], 0.45)
 
         # ── ACTION IMPERATIVE FALLBACK ──
         if is_action_imperative:
-            logger.warning("⚠️ [COGNITION] Action Imperative active but no response generated. Falling back to motor no-op.")
+            logger.warning(
+                "⚠️ [COGNITION] Action Imperative active but no response generated. Falling back to motor no-op."
+            )
             return Thought(
                 id=str(uuid.uuid4()),
-                content="[SOMATIC:key='.']", # Safe 'wait' or 'clear' key
+                content="[SOMATIC:key='.']",  # Safe 'wait' or 'clear' key
                 mode=mode,
                 confidence=0.5,
-                reasoning=["Action Imperative fallback (no-op)."]
+                reasoning=["Action Imperative fallback (no-op)."],
             )
 
         if is_background:
@@ -590,6 +703,7 @@ class CognitiveEngine:
             return self._empty_thought(mode, "background_cycle_no_response")
 
         import random
+
         _processing_fallbacks = [
             "I did not form a clean answer in this cognitive cycle; I recorded the degraded turn instead of inventing one.",
             "That's sitting with me, but I haven't landed on how to say it yet.",
@@ -602,10 +716,12 @@ class CognitiveEngine:
             content=random.choice(_processing_fallbacks),
             mode=mode,
             confidence=0.5,
-            reasoning=["No explicit response generated in this cycle."]
+            reasoning=["No explicit response generated in this cycle."],
         )
 
-    async def _reactive_recovery(self, objective: str, mode: ThinkingMode, origin: str, reason: str) -> Thought:
+    async def _reactive_recovery(
+        self, objective: str, mode: ThinkingMode, origin: str, reason: str
+    ) -> Thought:
         """
         Emergency reactive response when the main cognitive loop fails.
         BUG-10: Added recursion guard, timeout, and proper exception handling.
@@ -623,20 +739,20 @@ class CognitiveEngine:
         if not await self._recovery_lock.acquire_robust(timeout=1.0):
             return Thought(
                 id=str(uuid.uuid4()),
-                content="Reactive recovery is already active; I logged this turn instead of emitting a second recovery fragment.",
+                content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a second recovery fragment.",
                 mode=ThinkingMode.FAST,
                 confidence=0.2,
-                reasoning=["Recovery lock busy"]
+                reasoning=["Recovery lock busy"],
             )
 
         try:
-            if getattr(self, '_recovery_in_progress', False):
+            if getattr(self, "_recovery_in_progress", False):
                 return Thought(
                     id=str(uuid.uuid4()),
-                    content="Reactive recovery is already active; I logged this turn instead of emitting a duplicate recovery fragment.",
+                    content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a duplicate recovery fragment.",
                     mode=ThinkingMode.FAST,
                     confidence=0.2,
-                    reasoning=["Recovery recursion guard triggered"]
+                    reasoning=["Recovery recursion guard triggered"],
                 )
             self._recovery_in_progress = True
         finally:
@@ -645,32 +761,37 @@ class CognitiveEngine:
 
         try:
             logger.warning("⚡ [COGNITION] Initiating Reactive Recovery Phase. Reason: %s", reason)
-            
+
             # 1. Rollback state to last stable version (with timeout + guard)
             try:
                 async with asyncio.timeout(5.0):
                     await self.state_repository.rollback(f"recovery: {reason}")
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
-                record_degradation('cognitive_engine', rollback_err)
+                record_degradation(
+                    "cognitive_engine",
+                    rollback_err,
+                    severity="degraded",
+                    action="continued reactive recovery without state rollback",
+                )
                 logger.warning("Rollback failed during recovery: %s", rollback_err)
-            
+
             # 2. Get a quick reflex response if possible
             container = get_container()
-            router = container.get("llm_router")
-            
+            router = container.get("llm_router", default=None)
+
             reflex = None
-            if hasattr(router, 'get_reflex_response'):
+            if router is not None and hasattr(router, "get_reflex_response"):
                 reflex = router.get_reflex_response(objective)
-                
+
             if reflex:
                 return Thought(
                     id=str(uuid.uuid4()),
                     content=reflex,
                     mode=ThinkingMode.FAST,
                     confidence=1.0,
-                    reasoning=[f"Reactive recovery via reflex matrix ({reason})"]
+                    reasoning=[f"Reactive recovery via reflex matrix ({reason})"],
                 )
-                
+
             # 3. Last-resort fallback (natural, human-sounding)
             fallback_msg = "Reactive recovery reached its hard fallback before a coherent answer formed; the degraded turn was logged."
             if "user" in origin:
@@ -681,17 +802,22 @@ class CognitiveEngine:
                 content=fallback_msg,
                 mode=ThinkingMode.FAST,
                 confidence=0.3,
-                reasoning=[f"Hard fallback after cognitive failure: {reason}"]
+                reasoning=[f"Hard fallback after cognitive failure: {reason}"],
             )
         except (OSError, ConnectionError, TimeoutError) as recovery_err:
-            record_degradation('cognitive_engine', recovery_err)
+            record_degradation(
+                "cognitive_engine",
+                recovery_err,
+                severity="critical",
+                action="returned hard recovery failure thought",
+            )
             logger.error("Error during recovery: %s", recovery_err)
             return Thought(
                 id=str(uuid.uuid4()),
                 content="Reactive recovery failed internally; the turn was logged as a live cognition fault.",
                 mode=ThinkingMode.FAST,
                 confidence=0.1,
-                reasoning=[f"Recovery itself failed: {recovery_err}"]
+                reasoning=[f"Recovery itself failed: {recovery_err}"],
             )
         finally:
             await self._set_recovery_in_progress(False)
@@ -701,18 +827,31 @@ class CognitiveEngine:
         logger.info("🛑 CognitiveEngine stopping...")
         self._phases = []
 
-    async def record_interaction(self, user_input: str, response: str, domain: str = "general") -> None:
+    async def record_interaction(
+        self, user_input: str, response: str, domain: str = "general"
+    ) -> None:
         """Persist completed turns through the active learning/context stack."""
         container = get_container()
 
         context_manager = container.get("context_manager", default=None)
-        if context_manager and context_manager is not self and hasattr(context_manager, "record_interaction"):
+        if (
+            context_manager
+            and context_manager is not self
+            and hasattr(context_manager, "record_interaction")
+        ):
             try:
                 await context_manager.record_interaction(user_input, response, domain=domain)
                 return
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('cognitive_engine', exc)
-                logger.debug("CognitiveEngine.record_interaction context-manager path failed: %s", exc)
+                record_degradation(
+                    "cognitive_engine",
+                    exc,
+                    severity="warning",
+                    action="fell through to learning-engine interaction persistence",
+                )
+                logger.debug(
+                    "CognitiveEngine.record_interaction context-manager path failed: %s", exc
+                )
 
         learning = container.get("learning_engine", default=None)
         if learning and hasattr(learning, "record_interaction"):
@@ -723,7 +862,12 @@ class CognitiveEngine:
                     domain=domain,
                 )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('cognitive_engine', exc)
+                record_degradation(
+                    "cognitive_engine",
+                    exc,
+                    severity="warning",
+                    action="dropped optional interaction learning write",
+                )
                 logger.debug("CognitiveEngine.record_interaction learning path failed: %s", exc)
 
     async def think_stream(self, objective: str, **kwargs):
@@ -733,11 +877,12 @@ class CognitiveEngine:
         state = await self.state_repository.get_current()
         if not state:
             from core.state.aura_state import AuraState
+
             state = AuraState.default()
-        
+
         # Build structured messages
         messages = ContextAssembler.build_messages(state, objective)
-        
+
         # Standard streaming path
         async for event in router.think_stream(messages=messages, **kwargs):
             if hasattr(event, "content"):
@@ -745,20 +890,24 @@ class CognitiveEngine:
             else:
                 yield str(event)
 
-    async def see(self, vision_payload: Dict[str, Any]) -> str:
+    async def see(self, vision_payload: dict[str, Any]) -> str:
         """Process a vision payload from the sensory pipeline.
-        
+
         [ZENITH] Functionalized: Linking Sensory Buffer to Cognitive reasoning.
         """
         from core.container import ServiceContainer
+
         buffer = ServiceContainer.get("vision_buffer", default=None)
         if not buffer:
             logger.warning("👁️ [VISION] see() called but vision_buffer not found in container.")
             return "👁️ visual_analysis: Sensory buffer unavailable."
-            
-        prompt = vision_payload.get("query") or vision_payload.get("prompt") or "Describe the current visual state."
-        return await buffer.query_visual_context(prompt, brain=self)
 
+        prompt = (
+            vision_payload.get("query")
+            or vision_payload.get("prompt")
+            or "Describe the current visual state."
+        )
+        return await buffer.query_visual_context(prompt, brain=self)
 
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate a text response by routing through the LLM router.
@@ -778,7 +927,17 @@ class CognitiveEngine:
         purpose = str(kwargs.get("purpose", "") or "").strip().lower()
         origin = str(kwargs.get("origin", "") or "").strip().lower()
         user_facing_purposes = {"chat", "conversation", "expression", "reply", "user_response"}
-        user_facing_origins = {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"}
+        user_facing_origins = {
+            "user",
+            "voice",
+            "admin",
+            "api",
+            "gui",
+            "ws",
+            "websocket",
+            "direct",
+            "external",
+        }
 
         if not origin:
             origin = "system"
@@ -791,7 +950,7 @@ class CognitiveEngine:
 
         if kwargs.get("is_background") and "prefer_tier" not in kwargs:
             kwargs["prefer_tier"] = "tertiary"
-        
+
         # v40: Spiritual Spine - Prior Position Injection
         spine = container.get("spine", default=None)
         if spine:
@@ -800,7 +959,7 @@ class CognitiveEngine:
                 prompt = check.injection + "\n\n" + prompt
 
         router = container.get("llm_router", default=None)
-        
+
         # v41: Reasoning Strategy Enhancement
         # For non-trivial queries, apply advanced reasoning (debate, decompose, etc.)
         use_strategies = kwargs.pop("use_strategies", True)
@@ -810,10 +969,12 @@ class CognitiveEngine:
         if router and use_strategies:
             # Lazy-init the reasoning layer on first use
             if self._reasoning is None:
+
                 async def _raw_generate(p, **kw):
                     return await router.think(p, **kw)
+
                 self._reasoning = ReasoningStrategies(_raw_generate)
-            
+
             strategy = force_strategy
             if strategy is None:
                 if not strategy_query:
@@ -832,38 +993,47 @@ class CognitiveEngine:
                 classified = self._reasoning.classify(classify_target)
                 if classified != StrategyType.DIRECT and len(classify_target) > 30:
                     strategy = classified
-            
+
             if strategy and strategy != StrategyType.DIRECT:
                 try:
                     from ..thought_stream import get_emitter
+
                     get_emitter().emit(
                         "Deep Reasoning 🧠",
                         f"Using {strategy.name} strategy",
                         level="info",
-                        category="Cognition"
+                        category="Cognition",
                     )
                 except (ImportError, AttributeError, RuntimeError) as _exc:
-                    record_degradation('cognitive_engine', _exc)
+                    record_degradation(
+                        "cognitive_engine",
+                        _exc,
+                        severity="warning",
+                        action="continued generation without thought-stream emission",
+                    )
                     logger.debug("Suppressed Exception: %s", _exc)
-                
+
                 strategy_input = strategy_query or prompt
                 result = await self._reasoning.execute(strategy_input, strategy=strategy, **kwargs)
                 return result.content
-        
+
         # Standard direct generation
         if router:
             return await router.think(prompt, **kwargs)
         # Fallback if no router
         thought = await self.think(prompt, **kwargs)
-        return thought.content if hasattr(thought, 'content') else str(thought)
+        return thought.content if hasattr(thought, "content") else str(thought)
 
     def _emit_thought(self, thought: str):
         """Internal helper to publish thoughts to the event bus."""
         container = get_container()
         eb = container.get("event_bus")
         if eb:
-            eb.publish_threadsafe("thought", {
-                "timestamp": time.time(),
-                "content": thought,
-                "engine": "ReAct" if "ReAct" in thought else "Modular"
-            })
+            eb.publish_threadsafe(
+                "thought",
+                {
+                    "timestamp": time.time(),
+                    "content": thought,
+                    "engine": "ReAct" if "ReAct" in thought else "Modular",
+                },
+            )
