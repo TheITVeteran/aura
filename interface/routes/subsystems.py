@@ -23,6 +23,19 @@ logger = logging.getLogger("Aura.Server.Subsystems")
 
 router = APIRouter()
 SKILL_EXECUTE_BODY = Body(...)
+_SUBSYSTEM_ROUTE_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    KeyError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    sqlite3.Error,
+)
 
 
 def _get_live_orchestrator_state() -> Any | None:
@@ -47,7 +60,7 @@ def _latest_conversation_user_message() -> str:
             return ""
         latest = log[-1]
         return str(latest.get("user") or "").strip()
-    except Exception as exc:
+    except _SUBSYSTEM_ROUTE_ERRORS as exc:
         record_degradation("subsystems", exc)
         logger.debug("Unable to read latest user message from conversation log: %s", exc)
         return ""
@@ -78,7 +91,7 @@ async def api_pneuma_status():
             "arousal": arousal,
             "stability": stability,
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"online": False, "error": str(e)}, status_code=500)
 
@@ -109,7 +122,7 @@ async def api_mhaf_status():
             "lexicon": neo.get_lexicon_block() if neo else "",
             "lexicon_size": len(neo._lexicon) if neo else 0,
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"online": False, "error": str(e)}, status_code=500)
 
@@ -129,7 +142,7 @@ async def api_terminal_status():
             "watchdog_running": tw._running if tw else False,
             "ui_gone_since": tw._ui_gone_since if tw else None,
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"active": False, "error": str(e)}, status_code=500)
 
@@ -149,7 +162,7 @@ async def api_terminal_send(request: Request):
         return JSONResponse({"ok": True, "queued": text})
     except HTTPException:
         raise
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -164,25 +177,25 @@ async def api_security_status(request: Request):
     try:
         from core.security.trust_engine import get_trust_engine
         result["trust"] = get_trust_engine().get_status()
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["trust"] = {"error": str(e)}
     try:
         from core.security.integrity_guardian import get_integrity_guardian
         result["integrity"] = get_integrity_guardian().get_status()
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["integrity"] = {"error": str(e)}
     try:
         from core.security.emergency_protocol import get_emergency_protocol
         result["emergency"] = get_emergency_protocol().get_status()
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["emergency"] = {"error": str(e)}
     try:
         from core.security.user_recognizer import get_user_recognizer
         result["recognition"] = {"has_passphrase": get_user_recognizer().has_passphrase()}
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["recognition"] = {"error": str(e)}
     return JSONResponse(result)
@@ -196,7 +209,7 @@ async def api_security_snapshot():
         ep = get_emergency_protocol()
         path = ep.take_snapshot_now()
         return JSONResponse({"ok": True, "path": str(path) if path else None})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -223,7 +236,7 @@ async def api_circadian_status():
             "is_sleep_phase": ce.is_sleep_phase,
             "bg_task_budget": ce.bg_task_budget,
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -237,13 +250,13 @@ async def api_substrate_status():
     try:
         from core.consciousness.crsm_lora_bridge import get_crsm_lora_bridge
         result["lora_bridge"] = get_crsm_lora_bridge().get_status()
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["lora_bridge"] = {"error": str(e)}
     try:
         from core.consciousness.experience_consolidator import get_experience_consolidator
         result["consolidator"] = get_experience_consolidator().get_status()
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["consolidator"] = {"error": str(e)}
     return JSONResponse(result)
@@ -264,7 +277,7 @@ async def api_consolidate_now():
                 "traits": narrative.stable_traits,
             })
         return JSONResponse({"ok": False, "reason": "insufficient material"})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -551,7 +564,7 @@ async def api_mycelial_graph():
             "ram_usage": ram_usage,
             "cpu_usage": cpu_usage
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.error("Mycelial graph generation failed: %s", e, exc_info=True)
         return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
@@ -574,7 +587,7 @@ async def api_knowledge_graph(_: None = Depends(_require_internal)):
             "nodes": [{"id": 1, "label": "Aura Core", "color": "#8a2be2"}],
             "edges": []
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.error("Failed to fetch KG data: %s", e)
         return JSONResponse({"error": "Knowledge graph query failed"}, status_code=500)
@@ -601,7 +614,7 @@ async def api_knowledge_relationships(
                 edges = [dict(row) for row in c.fetchall()]
 
         return JSONResponse({"edges": edges, "count": len(edges)})
-    except Exception as exc:
+    except _SUBSYSTEM_ROUTE_ERRORS as exc:
         record_degradation('subsystems', exc)
         logger.debug("Relationships query failed: %s", exc)
         return JSONResponse({"edges": [], "error": str(exc)})
@@ -675,7 +688,7 @@ async def api_skill_execute(
         result = await intent_router.route_execution(skill_name, params, engine)
 
         return JSONResponse(result)
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.error("Skill execution API failed: %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -724,7 +737,7 @@ async def api_action_log(limit: int = 50, _: None = Depends(_require_internal)):
         from core.unified_action_log import get_action_log
         log = get_action_log()
         return JSONResponse({"items": log.recent(limit), "stats": log.stats()})
-    except Exception as exc:
+    except _SUBSYSTEM_ROUTE_ERRORS as exc:
         record_degradation('subsystems', exc)
         return JSONResponse({"items": [], "stats": {}, "error": str(exc)})
 
@@ -751,7 +764,7 @@ async def api_voice_state(_: None = Depends(_require_internal)):
             refresh=live_state is not None,
         )
         return JSONResponse({"voice": state})
-    except Exception as exc:
+    except _SUBSYSTEM_ROUTE_ERRORS as exc:
         record_degradation('subsystems', exc)
         return JSONResponse({"voice": {}, "error": str(exc)})
 
@@ -835,7 +848,7 @@ async def api_voice_affect_modulate(
                 "exclamation_allowed": profile.exclamation_allowed,
             },
         })
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.debug("Voice profile compilation after shift failed: %s", e)
         return JSONResponse({
@@ -856,7 +869,7 @@ async def api_code_graph_stats(_: None = Depends(_require_internal)):
         if graph is None:
             return JSONResponse({"status": "not_initialized"})
         return JSONResponse(graph.get_stats())
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)})
 
@@ -870,7 +883,7 @@ async def api_code_graph_search(q: str, type: str = "", limit: int = 20, _: None
             return JSONResponse({"error": "Code graph not initialized"})
         results = graph.search_symbols(q, sym_type=type or None, limit=limit)
         return JSONResponse({"query": q, "results": results, "count": len(results)})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)})
 
@@ -884,7 +897,7 @@ async def api_code_graph_who_calls(name: str, limit: int = 20, _: None = Depends
             return JSONResponse({"error": "Code graph not initialized"})
         callers = graph.who_calls(name, limit=limit)
         return JSONResponse({"function": name, "callers": callers, "count": len(callers)})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)})
 
@@ -897,7 +910,7 @@ async def api_code_graph_hotspots(limit: int = 15, _: None = Depends(_require_in
         if graph is None:
             return JSONResponse({"error": "Code graph not initialized"})
         return JSONResponse({"hotspots": graph.hotspots(limit=limit)})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)})
 
@@ -910,6 +923,6 @@ async def api_code_graph_orphans(limit: int = 20, _: None = Depends(_require_int
         if graph is None:
             return JSONResponse({"error": "Code graph not initialized"})
         return JSONResponse({"orphans": graph.orphans(limit=limit)})
-    except Exception as e:
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         return JSONResponse({"error": str(e)})
