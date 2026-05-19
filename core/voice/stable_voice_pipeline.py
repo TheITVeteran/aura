@@ -109,7 +109,7 @@ class StableVoicePipeline:
                     await self._stt.ensure_models_async()
                 logger.info("STT: Consolidated via SovereignVoiceEngine")
                 return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stable_voice_pipeline', exc)
             logger.warning("SovereignVoiceEngine STT unavailable: %s", exc)
 
@@ -129,7 +129,7 @@ class StableVoicePipeline:
                     await self._tts.ensure_models_async()
                 logger.info("TTS: Consolidated via SovereignVoiceEngine")
                 return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stable_voice_pipeline', exc)
             logger.warning("SovereignVoiceEngine TTS unavailable: %s", exc)
 
@@ -247,14 +247,14 @@ class StableVoicePipeline:
                         try:
                             self._utterance_queue.get_nowait()
                             self._utterance_queue.put_nowait(utterance)
-                        except Exception as e:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                             record_degradation('stable_voice_pipeline', e)
                             import logging
                             logger.debug("STT frame processing: %s", e)
 
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('stable_voice_pipeline', exc)
                 self._stt_errors += 1
                 logger.error("Listen loop error: %s", exc)
@@ -301,7 +301,7 @@ class StableVoicePipeline:
             
         except asyncio.TimeoutError:
             return None
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('stable_voice_pipeline', e)
             logger.debug("STT Breaker intercepted error: %s", e)
             return None
@@ -328,7 +328,7 @@ class StableVoicePipeline:
 
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('stable_voice_pipeline', exc)
                 logger.error("Process loop error: %s", exc)
                 self._set_state(VoiceState.IDLE)
@@ -386,7 +386,7 @@ class StableVoicePipeline:
                 mycelium = ServiceContainer.get("mycelium", default=None)
                 if mycelium:
                     mycelium.reinforce("voice_cognitive_pipeline", success=True)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('stable_voice_pipeline', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -399,7 +399,7 @@ class StableVoicePipeline:
         except asyncio.CancelledError:
             logger.debug("Voice handler cancelled for utterance: %r", utterance[:50])
             raise
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stable_voice_pipeline', exc)
             # Issue 47 Fix: Use 'exc' instead of 'e'
             logger.error("Voice: Error handling utterance: %s", exc)
@@ -429,7 +429,7 @@ class StableVoicePipeline:
             logger.debug("TTS interrupted")
             await self._interrupt_tts()  # VP-01: Ensure engine stop
             raise
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('stable_voice_pipeline', exc)
             logger.error("TTS error: %s", exc)
         finally:
@@ -452,7 +452,7 @@ class StableVoicePipeline:
                 
         try:
             await self._tts_breaker.execute(_do_speak)
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('stable_voice_pipeline', e)
             logger.warning("TTS pipeline bypassed due to breaker: %s", e)
 
@@ -467,7 +467,7 @@ class StableVoicePipeline:
         if self._tts and hasattr(self._tts, 'stop'):
             try:
                 self._tts.stop()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('stable_voice_pipeline', e)
                 logger.debug("TTS stop cleanup: %s", e)
 
@@ -491,7 +491,7 @@ class StableVoicePipeline:
             await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             logger.debug('Ignored Exception in stable_voice_pipeline.py: %s', "unknown_error")
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('stable_voice_pipeline', e)
             logger.debug("Autonomous thought interruption: %s", e)
 
@@ -503,7 +503,7 @@ class StableVoicePipeline:
             while not self._orch.reply_queue.empty():
                 try:
                     self._orch.reply_queue.get_nowait()
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     break
 
     # ── State Management ──────────────────────────────────────────────────────
@@ -616,7 +616,7 @@ class _WhisperWrapper:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 sf.write(f.name, audio, SAMPLE_RATE)
                 return f.name
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stable_voice_pipeline', exc)
             logger.error("Mic capture failed: %s", exc)
             return None

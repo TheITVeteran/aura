@@ -63,7 +63,7 @@ def _safe_get(eng: Any, attr: str, default: float) -> float:
         if isinstance(v, dict):
             return float(v.get(attr.replace("get_", ""), default) or default)
         return float(v) if v is not None else default
-    except Exception:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
         return default
 
 
@@ -107,7 +107,7 @@ def _read_substrate() -> Dict[str, float]:
             for k in ("frustration", "curiosity"):
                 if k in d:
                     out[k] = float(d[k])
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('latent_bridge', exc)
         logger.debug("latent_bridge substrate read failed: %s", exc)
     return out
@@ -230,7 +230,7 @@ def compute_inference_params(
         if v in (ViabilityState.STARVED, ViabilityState.DEGRADED, ViabilityState.INJURED, ViabilityState.RECOVERING):
             extra_stops = ["\n\n##", "\n---\n"]
             rationale.append(f"early-stop appended (viability={v.value})")
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 
     # ─── activation steering offsets ──────────────────────────────────

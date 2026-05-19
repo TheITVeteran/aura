@@ -43,7 +43,7 @@ def apply_presence_patch(orchestrator):
         voice_engine = get_voice_engine()
         voice_engine._on_vad_change = presence.mark_user_speaking
         logger.info("🎤 VAD pinned to ProactivePresence.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
         logger.warning("Failed to hook VAD: %s", e)
 
@@ -53,7 +53,7 @@ def apply_presence_patch(orchestrator):
         sg = get_shared_ground()
         ServiceContainer.register_instance("shared_ground", sg)
         logger.info("✅ SharedGroundBuffer registered (%d entries).", len(sg.entries))
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
         logger.warning("SharedGroundBuffer init failed: %s", e)
 
@@ -65,7 +65,7 @@ def apply_presence_patch(orchestrator):
             social_mem = SocialMemory()
             ServiceContainer.register_instance("social_memory", social_mem)
             logger.info("✅ SocialMemory registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
         logger.warning("SocialMemory init failed: %s", e)
 
@@ -77,7 +77,7 @@ def apply_presence_patch(orchestrator):
             tom = get_theory_of_mind(ce)
             ServiceContainer.register_instance("theory_of_mind", tom)
             logger.info("✅ TheoryOfMind registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
         logger.warning("TheoryOfMind init failed: %s", e)
 
@@ -88,7 +88,7 @@ def apply_presence_patch(orchestrator):
         discourse_tracker = DiscourseTracker(ce)
         ServiceContainer.register_instance("discourse_tracker", discourse_tracker)
         logger.info("✅ DiscourseTracker registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
         logger.warning("DiscourseTracker init failed: %s", e)
 

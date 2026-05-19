@@ -75,7 +75,7 @@ class MorphogeneticRuntime:
                 self._run_loop(),
                 name="morphogenesis.runtime",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._task = get_task_tracker().create_task(self._run_loop(), name="morphogenesis.runtime")
         logger.info("MorphogeneticRuntime started.")
 
@@ -135,7 +135,7 @@ class MorphogeneticRuntime:
         try:
             from core.morphogenesis.hooks import heartbeat_self_healing
             heartbeat_self_healing()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         resource = self.metabolism.pulse()
@@ -149,7 +149,7 @@ class MorphogeneticRuntime:
             try:
                 from core.morphogenesis.hooks import modulate_metabolic_energy
                 modulate_metabolic_energy()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
 
         active_signals = self._consume_signals()
@@ -220,7 +220,7 @@ class MorphogeneticRuntime:
                             name="morphogenesis.organ_episode",
                             bounded=True,
                         )
-                    except Exception:
+                    except (ImportError, AttributeError, RuntimeError):
                         pass  # no-op: intentional
 
         if self._tick % max(1, self.config.snapshot_every_ticks) == 0:
@@ -252,7 +252,7 @@ class MorphogeneticRuntime:
                 self._last_tick_error = ""
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('runtime', exc)
                 self._last_tick_error = f"{type(exc).__name__}: {exc}"
                 logger.error("Morphogenesis tick failed: %s", self._last_tick_error, exc_info=True)
@@ -277,7 +277,7 @@ class MorphogeneticRuntime:
                 return False
             quiet_until = float(getattr(orch, "_foreground_user_quiet_until", 0.0) or 0.0)
             return quiet_until > time.time()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     def _consume_signals(self) -> List[MorphogenSignal]:
@@ -339,7 +339,7 @@ class MorphogeneticRuntime:
                         self.emit_signal(MorphogenSignal(kind=SignalKind.CURIOSITY, source="liquid_state", subsystem="cognition", intensity=curiosity, ttl_ticks=3))
                     if energy < 0.25:
                         self.emit_signal(MorphogenSignal(kind=SignalKind.HOMEOSTASIS, source="liquid_state", subsystem="global", intensity=1.0 - energy, ttl_ticks=3))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     async def _bridge_signals_to_immunity(self, signals: Sequence[MorphogenSignal]) -> None:
@@ -367,7 +367,7 @@ class MorphogeneticRuntime:
                 result = immune.observe_event(event)
                 if asyncio.iscoroutine(result):
                     await asyncio.wait_for(result, timeout=3.0)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('runtime', exc)
                 logger.debug("Adaptive immunity bridge skipped: %s", exc)
 
@@ -387,7 +387,7 @@ class MorphogeneticRuntime:
                 try:
                     from core.memory.episodic_memory import get_episodic_memory
                     mem = get_episodic_memory()
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     mem = None
             if mem is None or not hasattr(mem, "record_episode_async"):
                 return
@@ -408,7 +408,7 @@ class MorphogeneticRuntime:
                 metadata={"tick": self._tick, "failure_count": len(failures)},
             )
             self._episode_buffer.clear()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('runtime', exc)
             logger.debug("morphogenesis episode record skipped: %s", exc)
 

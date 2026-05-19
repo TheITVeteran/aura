@@ -98,7 +98,7 @@ class APIAdapter:
                 gemini_key = config.llm.gemini_api_key
             else:
                 gemini_key = os.getenv("GEMINI_API_KEY")
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             gemini_key = os.getenv("GEMINI_API_KEY")
 
         # Initialize Gemini
@@ -110,7 +110,7 @@ class APIAdapter:
                 logger.info("✅ APIAdapter: Gemini enabled (%s)", GEMINI_MODELS["api_fast"])
             except ImportError:
                 logger.warning("APIAdapter: 'google-genai' package not installed.")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('api_adapter', e)
                 logger.error("APIAdapter: Gemini init failed: %s", e)
 
@@ -120,7 +120,7 @@ class APIAdapter:
                 self._local_client = get_mlx_client()
                 self.has_local = True
                 logger.info("✅ APIAdapter: Local runtime enabled.")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('api_adapter', e)
                 logger.error("APIAdapter: local runtime init failed: %s", e)
 
@@ -138,7 +138,7 @@ class APIAdapter:
                 logger.info("✅ AgencyFacade registered for MemoryFacade")
         except ImportError:
             logger.warning("⚠️ [BOOT] Early Facade registration deferred: AgencyFacade missing.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('api_adapter', e)
             logger.error("❌ [BOOT] AgencyFacade registration error: %s", e)
 
@@ -258,7 +258,7 @@ class APIAdapter:
                 )
                 self._call_count["gemini"] += 1
                 return response.text or ""
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('api_adapter', e)
                 err_text = str(e)
                 if "429" in err_text or "quota" in err_text.lower():
@@ -290,7 +290,7 @@ class APIAdapter:
                     yield ChatStreamEvent(type="token", content=chunk.text)
             yield ChatStreamEvent(type="end")
             self._call_count["gemini"] += 1
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('api_adapter', e)
             logger.warning("Gemini streaming failed: %s", e)
 
@@ -319,7 +319,7 @@ class APIAdapter:
                     
             self._call_count["local"] += 1
             return result
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('api_adapter', e)
             logger.warning("Local runtime generate failed: %s", e)
             self._error_count["local"] += 1
@@ -361,7 +361,7 @@ class APIAdapter:
                 
             yield ChatStreamEvent(type="end")
             self._call_count["local"] += 1
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('api_adapter', e)
             logger.warning("Local runtime stream failed: %s", e)
             self._error_count["local"] += 1
@@ -377,7 +377,7 @@ class APIAdapter:
                     contents=text,
                 )
                 return res.embeddings[0].values
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('api_adapter', e)
                 logger.debug("Gemini embedding failed: %s", e)
 
@@ -405,7 +405,7 @@ class APIAdapter:
                     return future.result()
 
             return asyncio.run(self.embed_async(text))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("api_adapter", exc)
             logger.debug("Synchronous embedding wrapper failed; falling back to local bag-of-words embedding: %s", exc)
             # Fallback to local bag-of-words embedding

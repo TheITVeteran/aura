@@ -146,7 +146,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
                     break
                 logger.warning("Capability discovery loop spuriously cancelled. Ignoring.")
                 continue
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('capability_discovery', exc)
                 logger.error("Discovery scan failed: %s", exc, exc_info=True)
                 # Back off on repeated failures to avoid log flood
@@ -252,7 +252,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
         try:
             addrs = psutil.net_if_addrs()
             current_ifaces: Set[str] = set(addrs.keys())
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             return discoveries, losses
 
         # Filter out loopback
@@ -363,7 +363,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
                     "plugged": battery.power_plugged if battery else None,
                 },
             )
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             pass  # no-op: intentional
 
         try:
@@ -383,7 +383,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
                 body.update_limb("disk_sensor", health=0.5)
             else:
                 body.update_limb("disk_sensor", health=1.0)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             pass  # no-op: intentional
 
     # ------------------------------------------------------------------
@@ -410,7 +410,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
                     title="CAPABILITY_LOST",
                     category="SOMATIC",
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('capability_discovery', exc)
             logger.debug("Neural feed emission failed: %s", exc)
 
@@ -427,7 +427,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
         try:
             addrs = psutil.net_if_addrs()
             self._known_interfaces = set(addrs.keys()) - {"lo", "lo0"}
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             pass  # no-op: intentional
 
         for lib_name in self.TRACKED_SENSORS:

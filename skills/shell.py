@@ -198,7 +198,7 @@ class ShellSkill(BaseSkill):
                 try:
                     process.kill()
                     await process.wait()  # Ensure cleanup
-                except Exception as exc:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                     record_degradation("shell", exc)
                     logger.debug("Shell timed-out process cleanup failed: %s", exc)
                 return {"ok": False, "error": f"Command timed out after {timeout}s."}
@@ -213,7 +213,7 @@ class ShellSkill(BaseSkill):
 
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "Command timed out."}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("shell", e)
             logger.debug("Shell command execution failed: %s", e)
             return {"ok": False, "error": str(e)}

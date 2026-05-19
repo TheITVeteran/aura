@@ -41,7 +41,7 @@ class ShellInterface:
             }
         except asyncio.TimeoutError:
             return {"success": False, "error": "Command timed out.", "stdout": "", "stderr": "", "code": -1}
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('shell', e)
             return {"success": False, "error": str(e), "stdout": "", "stderr": "", "code": -1}
 
@@ -70,7 +70,7 @@ class ShellInterface:
                 return {"success": False, "error": "Integrity check failed. Rollback triggered."}
                 
             return {"success": True, "file": target_file}
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('shell', e)
             logging.getLogger("Shell").error("Failed to write %s safely: %s", target_file, e)
             if snapshot:

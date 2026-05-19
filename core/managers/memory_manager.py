@@ -41,7 +41,7 @@ class MemoryManager:
         if self._mycelium is None:
             try:
                 self._mycelium = ServiceContainer.get("mycelial_network", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_manager', e)
                 capture_and_log(e, {'module': __name__})
         return self._mycelium
@@ -53,7 +53,7 @@ class MemoryManager:
                 hypha = mycelium.get_hypha(source, target)
                 if hypha:
                     hypha.pulse(success=success)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_manager', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -84,7 +84,7 @@ class MemoryManager:
                     context={"reason": reason},
                 )
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('memory_manager', exc)
             if constitutional_runtime_live:
                 record_degraded_event(
@@ -124,7 +124,7 @@ class MemoryManager:
             
             # Pulse mycelial root: memory → cognition
             self._pulse_hypha("memory", "cognition", success=True)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_manager', e)
             logger.error("Failed to store memory: %s", e)
             self._pulse_hypha("memory", "cognition", success=False)
@@ -142,7 +142,7 @@ class MemoryManager:
                 # Apply confidence gating
                 results = [r for r in raw_results if r.get("score", 0) >= min_confidence]
             self._pulse_hypha("cognition", "memory", success=True)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_manager', e)
             logger.error("Failed to retrieve memory: %s", e)
             self._pulse_hypha("cognition", "memory", success=False)
@@ -154,7 +154,7 @@ class MemoryManager:
             vector = ServiceContainer.get("vector_memory", default=None)
             if vector and hasattr(vector, 'search_similar'):
                 return vector.search_similar(query, limit=limit, **kwargs)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_manager', e)
             logger.error("search_similar delegation failed: %s", e)
         return []
@@ -179,7 +179,7 @@ class MemoryManager:
             episodic = ServiceContainer.get("episodic_memory", default=None)
             if episodic:
                 await episodic.consolidate()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_manager', e)
             logger.error("Memory consolidation failed: %s", e)
 
@@ -196,7 +196,7 @@ class MemoryManager:
                 tags.extend(metadata.get("tags", []))
             await self.store(content, importance=importance, tags=tags)
             logger.info("📝 Event logged: %s (%d chars)", event_type, len(str(content)[:200]))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('memory_manager', e)
             logger.error("Failed to log event '%s': %s", event_type, e)
 

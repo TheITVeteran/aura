@@ -125,12 +125,12 @@ class MetabolismManager:
             used = float(getattr(mem, "used", 0.0)) / (1024 ** 2)
             avail = float(getattr(mem, "available", 0.0)) / (1024 ** 2)
             mem_pct = float(getattr(mem, "percent", 0.0))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             cpu, used, avail, mem_pct = 0.0, 0.0, 0.0, 0.0
 
         try:
             load_1 = float(os.getloadavg()[0])
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             load_1 = 0.0
 
         pressure = clamp01(max(cpu / 100.0, mem_pct / 100.0, min(1.0, load_1 / max(1.0, os.cpu_count() or 1))))

@@ -194,7 +194,7 @@ class SelfOptimizer:
                 try:
                     with open(log_file, "r") as f:
                         error_msg = f.read().strip()[-500:] # Get last 500 chars
-                except Exception as _e:
+                except (OSError, IOError) as _e:
                     record_degradation('self_optimizer', _e)
                     logger.debug('Ignored Exception in self_optimizer.py: %s', _e)
                 
@@ -206,7 +206,7 @@ class SelfOptimizer:
                 logger.error("❌ Nucleus: Self-optimization failed: %s", error_msg)
                 return {"ok": False, "error": error_msg}
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_optimizer', e)
             logger.error("❌ Nucleus: Critical optimizer failure: %s", e)
             return {"ok": False, "error": str(e)}
@@ -228,7 +228,7 @@ class SelfOptimizer:
                             logger.info("🧠 Nucleus: MLX cache cleared post-optimization.")
                         finally:
                             sentinel.release()
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('self_optimizer', e)
                     logger.debug(f"[MLX] Cache clear skipped: {e}")
             except ImportError as _e:
@@ -240,7 +240,7 @@ class SelfOptimizer:
                 import shutil
                 shutil.rmtree(temp_dir)
                 logger.debug("🧠 Nucleus: Temporary training data cleaned.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_optimizer', e)
             logger.warning(f"Failed to cleanup optimizer temp dir: {e}")
 

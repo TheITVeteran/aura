@@ -84,7 +84,7 @@ class StructuralMutator:
             try:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "structural_mutations.sqlite3"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 db_path = Path.home() / ".aura" / "structural_mutations.sqlite3"
         self._db_path = Path(db_path)
         try:
@@ -176,7 +176,7 @@ class StructuralMutator:
                 if setter is not None:
                     try:
                         setter(enabled)
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         pass  # no-op: intentional
                 self._module_state[target] = enabled
                 post = {"enabled": enabled}
@@ -186,7 +186,7 @@ class StructuralMutator:
                 if setter is not None:
                     try:
                         setter(value)
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         pass  # no-op: intentional
                 minv, maxv, _ = self._parameter_bands.get(target, (value, value, value))
                 self._parameter_bands[target] = (minv, maxv, value)

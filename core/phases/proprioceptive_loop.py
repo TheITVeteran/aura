@@ -64,7 +64,7 @@ class ProprioceptiveLoop(BasePhase):
                 except AttributeError as _e:
                     logger.debug('Ignored AttributeError in proprioceptive_loop.py: %s', _e)
                     
-            except Exception as e:
+            except (ImportError, OSError, AttributeError) as e:
                 record_degradation('proprioceptive_loop', e)
                 logger.debug("Proprioception hardware probe failed (non-fatal): %s", e)
         
@@ -87,7 +87,7 @@ class ProprioceptiveLoop(BasePhase):
                     soma.latency["token_velocity"] = total  # Cumulative for now
         except AttributeError:
             pass  # get_stats not available on this router implementation
-        except Exception as _e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
             record_degradation('proprioceptive_loop', _e)
             logger.debug('Ignored Exception in proprioceptive_loop.py: %s', _e)
         
@@ -117,7 +117,7 @@ class ProprioceptiveLoop(BasePhase):
                 from dataclasses import asdict
                 mods = homeo.get_modifiers()
                 new_state.cognition.modifiers = asdict(mods)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('proprioceptive_loop', e)
             logger.debug("Proprioception homeostatic probe failed: %s", e)
             
@@ -143,7 +143,7 @@ class ProprioceptiveLoop(BasePhase):
                     soma.expressive["last_reflex"] = (
                         f"{latest.handler_name}:{latest.result_summary}"[:60]
                     )
-        except Exception as _mc_exc:
+        except (ImportError, AttributeError, RuntimeError) as _mc_exc:
             record_degradation('proprioceptive_loop', _mc_exc)
             logger.debug("Proprioception motor cortex drain failed: %s", _mc_exc)
 
@@ -158,7 +158,7 @@ class ProprioceptiveLoop(BasePhase):
                 if unhealthy:
                     soma.hardware["unhealthy_limbs"] = unhealthy
                     soma.hardware["unhealthy_limb_count"] = len(unhealthy)
-        except Exception as _fp_exc:
+        except (ImportError, AttributeError, RuntimeError) as _fp_exc:
             record_degradation('proprioceptive_loop', _fp_exc)
             logger.debug("Proprioception limb health probe failed: %s", _fp_exc)
 
@@ -230,7 +230,7 @@ class ProprioceptiveLoop(BasePhase):
                 soma.hardware.pop("action_stagnation", None)
                 soma.hardware.pop("action_failure_rate", None)
                 soma.hardware.pop("action_loop_detected", None)
-        except Exception as _stag_exc:
+        except (ImportError, AttributeError, RuntimeError) as _stag_exc:
             record_degradation('proprioceptive_loop', _stag_exc)
             logger.debug("Proprioception stagnation check failed: %s", _stag_exc)
 
@@ -263,7 +263,7 @@ class ProprioceptiveLoop(BasePhase):
                     logger.warning("🧠 [REFLEX] High Neural Tension (%.2f). Inhibiting non-essential background cycles.", tension)
                     await inhibition.inhibit("world_decay", duration=15.0, reason="High Neural Tension")
                     await inhibition.inhibit("memory_hygiene", duration=10.0, reason="High Neural Tension")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('proprioceptive_loop', e)
             logger.debug("Reflex tension check failed: %s", e)
 

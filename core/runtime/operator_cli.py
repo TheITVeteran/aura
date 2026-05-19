@@ -67,7 +67,7 @@ def cmd_doctor(args: argparse.Namespace) -> Dict[str, Any]:
         import sqlite3  # noqa: F401
 
         checks["sqlite_available"] = {"ok": True}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('operator_cli', exc)
         checks["sqlite_available"] = {"ok": False, "error": repr(exc)}
 
@@ -75,7 +75,7 @@ def cmd_doctor(args: argparse.Namespace) -> Dict[str, Any]:
         import mlx.core  # noqa: F401
 
         checks["mlx_available"] = {"ok": True}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('operator_cli', exc)
         checks["mlx_available"] = {"ok": False, "error": repr(exc)}
 
@@ -87,7 +87,7 @@ def cmd_doctor(args: argparse.Namespace) -> Dict[str, Any]:
         env = read_json_envelope(probe_path)
         probe_path.unlink(missing_ok=True)
         checks["atomic_writer_round_trip"] = {"ok": env["payload"]["ok"] is True}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('operator_cli', exc)
         checks["atomic_writer_round_trip"] = {"ok": False, "error": repr(exc)}
 
@@ -99,7 +99,7 @@ def _is_writable(p: Path) -> bool:
     try:
         p.mkdir(parents=True, exist_ok=True)
         return os.access(p, os.W_OK)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return False
 
 

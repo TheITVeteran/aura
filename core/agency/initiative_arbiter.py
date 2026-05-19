@@ -200,7 +200,7 @@ class InitiativeArbiter:
                 for dim, boost in mods.items():
                     if dim in effective_weights:
                         effective_weights[dim] = effective_weights[dim] + boost
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # degrade gracefully
 
         total_weight = 0.0
@@ -444,7 +444,7 @@ class InitiativeArbiter:
                 self._weights["resource_cost"] = min(1.0, self._weights["resource_cost"] + 0.2)
 
             logger.debug("InitiativeArbiter: weight overrides applied from identity values: %s", values)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('initiative_arbiter', exc)
             logger.debug("InitiativeArbiter: could not load identity weights: %s", exc)
 

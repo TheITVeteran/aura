@@ -125,7 +125,7 @@ class OutputGuardrails:
             if not assessment.ok:
                 issues.extend(f"ontological_overclaim:{issue}" for issue in assessment.issues)
                 sanitized = assessment.sanitized
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('output_guardrails', exc)
             logger.debug("Ontological boundary guard skipped: %s", exc)
 

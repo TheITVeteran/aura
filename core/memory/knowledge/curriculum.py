@@ -28,7 +28,7 @@ class CurriculumManager:
         try:
             with open(self.data_path, 'r') as f:
                 return json.load(f)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curriculum', e)
             logger.error("Failed to load curriculum: %s", e)
             return {"categories": []}
@@ -37,7 +37,7 @@ class CurriculumManager:
         try:
             with open(self.data_path, 'w') as f:
                 json.dump(self.data, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curriculum', e)
             logger.error("Failed to save curriculum: %s", e)
 

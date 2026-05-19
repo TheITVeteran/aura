@@ -90,7 +90,7 @@ class InterAgentCommSkill(BaseSkill):
                 }
             }
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('inter_agent_comm', e)
             logger.error("Inter-agent comm failed: %s", e)
             return {
@@ -103,6 +103,6 @@ class InterAgentCommSkill(BaseSkill):
         try:
             with open(self.comm_log_path, 'a') as f:
                 f.write(json.dumps(data) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('inter_agent_comm', e)
             logger.error("Failed to write comm log: %s", e)

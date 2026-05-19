@@ -36,7 +36,7 @@ class SleepSkill(BaseSkill):
                 if recent:
                     mem_text = "\n".join(str(m) for m in recent)
                     steps_completed.append("memory_recall")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep', e)
             logger.debug("Sleep: memory recall failed: %s", e)
 
@@ -50,7 +50,7 @@ class SleepSkill(BaseSkill):
                         for m in recent_turns if isinstance(m, dict)
                     )
                     steps_completed.append("conversation_fallback")
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
 
         if not mem_text:
@@ -76,7 +76,7 @@ class SleepSkill(BaseSkill):
                 derived_knowledge = getattr(result, "content", str(result))
                 steps_completed.append("dream_synthesis")
                 logger.info("Dream synthesis complete: knowledge extracted.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep', e)
             logger.debug("Sleep: dream synthesis failed: %s", e)
 
@@ -89,7 +89,7 @@ class SleepSkill(BaseSkill):
                     dream_type="consolidation",
                 )
                 steps_completed.append("dream_journal")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep', e)
             logger.debug("Sleep: dream journal failed: %s", e)
 
@@ -102,7 +102,7 @@ class SleepSkill(BaseSkill):
                     identity_evolved = await canonical_engine.evolve_from_dream(derived_knowledge)
                     if identity_evolved:
                         steps_completed.append("identity_evolution")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sleep', e)
                 logger.debug("Sleep: identity evolution failed: %s", e)
 
@@ -112,7 +112,7 @@ class SleepSkill(BaseSkill):
             if compressor and hasattr(compressor, "compact"):
                 await compressor.compact()
                 steps_completed.append("memory_compaction")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep', e)
             logger.debug("Sleep: memory compaction failed: %s", e)
 
@@ -123,7 +123,7 @@ class SleepSkill(BaseSkill):
                 await drive.satisfy("energy", 30.0)
                 await drive.satisfy("competence", 5.0)
                 steps_completed.append("drive_restoration")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep', e)
             logger.debug("Sleep: drive restoration failed: %s", e)
 
@@ -137,7 +137,7 @@ class SleepSkill(BaseSkill):
                 salience=0.3,
                 ttl=28800,  # 8 hours
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         summary_parts = [f"Dream cycle completed ({len(steps_completed)} steps)."]

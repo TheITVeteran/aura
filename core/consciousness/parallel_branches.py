@@ -375,7 +375,7 @@ class BranchManager:
                     "Branch '%s' results merged into Global Workspace (priority=%.2f)",
                     branch.name, candidate.priority,
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('parallel_branches', e)
             logger.warning("Failed to merge branch '%s' into workspace: %s", branch.name, e)
 
@@ -467,7 +467,7 @@ class BranchManager:
             self._total_failed += 1
             logger.debug("Branch cancelled: '%s'", branch.name)
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('parallel_branches', e)
             branch.state = BranchState.FAILED
             self._total_failed += 1
@@ -561,7 +561,7 @@ class BranchManager:
             if decision.is_approved():
                 return decision.receipt_id
             return ""
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('parallel_branches', e)
             logger.debug("BranchManager: Will consultation failed (degraded): %s", e)
             # Degrade gracefully -- allow spawn without Will if Will is unavailable
@@ -581,7 +581,7 @@ class BranchManager:
         try:
             from core.event_bus import get_event_bus
             get_event_bus().publish_threadsafe(topic, data)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("parallel_branches", exc)
             logger.debug("BranchManager: lifecycle event publish failed: %s", exc)
 

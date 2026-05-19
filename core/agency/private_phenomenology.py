@@ -42,7 +42,7 @@ class PrivatePhenomenology:
             if reason:
                 logger.debug("Phenomenology reflection deferred: %s", reason)
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('private_phenomenology', exc)
             logger.debug("Phenomenology background policy check failed: %s", exc)
 
@@ -96,7 +96,7 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
             if reflection:
                 await self._record_reflection(reflection, current_pad)
                 return reflection
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('private_phenomenology', e)
             logger.debug("LLM reflection failed; falling back to local phenomenology: %s", e)
             reflection = self._synthesize_local_reflection(current_pad, recent_events)
@@ -110,7 +110,7 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
             p = float(current_pad.get("P", 0.0) or 0.0)
             a = float(current_pad.get("A", 0.0) or 0.0)
             d = float(current_pad.get("D", 0.0) or 0.0)
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             p, a, d = 0.0, 0.0, 0.0
 
         if p < -0.35:
@@ -185,7 +185,7 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
                 await asyncio.to_thread(self.storage_path.write_text, 
                                         "\n".join(json.dumps(l) for l in sorted_kept) + "\n",
                                         encoding="utf-8")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('private_phenomenology', e)
             logger.debug("Pruning failed: %s", e)
 
@@ -217,7 +217,7 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
             for r in recent:
                 bias_context += f"• {r['reflection']}\n"
             return bias_context
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('private_phenomenology', e)
             logger.error("Error reading reflections: %s", e)
             return ""

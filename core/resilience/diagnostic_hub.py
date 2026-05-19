@@ -70,7 +70,7 @@ class DiagnosticHub:
             if result.stdout:
                 return {"ok": False, "issues": json.loads(result.stdout)}
             return {"ok": True, "issues": []}
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('diagnostic_hub', e)
             return {"ok": False, "error": str(e)}
 
@@ -83,7 +83,7 @@ class DiagnosticHub:
                 data = json.loads(result.stdout)
                 return {"ok": False, "issues": data.get("generalDiagnostics", [])}
             return {"ok": True, "issues": []}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('diagnostic_hub', e)
             return {"ok": False, "error": str(e)}
 

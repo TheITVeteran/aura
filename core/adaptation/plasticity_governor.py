@@ -351,7 +351,7 @@ class PlasticityGovernor:
                 save_dict[f"{name}__count"] = np.array([snap._consolidation_count])
             np.savez_compressed(str(_FISHER_PATH), **save_dict)
             logger.debug("Plasticity state saved")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Plasticity save failed: %s", exc)
 
     def _load(self) -> None:
@@ -370,7 +370,7 @@ class PlasticityGovernor:
                     snap.fisher_diag = data[f_key]
                     snap._consolidation_count = int(data[c_key][0])
             logger.info("Plasticity state restored (step %d)", self._step_count)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.debug("Plasticity load failed: %s", exc)
 
     # ── Public API ──────────────────────────────────────────────────────

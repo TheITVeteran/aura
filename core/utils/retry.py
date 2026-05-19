@@ -102,7 +102,7 @@ async def retry_with_backoff(
     for attempt in range(max_retries + 1):
         try:
             return await fn(*args, **kwargs)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('retry', e)
             last_error = e
 
@@ -121,7 +121,7 @@ async def retry_with_backoff(
             if on_retry:
                 try:
                     on_retry(attempt + 1, e, delay)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
 
             logger.info(
@@ -147,7 +147,7 @@ def retry_with_backoff_sync(
     for attempt in range(max_retries + 1):
         try:
             return fn(*args, **kwargs)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('retry', e)
             last_error = e
             if attempt >= max_retries or not is_retryable(e):

@@ -158,7 +158,7 @@ class BeliefSync:
                         content = abs_engine.storage_path.read_text()
                         parsed = extract_json(content)
                         principles = parsed.get("payload", parsed) if isinstance(parsed, dict) else parsed
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('belief_sync', e)
                         from core.utils.exceptions import capture_and_log
                         capture_and_log(e, {"module": "BeliefSync", "method": "_sync_loop"})
@@ -188,7 +188,7 @@ class BeliefSync:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('belief_sync', e)
                 logger.error("BeliefSync cycle error: %s", e)
                 backoff = min(backoff + 30, 600)
@@ -217,7 +217,7 @@ class BeliefSync:
             async with session.post(url, json=payload, timeout=5.0) as resp:
                 if resp.status == 200:
                     return True
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('belief_sync', e)
             logger.debug("Silent push failure to %s: %s", url, e)
         return False
@@ -250,7 +250,7 @@ class BeliefSync:
                 if resp.status == 200:
                     data = await resp.json()
                     return data.get("beliefs", [])
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('belief_sync', e)
             logger.debug("BeliefSync: Failed to query peer %s: %s", url, e)
         return []
@@ -278,7 +278,7 @@ class BeliefSync:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('belief_sync', e)
                 logger.error("Resonance loop error: %s", e)
                 await asyncio.sleep(5)
@@ -529,7 +529,7 @@ class BeliefSync:
                 await asyncio.sleep(self.discovery_interval)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('belief_sync', e)
                 logger.error("BeliefSync Discovery error: %s", e)
                 await asyncio.sleep(60)

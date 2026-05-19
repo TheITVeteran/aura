@@ -109,7 +109,7 @@ class ConversationPersistence:
         try:
             from core.event_bus import get_event_bus
             get_event_bus().publish("turn_recorded", {"role": role, "content": content})
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             logger.debug("Turn recorded but event bus failed to publish.")
         return turn_id
 
@@ -181,7 +181,7 @@ class ConversationPersistence:
                 metadata={"keep_days": self._retention_keep_days},
             ))
             self._maintenance_registered = True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('persistence', exc)
             logger.warning("ConversationPersistence maintenance registration failed: %s", exc)
 

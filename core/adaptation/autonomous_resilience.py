@@ -131,7 +131,7 @@ class StaticFaultAuditor:
                 continue
             try:
                 findings.extend(self.audit_file(path))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autonomous_resilience', exc)
                 logger.debug("Static fault audit skipped for %s: %s", path, exc)
             if len(findings) >= limit:
@@ -143,7 +143,7 @@ class StaticFaultAuditor:
         resolved = self._resolve_path(path)
         try:
             source = resolved.read_text(encoding="utf-8")
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             source = resolved.read_text(errors="ignore")
         tree = ast.parse(source, filename=str(resolved))
         parents = self._parent_map(tree)
@@ -297,7 +297,7 @@ class StaticFaultAuditor:
     def _relative_path(self, path: Path) -> str:
         try:
             return str(path.resolve().relative_to(self.base_dir))
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return str(path)
 
 
@@ -366,7 +366,7 @@ class IntegrationAuditor:
 
         try:
             from core.cognitive.autopoiesis import RepairStrategy
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_resilience', exc)
             return {
                 "health_probes_added": [],
@@ -381,7 +381,7 @@ class IntegrationAuditor:
                 continue
             try:
                 instance = self._service_resolver(name)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
             if instance is None:
                 continue
@@ -392,7 +392,7 @@ class IntegrationAuditor:
                     try:
                         autopoiesis.register_component(name, probe)
                         health_added.append(name)
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('autonomous_resilience', exc)
                         logger.debug("Auto-wire health probe skipped for %s: %s", name, exc)
 
@@ -407,7 +407,7 @@ class IntegrationAuditor:
                     autopoiesis.register_repair_handler(strategy, name, handler)
                     self._auto_wired_repairs.add(key)
                     repair_added.append(f"{name}:{strategy.value}")
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('autonomous_resilience', exc)
                     logger.debug("Auto-wire repair handler skipped for %s/%s: %s", name, strategy_name, exc)
 
@@ -566,7 +566,7 @@ class RuntimeWatchdogAuditor:
 
                 lock_watchdog = get_lock_watchdog()
             return dict(lock_watchdog.get_snapshot())
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_resilience', exc)
             return {
                 "active_count": 0,
@@ -581,7 +581,7 @@ class RuntimeWatchdogAuditor:
 
             tracker = get_task_tracker()
             stats = dict(tracker.get_stats())
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_resilience', exc)
             return {
                 "active": 0,
@@ -602,7 +602,7 @@ class RuntimeWatchdogAuditor:
                     unsupervised += 1
         except RuntimeError:
             unsupervised = 0
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             pass  # no-op: intentional
 
         stats["unsupervised_active"] = unsupervised
@@ -642,7 +642,7 @@ class SecurityImmuneAuditor:
 
             self._barrier = get_blood_brain_barrier()
             self._injection_patterns = tuple(getattr(self._barrier, "malicious_patterns", ()))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._barrier = None
             self._injection_patterns = ()
 
@@ -750,7 +750,7 @@ class VerifierGuidedRepairPipeline:
                 line_number,
                 diagnosis,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('autonomous_resilience', exc)
             logger.debug("Repair pipeline generation failed for %s:%s: %s", file_path, line_number, exc)
             return {
@@ -791,7 +791,7 @@ class VerifierGuidedRepairPipeline:
         if hasattr(modifier, "apply_fix"):
             try:
                 applied = bool(await modifier.apply_fix(proposal, force=True, test_results=test_results))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autonomous_resilience', exc)
                 apply_error = str(exc)
 
@@ -820,12 +820,12 @@ class VerifierGuidedRepairPipeline:
             if raw_path.is_absolute():
                 try:
                     raw_path = raw_path.resolve()
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
                 try:
                     rel = raw_path.relative_to(self.base_dir)
                     candidates.append((str(rel), line_number))
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     continue
             else:
                 candidate = (self.base_dir / raw_path).resolve()
@@ -839,7 +839,7 @@ class VerifierGuidedRepairPipeline:
                 if candidate.is_absolute():
                     candidate = candidate.resolve().relative_to(self.base_dir)
                 candidates.insert(0, (str(candidate), int(context["line_number"])))
-            except Exception:
+            except (OSError, IOError):
                 pass  # no-op: intentional
 
         if not candidates:
@@ -1071,7 +1071,7 @@ def get_autonomous_resilience_mesh() -> AutonomousResilienceMesh:
             from core.config import config
 
             base_dir = config.paths.base_dir
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             base_dir = os.getcwd()
         _autonomous_resilience_singleton = AutonomousResilienceMesh(base_dir=base_dir)
     return _autonomous_resilience_singleton

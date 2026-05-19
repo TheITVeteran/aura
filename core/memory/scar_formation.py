@@ -442,10 +442,10 @@ class ScarFormationSystem:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except Exception as exc:
+                except (OSError, IOError) as exc:
                     record_degradation("scar_formation", exc)
                     logger.debug("Temporary scar persistence cleanup failed: %s", exc)
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('scar_formation', exc)
             logger.debug("Scar persistence failed: %s", exc)
 
@@ -462,7 +462,7 @@ class ScarFormationSystem:
             logger.info(
                 "Loaded %d scar(s) from disk", len(self._scars),
             )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('scar_formation', exc)
             logger.debug("Scar load failed (starting fresh): %s", exc)
 
@@ -480,7 +480,7 @@ class ScarFormationSystem:
                 "trigger_count": scar.trigger_count,
                 "description": scar.description[:200],
             })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("scar_formation", exc)
             logger.debug("Scar event publish failed for %s: %s", topic, exc)
 

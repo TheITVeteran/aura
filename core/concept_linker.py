@@ -71,7 +71,7 @@ class ConceptLinker:
                 "component": "concept_linker",
                 "hooks_into": ["epistemic_tracker", "belief_challenger", "insight_journal"]
             })
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('concept_linker', _e)
             logger.debug('Ignored Exception in concept_linker.py: %s', _e)
 

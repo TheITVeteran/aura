@@ -46,7 +46,7 @@ class ContextAssembler:
                 # HomeostaticCoupling provides prompt injections and modifiers
                 context["cognitive_modifiers"] = coupling.get_metadata() if hasattr(coupling, 'get_metadata') else {}
                 context["prompt_injection"] = coupling.get_prompt_injection()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather internal state: %s", e)
 
@@ -59,7 +59,7 @@ class ContextAssembler:
             gw = ServiceContainer.get("global_workspace", default=None)
             if gw:
                 context["consciousness_snapshot"] = gw.get_snapshot()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather consciousness state: %s", e)
 
@@ -68,7 +68,7 @@ class ContextAssembler:
             bg = ServiceContainer.get("belief_graph", default=None)
             if bg:
                 context["world_model"]["beliefs"] = bg.get_beliefs() if hasattr(bg, 'get_beliefs') else {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather world model: %s", e)
 
@@ -83,7 +83,7 @@ class ContextAssembler:
                 
                 if hasattr(tom, 'known_selves') and user_id in tom.known_selves:
                     context["social_model"]["user"] = tom.known_selves[user_id].to_dict()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather ToM: %s", e)
 
@@ -92,7 +92,7 @@ class ContextAssembler:
             planner = ServiceContainer.get("strategic_planner", default=None)
             if planner:
                 context["strategic_state"] = planner.get_status() if hasattr(planner, 'get_status') else {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather strategic state: %s", e)
 
@@ -105,7 +105,7 @@ class ContextAssembler:
                     # Summary of relevant memories based on objective
                     # (This is usually done in the cognitive cycle, but we can provide a hook)
                     pass  # no-op: intentional
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('context_assembler', e)
                 logger.debug("Failed to gather memory: %s", e)
 

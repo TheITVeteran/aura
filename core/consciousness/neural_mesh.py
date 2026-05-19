@@ -394,7 +394,7 @@ class NeuralMesh:
                 t0 = time.time()
                 try:
                     await asyncio.to_thread(self._tick)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('neural_mesh', e)
                     logger.error("NeuralMesh tick error: %s", e, exc_info=True)
                 elapsed = time.time() - t0
@@ -418,7 +418,7 @@ class NeuralMesh:
         try:
             from core.consciousness.subcortical_core import get_subcortical_core
             gain *= get_subcortical_core().get_mesh_gain_multiplier()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("neural_mesh", exc)
             logger.debug("Subcortical mesh gain unavailable, using base gain: %s", exc)
         noise_sigma = cfg.noise_sigma * self._modulatory_noise
@@ -553,7 +553,7 @@ class NeuralMesh:
             started_at = float(lane.get("current_request_started_at", 0.0) or 0.0)
             completed_at = float(lane.get("last_generation_completed_at", 0.0) or 0.0)
             return started_at > 0.0 and started_at > completed_at
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("neural_mesh", exc)
             logger.debug("Foreground lane status unavailable, allowing plasticity: %s", exc)
             return False

@@ -97,7 +97,7 @@ class GitIntegration:
                 timeout=5
             )
             return result.returncode == 0
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             return False
 
     @staticmethod
@@ -122,7 +122,7 @@ class GitIntegration:
             cwd_path = os.path.realpath(os.getcwd())
             if not full_path.startswith(cwd_path):
                 raise ValueError(f"Path escaped project root via symlink: {file_path!r}")
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('safe_modification', e)
             if isinstance(e, ValueError):
                 raise
@@ -166,7 +166,7 @@ class GitIntegration:
                 timeout=5,
             )
             return bool(result.stdout.strip())
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('safe_modification', e)
             logger.debug("Dirty worktree check failed: %s", e)
             return True
@@ -199,7 +199,7 @@ class GitIntegration:
                 logger.error("Branch creation failed: %s", result.stderr)
                 return False
                 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('safe_modification', e)
             logger.error("Branch creation exception: %s", e)
             return False
@@ -248,7 +248,7 @@ class GitIntegration:
             logger.info("Committed changes: %s", commit_hash[:8])
             return commit_hash
             
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('safe_modification', e)
             logger.error("Commit exception: %s", e)
             return None
@@ -286,7 +286,7 @@ class GitIntegration:
                 logger.error("Merge failed: %s", result.stderr)
                 return False
                 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('safe_modification', e)
             logger.error("Merge exception: %s", e)
             return False
@@ -307,7 +307,7 @@ class GitIntegration:
             )
             logger.info("Deleted branch: %s", branch_name)
             return True
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('safe_modification', e)
             logger.error("Branch deletion failed: %s", e)
             return False
@@ -326,7 +326,7 @@ class GitIntegration:
                 timeout=5
             )
             return True
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             return False
     
     async def get_current_branch(self) -> str | None:
@@ -344,7 +344,7 @@ class GitIntegration:
                 timeout=5
             )
             return result.stdout.strip()
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             return None
 
 
@@ -397,7 +397,7 @@ class BackupSystem:
             
             return backup_id
             
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('safe_modification', e)
             logger.error("Backup creation failed: %s", e)
             return None
@@ -431,7 +431,7 @@ class BackupSystem:
             logger.info("Restored backup %s to %s", backup_id, original_path)
             return True
             
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('safe_modification', e)
             logger.error("Restore failed: %s", e)
             return False
@@ -451,7 +451,7 @@ class BackupSystem:
                         if meta_file.exists():
                             meta_file.unlink()
                         logger.debug("Cleaned up old backup: %s", backup_file.name)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('safe_modification', e)
                     logger.error("Cleanup failed for %s: %s", backup_file, e)
 
@@ -553,7 +553,7 @@ class SafeSelfModification:
 
         try:
             normalized_target = self._relative_target_path(fix.target_file)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('safe_modification', exc)
             self.stats["blocked_by_policy"] += 1
             return False, f"Target path resolution failed: {exc}"
@@ -598,7 +598,7 @@ class SafeSelfModification:
                 sepsis_data = json.loads(sepsis_file.read_text())
                 if fix.target_file in sepsis_data.get("banned_files", []):
                     return False, f"File {fix.target_file} is barred due to previous sepsis"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('safe_modification', e)
             logger.error("Sepsis check failed: %s", e)
             raise  # Fail closed completely
@@ -624,7 +624,7 @@ class SafeSelfModification:
             except SyntaxError as e:
                 logger.error("Proposed fix contains syntax error: %s", e)
                 return False, f"Proposed fix contains syntax error: {e.msg} (Line {e.lineno})"
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('safe_modification', e)
                 logger.error("Failed to compile proposed fix: %s", e)
                 return False, f"Proposed fix failed compilation: {e}"
@@ -648,7 +648,7 @@ class SafeSelfModification:
                 source="SafeSelfModification",
             )
             self.event_bus.publish(event)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('safe_modification', e)
             logger.debug("Failed to emit proposal event: %s", e)
 
@@ -736,7 +736,7 @@ class SafeSelfModification:
             
             logger.info("✓ Stage 3: Staged modification applied to quarantine")
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('safe_modification', e)
             logger.error("Code modification exception: %s", e)
             await self._rollback(backup_id, branch_name if branch_created else None, expected_hash=pre_mod_hash)
@@ -862,7 +862,7 @@ class SafeSelfModification:
             
             return True
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('safe_modification', e)
             logger.error("Patching failed for %s: %s", fix.target_file, e)
             return False
@@ -897,7 +897,7 @@ class SafeSelfModification:
                 
             return True
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('safe_modification', e)
             logger.error("Logic transplant failed for %s: %s", transplant.target_file, e)
             return False
@@ -925,7 +925,7 @@ class SafeSelfModification:
                         logger.info("✓ Backup integrity verified (SHA-256 match)")
                     else:
                         logger.error("✗ Backup integrity MISMATCH — file may be corrupt")
-                except Exception as e:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
                     record_degradation('safe_modification', e)
                     logger.warning("Could not verify backup integrity: %s", e)
         else:
@@ -953,7 +953,7 @@ class SafeSelfModification:
             
             atomic_write_text(sepsis_file, json.dumps(sepsis_data, indent=2))
             logger.error("💀 FILE %s MARKED AS SEPSIS (Cause: Boot Failure)", file_path)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('safe_modification', e)
             logger.error("Failed to mark sepsis: %s", e)
     
@@ -962,7 +962,7 @@ class SafeSelfModification:
         try:
             with open(self.modification_log, 'a') as f:
                 f.write(json.dumps(record.to_dict()) + '\n')
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('safe_modification', e)
             logger.error("Failed to log modification: %s", e)
     
@@ -981,10 +981,10 @@ class SafeSelfModification:
             for line in lines[-limit:]:
                 try:
                     history.append(json.loads(line))
-                except Exception as e:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
                     record_degradation('safe_modification', e)
                     logger.debug("Skipped malformed line in history log: %s", e)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('safe_modification', e)
             logger.error("Failed to read history: %s", e)
         
@@ -1016,14 +1016,14 @@ class SafeSelfModification:
                 except SyntaxError as e:
                     logger.error("Syntax error in %s: %s", py_file, e)
                     return False
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('safe_modification', e)
                     logger.warning("Could not validate %s: %s", py_file, e)
 
             logger.info("\u2713 Static validation PASSED")
             return True
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('safe_modification', e)
             logger.error("Static validation failed: %s", e)
             return False

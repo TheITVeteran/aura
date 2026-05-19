@@ -173,7 +173,7 @@ class BodySchema(AuraBaseModule):
                         description = getattr(obj, "description", "")
                         metabolic_cost = getattr(obj, "metabolic_cost", 1)
                         break
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('body_schema', exc)
                 logger.debug(
                     "Lightweight introspection failed for %s: %s", skill_name, exc
@@ -302,7 +302,7 @@ class BodySchema(AuraBaseModule):
         try:
             interfaces = psutil.net_if_addrs()
             net_available = len(interfaces) > 0
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             pass  # no-op: intentional
         self._register_limb(Limb(
             name="network",

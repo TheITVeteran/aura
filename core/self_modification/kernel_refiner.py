@@ -67,7 +67,7 @@ class KernelRefiner:
             self._content_cache = content
             self._last_audit_time = mtime
             return content
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('kernel_refiner', e)
             logger.error("Failed to read kernel: %s", e)
             return None
@@ -178,7 +178,7 @@ If no refinement is needed, return {{"found": false}}.
                     "plan": data["plan"],
                     "priority": "high"
                 }]
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('kernel_refiner', e)
             logger.error("Deep audit failed: %s", e)
             
@@ -207,12 +207,12 @@ If no refinement is needed, return {{"found": false}}.
                 try:
                     from core.thought_stream import get_emitter
                     get_emitter().emit("Kernel Evolved 💎", f"Logic optimized in {proposal['file']}", level="success")
-                except Exception: pass
+                except (ImportError, AttributeError, RuntimeError): pass
             else:
                 logger.warning("❌ Refinement rejected or failed during SME application loop.")
                 
             return success
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('kernel_refiner', e)
             logger.error("Critical error during kernel refinement: %s", e)
             return False

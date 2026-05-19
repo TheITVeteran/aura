@@ -12,7 +12,7 @@ def _json_safe(value: Any) -> Any:
     try:
         json.dumps(value)
         return value
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         if isinstance(value, dict):
             return {str(k): _json_safe(v) for k, v in value.items()}
         if isinstance(value, (list, tuple, set)):

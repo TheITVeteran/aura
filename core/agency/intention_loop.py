@@ -170,7 +170,7 @@ class IntentionLoop:
                 len(self._completed_intentions),
                 self._db_path,
             )
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('intention_loop', e)
             logger.error("IntentionLoop initialization failed: %s", e)
             self._conn = None
@@ -201,7 +201,7 @@ class IntentionLoop:
                 raw = dict(zip(cols, row))
                 rec = self._row_to_record(raw)
                 self._completed_intentions.appendleft(rec)
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('intention_loop', e)
             logger.error("IntentionLoop hydration failed: %s", e)
 
@@ -212,7 +212,7 @@ class IntentionLoop:
             try:
                 from core.container import ServiceContainer
                 self._ledger = ServiceContainer.get("cognitive_ledger", default=None)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('intention_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         return self._ledger
@@ -222,7 +222,7 @@ class IntentionLoop:
             try:
                 from core.container import ServiceContainer
                 self._belief_engine = ServiceContainer.get("belief_revision_engine", default=None)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('intention_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         return self._belief_engine
@@ -474,7 +474,7 @@ class IntentionLoop:
                             ),
                             loop,
                         )
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('intention_loop', e)
                     logger.debug("Belief push deferred: %s", e)
 
@@ -587,7 +587,7 @@ class IntentionLoop:
             try:
                 cur = self._conn.execute("SELECT COUNT(*) FROM intentions")
                 total_from_db = cur.fetchone()[0]
-            except Exception as _exc:
+            except (sqlite3.Error, OSError) as _exc:
                 record_degradation('intention_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -623,7 +623,7 @@ class IntentionLoop:
             if embedder and hasattr(embedder, "similarity"):
                 sim = embedder.similarity(expected, actual)
                 return round(max(0.0, min(1.0, 1.0 - sim)), 3)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('intention_loop', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -679,7 +679,7 @@ class IntentionLoop:
                 )
                 self._conn.commit()
                 return True
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('intention_loop', e)
                 logger.error("IntentionLoop persist failed: %s", e)
                 return False
@@ -752,7 +752,7 @@ class IntentionLoop:
                         deleted, max_age_days,
                     )
                 return deleted
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('intention_loop', e)
                 logger.error("IntentionLoop prune failed: %s", e)
                 return 0
@@ -797,7 +797,7 @@ def get_intention_loop() -> IntentionLoop:
         try:
             from core.container import ServiceContainer
             ServiceContainer.register_instance("intention_loop", _instance)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('intention_loop', e)
             logger.debug("IntentionLoop: ServiceContainer registration deferred: %s", e)
     return _instance

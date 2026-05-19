@@ -290,7 +290,7 @@ class CodeGraph:
 
             except SyntaxError:
                 self._stats["errors"] += 1
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('code_graph', e)
                 self._stats["errors"] += 1
                 logger.debug("CodeGraph parse error in %s: %s", rel_path, e)
@@ -439,14 +439,14 @@ class CodeGraph:
             if arg.annotation:
                 try:
                     ann = f": {ast.unparse(arg.annotation)}"
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
             args.append(f"{arg.arg}{ann}")
         ret = ""
         if node.returns:
             try:
                 ret = f" -> {ast.unparse(node.returns)}"
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         return f"({', '.join(args)}){ret}"
 

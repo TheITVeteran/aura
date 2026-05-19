@@ -59,7 +59,7 @@ class ValueSystem:
                     mood = affect.get_dominant_emotion_sync()
                     if mood:
                         self.apply_emotional_context(mood)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('values_engine', e)
             capture_and_log(e, {'module': __name__})
 
@@ -134,7 +134,7 @@ class IdentityModel:
             try:
                 with open(self.storage_path, "r") as f:
                     self.identity.update(json.load(f))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('values_engine', e)
                 logger.error("Failed to load identity: %s", e)
         else:
@@ -145,7 +145,7 @@ class IdentityModel:
         try:
             with open(self.storage_path, "w") as f:
                 json.dump(self.identity, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('values_engine', e)
             logger.error("Failed to save identity: %s", e)
 

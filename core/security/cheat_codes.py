@@ -197,7 +197,7 @@ def activate_cheat_code(code: str, *, silent: bool = False, source: str = "setti
                     },
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cheat_codes', exc)
             logger.debug("Cheat code telemetry emit skipped: %s", exc)
 

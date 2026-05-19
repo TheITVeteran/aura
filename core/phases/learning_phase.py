@@ -36,7 +36,7 @@ class LearningPhase(Phase):
             try:
                 from core.learning.live_learner import get_live_learner
                 self._learner = get_live_learner()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('learning_phase', e)
                 logger.debug("LearningPhase: could not load learner: %s", e)
         return self._learner
@@ -73,26 +73,26 @@ class LearningPhase(Phase):
                     calibrator.record_prediction(
                         confidence=prev_confidence, actual_correctness=1.0
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('learning_phase', e)
             logger.debug("LearningPhase: metacognitive feedback failed: %s", e)
 
         # Run standard learning + cross-domain synthesis
         try:
             state = await self._perform_standard_learning(state, objective or "")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('learning_phase', e)
             logger.debug("LearningPhase: standard learning failed: %s", e)
 
         try:
             state = await self._map_cross_domain(state, objective or "")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('learning_phase', e)
             logger.debug("LearningPhase: cross-domain mapping failed: %s", e)
 
         try:
             await self._wire_conversation_learning(state, objective or "")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('learning_phase', e)
             logger.debug("LearningPhase: follow-up wiring failed: %s", e)
 
@@ -127,7 +127,7 @@ class LearningPhase(Phase):
                     state.response_modifiers = {}
                 state.response_modifiers["learning_score"] = round(score.raw_score, 3)
                 state.response_modifiers["affective_sync"] = True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('learning_phase', e)
             logger.debug("LearningPhase: record failed: %s", e)
         return state
@@ -139,7 +139,7 @@ class LearningPhase(Phase):
             try:
                 from core.container import ServiceContainer
                 orch = ServiceContainer.get("orchestrator", default=None)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 orch = None
             if not background_activity_allowed(
                 orch,
@@ -234,7 +234,7 @@ class LearningPhase(Phase):
                     name="learning_phase.knowledge_enrichment",
                 )
                 get_task_tracker().track_task(task)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('learning_phase', e)
                 logger.debug("LearningPhase: knowledge enrichment scheduling failed: %s", e)
 
@@ -248,7 +248,7 @@ class LearningPhase(Phase):
             try:
                 dialogue_contract = ResponseContract(**contract)
                 should_distill = not validate_dialogue_response(response, dialogue_contract).ok
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('learning_phase', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         if should_distill:
@@ -269,7 +269,7 @@ class LearningPhase(Phase):
                         "affect_signature": affect_signature,
                     },
                 )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('learning_phase', e)
                 logger.debug("LearningPhase: distillation flagging failed: %s", e)
 

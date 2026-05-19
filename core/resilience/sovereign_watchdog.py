@@ -84,7 +84,7 @@ class SovereignWatchdog:
                             "lag_seconds": round(loop_elapsed, 2),
                             "metadata": {"system": True},
                         })
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('sovereign_watchdog', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -104,13 +104,13 @@ class SovereignWatchdog:
                                 "⏳ BACKPRESSURE: Suppressing autonomous work for %.0fs (lag=%.1fs)",
                                 suppress_duration, loop_elapsed,
                             )
-                    except Exception as _bp_exc:
+                    except (ImportError, AttributeError, RuntimeError) as _bp_exc:
                         record_degradation('sovereign_watchdog', _bp_exc)
                         logger.debug("Backpressure application failed: %s", _bp_exc)
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sovereign_watchdog', e)
                 logger.error("Watchdog loop error: %s", e)
 
@@ -133,7 +133,7 @@ class SovereignWatchdog:
             else:
                 # If we acquired it, it wasn't deadlocked (at least not by this lock), so release it back.
                 sentinel._lock.release()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sovereign_watchdog', e)
             capture_and_log(e, {'module': __name__})
 
@@ -154,7 +154,7 @@ class SovereignWatchdog:
                     "recovery_count": self._recovery_count
                 }
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sovereign_watchdog', e)
             capture_and_log(e, {'module': __name__})
 
@@ -162,7 +162,7 @@ class SovereignWatchdog:
         if hasattr(self._orchestrator, "reset_internal_state"):
             try:
                 await self._orchestrator.reset_internal_state()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sovereign_watchdog', e)
                 logger.error("Failed to reset orchestrator state: %s", e)
 

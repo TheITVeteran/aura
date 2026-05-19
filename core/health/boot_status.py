@@ -97,7 +97,7 @@ def build_boot_health_snapshot(
     if orchestrator is not None and hasattr(orchestrator, "health_check"):
         try:
             healthy = bool(orchestrator.health_check())
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('boot_status', exc)
             healthy = False
             health_check_error = str(exc)

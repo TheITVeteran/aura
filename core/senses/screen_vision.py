@@ -25,7 +25,7 @@ def _screen_capture_preflight() -> bool:
         preflight = getattr(Quartz, "CGPreflightScreenCaptureAccess", None)
         if callable(preflight):
             return bool(preflight())
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('screen_vision', exc)
         logger.debug("Quartz screen preflight unavailable in LocalVision: %s", exc)
     return os.getenv("AURA_ASSUME_SCREEN_PERMISSION", "0") == "1"
@@ -67,7 +67,7 @@ class LocalVision:
                 if not check.get("granted", False):
                     logger.info("👁️ Screen capture skipped: screen permission not active for this app identity.")
                     return None
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('screen_vision', exc)
             logger.debug("Screen permission preflight failed before capture: %s", exc)
 
@@ -81,7 +81,7 @@ class LocalVision:
                 import pyautogui
 
                 return pyautogui.screenshot()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('screen_vision', e)
                 logger.error("Screenshot failed (check screen recording permissions): %s", e)
                 return None
@@ -133,7 +133,7 @@ class LocalVision:
 
         try:
             return await self._circuit_breaker.call(_vision_payload)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('screen_vision', e)
             logger.error("👁️ Vision Circuit Tripped: %s", e)
             return "Vision subsystem is offline due to repeated failures (check macOS Screen Recording permissions)."

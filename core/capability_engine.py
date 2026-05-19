@@ -238,7 +238,7 @@ class SkillMetadata(BaseModel):
                 return self.input_model.model_validate(params).model_dump()
             
             return params
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('capability_engine', e)
             # Fallback for complex extraction failures
             return {"raw_params": params_raw, "_error": str(e)}
@@ -398,7 +398,7 @@ class Sandbox2:
                 raise NameError(f"Function {func_name} not found in forged code.")
                 
             return locs[func_name](**params)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('capability_engine', e)
             self.logger.error(f"Sandbox Violation or Error: {e}")
             raise e
@@ -903,7 +903,7 @@ class CapabilityEngine(AuraBaseModule):
                     memory_mb_estimate=meta.get("memory_mb_estimate", 256)
                 )
             self.logger.info("⚡ Rust perfect hash index loaded (%d core skills)", len(index))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             self.logger.info("ℹ️ Optional Rust index unavailable, falling back to AST: %s", e)
 
         # 2. AST Discovery (Fallback/Project skills)
@@ -958,7 +958,7 @@ class CapabilityEngine(AuraBaseModule):
                                     module_path=f"{module_prefix}.{filename[:-3]}",
                                     class_name=node.name
                                 )
-                except Exception as e:
+                except (OSError, IOError) as e:
                     record_degradation('capability_engine', e)
                     self.logger.error("AST fail for %s: %s", filename, e)
 
@@ -968,7 +968,7 @@ class CapabilityEngine(AuraBaseModule):
         if self.orchestrator and hasattr(self.orchestrator, 'status') and self.orchestrator.status:
             try:
                 self.orchestrator.status.skills_loaded = len(self.skills)
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('capability_engine', _exc)
                 self.logger.debug("Suppressed Exception: %s", _exc)
         self._refresh_active_skills()
@@ -1061,7 +1061,7 @@ class CapabilityEngine(AuraBaseModule):
             for mod in critical_modules:
                 if mod in accessed_names and mod not in defined_names:
                     self.logger.warning(f"⚠️ Skill Safety Audit: '{skill_name}' uses '{mod}' but does not import it.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('capability_engine', e)
             self.logger.debug(f"AST validation skipped for {skill_name}: {e}")
 
@@ -1119,7 +1119,7 @@ class CapabilityEngine(AuraBaseModule):
                 continue
             try:
                 return "async" if inspect.iscoroutinefunction(fn) else "sync"
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("capability_engine", exc)
                 self.logger.debug("Unable to classify route for skill %s attr %s: %s", meta.name, attr, exc)
                 continue
@@ -1651,7 +1651,7 @@ class CapabilityEngine(AuraBaseModule):
                                 f"Background {skill_name} deferred while live conversation is protected ({reason})."
                             ),
                         }
-                except Exception as policy_exc:
+                except (ImportError, AttributeError, RuntimeError) as policy_exc:
                     record_degradation('capability_engine', policy_exc)
                     self.logger.debug("Foreground-exclusive skill preflight skipped: %s", policy_exc)
             
@@ -1688,7 +1688,7 @@ class CapabilityEngine(AuraBaseModule):
                     meta.input_model = getattr(skill_class, "input_model", None)
                     # Initialize instance
                     self.instances[skill_name] = skill_class()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError) as e:
                     record_degradation('capability_engine', e)
                     self.logger.error("Failed to lazy load %s: %s", skill_name, e)
                     return {"ok": False, "error": f"Failed to load implementation: {e}"}
@@ -1750,7 +1750,7 @@ class CapabilityEngine(AuraBaseModule):
                         }
                 if capability_token_id:
                     ctx["capability_token_id"] = capability_token_id
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('capability_engine', e)
                 if constitutional_runtime_live:
                     try:
@@ -1765,7 +1765,7 @@ class CapabilityEngine(AuraBaseModule):
                             context={"error": type(e).__name__},
                             exc=e,
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('capability_engine', _exc)
                         self.logger.debug("Suppressed Exception: %s", _exc)
                     self.logger.warning("🚫 CapabilityEngine: Executive check failed for '%s': %s", skill_name, e)
@@ -1821,7 +1821,7 @@ class CapabilityEngine(AuraBaseModule):
                                 "unbounded": unbounded,
                             },
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('capability_engine', _exc)
                         self.logger.debug("Suppressed Exception: %s", _exc)
                     return {
@@ -1829,7 +1829,7 @@ class CapabilityEngine(AuraBaseModule):
                         "error": f"Self-preservation block: {reason}",
                         "status": "blocked_by_self_preservation",
                     }
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('capability_engine', e)
                 self.logger.debug("CapabilityEngine: metabolic self-preservation check skipped: %s", e)
 
@@ -1860,7 +1860,7 @@ class CapabilityEngine(AuraBaseModule):
                         lambda: self.sandbox.execute(code, meta.class_name, exec_params)
                     )
                     return result if isinstance(result, dict) else {"ok": True, "result": result}
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
                     record_degradation('capability_engine', e)
                     self.logger.error("Sandbox execution failed for %s: %s", skill_name, e)
                     return {"ok": False, "error": f"Sandbox failed: {e}"}
@@ -1887,7 +1887,7 @@ class CapabilityEngine(AuraBaseModule):
                 if gov:
                     gov.check()
                 orm = rt.container.get("persistent_state")
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("capability_engine", exc)
                 self.logger.debug("Core runtime memory governance unavailable: %s", exc)
                 rt = None
@@ -1926,7 +1926,7 @@ class CapabilityEngine(AuraBaseModule):
                                     f"Network {mode} deferred while foreground conversation is protected ({reason})."
                                 ),
                             }
-                except Exception as policy_exc:
+                except (ImportError, AttributeError, RuntimeError) as policy_exc:
                     record_degradation('capability_engine', policy_exc)
                     self.logger.debug("Background network preflight skipped: %s", policy_exc)
             if (
@@ -1954,7 +1954,7 @@ class CapabilityEngine(AuraBaseModule):
                                 f"Background {skill_name} deferred while live conversation resources are protected ({reason})."
                             ),
                         }
-                except Exception as policy_exc:
+                except (ImportError, AttributeError, RuntimeError) as policy_exc:
                     record_degradation('capability_engine', policy_exc)
                     self.logger.debug("Heavy background preflight skipped: %s", policy_exc)
             constrained_timeout = ctx.get("timeout_s")
@@ -1988,7 +1988,7 @@ class CapabilityEngine(AuraBaseModule):
                         timeout_seconds=timeout_budget,
                     )
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('capability_engine', e)
                 self.logger.error("❌ Skill '%s' unwrapped failure: %s", skill_name, e)
                 result = {"ok": False, "error": str(e), "_exception": True}
@@ -2033,7 +2033,7 @@ class CapabilityEngine(AuraBaseModule):
                         result=result if result.get("ok") else None,
                         error=result.get("error") if not result.get("ok") else None
                     )
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('capability_engine', e)
                     self.logger.warning("ORM logging failed: %s", e)
             
@@ -2047,7 +2047,7 @@ class CapabilityEngine(AuraBaseModule):
                     )
             except AttributeError as e:
                 self.logger.debug("Reinforcement attribute missing: %s", e)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('capability_engine', e)
                 self.logger.warning("Reinforcement failed: %s", e)
             
@@ -2069,7 +2069,7 @@ class CapabilityEngine(AuraBaseModule):
                         duration_ms=0.0,
                         error="" if bool(isinstance(result, dict) and result.get("ok", False)) else str((result or {}).get("error", "")),
                     )
-            except Exception as _exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
                 record_degradation('capability_engine', _exc)
                 self.logger.debug("Suppressed Exception: %s", _exc)
 
@@ -2154,7 +2154,7 @@ class CapabilityEngine(AuraBaseModule):
                 last_error = self._extract_error(output)
                 if not self._is_transient(last_error): 
                     break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('capability_engine', e)
                 last_error = str(e)
                 if not self._is_transient(last_error): 
@@ -2234,7 +2234,7 @@ class CapabilityEngine(AuraBaseModule):
                 actual_outcome=str(result)[:500],
                 success=result.get("ok", False)
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('capability_engine', e)
             self.logger.debug("Temporal record failed: %s", e)
 

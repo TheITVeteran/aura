@@ -243,7 +243,7 @@ class EntropyFluencyTracker:
             # tanh-squash; characteristic scale 1.0 → tanh(1)≈0.76
             squashed = np.tanh(np.asarray(relative_std, dtype=np.float64))
             return float(max(0.0, min(1.0, squashed.mean())))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('entropy_fluency', e)
             logger.debug("entropy compute fallback (zero): %s", e)
             return 0.0

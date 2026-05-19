@@ -94,7 +94,7 @@ class AgencyBus:
                     return False
                 receipt_id = _auto_decision.receipt_id
                 proposal["will_receipt"] = receipt_id
-            except Exception as _will_err:
+            except (ImportError, AttributeError, RuntimeError) as _will_err:
                 # Degraded mode — allow through without receipt if Will is unavailable
                 logger.debug("🚌 AgencyBus: Will unavailable for auto-receipt, allowing degraded pass: %s", _will_err)
                 receipt_id = "degraded_auto"

@@ -75,7 +75,7 @@ def run_migrations(*, target_version: Optional[int] = None, dry_run: bool = Fals
         for jf in d.rglob("*.json"):
             try:
                 env = read_json_envelope(jf)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('migrations', exc)
                 failed.append({"path": str(jf), "error": repr(exc)})
                 continue
@@ -85,7 +85,7 @@ def run_migrations(*, target_version: Optional[int] = None, dry_run: bool = Fals
                 continue
             try:
                 migrated_payload = migrate_payload(env.get("payload") or {}, current, target)
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('migrations', exc)
                 failed.append({"path": str(jf), "error": repr(exc)})
                 continue

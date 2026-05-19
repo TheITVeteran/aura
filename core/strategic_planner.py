@@ -71,7 +71,7 @@ Return the response as a valid JSON object with the following structure:
 
             return project
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('strategic_planner', e)
             logger.error("🚫 Strategic scaling failure: %s", e)
             return None
@@ -173,7 +173,7 @@ Return as JSON as before:
                 feed.push(f"REFLECTION_LOOP: Replanned project '{project.name}' after failure: {reason}", category="STRATEGY")
             
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('strategic_planner', e)
             logger.error("Failed to replan project: %s", e, exc_info=True)
             return False

@@ -47,7 +47,7 @@ class CognitiveTrainerSkill(BaseSkill):
                 return await self._ingest_agent_drive(params.limit, params.dry_run)
             else:
                 return {"ok": False, "error": f"Unsupported dataset: {params.dataset_name}"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('cognitive_trainer', e)
             logger.error("Training failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -86,7 +86,7 @@ class CognitiveTrainerSkill(BaseSkill):
                     logger.info("Processed %d samples...", count)
 
             return {"ok": True, "count": count, "message": f"Successfully ingested {count} samples from MemoryAgentBench."}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_trainer', e)
             logger.error("HuggingFace ingestion failed: %s", e)
             return {"ok": False, "error": f"HF Load Error: {e}"}
@@ -137,7 +137,7 @@ class CognitiveTrainerSkill(BaseSkill):
                     logger.info("Processed %d AgentDrive samples...", count)
 
             return {"ok": True, "count": count, "message": f"Successfully ingested {count} scenarios from AgentDrive."}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('cognitive_trainer', e)
             logger.error("AgentDrive ingestion failed: %s", e)
             return {"ok": False, "error": str(e)}

@@ -15,7 +15,7 @@ def _safe_get_service(name: str) -> Any:
     try:
         from core.container import ServiceContainer
         return ServiceContainer.get(name, default=None)
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return None
 
 
@@ -50,7 +50,7 @@ async def _service_health_handler(cell, signals, field_state):
                     value = await value
                 status = value
                 break
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('integration', exc)
                 actions.append({"kind": "health_probe_error", "service": service_name, "method": method, "error": f"{type(exc).__name__}: {exc}"})
                 out_signals.append(
@@ -153,7 +153,7 @@ def register_morphogenesis_services(runtime: Optional[MorphogeneticRuntime] = No
         except TypeError:
             ServiceContainer.register_instance("morphogenetic_runtime", rt)
         logger.info("MorphogeneticRuntime registered in ServiceContainer.")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('integration', exc)
         logger.debug("ServiceContainer registration skipped: %s", exc)
 
@@ -171,7 +171,7 @@ async def start_morphogenesis_runtime(runtime: Optional[MorphogeneticRuntime] = 
         from core.morphogenesis.hooks import wire_all_hooks
         hook_results = await wire_all_hooks()
         logger.info("Morphogenesis hooks: %s", hook_results)
-    except Exception as hook_exc:
+    except (ImportError, AttributeError, RuntimeError) as hook_exc:
         record_degradation('integration', hook_exc)
         logger.warning("Morphogenesis hook wiring degraded: %s", hook_exc)
 

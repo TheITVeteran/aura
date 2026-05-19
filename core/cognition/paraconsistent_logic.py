@@ -486,7 +486,7 @@ class ParaconsistentEngine:
                     # Contradictions are a form of prediction error
                     error_signal = min(1.0, len(high_tension) * 0.15)
                     ncs.on_prediction_error(error_signal)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('paraconsistent_logic', e)
                 logger.debug("Paraconsistent -> NCS signal failed: %s", e)
 
@@ -498,7 +498,7 @@ class ParaconsistentEngine:
                         curiosity.on_paradox_detected(p.tension)
                 elif curiosity and hasattr(curiosity, "boost"):
                     curiosity.boost(min(0.3, len(high_tension) * 0.1))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('paraconsistent_logic', e)
                 logger.debug("Paraconsistent -> Curiosity signal failed: %s", e)
 
@@ -775,7 +775,7 @@ class ParaconsistentEngine:
             atomic_write_text(self._graph_path, json.dumps(data, indent=2, default=str))
             logger.debug("Belief graph saved (%d beliefs, %d paradoxes)",
                          len(self._beliefs), len(self._paradoxes))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('paraconsistent_logic', e)
             logger.debug("Failed to save belief graph: %s", e)
 
@@ -793,20 +793,20 @@ class ParaconsistentEngine:
                         self._beliefs[bid] = belief
                         content_hash = self._hash_content(belief.content)
                         self._content_index[content_hash] = bid
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('paraconsistent_logic', e)
                         logger.debug("Skipped corrupt belief %s: %s", bid, e)
 
                 for pid, pd in paradoxes_raw.items():
                     try:
                         self._paradoxes[pid] = ParadoxState.from_dict(pd)
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('paraconsistent_logic', e)
                         logger.debug("Skipped corrupt paradox %s: %s", pid, e)
 
                 logger.debug("Loaded belief graph (%d beliefs, %d paradoxes)",
                              len(self._beliefs), len(self._paradoxes))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('paraconsistent_logic', e)
             logger.debug("Failed to load belief graph: %s", e)
             self._beliefs = {}

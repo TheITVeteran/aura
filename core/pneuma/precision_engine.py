@@ -167,7 +167,7 @@ class PrecisionEngine:
             vals = get_heartstone_values().values
             curiosity = vals.get("Curiosity", 0.5)
             drive += 0.3 * (curiosity - 0.5)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('precision_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         try:
@@ -175,7 +175,7 @@ class PrecisionEngine:
             params = get_circumplex().get_llm_params()
             arousal = params.get("arousal", 0.5)
             drive += 0.2 * (arousal - 0.5)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('precision_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return max(0.0, min(1.5, drive))
@@ -187,7 +187,7 @@ class PrecisionEngine:
             if soma:
                 snap = soma.get_body_snapshot()
                 return snap.get("affects", {}).get("stress", 0.0)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('precision_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return 0.0

@@ -84,7 +84,7 @@ class StructuralImprover:
             scanned += 1
             try:
                 issues.extend(self._scan_file(path))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("structural_improver", exc)
                 logger.debug("Structural scan skipped %s: %s", path, exc)
         return sorted(issues, key=lambda i: (-i.severity, i.file_path, i.line))
@@ -147,11 +147,11 @@ class StructuralImprover:
                 return StructuralRepairResult(issue, True, False, "validation failed; rolled back", validation)
 
             return StructuralRepairResult(issue, True, True, "repair applied", validation)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("structural_improver", exc)
             try:
                 atomic_write_text(path, original, encoding="utf-8")
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
             return StructuralRepairResult(issue, repaired != original, False, f"{type(exc).__name__}: {exc}")
 
@@ -342,7 +342,7 @@ class StructuralImprover:
                 "stderr": result.stderr[-2000:],
                 "files": [str(path.relative_to(self.root)) for path in files],
             }
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             record_degradation("structural_improver", exc)
             return {"ok": False, "stderr": str(exc)}
 
@@ -365,6 +365,6 @@ def get_structural_improver(root: Optional[Path | str] = None) -> StructuralImpr
             from core.config import config
 
             root = getattr(config.paths, "project_root", Path.cwd())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             root = Path.cwd()
     return StructuralImprover(root)

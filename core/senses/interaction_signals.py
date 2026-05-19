@@ -23,7 +23,7 @@ def _clamp01(value: float) -> float:
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return float(default)
 
 
@@ -209,7 +209,7 @@ class InteractionSignalsEngine:
             try:
                 self._typing = self._update_typing_state(payload)
                 self._fused = self._compute_fused_state()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('interaction_signals', exc)
                 logger.debug("Typing signal update failed: %s", exc)
             finally:
@@ -221,7 +221,7 @@ class InteractionSignalsEngine:
             try:
                 self._voice = self._update_voice_state(payload)
                 self._fused = self._compute_fused_state()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('interaction_signals', exc)
                 logger.debug("Voice signal update failed: %s", exc)
             finally:
@@ -236,7 +236,7 @@ class InteractionSignalsEngine:
                 analysis = await asyncio.to_thread(self._analyze_vision_frame_sync, jpeg_bytes, metadata)
                 self._vision = self._update_vision_state(analysis)
                 self._fused = self._compute_fused_state()
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('interaction_signals', exc)
                 logger.debug("Vision signal update failed: %s", exc)
             finally:
@@ -458,7 +458,7 @@ class InteractionSignalsEngine:
             self._vision_backend_ready = True
             self._vision_backend_reason = ""
             return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('interaction_signals', exc)
             self._vision_backend_ready = False
             self._vision_backend_reason = str(exc)
@@ -584,7 +584,7 @@ class InteractionSignalsEngine:
                 "method": "haar_cascade_pupil_threshold",
                 "reliability": "rough_attention_indicator",
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('interaction_signals', exc)
             logger.debug("Vision frame analysis failed: %s", exc)
             return {"updated_at": time.time()}

@@ -44,7 +44,7 @@ class CognitiveGovernor:
                 await self._record_failure()
                 return {"status": "timeout", "error": "Operation took too long"}
                 
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('cognitive_governor', e)
                 logger.error(f"Task {task_name} failed: {e}")
                 await self._record_failure()

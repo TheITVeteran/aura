@@ -186,7 +186,7 @@ class ShutdownCoordinator:
                 await asyncio.wait_for(result, timeout=record.timeout)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
             raise
 
 
@@ -206,7 +206,7 @@ def request_shutdown(reason: str = "") -> None:
             grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
             grace_file.parent.mkdir(parents=True, exist_ok=True)
             grace_file.touch(exist_ok=True)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
     _shutdown_requested.set()
 

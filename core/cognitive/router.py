@@ -91,7 +91,7 @@ class IntentRouter:
             cap = optional_service("capability_engine", default=None)
             if cap and hasattr(cap, "detect_intent"):
                 matched_skills = bool(cap.detect_intent(user_input))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('router', exc)
             logger.debug("IntentRouter: capability pre-check failed: %s", exc)
 

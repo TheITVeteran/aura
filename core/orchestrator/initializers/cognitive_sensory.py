@@ -37,7 +37,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any):
         ServiceContainer.register_instance("personality", orchestrator.personality_engine)
         
         logger.info("🆔 Identity, Soul, Personality, and Fictional Engines registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.error("🛑 Failed to load SelfModel: %s", e)
             
@@ -52,7 +52,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any):
             logger.info("🚗 Drive Engine registered via AffectCoordinator")
         else:
             logger.warning("🚗 Affect system missing; deferring DriveController")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.error("🚗 DriveController init failed: %s", e)
     
@@ -113,7 +113,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any):
         ServiceContainer.register_instance("metabolic_coordinator", orchestrator.will_engine)
         orchestrator.metabolic_coordinator = orchestrator.will_engine
         logger.info("☘️ WillEngine (Metabolic Evolution) registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.error("🛑 WillEngine init failed: %s", e)
 
@@ -148,7 +148,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any):
             instance = factory() if callable(factory) else factory
             ServiceContainer.register_instance(svc_name, instance)
             registered_count += 1
-        except Exception as cog_exc:
+        except (ImportError, AttributeError, RuntimeError) as cog_exc:
             record_degradation('cognitive_sensory', cog_exc)
             logger.debug("Cognitive/ALife service '%s' deferred: %s", svc_name, cog_exc)
     if registered_count:
@@ -164,7 +164,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any):
         await orchestrator.cellular_substrate.initialize()
         ServiceContainer.register_instance("cellular_substrate", orchestrator.cellular_substrate)
         logger.info("♾️ CellularSubstrate (Unified Mutation) registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.error("🛑 CellularSubstrate init failed: %s", e)
     

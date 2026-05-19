@@ -33,7 +33,7 @@ class UserModel:
             try:
                 with open(self.storage_path, 'r') as f:
                     self.data.update(json.load(f))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('user_model', e)
                 logger.error("Failed to load user model: %s", e)
 
@@ -43,7 +43,7 @@ class UserModel:
             with open(self.storage_path, 'w') as f:
                 json.dump(self.data, f, indent=2)
             logger.debug("User model saved")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('user_model', e)
             logger.error("Failed to save user model: %s", e)
 

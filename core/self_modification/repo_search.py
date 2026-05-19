@@ -72,7 +72,7 @@ class InternalRepositorySearch:
                                         "content": line.strip(),
                                         "snippet": self._get_sync_snippet(file_path, i)
                                     })
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('repo_search', e)
                         logger.debug("Grepping failed for %s: %s", file_path, e)
 
@@ -86,7 +86,7 @@ class InternalRepositorySearch:
             start = max(0, line_no - context - 1)
             end = min(len(lines), line_no + context)
             return "\n".join(lines[start:end])
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return ""
 
     def _get_snippet(self, file_path: Path, line_no: int, context: int = 2) -> str:
@@ -97,7 +97,7 @@ class InternalRepositorySearch:
             start = max(0, line_no - context - 1)
             end = min(len(lines), line_no + context)
             return "".join(lines[start:end])
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return ""
 
     async def map_dependencies(self, module_name: str) -> dict[str, Any]:

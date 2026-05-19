@@ -86,7 +86,7 @@ class BryanModelEngine:
                         conversation_count=data.get("conversation_count", 0),
                         total_messages=data.get("total_messages", 0),
                     )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('user_model', e)
                 logger.warning("User model load failed: %s", e)
         return UserModel()
@@ -135,11 +135,11 @@ class BryanModelEngine:
                         metadata={"path": str(_USER_MODEL_PATH)},
                     )
                 )
-            except Exception as _rcpt_exc:
+            except (ImportError, AttributeError, RuntimeError) as _rcpt_exc:
                 record_degradation('user_model', _rcpt_exc)
                 logger.debug("Receipt emit skipped: %s", _rcpt_exc)
             self._last_saved = time.time()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('user_model', e)
             logger.error("User model save failed: %s", e)
 

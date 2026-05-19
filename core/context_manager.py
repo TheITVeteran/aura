@@ -55,7 +55,7 @@ def estimate_tokens(text: str) -> int:
     if HAS_TIKTOKEN and _T_ENCODING:
         try:
             return len(_T_ENCODING.encode(text, disallowed_special=()))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("context_manager", exc)
             logger.debug("tiktoken estimate failed; falling back to char estimate: %s", exc)
     return max(1, len(text) // 4)
@@ -209,7 +209,7 @@ class ContextWindowManager:
             if recent:
                 # Insert after system prompt (index 1)
                 messages.insert(1, {"role": "system", "content": f"[RECENT CONVERSATION]\n{recent}"})
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_manager', e)
             logger.debug("Failed to inject UnifiedTranscript: %s", e)
 

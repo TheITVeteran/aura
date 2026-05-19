@@ -46,7 +46,7 @@ class HiveNode:
             self._gossip_task = get_task_tracker().create_task(self._gossip_loop())
             async with self.server:
                 await self.server.serve_forever()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('hive_node', e)
             logger.error("Hive Node failure: %s", e)
 
@@ -62,7 +62,7 @@ class HiveNode:
             self.peers[m_node_id] = NodeInfo(node_id=m_node_id, ip=addr[0], port=message.get("port", self.port))
             if m_type == "gossip_work_item":
                 await self._process_gossip_item(message.get("payload"))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('hive_node', e)
             logger.debug("Failed to handle peer message: %s", e)
         finally:
@@ -100,7 +100,7 @@ class HiveNode:
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 logger.debug("Failed to gossip to peer %s", peer.node_id)
 
     async def _gossip_loop(self):

@@ -77,7 +77,7 @@ class SensoryIngestionPhase(BasePhase):
         except (asyncio.QueueEmpty, AttributeError):
             # No message in queue, return state unchanged
             return state
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_ingestion', e)
             logger.error("❌ SensoryIngestion: Error pulling from queue: %s", e)
             return state

@@ -157,7 +157,7 @@ class PastReflectionEngine:
                 less_coro = self._extract_lessons(action, intended_outcome, actual_outcome, success, [])
                 
                 externalities, lessons = await asyncio.gather(ext_coro, less_coro)
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('temporal_reasoning', e)
                 logger.error("Error in temporal analysis: %s", e, exc_info=True)
                 externalities = []
@@ -274,7 +274,7 @@ Return JSON:
                 "failure_count": len(similar_failures),
                 **analysis
             }
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('temporal_reasoning', e)
             logger.error("Failure analysis error: %s", e, exc_info=True)
             return {"error": str(e)}
@@ -336,7 +336,7 @@ Ensure valid JSON."""
 
             externalities = json.loads(response)
             return externalities if isinstance(externalities, list) else []
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('temporal_reasoning', e)
             logger.debug("Failed to identify externalities: %s", e)
             return []
@@ -375,7 +375,7 @@ Format as JSON array: ["lesson1", "lesson2"]"""
 
             lessons = json.loads(response)
             return lessons if isinstance(lessons, list) else []
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('temporal_reasoning', e)
             logger.debug("Failed to extract lessons: %s", e)
             return [f"Document {'success' if success else 'failure'} of {action}"]
@@ -469,7 +469,7 @@ Be specific and actionable."""
         try:
             thought = await self.brain.think(prompt)
             return thought.content
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('temporal_reasoning', e)
             return f"Reflection unavailable: {e}"
     
@@ -510,7 +510,7 @@ Event {i}:
             try:
                 with open(self.memory_path, 'a') as f:
                     f.write(json.dumps(event.to_dict()) + '\n')
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('temporal_reasoning', e)
                 logger.error("Failed to persist event: %s", e)
         await asyncio.to_thread(write_sync)
@@ -534,7 +534,7 @@ Event {i}:
             if len(self.past_events) > self.max_cache:
                 self.past_events = self.past_events[-self.max_cache:]
             
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('temporal_reasoning', e)
             logger.error("Failed to load past events: %s", e)
 
@@ -693,7 +693,7 @@ Return JSON:
             # Hardening: Use robust extraction
             from core.utils.json_utils import extract_json
             return extract_json(response) or {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('temporal_reasoning', e)
             logger.error("Prediction generation failed: %s", e)
             return {
@@ -841,7 +841,7 @@ Be concise (2-3 sentences)."""
                 "recommendation": ranked[0]['action'],
                 "reasoning": thought.content
             }
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("temporal_reasoning", exc)
             logger.debug("Temporal option comparison analysis failed: %s", exc)
             return {

@@ -85,7 +85,7 @@ class TrajectoryPredictor:
                 })
                 
                 return traj
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('trajectory_predictor', e)
             logger.warning(f"Trajectory prediction failed: {e}")
             

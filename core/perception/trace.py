@@ -44,7 +44,7 @@ class EmbodiedTraceLogger:
                 from core.brain.trace_logger import TraceLogger
 
                 self._existing_trace = TraceLogger("~/.aura/traces/embodied_cognition.jsonl")
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 self._existing_trace = None
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +59,7 @@ class EmbodiedTraceLogger:
         if self._existing_trace is not None:
             try:
                 self._existing_trace.log({"type": "embodied_cognition", **payload})
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
     def latest(self) -> Optional[EmbodiedTraceRecord]:

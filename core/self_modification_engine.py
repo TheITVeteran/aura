@@ -165,7 +165,7 @@ class SelfModificationEngine:
                 "checksum": hashlib.sha256(content.encode()).hexdigest()
             }
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("File analysis failed: %s", e)
             return {"allowed": False, "reason": f"analysis_error: {e}"}
@@ -216,7 +216,7 @@ class SelfModificationEngine:
                     
             return {"success": True}
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Verification process failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -292,7 +292,7 @@ class SelfModificationEngine:
                 "backup_path": str(backup_path)
             }
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Proposal application failed: %s", e, exc_info=True)
             self.state = ModificationState.IDLE
@@ -315,7 +315,7 @@ class SelfModificationEngine:
             
             return backup_path
             
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Backup creation failed: %s", e)
             return None
@@ -330,7 +330,7 @@ class SelfModificationEngine:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(item, target)
             return True
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Rollback failed: %s", e)
             return False
@@ -368,7 +368,7 @@ class SelfModificationEngine:
                 "line": change.target_line
             }
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Change application failed: %s", e)
             return {

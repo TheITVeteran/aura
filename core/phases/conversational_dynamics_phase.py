@@ -44,7 +44,7 @@ class ConversationalDynamicsPhase(Phase):
             try:
                 from core.conversational.dynamics import get_dynamics_engine
                 self._engine = get_dynamics_engine()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('conversational_dynamics_phase', e)
                 logger.warning("ConversationalDynamics: Engine init failed: %s", e)
         return self._engine
@@ -109,7 +109,7 @@ class ConversationalDynamicsPhase(Phase):
                     cog.modifiers["interaction_summary"] = str(fused.get("summary") or "")
                     cog.modifiers["interaction_pacing"] = str(fused.get("pacing") or "steady")
                     cog.modifiers["interaction_verbosity_bias"] = str(fused.get("verbosity_bias") or "balanced")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: interaction signal integration skipped: %s", exc)
 
@@ -159,7 +159,7 @@ class ConversationalDynamicsPhase(Phase):
                     new_state.response_modifiers["multiple_drafts"] = md_block
                 if divergence > 0.15:
                     cog.modifiers["draft_divergence"] = f"{divergence:.2f}"
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: multiple drafts skipped: %s", exc)
 
@@ -186,13 +186,13 @@ class ConversationalDynamicsPhase(Phase):
                     affect_engine = ServiceContainer.get("affect_engine", default=None)
                     if affect_engine:
                         hot_engine.apply_feedback(affect_engine)
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass  # no-op: intentional
                 hot_block = hot_engine.get_context_block()
                 if hot_block:
                     new_state.response_modifiers["higher_order_thought"] = hot_block
                     cog.modifiers["higher_order_thought"] = hot_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: HOT engine skipped: %s", exc)
 
@@ -210,7 +210,7 @@ class ConversationalDynamicsPhase(Phase):
                     banter = humor.get_banter_directive() if hasattr(humor, "get_banter_directive") else ""
                     if guidance or banter:
                         new_state.response_modifiers["humor_guidance"] = f"{guidance}\n{banter}".strip()
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: humor engine skipped: %s", exc)
 
@@ -222,7 +222,7 @@ class ConversationalDynamicsPhase(Phase):
                     ci_block = conv_intel.get_context_injection()
                     if ci_block:
                         new_state.response_modifiers["conversation_intelligence"] = ci_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: conversation intelligence skipped: %s", exc)
 
@@ -234,7 +234,7 @@ class ConversationalDynamicsPhase(Phase):
                     ri_block = rel_intel.get_context_injection("owner")
                     if ri_block:
                         new_state.response_modifiers["relational_intelligence"] = ri_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: relational intelligence skipped: %s", exc)
 
@@ -251,7 +251,7 @@ class ConversationalDynamicsPhase(Phase):
                         strategy = meta_hints.get("strategy", "")
                         if strategy:
                             new_state.response_modifiers["metacognitive_strategy"] = strategy
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: metacognition skipped: %s", exc)
 
@@ -263,7 +263,7 @@ class ConversationalDynamicsPhase(Phase):
                     ca_block = credit.get_context_block()
                     if ca_block:
                         new_state.response_modifiers["credit_assignment"] = ca_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: credit assignment skipped: %s", exc)
 
@@ -274,7 +274,7 @@ class ConversationalDynamicsPhase(Phase):
                 agency_block = agency.get_context_block()
                 if agency_block:
                     new_state.response_modifiers["agency_comparator"] = agency_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: agency comparator skipped: %s", exc)
 
@@ -286,7 +286,7 @@ class ConversationalDynamicsPhase(Phase):
                     nm_block = narrative.get_narrative_context()
                     if nm_block:
                         new_state.response_modifiers["narrative_context"] = nm_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: narrative memory skipped: %s", exc)
 
@@ -318,7 +318,7 @@ class ConversationalDynamicsPhase(Phase):
                                 "word_budget": decision.word_budget,
                                 "reason": decision.reason,
                             }
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: natural followup skipped: %s", exc)
 
@@ -339,7 +339,7 @@ class ConversationalDynamicsPhase(Phase):
                             engagement_level=float(profile_data.get("engagement", 0.5)),
                             trust_level=float(profile_data.get("trust", 0.5)),
                         )
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass  # no-op: intentional
                 # Compute intersubjective frame from current qualia state
                 try:
@@ -354,9 +354,9 @@ class ConversationalDynamicsPhase(Phase):
                         isub_block = isub.get_context_block()
                         if isub_block:
                             new_state.response_modifiers["intersubjectivity"] = isub_block
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass  # no-op: intentional
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: intersubjectivity skipped: %s", exc)
 
@@ -374,7 +374,7 @@ class ConversationalDynamicsPhase(Phase):
                 ng_block = ngc.get_context_block()
                 if ng_block:
                     new_state.response_modifiers["narrative_gravity"] = ng_block
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('conversational_dynamics_phase', exc)
                 logger.debug("ConversationalDynamics: narrative gravity skipped: %s", exc)
 
@@ -389,7 +389,7 @@ class ConversationalDynamicsPhase(Phase):
 
             return new_state
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversational_dynamics_phase', e)
             logger.warning("ConversationalDynamics phase failed: %s", e)
             return state

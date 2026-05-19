@@ -170,7 +170,7 @@ class OrchestratorBootMixin(
             from core.consciousness.executive_authority import get_executive_authority
 
             self.executive_authority = get_executive_authority(self)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('boot', exc)
             logger.error("Executive authority bootstrap failed: %s", exc, exc_info=True)
 
@@ -178,7 +178,7 @@ class OrchestratorBootMixin(
             from core.constitution import get_constitutional_core
 
             self.constitutional_core = get_constitutional_core(self)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('boot', exc)
             logger.error("Constitutional core bootstrap failed: %s", exc, exc_info=True)
 
@@ -189,7 +189,7 @@ class OrchestratorBootMixin(
             score = guard.verify_sovereignty()
             if score < 1.0:
                 logger.warning("🛡️ [BOOT] Integrity score degraded: %.2f", score)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot', e)
             logger.error("🛡️ [BOOT] Integrity check failed: %s", e)
         
@@ -238,7 +238,7 @@ class OrchestratorBootMixin(
             ServiceContainer.register_instance("affect_facade", affect_facade)
             
             logger.info("✓ [BOOT] All Core Facades (Memory, Agency, Affect) registered during synchronous setup.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot', e)
             logger.warning("⚠️ [BOOT] Early Facade registration encountered issues: %s", e)
 
@@ -314,7 +314,7 @@ class OrchestratorBootMixin(
                     await self.runtime_hygiene.start()
                     ServiceContainer.register_instance("runtime_hygiene", self.runtime_hygiene)
                     logger.info("🧹 Runtime hygiene installed (tasks, threads, processes, memory).")
-                except Exception as hygiene_exc:
+                except (ImportError, AttributeError, RuntimeError) as hygiene_exc:
                     record_degradation('boot', hygiene_exc)
                     logger.error("⚠️ Runtime hygiene bootstrap failed: %s", hygiene_exc, exc_info=True)
                 
@@ -347,7 +347,7 @@ class OrchestratorBootMixin(
                         await self._inference_gate.initialize()
                     ServiceContainer.register_instance("inference_gate", self._inference_gate)
                     logger.info("✅ [BOOT] InferenceGate registered and initialized.")
-                except Exception as gate_err:
+                except (ImportError, AttributeError, RuntimeError) as gate_err:
                     record_degradation('boot', gate_err)
                     logger.error("⚠️ [BOOT] InferenceGate init failed: %s. Creating cloud-only gate.", gate_err, exc_info=True)
                     # ALWAYS create a gate — cloud fallback is better than Legacy Pipeline
@@ -388,7 +388,7 @@ class OrchestratorBootMixin(
                     from core.utils.task_tracker import get_task_tracker
                     try:
                         return get_task_tracker().create_task(coro, name=name)
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         return get_task_tracker().create_task(coro, name=name)
 
                 # ZENITH LOCKDOWN: Start Deadlock Watchdog
@@ -463,7 +463,7 @@ class OrchestratorBootMixin(
                             scan_dirs=["core", "skills"],
                         )
                         mycelium.establish_consciousness_hyphae()
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('boot', e)
                         logger.error("🍄 [MYCELIUM] Mapping failed: %s", e)
 
@@ -543,7 +543,7 @@ class OrchestratorBootMixin(
                         logger.info("🧠 Cognitive Loop started.")
                     except asyncio.TimeoutError:
                         logger.error("🛑 Cognitive Loop boot TIMEOUT.")
-                    except Exception as e:
+                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                         record_degradation('boot', e)
                         logger.error("❌ Cognitive Loop failed: %s", e)
                     ServiceContainer.register_instance("cognitive_loop", self.cognitive_loop)
@@ -560,7 +560,7 @@ class OrchestratorBootMixin(
                             logger.info("💓 MindTick: Unified cognitive rhythm online.")
                         except asyncio.TimeoutError:
                             logger.error("🛑 MindTick boot TIMEOUT.")
-                        except Exception as e:
+                        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                             record_degradation('boot', e)
                             logger.error("❌ MindTick failed: %s", e)
                 else:
@@ -579,7 +579,7 @@ class OrchestratorBootMixin(
                         logger.info("🛡️ Memory Governor started.")
                     except asyncio.TimeoutError:
                         logger.error("🛑 Memory Governor TIMEOUT.")
-                    except Exception as e:
+                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                         record_degradation('boot', e)
                         logger.error("❌ Memory Governor failed: %s", e)
                     ServiceContainer.register_instance("memory_governor", gov)
@@ -591,7 +591,7 @@ class OrchestratorBootMixin(
                     ServiceContainer.register_instance("metrics_exporter", self.metrics_exporter)
                 except (ImportError, ModuleNotFoundError) as e:
                     logger.warning(f"📈 [BOOT] Metrics Exporter skipped: {e}")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot', e)
                     logger.error(f"📈 [BOOT] Metrics Exporter failed to start: {e}")
                 
@@ -603,7 +603,7 @@ class OrchestratorBootMixin(
                     ServiceContainer.register_instance("meta_cognition_shard", metacog)
                     self.meta_cognition = metacog
                     logger.info("🧠 Meta-Cognition Shard initialized and started.")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('boot', e)
                     logger.error(f"🛑 Failed to init Meta-Cognition Shard: {e}")
 
@@ -617,7 +617,7 @@ class OrchestratorBootMixin(
                         ServiceContainer.register_instance("healing_swarm", healer)
                         self.healing_service = healer
                         logger.info("🛡️ Healing Swarm Service initialized and started.")
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('boot', e)
                         logger.error(f"🛑 Failed to init Healing Swarm: {e}")
                 
@@ -679,7 +679,7 @@ class OrchestratorBootMixin(
                         logger.info("💾 UPSO: Online state committed.")
                     else:
                         logger.warning("⚠️ UPSO: No state found to commit online.")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot', e)
                     logger.error("UPSO: Failed to commit online state: %s", e)
                 
@@ -701,7 +701,7 @@ class OrchestratorBootMixin(
                                 logger.warning("🎙️ Voice capture failed to auto-start — will retry on demand")
                         else:
                             logger.info("🎙️ Voice capture deferred. Mic will start only after explicit enablement.")
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('boot', e)
                         logger.warning("🎙️ Voice auto-start skipped: %s", e)
                 
@@ -711,7 +711,7 @@ class OrchestratorBootMixin(
                     immune = ServiceContainer.get("immune_system", default=None)
                     if immune and hasattr(immune, 'post_boot_scan'):
                         await immune.post_boot_scan(self)
-                except Exception as scan_err:
+                except (ImportError, AttributeError, RuntimeError) as scan_err:
                     record_degradation('boot', scan_err)
                     logger.warning("Immune post-boot scan failed: %s", scan_err)
 
@@ -722,7 +722,7 @@ class OrchestratorBootMixin(
                 else:
                     logger.warning("⚠️ BOOT COMPLETE: System initialized in degraded mode.")
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('boot', e)
                 logger.error("BOOT ENCOUNTERED ISSUES (Recovering...): %s", e, exc_info=True)
                 self.status.add_error(str(e))

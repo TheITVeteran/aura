@@ -53,14 +53,14 @@ class VRAMManager:
                     from core.utils.task_tracker import get_task_tracker
 
                     get_task_tracker().track_task(task)
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('vram_manager', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 logger.info("🗜️ VRAMManager: pre-purge context summarization hook fired.")
             else:
                 asyncio.run(self._pre_purge_hook())
                 logger.info("🗜️ VRAMManager: pre-purge context summarization hook fired synchronously.")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('vram_manager', exc)
             logger.debug("pre-purge hook error (non-fatal): %s", exc)
 
@@ -103,7 +103,7 @@ class VRAMManager:
                             mx.clear_cache()
                     finally:
                         sentinel.release()
-            except Exception: pass
+            except (ImportError, AttributeError, RuntimeError): pass
             logger.debug("VRAM purged and zeroed (MLX Metal Cache Cleared).")
         else:
             logger.debug("VRAM purged (GC only).")

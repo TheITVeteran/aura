@@ -86,7 +86,7 @@ def _score_candidate(args: tuple[str, str, list[Task]]) -> tuple[str, float]:
     for task in tasks:
         try:
             passed += 1 if solver(task) == task.answer else 0
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("architecture_search", exc)
             logger.debug("Architecture candidate %s failed task %s: %s", solver_name, task.kind, exc)
     return name, passed / max(1, len(tasks))

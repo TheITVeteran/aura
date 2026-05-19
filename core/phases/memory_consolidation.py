@@ -60,7 +60,7 @@ class MemoryConsolidationPhase(BasePhase):
                     if fe.current.surprise > 0.7:
                         force_consolidation = True  # High surprise = memorable event
                         logger.debug("💾 Force consolidation: high surprise (%.2f)", fe.current.surprise)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
         
         if len(new_state.cognition.working_memory) < 1:
@@ -215,7 +215,7 @@ class MemoryConsolidationPhase(BasePhase):
                         "resonance": affect_signature.get("resonance", getattr(new_state.affect, "get_resonance_string", lambda: "")()),
                     },
                 )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('memory_consolidation', e)
                 logger.debug("MemoryConsolidation: MemoryFacade commit failed: %s", e)
  

@@ -42,7 +42,7 @@ async def _run_tests_async() -> tuple[bool, str]:
         if process.returncode == 0:
             return True, stdout.decode().strip()
         return False, (stderr.decode().strip() or stdout.decode().strip())
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         record_degradation('mutate', e)
         return False, f"pytest failed to run: {e}"
 
@@ -97,7 +97,7 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
         await proc_commit.communicate()
         return True
 
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         record_degradation('mutate', e)
         logger.exception("Critical error during mutation: %s", e)
         atomic_write_text(path, original_text, encoding="utf-8")

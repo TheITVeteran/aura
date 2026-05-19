@@ -66,7 +66,7 @@ class PluginManager:
                             return False
                             
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('plugin_loader', e)
             logger.error("Validation failed for %s: %s", file_path, e)
             return False
@@ -91,7 +91,7 @@ class PluginManager:
                 self.loaded_plugins[plugin_name] = module
                 logger.info("Plugin %s loaded successfully.", plugin_name)
                 return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('plugin_loader', e)
             logger.error("Failed to load plugin %s: %s", plugin_name, e)
             return False

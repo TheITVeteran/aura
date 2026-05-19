@@ -162,7 +162,7 @@ def classify(exc: BaseException) -> PhenomenalState:
         try:
             if predicate(exc):
                 return PHENOMENAL_STATES[state_name]
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             continue
     # Fallback substring scan
     msg = (str(exc) or "").lower()
@@ -241,9 +241,9 @@ def _notify_substrate(state: PhenomenalState, *, source: str = "phenomenal_error
             for k, v in state.substrate_signal.items():
                 try:
                     nc.nudge(k, v, source=source)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     continue
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('phenomenal_error_map', exc)
         logger.debug("phenomenal substrate notify failed: %s", exc)
 

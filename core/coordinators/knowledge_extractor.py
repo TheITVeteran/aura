@@ -51,7 +51,7 @@ class KnowledgeExtractor:
                     thought_type,
                     (response or "")[:80],
                 )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('knowledge_extractor', e)
             logger.debug("Autonomous insight storage failed: %s", e)
 
@@ -91,7 +91,7 @@ class KnowledgeExtractor:
             # Question extraction
             self._extract_questions(kg, aura_response)
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('knowledge_extractor', e)
             logger.debug("Learning from exchange failed: %s", e)
 
@@ -121,7 +121,7 @@ class KnowledgeExtractor:
             db_path = str(getattr(config.paths, "data_dir", "data") / "knowledge.db")
             self.orch.knowledge_graph = PersistentKnowledgeGraph(db_path)
             return self.orch.knowledge_graph
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('knowledge_extractor', e)
             logger.debug("Knowledge graph unavailable: %s", e)
             return None
@@ -160,7 +160,7 @@ class KnowledgeExtractor:
                                 confidence=float(item.get("confidence", 0.6)),
                             )
                             logger.info("📚 Learned: %s", (item.get("content") or "")[:80])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('knowledge_extractor', e)
             logger.debug("Knowledge extraction failed: %s", e)
 

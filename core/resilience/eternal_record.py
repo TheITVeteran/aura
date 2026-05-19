@@ -47,7 +47,7 @@ class EternalRecord:
                 json.dump(metadata, f, indent=4)
 
             return snapshot_dir
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('eternal_record', e)
             logger.error("Failed to create Eternal Record snapshot: %s", e)
             return None

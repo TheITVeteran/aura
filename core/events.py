@@ -123,7 +123,7 @@ class InputBus:
                     source=event_input.get("source", "normalized_dict"),
                     priority=_coerce_priority(event_input.get("priority", EventPriority.NORMAL))
                 )
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("events", exc)
                 logger.debug("Event normalization failed for dict input; using fallback event: %s", exc)
                 return Event(payload=event_input, source="fallback_dict")
@@ -175,7 +175,7 @@ class InputBus:
         for cb in callbacks:
             try:
                 cb(event)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('events', e)
                 logger.error(
                     "Subscriber %s failed on %s: %s",

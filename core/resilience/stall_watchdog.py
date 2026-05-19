@@ -64,7 +64,7 @@ class StallWatchdog(threading.Thread):
             except RuntimeError:
                 # Event loop closed during shutdown — exit silently
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('stall_watchdog', e)
                 logger.debug("Watchdog heartbeat schedule issue: %s", e)
 
@@ -108,7 +108,7 @@ class StallWatchdog(threading.Thread):
             for tid in list(self._task_birth.keys()):
                 if tid not in seen:
                     self._task_birth.pop(tid, None)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('stall_watchdog', exc)
             logger.debug("Task age bookkeeping failed: %s", exc)
 
@@ -188,7 +188,7 @@ class StallWatchdog(threading.Thread):
             from core.resilience.diagnostic_hub import get_diagnostic_hub
             get_diagnostic_hub()
             # Future: trigger auto-repair or circuit break
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation(
                 "stall_watchdog",
                 _e,
@@ -214,7 +214,7 @@ class StallWatchdog(threading.Thread):
             )
         except RuntimeError:
             return
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('stall_watchdog', exc)
             logger.debug("Stall recovery scheduling failed: %s", exc)
 
@@ -285,7 +285,7 @@ class StallWatchdog(threading.Thread):
         # recycle anyone that's been wedged.
         try:
             from core.brain.llm.mlx_client import _LIVE_MLX_CLIENTS  # type: ignore
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             _LIVE_MLX_CLIENTS = None  # type: ignore
 
         if _LIVE_MLX_CLIENTS:
@@ -295,7 +295,7 @@ class StallWatchdog(threading.Thread):
                         # Schedule a no-op alive probe so the stale-handshake
                         # branch fires on next entry.
                         self.loop.call_soon(client._mark_progress)
-                except Exception as exc:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                     record_degradation('stall_watchdog', exc)
                     logger.debug("Stall recovery MLX poke failed: %s", exc)
 
@@ -308,7 +308,7 @@ class StallWatchdog(threading.Thread):
                 if state_repo and hasattr(state_repo, "request_flush"):
                     state_repo.request_flush()
                     logger.info("💉 [IMMUNE] Requested state vault flush after %d consecutive stalls.", self._consecutive_long_stalls)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('stall_watchdog', exc)
                 logger.debug("Stall recovery state-flush request failed: %s", exc)
 

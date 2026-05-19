@@ -431,7 +431,7 @@ class SteeringVectorLibrary:
             try:
                 from core.config import config as aura_config
                 cache_dir = aura_config.paths.data_dir / "steering_vectors"
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("affective_steering", exc)
                 logger.debug("Steering vector cache config unavailable, using user cache: %s", exc)
                 cache_dir = Path.home() / ".aura" / "steering_vectors"
@@ -465,7 +465,7 @@ class SteeringVectorLibrary:
                 return "extracted_caa"
             if "steering_vectors" in parts:
                 return "cached_caa"
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("affective_steering", exc)
             logger.debug("Steering vector source inference failed: %s", exc)
         return "configured_caa"
@@ -664,7 +664,7 @@ class SteeringVectorLibrary:
                 exact_layer_match=True,
                 extracted=False,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('affective_steering', e)
             logger.error("❌ Failed to derive vector %s at layer %d: %s", key, target_layer, e)
             from core.evaluation.evidence_mode import require
@@ -735,7 +735,7 @@ class SteeringVectorLibrary:
                             )
                             loaded += 1
                             nearest += 0 if exact else 1
-                        except Exception as e:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                             record_degradation('affective_steering', e)
                             logger.warning(
                                 "Failed to load cached vector %s at layer %d from %s: %s",
@@ -825,7 +825,7 @@ class SteeringVectorLibrary:
                 input_tensor = mx.array([input_ids])
                 _ = model(input_tensor)
                 mx.eval(_)  # Force evaluation (MLX is lazy)
-            except Exception as inner_e:
+            except (RuntimeError, AttributeError, TypeError) as inner_e:
                 record_degradation('affective_steering', inner_e)
                 logger.debug("Capture failed for prompt: %s", inner_e)
             finally:
@@ -1043,7 +1043,7 @@ class AffectiveSteeringHook:
                 self._last_mask_mode = "last_position_3d"
                 return mx.astype(mx.array(mask_np), h.dtype)
             self._last_mask_mode = "single_token"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('affective_steering', exc)
             self._last_mask_mode = f"mask_unavailable:{type(exc).__name__}"
         return None
@@ -1061,7 +1061,7 @@ class AffectiveSteeringHook:
             phi_core = ServiceContainer.get("phi_core", default=None)
             if phi_core is not None and hasattr(phi_core, "record_residual_stream"):
                 phi_core.record_residual_stream(h, layer_idx=self._layer_idx, token_position=-1)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('affective_steering', exc)
             logger.debug("Residual phi sample failed at layer %d: %s", self._layer_idx, exc)
 
@@ -1119,7 +1119,7 @@ class AffectiveSteeringHook:
                     return (h,) + rest
                 return h
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('affective_steering', e)
                 logger.debug("Steering injection failed at layer %d: %s", hook._layer_idx, e)
                 return result
@@ -1206,7 +1206,7 @@ class SubstrateSyncThread:
                     ncs = ServiceContainer.get("neurochemical_system", default=None)
                     if ncs is not None:
                         moods = ncs.get_mood_vector()
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('affective_steering', _e)
                     logger.debug('Ignored Exception in affective_steering.py: %s', _e)
 
@@ -1222,7 +1222,7 @@ class SubstrateSyncThread:
                         hook.update_substrate(moods)
                         try:
                             hook.substrate_source = "live_mood"
-                        except Exception as exc:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                             record_degradation("affective_steering", exc)
                             logger.debug("Live mood substrate source annotation failed: %s", exc)
                 else:
@@ -1239,11 +1239,11 @@ class SubstrateSyncThread:
                         hook.update_substrate(neutral_moods)
                         try:
                             hook.substrate_source = "neutral_fallback"
-                        except Exception as exc:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                             record_degradation("affective_steering", exc)
                             logger.debug("Neutral substrate source annotation failed: %s", exc)
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('affective_steering', e)
                 logger.debug("SubstrateSyncThread error: %s", e)
 
@@ -1502,7 +1502,7 @@ class AffectiveSteeringEngine:
             from core.config import config as aura_config
 
             base = aura_config.paths.data_dir / "steering_vectors"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("affective_steering", exc)
             logger.debug("Runtime steering cache config unavailable, using user cache: %s", exc)
             base = Path.home() / ".aura" / "steering_vectors"
@@ -1550,7 +1550,7 @@ class AffectiveSteeringEngine:
 
             logger.warning("Geometry discovery reached fallback for d_model.")
             return n_layers, d_model or 4096  # Reasonable guess if discovery fails
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('affective_steering', e)
             logger.error("Error discovering model geometry: %s", e)
             return 0, 0
@@ -1660,7 +1660,7 @@ def get_steering_engine() -> AffectiveSteeringEngine:
             try:
                 from core.container import ServiceContainer
                 ServiceContainer.register_instance("affective_steering_engine", _engine_instance, required=False)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("affective_steering", exc)
                 logger.debug("Affective steering engine registration failed: %s", exc)
         return _engine_instance
@@ -1685,7 +1685,7 @@ def attach_steering_to_mlx_client():
                 # === ADD THIS ===
                 try:
                     attach_steering_to_mlx_client()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('affective_steering', e)
                     logger.warning("Affective steering failed to attach: %s", e)
                 # ================
@@ -1717,7 +1717,7 @@ def attach_steering_to_mlx_client():
         ServiceContainer.register_instance("affective_steering_engine", engine)
         logger.info("✅ Affective steering attached to MLX client")
 
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('affective_steering', e)
         logger.error("attach_steering_to_mlx_client failed: %s", e)
 
@@ -1795,7 +1795,7 @@ class SteeringCalibrator:
                         "prompt": prompt,
                         "top_tokens": top_tokens,
                     })
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('affective_steering', e)
                     alpha_results.append({"prompt": prompt, "error": str(e)})
 

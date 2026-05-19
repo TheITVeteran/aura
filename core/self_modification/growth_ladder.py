@@ -175,7 +175,7 @@ Respond with JSON only:
                 logger.info("❌ [GrowthLadder] Aura VETOED proposal %s: %s", proposal.id, reasoning[:100])
             else:
                 logger.info("✅ [GrowthLadder] Aura CONSENTED to proposal %s: %s", proposal.id, reasoning[:100])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('growth_ladder', e)
             logger.debug("[GrowthLadder] Consent request failed: %s", e)
 
@@ -231,7 +231,7 @@ Respond with JSON only:
                 "level_start_times": self._level_start_times,
                 "drift_history": self._drift_history[-50:],
             }, indent=2))
-        except Exception as e: logger.debug("[GrowthLadder] Save failed: %s", e)
+        except (json.JSONDecodeError, TypeError, ValueError) as e: logger.debug("[GrowthLadder] Save failed: %s", e)
 
     def _load(self):
         try:
@@ -250,7 +250,7 @@ Respond with JSON only:
             logger.info("[GrowthLadder] State loaded. Current Level: %s", self._current_level.name)
         except (json.JSONDecodeError, ValueError) as e:
             logger.error("[GrowthLadder] State file corrupted: %s. Using defaults.", e)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('growth_ladder', e)
             logger.debug("[GrowthLadder] Load failed: %s", e)
 

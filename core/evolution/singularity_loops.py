@@ -70,7 +70,7 @@ class SingularityLoops:
             self._tick_count += 1
             try:
                 await self._tick()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('singularity_loops', exc)
                 logger.debug("SingularityLoops tick error: %s", exc)
             try:
@@ -120,7 +120,7 @@ class SingularityLoops:
                             confidence=0.6,
                             source="metacognition_loop",
                         )
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError) as _exc:
                     record_degradation('singularity_loops', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
 
@@ -176,7 +176,7 @@ class SingularityLoops:
                                     source="curiosity_explorer",
                                     tags=["exploration", "self_directed_learning"],
                                 )
-                            except Exception as _exc:
+                            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                                 record_degradation('singularity_loops', _exc)
                                 logger.debug("Suppressed Exception: %s", _exc)
         except asyncio.TimeoutError as _exc:
@@ -209,7 +209,7 @@ class SingularityLoops:
                         planner.decompose_goal(goal.id, router),
                         timeout=20.0,
                     )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('singularity_loops', exc)
             logger.debug("Goal decomposition failed: %s", exc)
 
@@ -262,7 +262,7 @@ class SingularityLoops:
                                             goal.id, min(goal.progress + 0.2, 0.9),
                                             f"Searched: {query[:40]}",
                                         )
-                                    except Exception as _exc:
+                                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as _exc:
                                         record_degradation('singularity_loops', _exc)
                                         logger.debug("Suppressed Exception: %s", _exc)
                             elif action.upper().startswith("REFLECT:"):
@@ -279,7 +279,7 @@ class SingularityLoops:
                                 )
                     except asyncio.TimeoutError as _exc:
                         logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('singularity_loops', exc)
             logger.debug("Goal advancement failed: %s", exc)
 
@@ -325,7 +325,7 @@ class SingularityLoops:
                             state.cognition.modifiers.append(
                                 f"[USER_PROFILE] {context_block[:500]}"
                             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('singularity_loops', exc)
             logger.debug("Profile injection failed: %s", exc)
 
@@ -374,7 +374,7 @@ class SingularityLoops:
                         )
             except asyncio.TimeoutError:
                 logger.debug("Distillation timed out")
-            except Exception as exc:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                 record_degradation('singularity_loops', exc)
                 logger.debug("Distillation failed: %s", exc)
 
@@ -433,7 +433,7 @@ class SingularityLoops:
                     curiosity=curiosity_level,
                     active_topic=topic or "something new",
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('singularity_loops', exc)
             logger.debug("Affect→Exploration loop failed: %s", exc)
 
@@ -451,7 +451,7 @@ def get_singularity_loops() -> SingularityLoops:
             ServiceContainer.register_instance(
                 "singularity_loops", _instance, required=False
             )
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('singularity_loops', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return _instance

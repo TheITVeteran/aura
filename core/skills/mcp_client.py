@@ -83,7 +83,7 @@ class MCPClientSkill(BaseSkill):
                     else:
                         return {"ok": False, "error": f"Unknown action: {params.action}"}
                         
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation("mcp_client", e)
             logger.error("MCP Execution failed: %s", str(e), exc_info=True)
             return {"ok": False, "error": f"MCP Execution Error: {str(e)}"}

@@ -100,7 +100,7 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
             await asyncio.sleep(0.5)
             self._update_screen()
             self._resolve_startup_prompt()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._last_error = f"{type(exc).__name__}: {exc}"
             if self.mode == EnvironmentMode.STRICT_REAL:
                 raise EnvironmentUnavailableError(f"NetHack strict-real startup failed: {self._last_error}") from exc
@@ -126,7 +126,7 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
                 self._mark_child_dead(exc)
             else:
                 self._last_error = f"{type(exc).__name__}: {exc}"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._last_error = f"{type(exc).__name__}: {exc}"
 
     async def observe(self) -> Observation:
@@ -155,13 +155,13 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
                 self._update_screen()
             observation = await self.observe()
             return ExecutionResult(True, command.command_id, observation, raw_result={"simulated": False})
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             self._last_error = f"{type(exc).__name__}: {exc}"
             if self.child is not None:
                 try:
                     if not self.child.isalive():
                         self._mark_child_dead(exc)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     self._mark_child_dead(exc)
             return ExecutionResult(
                 False,
@@ -175,7 +175,7 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
         if self.child is not None:
             try:
                 self.child.terminate(force=True)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
             self.child = None
         await super().close()
@@ -193,7 +193,7 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
         if child is not None:
             try:
                 child.terminate(force=True)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
     def _resolve_startup_prompt(self) -> None:

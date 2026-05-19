@@ -99,7 +99,7 @@ class LocalBrain:
             with httpx.Client(base_url=self.base_url, timeout=3) as client:
                 response = client.get("/api/tags")
                 return response.status_code == 200
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return False
 
     async def check_health_async(self) -> bool:
@@ -107,7 +107,7 @@ class LocalBrain:
         try:
             response = await self.client.get("/api/tags", timeout=3)
             return response.status_code == 200
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return False
     
     async def warmup(self) -> bool:
@@ -128,7 +128,7 @@ class LocalBrain:
             self._warmed = True
             logger.info("🔥 Model %s warmed up successfully", self.model)
             return True
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('local_llm', e)
             logger.warning("Model warmup failed: %s", e)
             return False
@@ -247,7 +247,7 @@ class LocalBrain:
                     logger.warning("Transient LLM error (retry %d in %ds): %s", attempt + 1, backoff, e)
                     await asyncio.sleep(backoff)
                     continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('local_llm', e)
                 last_error = e
                 break
@@ -347,7 +347,7 @@ class LocalBrain:
                     except json.JSONDecodeError:
                         continue
             self._record_success()
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('local_llm', e)
             self._record_failure()
             logger.error("Streaming Error: %s", e)
@@ -417,7 +417,7 @@ class LocalBrain:
                     logger.warning("Transient chat error (retry %d in %ds): %s", attempt + 1, backoff, e)
                     await asyncio.sleep(backoff)
                     continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('local_llm', e)
                 last_error = e
                 break
@@ -519,7 +519,7 @@ class LocalBrain:
                     except json.JSONDecodeError:
                         continue
             self._record_success()
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('local_llm', e)
             self._record_failure()
             logger.error("Chat Streaming Error: %s (%s)", e, type(e).__name__)

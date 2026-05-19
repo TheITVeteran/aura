@@ -142,7 +142,7 @@ class CuriosityExplorer:
             logger.info("CuriosityExplorer completed: %s → %s",
                         item.question[:40], finding[:60])
             return [item]
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curiosity_explorer', e)
             logger.debug("Exploration execution failed: %s", e)
             return []
@@ -193,7 +193,7 @@ class CuriosityExplorer:
                 )
                 if results:
                     return f"Memory: {'; '.join(str(r)[:60] for r in results[:2])}"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('curiosity_explorer', e)
             logger.debug("Memory query failed: %s", e)
         return "No relevant memory found."
@@ -229,7 +229,7 @@ class CuriosityExplorer:
                         )
                         result_text = "External search deferred by constitutional gate."
                         return result_text
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('curiosity_explorer', e)
                 logger.debug("CuriosityExplorer constitutional gate unavailable: %s", e)
 
@@ -255,7 +255,7 @@ class CuriosityExplorer:
                             result_text = str(summary)[:200]
                             success = True
                             return result_text
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('curiosity_explorer', e)
                 logger.debug("Skill-based web search failed: %s", e)
                 error_text = f"{type(e).__name__}: {e}"
@@ -270,7 +270,7 @@ class CuriosityExplorer:
                         result_text = str(result)[:200] if result else "No web results."
                         success = bool(result_text)
                         return result_text
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('curiosity_explorer', e)
                     error_text = f"{type(e).__name__}: {e}"
 
@@ -291,7 +291,7 @@ class CuriosityExplorer:
                         duration_ms=duration_ms,
                         error=error_text,
                     )
-                except Exception as finish_exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as finish_exc:
                     record_degradation('curiosity_explorer', finish_exc)
                     logger.debug("CuriosityExplorer tool finish skipped: %s", finish_exc)
 
@@ -312,7 +312,7 @@ class CuriosityExplorer:
                 timeout=15.0,
             )
             return (result or "").strip()[:400]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('curiosity_explorer', e)
             return f"Synthesis failed: {e}"
 
@@ -324,7 +324,7 @@ class CuriosityExplorer:
             rule = f"When curious about '{question[:50]}': {finding[:80]}"
             hs.ingest_external_heuristic(rule, domain="curiosity_learning",
                                           source="CuriosityExplorer")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('curiosity_explorer', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

@@ -30,7 +30,7 @@ def apply_consciousness_patches(orchestrator: Any) -> None:
         monitor = get_loop_monitor(orchestrator)
         monitor.start()
         orchestrator.loop_monitor = monitor
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('apply_patches', exc)
         logger.error("ConsciousnessPatches: loop monitor failed — %s", exc, exc_info=True)
 

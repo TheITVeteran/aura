@@ -70,7 +70,7 @@ class AgencyCoordinator:
             if hasattr(engine, "execute_skill"):
                 return await engine.execute_skill(skill_name, params, ctx)
             return await engine.execute(skill_name, params, ctx)
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('agency', e)
             logger.error(f"Skill execution failed for {skill_name}: {e}")
             record_degraded_event(

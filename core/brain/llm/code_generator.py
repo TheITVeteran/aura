@@ -250,7 +250,7 @@ class LLMCodeGenerator:
                 len(code),
             )
             return code
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("llm_code_generator", exc)
             logger.warning("LLM code generation failed: %s", exc)
             if self.fallback_to_stub:
@@ -268,7 +268,7 @@ class LLMCodeGenerator:
                 if service is not None:
                     self._router = service
                     return service
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("llm_code_generator", exc)
             logger.debug("Could not resolve LLM service for code generation: %s", exc)
         return None

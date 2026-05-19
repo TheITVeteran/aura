@@ -169,7 +169,7 @@ class DialogueCognitionEngine:
                 from core.config import config
 
                 storage_path = config.paths.data_dir / "dialogue_cognition.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path("data") / "dialogue_cognition.json"
         self._storage_path = Path(storage_path)
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +183,7 @@ class DialogueCognitionEngine:
             payload = json.loads(self._storage_path.read_text(encoding="utf-8"))
             for user_id, data in (payload.get("profiles", {}) or {}).items():
                 self._profiles[user_id] = DialogueCognitionProfile.from_dict(data)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('dialogue_cognition', exc)
             logger.debug("DialogueCognition load skipped: %s", exc)
 
@@ -194,7 +194,7 @@ class DialogueCognitionEngine:
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2)
             os.replace(tmp, self._storage_path)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('dialogue_cognition', exc)
             logger.debug("DialogueCognition save skipped: %s", exc)
 
@@ -702,7 +702,7 @@ def get_dialogue_cognition() -> DialogueCognitionEngine:
 
             if not ServiceContainer.has("dialogue_cognition"):
                 ServiceContainer.register_instance("dialogue_cognition", _dialogue_cognition, required=False)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('dialogue_cognition', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return _dialogue_cognition

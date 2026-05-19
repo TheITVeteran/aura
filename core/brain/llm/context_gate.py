@@ -197,7 +197,7 @@ class ContextDeltaTracker:
         """
         try:
             v = float(value)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
         if critical is not None:

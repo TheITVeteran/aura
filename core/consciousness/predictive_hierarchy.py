@@ -350,7 +350,7 @@ class PredictiveHierarchy:
             # Normalize to [0, 1] — cap at practical maximum
             normalized = min(1.0, self._smoothed_fe / 0.5)
             fe_engine.accept_surprise_signal(normalized)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_hierarchy', e)
             logger.debug("PredictiveHierarchy → FreeEnergyEngine push failed: %s", e)
 
@@ -387,7 +387,7 @@ class PredictiveHierarchy:
                     n = min(len(raw), self.dim)
                     s[:n] = raw[:n]
                     result["sensory_input"] = s
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_hierarchy', e)
             logger.debug("PH gather sensory failed: %s", e)
 
@@ -403,7 +403,7 @@ class PredictiveHierarchy:
                     n = min(len(raw), self.dim)
                     a[:n] = raw[:n]
                     result["association_input"] = a
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_hierarchy', e)
             logger.debug("PH gather association failed: %s", e)
 
@@ -416,7 +416,7 @@ class PredictiveHierarchy:
                 n = min(len(proj), self.dim)
                 e[:n] = proj[:n]
                 result["executive_state"] = e
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_hierarchy', e)
             logger.debug("PH gather executive failed: %s", e)
 
@@ -430,7 +430,7 @@ class PredictiveHierarchy:
                     n = min(len(x), self.dim)
                     narr[:n] = x[:n]
                     result["narrative_state"] = narr
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_hierarchy', e)
             logger.debug("PH gather narrative failed: %s", e)
 

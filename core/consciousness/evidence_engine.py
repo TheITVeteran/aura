@@ -47,7 +47,7 @@ class ConsciousnessEvidenceEngine:
                 audit_index = _clamp01(getattr(latest, "consciousness_index", 0.0))
                 latest_phi = float(getattr(latest, "phi", 0.0) or 0.0)
                 audit_summary = str(getattr(latest, "summary", audit_summary))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('evidence_engine', exc)
             logger.debug("Audit evidence unavailable: %s", exc)
 
@@ -70,7 +70,7 @@ class ConsciousnessEvidenceEngine:
         try:
             if executive_closure and hasattr(executive_closure, "get_status"):
                 closure_score = float(executive_closure.get_status().get("closure_score", 0.0) or 0.0)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('evidence_engine', exc)
             logger.debug("Executive closure evidence unavailable: %s", exc)
 
@@ -78,7 +78,7 @@ class ConsciousnessEvidenceEngine:
         try:
             if self_report and hasattr(self_report, "generate_state_report"):
                 self_report_text = str(self_report.generate_state_report() or "")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('evidence_engine', exc)
             logger.debug("Self report unavailable: %s", exc)
 
@@ -92,7 +92,7 @@ class ConsciousnessEvidenceEngine:
                     phenom_fragment = str(getattr(phenomenology, "phenomenal_context_string", "") or "")
                 if hasattr(phenomenology, "to_dict"):
                     phenom_stale = bool(phenomenology.to_dict().get("is_stale", True))
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('evidence_engine', exc)
             logger.debug("Phenomenology unavailable: %s", exc)
 
@@ -101,7 +101,7 @@ class ConsciousnessEvidenceEngine:
             if personality:
                 emo = personality.get_emotional_context_for_response()
                 dominant_emotions = list(emo.get("dominant_emotions", []))
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('evidence_engine', exc)
             logger.debug("Personality evidence unavailable: %s", exc)
 

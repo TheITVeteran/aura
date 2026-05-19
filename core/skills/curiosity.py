@@ -97,7 +97,7 @@ class CuriositySkill(BaseSkill):
                         if drive and hasattr(drive, "latent_interests") and drive.latent_interests:
                             import random
                             topic = random.choice(drive.latent_interests)
-                    except Exception:
+                    except (ImportError, AttributeError, RuntimeError):
                         pass  # no-op: intentional
                 if not topic:
                     return {"ok": False, "error": "No topic to explore. Provide a topic or category."}
@@ -118,7 +118,7 @@ class CuriositySkill(BaseSkill):
                         drive = ServiceContainer.get("drive_engine", default=None)
                         if drive:
                             await drive.satisfy("curiosity", 25.0)
-                    except Exception:
+                    except (ImportError, AttributeError, RuntimeError):
                         pass  # no-op: intentional
 
                     # Mark as explored if from curriculum
@@ -136,7 +136,7 @@ class CuriositySkill(BaseSkill):
                     }
                 else:
                     return {"ok": False, "error": search_result.get("error", "Search failed")}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('curiosity', e)
                 logger.warning("Curiosity exploration failed: %s", e)
                 return {"ok": False, "error": f"Exploration failed: {e}"}

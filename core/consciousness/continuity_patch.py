@@ -119,7 +119,7 @@ def _patched_save_phenomenal_memory(self: "PhenomenologicalExperiencer") -> None
         for m in tail:
             try:
                 moments_dicts.append(_moment_to_dict(m))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('continuity_patch', exc)
                 logger.debug("ContinuityPatch: moment serialise error — %s", exc)
 
@@ -154,13 +154,13 @@ def _patched_save_phenomenal_memory(self: "PhenomenologicalExperiencer") -> None
                 "💾 Phenomenal memory saved (atomic) — thread: %.60s…",
                 memory["continuity_thread"] or "(empty)",
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('continuity_patch', exc)
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise exc
 
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         record_degradation('continuity_patch', exc)
         logger.debug("ContinuityPatch._save: %s", exc)
 
@@ -203,7 +203,7 @@ def _patched_load_phenomenal_memory(self: "PhenomenologicalExperiencer") -> None
             bool(witness),
         )
 
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         record_degradation('continuity_patch', exc)
         logger.warning("ContinuityPatch._load: %s", exc)
 

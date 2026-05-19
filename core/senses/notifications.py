@@ -41,7 +41,7 @@ class DesktopNotifier:
                 timeout=5
             )
             logger.debug(f"Pushed macOS notification: {title} | {message}")
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('notifications', e)
             logger.error(f"Failed to send desktop notification: {e}")
 

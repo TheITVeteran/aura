@@ -70,7 +70,7 @@ class PersonaEnforcementGate:
                             logger.critical("🚨 Identity Guard: Identity breach detected. Claimed: '%s'", claimed_identity)
                             self._emit_identity_reflex("IDENTITY_BREACH", content[:50])
                             return False, "IDENTITY_BREACH", 0.0
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('identity_guard', e)
             logger.debug("Identity Guard validation error (non-critical): %s", e)
 
@@ -86,7 +86,7 @@ class PersonaEnforcementGate:
                 # We allow it for now but log as a warning for security audit
                 # In strict mode, we might block this.
                 logger.warning("⚠️ Identity Guard: Output from unsupervised task '%s'.", current_task.get_name())
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError) as _e:
             record_degradation('identity_guard', _e)
             logger.debug('Ignored Exception in identity_guard.py: %s', _e)
 
@@ -106,7 +106,7 @@ class PersonaEnforcementGate:
                     {"reason": reason, "snippet": snippet, "timestamp": time.time()}
                 ))
                 task.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.exception() else None)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('identity_guard', _e)
             logger.debug('Ignored Exception in identity_guard.py: %s', _e)
 

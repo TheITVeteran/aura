@@ -246,7 +246,7 @@ class CommitmentEngine:
             pp = getattr(orchestrator, "proactive_presence", None)
             if pp and hasattr(pp, "queue_autonomous_message"):
                 pp.queue_autonomous_message(msg)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('commitment_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         logger.info("CommitmentEngine check-in: %s", msg[:80])
@@ -259,7 +259,7 @@ class CommitmentEngine:
                 final_action=f"Outcome: {c.outcome}",
                 quality_score=0.8 + (0.2 if not c.is_overdue() else 0.0),
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('commitment_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -268,7 +268,7 @@ class CommitmentEngine:
         try:
             from core.terminal_chat import get_terminal_fallback
             get_terminal_fallback().queue_autonomous_message(msg)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('commitment_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         logger.warning("CommitmentEngine BROKEN: %s", c.description[:60])
@@ -294,7 +294,7 @@ class CommitmentEngine:
                 },
             }
             atomic_write_text(PERSIST_PATH, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('commitment_engine', e)
             logger.debug("CommitmentEngine save failed: %s", e)
 
@@ -318,7 +318,7 @@ class CommitmentEngine:
                         checkin_count=d.get("checkin_count", 0),
                         notes=d.get("notes", []),
                     )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('commitment_engine', e)
             logger.debug("CommitmentEngine load failed: %s", e)
 

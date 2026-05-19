@@ -82,7 +82,7 @@ class VisionActorSkill(BaseSkill):
             from core.senses.screen_vision import _process_image_for_vlm
             img_b64 = _process_image_for_vlm(image)
             return img_b64
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vision_actor', e)
             logger.error("Screen capture failed: %s", e)
             return None
@@ -110,7 +110,7 @@ class VisionActorSkill(BaseSkill):
                 data = json.loads(match.group(0))
                 if data.get("found"):
                     return (data.get("x", 0), data.get("y", 0))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vision_actor', e)
             logger.error("Vision location failed: %s", e)
         return None
@@ -142,7 +142,7 @@ class VisionActorSkill(BaseSkill):
         try:
             await asyncio.to_thread(self._physical_click, x, y, pyautogui)
             return {"ok": True, "summary": f"Successfully clicked '{target_desc}' at ({x}, {y})."}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('vision_actor', e)
             failsafe_exc = getattr(pyautogui, "FailSafeException", None)
             if failsafe_exc and isinstance(e, failsafe_exc):
@@ -159,7 +159,7 @@ class VisionActorSkill(BaseSkill):
             if enter:
                 await asyncio.to_thread(pyautogui.press, "enter")
             return {"ok": True, "summary": f"Successfully typed text (enter={enter})."}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('vision_actor', e)
             return {"ok": False, "summary": f"Typing failed: {e}"}
 

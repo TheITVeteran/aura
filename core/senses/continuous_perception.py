@@ -126,7 +126,7 @@ class ContinuousPerceptionEngine:
                 await asyncio.sleep(5.0)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('continuous_perception', e)
                 logger.debug("Continuous audio error: %s", e)
                 await asyncio.sleep(5)
@@ -199,7 +199,7 @@ class ContinuousPerceptionEngine:
                     
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('continuous_perception', e)
                 logger.debug("Continuous vision error: %s", e)
 
@@ -239,13 +239,13 @@ class ContinuousPerceptionEngine:
                             if agency and hasattr(agency, 'update_ambient_context'):
                                 agency.update_ambient_context(summary)
                                 
-                    except Exception as summarize_err:
+                    except (ImportError, AttributeError, RuntimeError) as summarize_err:
                         record_degradation('continuous_perception', summarize_err)
                         logger.debug("Failed to summarize ambient context: %s", summarize_err)
                         
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuous_perception', e)
                 logger.debug("Ambient loop error: %s", e)
                 await asyncio.sleep(10)
@@ -265,7 +265,7 @@ class ContinuousPerceptionEngine:
             if self.soma:
                 source_type = "vision" if "vision" in source else "audio"
                 self.soma.update_sensory_imprint(source_type, text)
-        except Exception as agency_err:
+        except (RuntimeError, AttributeError, TypeError) as agency_err:
             record_degradation('continuous_perception', agency_err)
             logger.debug("Failed to route perception to AgencyCore: %s", agency_err)
             
@@ -289,7 +289,7 @@ class ContinuousPerceptionEngine:
                             source=source,
                             urgency=0.35,
                         )
-                    except Exception as exc:
+                    except (ImportError, AttributeError, RuntimeError) as exc:
                         record_degradation('continuous_perception', exc)
                         record_degraded_event(
                             "continuous_perception",
@@ -323,7 +323,7 @@ class ContinuousPerceptionEngine:
                     return
 
                 await self.orchestrator.process_user_input(text, origin="continuous_perception")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuous_perception', e)
                 logger.error("Failed to dispatch spontaneous intent: %s", e)
                 

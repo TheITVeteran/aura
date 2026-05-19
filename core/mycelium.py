@@ -508,7 +508,7 @@ class MycelialNetwork:
             from core.event_bus import EventPriority, get_event_bus
 
             await get_event_bus().publish(signal_type, payload, priority=EventPriority.COGNITIVE)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('mycelium', exc)
             logger.debug("🍄 [MYCELIUM] emit bridge publish failed: %s", exc)
         return payload
@@ -541,7 +541,7 @@ class MycelialNetwork:
                 success = await run_io_bound(nr.subsurface_ping)
                 if not success:
                     logger.warning("🍄 [MYCELIUM] Neural Root pulse drop: %s", nr.name)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('mycelium', e)
                 logger.error("🍄 [MYCELIUM] Neural Root pulse failure: %s", e)
 
@@ -582,7 +582,7 @@ class MycelialNetwork:
                     "🍄 [MYCELIUM] 🧠 Qualia-weighted reinforcement: '%s' ±%.3f (q=%.2f, a=%.2f)",
                     pathway_id, qualia_bonus, qualia.q_norm, arousal
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('mycelium', e)
             capture_and_log(e, {'module': __name__})
 
@@ -776,7 +776,7 @@ class MycelialNetwork:
         except asyncio.CancelledError:
             hypha.log(f"CANCELLED: {activity}")
             raise
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mycelium', e)
             hypha.pulse(success=False)
             hypha.log(f"STALL/FAILURE: {activity} - {e}")
@@ -1160,12 +1160,12 @@ class MycelialNetwork:
                     if hasattr(self, '_critical_cleanup') and callable(self._critical_cleanup):
                         await self._critical_cleanup()
                         logger.info("🛡️ Memory Governor shutdown complete. All worker handles leaked/active were purged.")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError) as e:
                     record_degradation('mycelium', e)
                     logger.error(f"Error during Memory Governor shutdown: {e}")
                 logger.info("🍄 [MYCELIUM] Pulse check loop shutting down.")
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('mycelium', e)
                 logger.error("🍄 [MYCELIUM] Pulse check error: %s", e, exc_info=True)
                 await asyncio.sleep(10)  # Backoff on error
@@ -1252,7 +1252,7 @@ class MycelialNetwork:
                     cursor.execute('REPLACE INTO aegis_vault (key, data, timestamp) VALUES (?, ?, ?)',
                                    ("hyphae", json.dumps(hypha_data), time.time()))
                     conn.commit()
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('mycelium', e)
                 logger.error("🛡️ AEGIS: Vault Sync Worker Failed! %s", e)
                 raise
@@ -1260,7 +1260,7 @@ class MycelialNetwork:
         try:
             await run_io_bound(_sync_worker)
             logger.debug("🛡️ AEGIS: Vault Sync Complete.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mycelium', e)
             logger.error("🛡️ AEGIS: Vault Sync Failed! %s", e)
 
@@ -1326,7 +1326,7 @@ class MycelialNetwork:
                     object.__setattr__(inst, "_aegis_locked", True)
                     logger.critical("🛡️ AEGIS: Restoration Successful. Mycelium Unity restored.")
                     return True
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('mycelium', e)
                 logger.critical("🛡️ AEGIS FATAL: Restoration Failed! %s", e)
                 return False

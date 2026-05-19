@@ -89,13 +89,13 @@ class PersistentKnowledgeGraph:
                     classification="background_degraded",
                     context={"source": source, "reason": reason},
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('knowledge_graph', exc)
                 logger.debug("KnowledgeGraph degraded-event logging skipped: %s", exc)
             if return_decision:
                 return False, None
             return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('knowledge_graph', exc)
             logger.debug("KnowledgeGraph constitutional gate skipped: %s", exc)
             if return_decision:
@@ -127,7 +127,7 @@ class PersistentKnowledgeGraph:
             if not health["wal_mode"] or not health["integrity_ok"]:
                 health["status"] = "degraded"
                 
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('knowledge_graph', e)
             health["status"] = "error"
             health["error"] = str(e)
@@ -740,7 +740,7 @@ class PersistentKnowledgeGraph:
                 nodes.append({"id": "aura-core", "label": "Aura Core", "color": "#ff00ff"})
 
             return {"nodes": nodes, "edges": edges}
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('knowledge_graph', e)
             logger.error("Failed to generate vis data: %s", e)
             return {"nodes": [{"id": "error", "label": "Graph Error", "color": "red"}], "edges": []}

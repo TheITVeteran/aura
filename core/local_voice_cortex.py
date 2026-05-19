@@ -102,7 +102,7 @@ class LocalVoiceCortex:
             
             self._loop_task = fire_and_track(self.listen_loop(), name="VoiceListenLoop")
             logger.info("✅ Voice Cortex online. Aura is listening locally.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('local_voice_cortex', e)
             logger.error(f"Failed to start Voice Cortex: {e}")
 
@@ -145,12 +145,12 @@ class LocalVoiceCortex:
             else:
                 # Last resort fallback to system say
                 await asyncio.to_thread(subprocess.run, ["say", "-v", "Samantha", text])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('local_voice_cortex', e)
             logger.error(f"TTS failed: {e}")
             try:
                 await asyncio.to_thread(subprocess.run, ["say", text])
-            except Exception as e2:
+            except (subprocess.SubprocessError, OSError) as e2:
                 record_degradation('local_voice_cortex', e2)
                 logger.error(f"Fallback TTS also failed: {e2}")
 
@@ -173,7 +173,7 @@ class LocalVoiceCortex:
                 )
                 stream.start_stream()
                 retry_delay = 1.0  # Reset on successful open
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('local_voice_cortex', e)
                 logger.error(f"Could not open audio stream: {e}. Retrying in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
@@ -215,7 +215,7 @@ class LocalVoiceCortex:
                                 break
                     except asyncio.TimeoutError:
                         continue
-                    except Exception as e:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                         record_degradation('local_voice_cortex', e)
                         logger.debug(f"Audio read error: {e}")
                         break
@@ -266,7 +266,7 @@ class LocalVoiceCortex:
                 logger.warning("⚠️ Transcribe cancelled! Waiting for thread to release VRAM cleanly...")
                 try:
                     await transcribe_task
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('local_voice_cortex', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 raise
@@ -283,6 +283,6 @@ class LocalVoiceCortex:
                     if response:
                         await self.speak(response)
                         
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('local_voice_cortex', e)
             logger.error(f"Error processing audio segment: {e}")

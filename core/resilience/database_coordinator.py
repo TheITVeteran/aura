@@ -34,7 +34,7 @@ class DatabaseCoordinator:
                 self._process_writes(),
                 name="aura.database_coordinator",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._worker_task = get_task_tracker().create_task(self._process_writes(), name="aura.database_coordinator")
         logger.info("🗄️ DatabaseCoordinator worker started.")
 
@@ -73,7 +73,7 @@ class DatabaseCoordinator:
                     
                     if not future.done():
                         future.set_result(cursor.lastrowid or True)
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
                     record_degradation('database_coordinator', e)
                     logger.error("Database write error on %s: %s", db_path, e)
                     if not future.done():
@@ -83,7 +83,7 @@ class DatabaseCoordinator:
                     
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('database_coordinator', e)
                 logger.error("DatabaseCoordinator loop error: %s", e)
                 await asyncio.sleep(1)
@@ -107,7 +107,7 @@ class DatabaseCoordinator:
             try:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 logger.info("✓ [DB] WAL checkpoint: %s", path)
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('database_coordinator', e)
                 logger.error("❌ [DB] WAL checkpoint failed for %s: %s", path, e)
 
@@ -118,7 +118,7 @@ class DatabaseCoordinator:
             try:
                 conn.execute("VACUUM")
                 logger.info("✓ [DB] Vacuumed: %s", path)
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('database_coordinator', e)
                 logger.error("❌ [DB] Vacuum failed for %s: %s", path, e)
 

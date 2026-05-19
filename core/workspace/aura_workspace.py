@@ -105,7 +105,7 @@ class WorkspacePolicy:
 
             if not get_capability_token_store().consume(token_id):
                 raise PermissionError("capability_token_consume_failed")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("aura_workspace", exc)
             raise
 
@@ -131,7 +131,7 @@ class WorkspacePolicy:
                 authority_receipt_id=token.receipt_id,
                 capability_token_id=capability_token,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("aura_workspace", exc)
             return WorkspacePolicyDecision(False, f"capability_token_validation_failed:{exc}")
 
@@ -167,7 +167,7 @@ class WorkspacePolicy:
                 or getattr(decision, "executive_intent_id", None)
             )
             return WorkspacePolicyDecision(True, "authority_gateway_approved", receipt)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("aura_workspace", exc)
             return None
 

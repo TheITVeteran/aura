@@ -238,7 +238,7 @@ class AestheticEngine:
             elif circumplex and hasattr(circumplex, "current_valence"):
                 self._valence = getattr(circumplex, "current_valence", self._valence)
                 self._arousal = getattr(circumplex, "current_arousal", self._arousal)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("AestheticEngine: affect read failed: %s", e)
 
@@ -249,7 +249,7 @@ class AestheticEngine:
                 v, a = circ.get_coordinates()
                 self._valence = v
                 self._arousal = a
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("aesthetic_engine", e)
             logger.debug("AestheticEngine: circumplex fallback read failed: %s", e)
 
@@ -270,7 +270,7 @@ class AestheticEngine:
                 if "arousal" in mood:
                     ncs_arousal = (mood["arousal"] + 1.0) / 2.0
                     self._arousal = 0.6 * self._arousal + 0.4 * max(0.0, min(1.0, ncs_arousal))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("AestheticEngine: neurochemical read failed: %s", e)
 
@@ -282,7 +282,7 @@ class AestheticEngine:
                 self._free_energy = status.get("free_energy", self._free_energy)
             elif fee and hasattr(fee, "_history") and fee._history:
                 self._free_energy = fee._history[-1].free_energy
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("AestheticEngine: free energy read failed: %s", e)
 
@@ -296,7 +296,7 @@ class AestheticEngine:
                     import numpy as np
                     raw_d = substrate.x[substrate.idx_dominance]
                     self._dominance = float(np.clip((raw_d + 1.0) / 2.0, 0, 1))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("AestheticEngine: substrate read failed: %s", e)
 
@@ -309,7 +309,7 @@ class AestheticEngine:
                     self._drives = {k: v for k, v in ds.items() if isinstance(v, (int, float))}
             elif drive and hasattr(drive, "get_drives"):
                 self._drives = drive.get_drives()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("AestheticEngine: drive read failed: %s", e)
 
@@ -318,7 +318,7 @@ class AestheticEngine:
             qs = ServiceContainer.get("qualia_synthesizer", default=None)
             if qs:
                 self._pri = getattr(qs, "pri", 0.5)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("aesthetic_engine", e)
             logger.debug("AestheticEngine: qualia PRI read failed: %s", e)
 
@@ -752,7 +752,7 @@ class AestheticEngine:
                 json.dumps(trimmed, indent=2, default=str)
             )
             logger.debug("Aesthetic journal saved (%d entries)", len(trimmed))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("Failed to save aesthetic journal: %s", e)
 
@@ -764,7 +764,7 @@ class AestheticEngine:
                 if isinstance(data, list):
                     self._journal = data[-_MAX_JOURNAL_ENTRIES:]
                     logger.debug("Loaded aesthetic journal (%d entries)", len(self._journal))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('aesthetic_engine', e)
             logger.debug("Failed to load aesthetic journal: %s", e)
             self._journal = []

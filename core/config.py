@@ -69,7 +69,7 @@ class Paths(BaseModel):
             probe.unlink(missing_ok=True)
             self.__class__._runtime_home_cache = candidate
             return candidate
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('config', exc)
             fallback = self.project_root / ".aura_runtime"
             fallback.mkdir(parents=True, exist_ok=True)
@@ -471,7 +471,7 @@ class AuraConfig(BaseSettings):
             audit = audit_lane_assignments()
             if not bool(audit.get("ok", True)):
                 logger.warning("LLM lane role audit found issues: %s", audit.get("issues", []))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('config', exc)
             logger.debug("LLM role canonicalization skipped: %s", exc)
 
@@ -501,7 +501,7 @@ class AuraConfig(BaseSettings):
             else:
                 with open(file_path.with_suffix('.json'), 'w') as f:
                     json.dump(data, f, indent=4)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('config', e)
             logger.error("config_save_failed: %s", e)
 

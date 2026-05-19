@@ -45,7 +45,7 @@ def main() -> None:
             sys.stdout.write(f"{len(resp)}\n{resp}\n")
             sys.stdout.flush()
             
-        except Exception as _e:
+        except (json.JSONDecodeError, TypeError, ValueError) as _e:
             record_degradation('repl_daemon', _e)
             err = json.dumps({"success": False, "output": f"Daemon Error: {str(_e)}"})
             sys.stdout.write(f"{len(err)}\n{err}\n")

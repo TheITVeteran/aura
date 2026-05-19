@@ -413,7 +413,7 @@ class AutopoiesisEngine:
             adaptive_immune = ServiceContainer.get("adaptive_immune_system", default=None)
             if adaptive_immune and hasattr(adaptive_immune, "observe_signature"):
                 adaptive_immune.observe_signature(component, exception_type)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autopoiesis', exc)
             logger.debug("Adaptive immune signature feed skipped: %s", exc)
 
@@ -487,7 +487,7 @@ class AutopoiesisEngine:
                 await self._do_tick()
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 # The immune system itself must not crash.
                 logger.exception("Autopoiesis tick failed (self-healing continues)")
             await asyncio.sleep(self._tick_interval)
@@ -546,7 +546,7 @@ class AutopoiesisEngine:
             try:
                 raw = fn()
                 health = max(0.0, min(1.0, float(raw)))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autopoiesis', exc)
                 # If the health function itself fails, the component is in
                 # bad shape.  Record a zero and log the error.
@@ -805,7 +805,7 @@ class AutopoiesisEngine:
                 if asyncio.iscoroutine(ret):
                     await ret
                 success = True
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autopoiesis', exc)
                 error_msg = f"{type(exc).__name__}: {exc}"
                 logger.error(
@@ -820,7 +820,7 @@ class AutopoiesisEngine:
         try:
             fn = self._health_fns.get(component)
             health_after = max(0.0, min(1.0, float(fn()))) if fn else health_before
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             health_after = health_before
 
         duration_ms = (time.time() - t0) * 1000
@@ -902,7 +902,7 @@ class AutopoiesisEngine:
                 },
             )
             return decision.is_approved()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autopoiesis', exc)
             # If the governance system is unavailable, allow the repair.
             # A living system must be able to heal itself even when parts

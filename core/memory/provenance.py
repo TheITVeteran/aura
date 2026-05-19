@@ -105,7 +105,7 @@ def _read_confidence_from_substrate() -> float:
             # Lower free energy → higher subjective confidence
             free_energy = float(getattr(cur, "free_energy", 0.5) or 0.5)
             return max(0.05, min(0.99, 1.0 - free_energy))
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("memory_provenance", exc)
         logger.debug("Substrate confidence lookup failed: %s", exc)
     return 0.7

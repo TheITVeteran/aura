@@ -49,7 +49,7 @@ class LatentSpaceDistiller:
                         summary = await brain.think(
                             f"Summarize the key insights and decisions from this conversation in 2-3 sentences:\n\n{full_text[:3000]}"
                         )
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('latent_distiller', e)
                     logger.debug("MIST: LLM distillation unavailable: %s", e)
 
@@ -65,7 +65,7 @@ class LatentSpaceDistiller:
                         metadata={"type": "distilled_wisdom", "timestamp": time.time()}
                     )
                     logger.info("MIST: Distilled session into permanent memory.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('latent_distiller', e)
             logger.error("❌ MIST: Distillation failed: %s", e)
         finally:

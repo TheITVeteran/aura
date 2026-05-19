@@ -77,7 +77,7 @@ class DecoupledVoiceEngine:
         try:
             from core.container import ServiceContainer
             self._init_engines()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine_decoupled', e)
             logger.error(f"Failed to init speech worker engines: {e}")
             return
@@ -98,7 +98,7 @@ class DecoupledVoiceEngine:
                 self.state = VoiceState.IDLE
             except queue.Empty:
                 continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('voice_engine_decoupled', e)
                 logger.error(f"Speech worker error: {e}")
                 self.state = VoiceState.IDLE
@@ -135,6 +135,6 @@ class DecoupledVoiceEngine:
                     break
                 time.sleep(0.05)
                 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_engine_decoupled', e)
             logger.error(f"TTS Synthesis error: {e}")

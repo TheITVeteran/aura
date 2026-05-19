@@ -52,7 +52,7 @@ def register_stability_guardian_check() -> bool:
         guardian.add_check(_morphogenesis_health_check)
         logger.info("🧬 Morphogenesis health check registered with StabilityGuardian.")
         return True
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         logger.debug("StabilityGuardian hook skipped: %s", exc)
         return False
@@ -133,7 +133,7 @@ def _morphogenesis_health_check():
             message=message,
             severity=severity,
         )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         from core.resilience.stability_guardian import HealthCheckResult
         return HealthCheckResult(
@@ -173,7 +173,7 @@ def register_self_healing_watch() -> bool:
         )
         logger.info("🧬 Morphogenesis registered with SelfHealing watchdog.")
         return True
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         logger.debug("SelfHealing hook skipped: %s", exc)
         return False
@@ -184,7 +184,7 @@ def heartbeat_self_healing() -> None:
     try:
         from core.runtime.self_healing import get_healer
         get_healer().heartbeat("morphogenesis_runtime")
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 
 
@@ -230,7 +230,7 @@ def modulate_metabolic_energy() -> Optional[float]:
         coord._energy_refill_rate = base_rate * modifier
 
         return modifier
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         logger.debug("Metabolic modulation skipped: %s", exc)
         return None
@@ -299,7 +299,7 @@ def get_morphogenesis_routing_advice() -> Dict[str, Any]:
             "reason": reason,
             "field_snapshot": field_state,
         }
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         logger.debug("Routing advice skipped: %s", exc)
         return default
@@ -330,7 +330,7 @@ def observe_orchestrator_exception(
                 source=source,
                 danger=0.65,
             )
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 
 
@@ -357,7 +357,7 @@ def emit_task_signal(
             payload={"task": task_description[:200]},
             ttl_ticks=6,
         ))
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 
 
@@ -377,7 +377,7 @@ async def record_organ_formation_episode(organ_data: Dict[str, Any]) -> None:
             try:
                 from core.memory.episodic_memory import get_episodic_memory
                 mem = get_episodic_memory()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 return
 
         if not hasattr(mem, "record_episode_async"):
@@ -410,7 +410,7 @@ async def record_organ_formation_episode(organ_data: Dict[str, Any]) -> None:
             },
         )
         logger.debug("🧬 Organ formation episode recorded: %s", organ_name)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('hooks', exc)
         logger.debug("Organ formation episode recording failed: %s", exc)
 
@@ -440,7 +440,7 @@ def should_suppress_autonomous_initiative() -> bool:
 
         # Suppress if danger or resource pressure is elevated
         return (danger > 0.6 or resource_pressure > 0.7 or inhibition > 0.5)
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return False
 
 
@@ -471,7 +471,7 @@ def get_cell_capability_boost(tool_name: str) -> float:
                 confidence = cell.state.confidence
                 boost = max(boost, min(0.5, health * 0.3 + confidence * 0.2))
         return boost
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return 0.0
 
 
@@ -496,7 +496,7 @@ async def wire_all_hooks() -> Dict[str, bool]:
         from core.container import ServiceContainer
         coord = ServiceContainer.get("metabolic_coordinator", default=None)
         results["metabolic_modulation"] = coord is not None
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         results["metabolic_modulation"] = False
 
     # Routing advice is pulled on-demand by InferenceGate, no registration needed.

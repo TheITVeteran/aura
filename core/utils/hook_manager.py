@@ -41,7 +41,7 @@ class HookManager:
                 else:
                     res = cb(*args, **kwargs)
                 results.append(res)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('hook_manager', e)
                 logger.error("Error in hook %s: %s", event, e, exc_info=True)
                 results.append(None)

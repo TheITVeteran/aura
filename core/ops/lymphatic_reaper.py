@@ -48,7 +48,7 @@ class LymphaticReaper:
         while self._running:
             try:
                 await self.sweep()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('lymphatic_reaper', e)
                 logger.error("Reaper sweep failed: %s", e)
             await asyncio.sleep(self._interval)
@@ -102,7 +102,7 @@ class LymphaticReaper:
                             f.unlink()
                         elif f.is_dir():
                             shutil.rmtree(f)
-                except Exception as e:
+                except (OSError, IOError) as e:
                     record_degradation('lymphatic_reaper', e)
                     logger.debug("Reaper: failed to clean %s: %s", f, e)
         return reclaimed

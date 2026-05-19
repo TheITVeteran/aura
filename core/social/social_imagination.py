@@ -196,7 +196,7 @@ class SocialImagination:
                 from core.config import config
 
                 storage_path = config.paths.data_dir / "social_imagination.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "social_imagination.json"
         self._storage_path = Path(storage_path)
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +216,7 @@ class SocialImagination:
                     for frame in (frames or [])
                     if isinstance(frame, dict)
                 ]
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('social_imagination', exc)
             logger.warning("SocialImagination load failed: %s", exc)
 
@@ -232,7 +232,7 @@ class SocialImagination:
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2)
             os.replace(tmp, self._storage_path)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('social_imagination', exc)
             logger.error("SocialImagination save failed: %s", exc)
 
@@ -414,7 +414,7 @@ def get_social_imagination() -> SocialImagination:
 
             if not ServiceContainer.has("social_imagination"):
                 ServiceContainer.register_instance("social_imagination", _instance, required=False)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('social_imagination', exc)
             logger.debug("SocialImagination container registration skipped: %s", exc)
     return _instance

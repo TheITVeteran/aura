@@ -147,7 +147,7 @@ class GuardrailAuditor:
                     violations.append(f"FORMAL_INVARIANT: {inv}")
         except ImportError:
             logger.debug("formal_verifier not available — skipping formal checks")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.debug("Formal verification error (non-fatal): %s", e)
 
         return violations
@@ -164,7 +164,7 @@ class GuardrailAuditor:
         try:
             original_source = original_path.read_text(encoding="utf-8")
             original_tree = ast.parse(original_source)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return violations
 
         # Count governance calls in original

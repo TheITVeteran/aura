@@ -95,7 +95,7 @@ class PNEUMA:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('pneuma', e)
                 logger.debug("PNEUMA loop error: %s", e)
 

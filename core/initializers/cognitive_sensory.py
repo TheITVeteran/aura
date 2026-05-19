@@ -19,7 +19,7 @@ def init_cognitive_sensory_layer(container):
         if sensory is not None:
             container.register_instance("sensory_system", sensory, required=False)
             logger.debug("Sensory system registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Sensory system init deferred: %s", e)
 
@@ -29,7 +29,7 @@ def init_cognitive_sensory_layer(container):
         buffer = ContinuousSensoryBuffer(data_dir=getattr(config.paths, "data_dir", None))
         container.register_instance("continuous_vision", buffer, required=False)
         logger.debug("Continuous vision buffer registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Continuous vision init deferred: %s", e)
 
@@ -39,7 +39,7 @@ def init_cognitive_sensory_layer(container):
         grav = get_gravitation_engine()
         container.register_instance("conceptual_gravitation", grav, required=False)
         logger.debug("Conceptual gravitation engine registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Conceptual gravitation init deferred: %s", e)
 
@@ -48,7 +48,7 @@ def init_cognitive_sensory_layer(container):
         compressor = get_knowledge_compressor()
         container.register_instance("knowledge_compressor", compressor, required=False)
         logger.debug("Knowledge compressor registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Knowledge compressor init deferred: %s", e)
 
@@ -57,7 +57,7 @@ def init_cognitive_sensory_layer(container):
         nsg = get_navigating_graph()
         container.register_instance("navigating_graph", nsg, required=False)
         logger.debug("Navigating graph registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Navigating graph init deferred: %s", e)
 
@@ -66,7 +66,7 @@ def init_cognitive_sensory_layer(container):
         stdp = get_stdp_engine()
         container.register_instance("stdp_engine", stdp, required=False)
         logger.debug("STDP learning engine registered (with MESU plasticity).")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("STDP engine init deferred: %s", e)
 
@@ -78,7 +78,7 @@ def init_cognitive_sensory_layer(container):
         metacog = MetaCognitiveMonitor()
         container.register_instance("metacognitive_monitor", metacog, required=False)
         logger.debug("MetaCognitive monitor registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("MetaCognitive monitor init deferred: %s", e)
 
@@ -87,7 +87,7 @@ def init_cognitive_sensory_layer(container):
         im_engine = IntrinsicMotivationEngine()
         container.register_instance("intrinsic_motivation", im_engine, required=False)
         logger.debug("Intrinsic motivation engine registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Intrinsic motivation init deferred: %s", e)
 
@@ -96,7 +96,7 @@ def init_cognitive_sensory_layer(container):
         distillery = ExperienceDistillery()
         container.register_instance("experience_distillery", distillery, required=False)
         logger.debug("Experience distillery registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Experience distillery init deferred: %s", e)
 
@@ -105,7 +105,7 @@ def init_cognitive_sensory_layer(container):
         gov = PlasticityGovernor()
         container.register_instance("plasticity_governor", gov, required=False)
         logger.debug("Plasticity governor (EWC) registered.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Plasticity governor init deferred: %s", e)
 
@@ -118,7 +118,7 @@ def init_cognitive_sensory_layer(container):
         # Build incrementally in background (don't block boot)
         get_task_tracker().create_task(_build_code_graph_background(graph))
         logger.info("Code graph registered (building in background).")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('cognitive_sensory', e)
         logger.debug("Code graph init deferred: %s", e)
 
@@ -132,6 +132,6 @@ async def _build_code_graph_background(graph):
         stats = await graph.build(incremental=True)
         _logger.info("Code graph ready: %d files, %d symbols, %d relationships (%.1fs)",
                      stats["files"], stats["symbols"], stats["relationships"], stats.get("build_time_s", 0))
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
         record_degradation('cognitive_sensory', e)
         _logger.warning("Code graph background build failed: %s", e)

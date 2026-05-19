@@ -246,7 +246,7 @@ class ValueAutopoiesis:
 
             return applied_shifts
 
-        except Exception as _graph_exc:
+        except (ImportError, AttributeError, RuntimeError) as _graph_exc:
             logger.debug(
                 "DynamicValueGraph unavailable, using legacy pipeline: %s",
                 _graph_exc,
@@ -477,7 +477,7 @@ class ValueAutopoiesis:
             hv = get_heartstone_values()
             hv._adjust(shift.value_name, shift.delta)
             return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('value_autopoiesis', exc)
             logger.error("Failed to apply shift %s: %s", shift.value_name, exc)
             return False
@@ -487,7 +487,7 @@ class ValueAutopoiesis:
         try:
             from core.affect.heartstone_values import get_heartstone_values
             return get_heartstone_values().values
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return {}
 
     # ── Persistence ─────────────────────────────────────────────────────
@@ -511,9 +511,9 @@ class ValueAutopoiesis:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except Exception:
+                except (OSError, IOError):
                     pass  # no-op: intentional
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('value_autopoiesis', exc)
             logger.debug("Autopoiesis state save failed: %s", exc)
 
@@ -529,7 +529,7 @@ class ValueAutopoiesis:
                 "Autopoiesis state restored: cycle=%d, origin_values=%d",
                 self._cycle_count, len(self._origin_values),
             )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('value_autopoiesis', exc)
             logger.debug("Autopoiesis state load failed: %s", exc)
 
@@ -539,7 +539,7 @@ class ValueAutopoiesis:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(_EVOLUTION_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(shift.to_dict(), default=str) + "\n")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('value_autopoiesis', exc)
             logger.debug("Evolution log write failed: %s", exc)
 
@@ -550,7 +550,7 @@ class ValueAutopoiesis:
         try:
             from core.event_bus import get_event_bus
             get_event_bus().publish_threadsafe(topic, data)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     # ── Public API ──────────────────────────────────────────────────────

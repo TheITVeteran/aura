@@ -113,7 +113,7 @@ class HiddenEvalPack:
                 continue
             try:
                 predicted = solver(task)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 failures.append(f"{task_id}:solver_error:{type(exc).__name__}")
                 continue
             if predicted == task.answer:

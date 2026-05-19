@@ -143,7 +143,7 @@ class LocalPipeBus:
             return
         try:
             conn.close()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('local_pipe_bus', exc)
             logger.debug("📡 LocalPipeBus: connection close skipped: %s", exc)
 
@@ -180,7 +180,7 @@ class LocalPipeBus:
                 await asyncio.wait_for(self._reader_task, timeout=1.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass # Normal during shutdown
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Error during stop: %s", e)
         if self._dispatcher_task:
@@ -190,7 +190,7 @@ class LocalPipeBus:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 logger.debug("Suppressed bare exception")
                 pass  # no-op: intentional
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Dispatcher stop error: %s", e)
         self._cleanup_expired_shm_segments(force=True)
@@ -225,7 +225,7 @@ class LocalPipeBus:
                 continue
             try:
                 shm.close()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.debug("📡 LocalPipeBus: SHM cleanup failed for %s: %s", name, e)
 
@@ -255,12 +255,12 @@ class LocalPipeBus:
             self._retain_outbound_shm(shm)
             logger.debug("🚀 [SHM] Offloaded payload: %s (%d bytes)", shm_name, len(payload_bytes))
             return {"__shm__": shm_name}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('local_pipe_bus', e)
             if shm is not None:
                 try:
                     shm.close()
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('local_pipe_bus', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             logger.warning("⚠️ SHM offload failed, falling back to Pipe: %s", e)
@@ -298,7 +298,7 @@ class LocalPipeBus:
             try:
                 # We can't poll writing, but we can check if it's explicitly broken if there's a quick way
                 pass  # no-op: intentional
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('local_pipe_bus', _e)
                 logger.debug('Ignored Exception in local_pipe_bus.py: %s', _e)
 
@@ -329,7 +329,7 @@ class LocalPipeBus:
                         "PipeWriteSaturation",
                         f"write timeout streak={self._write_timeout_count}; suppressing writes for 30s",
                     )
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass
         except (BrokenPipeError, EOFError, OSError, ConnectionResetError) as e:
             if not getattr(self, '_pipe_broken', False):
@@ -337,9 +337,9 @@ class LocalPipeBus:
                 logger.info("📡 Bus pipe closed (normal shutdown): %s", str(e)[:60])
             try:
                 self._safe_close_connection(self.write_conn)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # Already closed, expected
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('local_pipe_bus', e)
             if self._is_running:
                 logger.error("❌ Unexpected error in bus send: %s", e)
@@ -398,7 +398,7 @@ class LocalPipeBus:
             
             try:
                 self._safe_close_connection(self.write_conn)
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('local_pipe_bus', _e)
                 logger.debug("📡 LocalPipeBus: Secondary error during request-failure close: %s", _e)
             raise
@@ -424,7 +424,7 @@ class LocalPipeBus:
                 if self._activity_callback:
                     try:
                         self._activity_callback()
-                    except Exception as callback_err:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as callback_err:
                         record_degradation('local_pipe_bus', callback_err)
                         logger.debug("LocalPipeBus activity callback failed: %s", callback_err)
                 
@@ -440,7 +440,7 @@ class LocalPipeBus:
                         # Actually, for a single read, we should detach.
                         shm.close()
                         logger.debug("📥 Resolved SHM payload: %s", shm_name)
-                    except Exception as e:
+                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                         record_degradation('local_pipe_bus', e)
                         logger.error("❌ Failed to resolve SHM payload %s: %s", shm_name, e)
                         if msg.get("is_request") and "request_id" in msg:
@@ -493,7 +493,7 @@ class LocalPipeBus:
                 logger.error("🛑 Bus read error: %s", e)
                 self._cancel_pending_requests(e)
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.exception("❌ Error in Bus read loop: %s", e)
                 
@@ -505,7 +505,7 @@ class LocalPipeBus:
                         reason="read_loop_exception",
                         metadata={"error": str(e)}
                     )
-                except Exception as _heal_e:
+                except (ImportError, AttributeError, RuntimeError) as _heal_e:
                     logger.debug(f"Deep repair scheduling failed: {_heal_e}")
                     
                 await asyncio.sleep(1.0)
@@ -524,7 +524,7 @@ class LocalPipeBus:
                     self._dispatch_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("❌ Error in Bus dispatch loop: %s", e)
                 
@@ -536,7 +536,7 @@ class LocalPipeBus:
                         reason="dispatch_loop_exception",
                         metadata={"error": str(e)}
                     )
-                except Exception as _heal_e:
+                except (ImportError, AttributeError, RuntimeError) as _heal_e:
                     logger.debug(f"Deep repair scheduling failed: {_heal_e}")
                     
                 await asyncio.sleep(1.0)
@@ -570,7 +570,7 @@ class LocalPipeBus:
                 raw_resp = json.dumps(resp)
                 # ZENITH LOCKDOWN: Dedicated executor
                 await self.loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_resp)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('local_pipe_bus', e)
             logger.error("❌ Bus handler error (%s): %s", msg.get("type"), e)
             
@@ -582,7 +582,7 @@ class LocalPipeBus:
                     reason="handler_exception",
                     metadata={"error": str(e), "msg_type": msg.get("type")}
                 )
-            except Exception as _heal_e:
+            except (ImportError, AttributeError, RuntimeError) as _heal_e:
                 logger.debug(f"Deep repair scheduling failed: {_heal_e}")
                 
             if msg.get("is_request") and "request_id" in msg:

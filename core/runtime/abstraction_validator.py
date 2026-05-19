@@ -81,7 +81,7 @@ class PrincipleValidator:
         for ep in episodes:
             try:
                 ok = bool(applicator(candidate, ep))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 ok = False
             if ok:
                 result.passed += 1

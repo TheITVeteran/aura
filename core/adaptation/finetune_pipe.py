@@ -84,7 +84,7 @@ class FinetunePipe:
             if len(self._batch) >= 5:
                 await self.flush()
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('finetune_pipe', e)
             logger.error("Failed to register success trace: %s", e)
 
@@ -124,7 +124,7 @@ class FinetunePipe:
                             obj = json.loads(line)
                             q = obj.pop("_quality", 0.5)
                             entries.append((q, json.dumps(obj)))
-                        except Exception:
+                        except (json.JSONDecodeError, TypeError, ValueError):
                             entries.append((0.5, line))
                     entries.sort(key=lambda x: x[0], reverse=True)
                     with open(path, "w", encoding="utf-8") as f:
@@ -133,11 +133,11 @@ class FinetunePipe:
                             
                 try:
                     await asyncio.to_thread(_rotate_dataset, self.dataset_path)
-                except Exception as rotate_err:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as rotate_err:
                     record_degradation('finetune_pipe', rotate_err)
                     logger.debug("Dataset rotation skipped: %s", rotate_err)
                     
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('finetune_pipe', e)
                 logger.error("Failed to flush traces to disk: %s", e)
 

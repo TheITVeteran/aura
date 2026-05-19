@@ -68,7 +68,7 @@ DENSE MEMORY SPORES:
             logger.info("✅ Context Pruned. Reduced to %d messages.", len(new_history))
             return new_history
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('context_pruner', e)
             logger.error("Pruning failed: %s", e)
             # Fallback: Just drop some messages if LLM pruning fails

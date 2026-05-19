@@ -112,7 +112,7 @@ class SafeSelfOptimizer:
             return True
         try:
             report = json.loads(Path(report_path).read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.error("LoRA eval report unreadable: %s", exc)
             return False
         max_regression = float(report.get("max_regression", 0.0))

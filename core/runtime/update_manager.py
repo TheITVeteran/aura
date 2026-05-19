@@ -136,7 +136,7 @@ class UpdateManager:
         self._key_path.write_bytes(raw)
         try:
             os.chmod(self._key_path, 0o600)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
         return raw
 
@@ -148,7 +148,7 @@ class UpdateManager:
             data = archive.read_bytes()
             mac = hmac.new(self._key(), data, hashlib.sha256).digest()
             return hmac.compare_digest(mac, sig)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
     async def list_available(self, channel: Channel) -> List[Release]:
@@ -187,7 +187,7 @@ class UpdateManager:
         try:
             with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(staged)
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             attempt.failed_reason = f"unpack_failed:{exc}"
             self._record(attempt, "unpack_failed")
@@ -204,7 +204,7 @@ class UpdateManager:
                 # Non-symlink layout: move the directory aside, then swap
                 shutil.move(str(_LIVE_LINK), str(_LIVE_LINK) + f".pre-{release.version}")
                 shutil.move(str(staged), str(_LIVE_LINK))
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             attempt.failed_reason = f"cutover_failed:{exc}"
             self._record(attempt, "cutover_failed")
@@ -231,7 +231,7 @@ class UpdateManager:
             with tarfile.open(attempt.backed_up_to, "r:gz") as tar:
                 tar.extractall(_LIVE_LINK.parent)
             self._record(attempt, "rolled_back")
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             self._record(attempt, f"rollback_failed:{exc}")
 
@@ -240,7 +240,7 @@ class UpdateManager:
         try:
             from core.identity.self_object import get_self
             return get_self().snapshot().continuity_hash
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod
@@ -258,9 +258,9 @@ class UpdateManager:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
 

@@ -54,7 +54,7 @@ class ConsciousnessAugmentor:
                 if hasattr(qualia, "get_state"):
                     status["qualia"] = qualia.get_state()
             status["objective_hint"] = str(objective or "")[:240]
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation("integration", exc)
             status["error"] = str(exc)
         return {k: v for k, v in status.items() if v is not None}
@@ -125,7 +125,7 @@ class ConsciousnessIntegration:
                 
             self._running = True
             logger.info("🌟 Consciousness Integration Layer initialized")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('integration', e)
             logger.error("❌ Consciousness Integration failed: %s", e)
 

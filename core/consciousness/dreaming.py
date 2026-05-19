@@ -40,7 +40,7 @@ class DreamingProcess:
                     ServiceContainer.get("identity_service", default=None)
                     or ServiceContainer.get("identity", default=None)
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Failed to resolve identity service: %s", exc)
         return self._identity
@@ -50,7 +50,7 @@ class DreamingProcess:
         if not self._narrator:
             try:
                 self._narrator = ServiceContainer.get("narrator", default=None)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Failed to resolve narrator service: %s", exc)
         return self._narrator
@@ -83,7 +83,7 @@ class DreamingProcess:
                     await self.dream()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('dreaming', e)
                 logger.error(f"Error in dreaming loop: {e}")
 
@@ -216,7 +216,7 @@ class DreamingProcess:
                             "aura_pattern", "recurring_theme", p["pattern"],
                             confidence=conf,
                         )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Dream: world_model belief update failed: %s", exc)
 
@@ -227,7 +227,7 @@ class DreamingProcess:
                     novel = [p for p in patterns if p["frequency"] == 1]
                     for _ in novel[:3]:  # Cap curiosity nudges
                         homeostasis.feed_curiosity(0.05)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Dream: homeostasis curiosity feed failed: %s", exc)
 
@@ -242,7 +242,7 @@ class DreamingProcess:
                             p["frequency"] / 10.0,
                             "identity",
                         )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Dream: credit_assignment failed: %s", exc)
 
@@ -267,14 +267,14 @@ class DreamingProcess:
                     consolidated_count = await vector_mem.consolidate(brain=None)
                     if consolidated_count > 0:
                         logger.info(f"💾 Consolidated {consolidated_count} semantic clusters into insights.")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('dreaming', exc)
                 logger.debug("Dream: vector memory consolidation failed: %s", exc)
 
             # 8. Update Identity with extracted patterns
             self._process_growth(recent_events, patterns)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dreaming', e)
             logger.error(f"Dream cycle failed: {e}")
 
@@ -293,7 +293,7 @@ class DreamingProcess:
                 summary.append(f"Context: {ep.context} | Action: {ep.action} | Outcome: {ep.outcome} (Valence: {ep.emotional_valence})")
 
             return "\n".join(summary)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dreaming', e)
             logger.debug(f"Failed to get recent summary: {e}")
             return ""

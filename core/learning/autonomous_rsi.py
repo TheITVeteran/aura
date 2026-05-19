@@ -93,7 +93,7 @@ class ExternalHiddenEvalCustodian:
             total += 1
             try:
                 prediction = solver(public_task)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 prediction = object()
             if prediction == task.answer:
                 passed += 1
@@ -265,7 +265,7 @@ if __name__ == '__main__':
             except json.JSONDecodeError as exc:
                 return False, None, f"json_decode_error:{exc}:{proc.stdout[-240:]}"
         return False, None, (proc.stderr or proc.stdout or f"returncode:{proc.returncode}")[-500:]
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         from core.runtime.errors import record_degradation
         record_degradation("rsi_solver_execution", exc)
         return False, None, repr(exc)
@@ -434,7 +434,7 @@ def generate_solver_source(handlers: Set[str], *, generation_id: str) -> Tuple[s
                     return final_code, metadata
                 repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
             raise RuntimeError(f"generated solver failed sandbox after repair attempts: {repair_feedback}")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         from core.runtime.errors import record_degradation
         record_degradation("autonomous_rsi_generation", exc)
         metadata["parse_result"] = str(exc)

@@ -582,7 +582,7 @@ class CodingSessionMemory:
             if not self.persist_path.exists():
                 return
             payload = json.loads(self.persist_path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('coding_session_memory', exc)
             logger.debug("Coding session memory load skipped: %s", exc)
             return
@@ -615,7 +615,7 @@ class CodingSessionMemory:
                     "updated_at": self._updated_at,
                 },
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('coding_session_memory', exc)
             logger.debug("Coding session memory save skipped: %s", exc)
 

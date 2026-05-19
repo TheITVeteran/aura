@@ -123,7 +123,7 @@ class OutcomeLearner:
                         ),
                     )
                     conn.commit()
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('outcome_learner', e)
                 logger.debug("Outcome recording failed: %s", e)
 
@@ -169,7 +169,7 @@ class OutcomeLearner:
                             (strategy, 1 if success else 0, duration_ms, time.time()),
                         )
                     conn.commit()
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('outcome_learner', e)
                 logger.debug("Strategy score update failed: %s", e)
 
@@ -190,7 +190,7 @@ class OutcomeLearner:
                         (cutoff,),
                     )
                     conn.commit()
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('outcome_learner', e)
                 logger.debug("Metric recording failed: %s", e)
 

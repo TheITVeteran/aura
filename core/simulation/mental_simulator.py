@@ -41,7 +41,7 @@ class MentalSimulator:
         try:
             from core.world_model.acg import acg
             history = acg.query_consequences(tool_name, params)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('mental_simulator', _e)
             logger.debug("ACG lookup failed: %s", _e)
             
@@ -113,7 +113,7 @@ class MentalSimulator:
             else:
                 return {"risk": 0.1, "prediction": response.content}
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('mental_simulator', e)
             logger.error("Simulation failed: %s", e)
             return {"risk": 0.5, "error": str(e)}

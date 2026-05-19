@@ -27,14 +27,14 @@ def register_research_core(
             from core.container import ServiceContainer
 
             container = ServiceContainer
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             container = None
 
     if container is not None:
         existing = None
         try:
             existing = container.get(SelfImprovingResearchCore.SERVICE_NAME, default=None)
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             existing = None
         if existing is not None:
             return existing
@@ -44,7 +44,7 @@ def register_research_core(
     if container is not None:
         try:
             container.register_instance(SelfImprovingResearchCore.SERVICE_NAME, core)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Container failures must not stop the core from running
             # — callers that hold a direct reference still work.
             pass

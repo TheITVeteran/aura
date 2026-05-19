@@ -73,7 +73,7 @@ class AgentDelegator(AuraBaseModule):
                     self.logger.debug("🧹 Scavenged swarm agent: %s", aid)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 try:
                     import psutil
                     if psutil.virtual_memory().percent < 90:
@@ -87,7 +87,7 @@ class AgentDelegator(AuraBaseModule):
                         )
                     else:
                         record_degradation('delegator', e, action="suppressed_repair_due_to_memory_pressure", receipt_required=True)
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     record_degradation('delegator', e)
                 self.logger.error("Scavenger loop error: %s", e)
 
@@ -197,7 +197,7 @@ class AgentDelegator(AuraBaseModule):
                     self.logger.warning("🕒 Swarm debate: %d agents timed out.", len(pending))
                     for t in pending:
                         t.cancel()
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('delegator', e)
                 self.logger.error("Error during swarm wait: %s", e)
                 
@@ -248,7 +248,7 @@ FINAL SYNTHESIS:"""
         except asyncio.TimeoutError:
             self.logger.error("❌ Synthesis FAILED: Cognitive engine timed out (>60s).")
             return deterministic
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('delegator', e)
             self.logger.error("Failed to synthesize consensus: %s", e)
             return deterministic
@@ -416,7 +416,7 @@ FINAL SYNTHESIS:"""
             self.logger.error("❌ Agentic Agent %s timed out (>%.0fs)", agent.id, timeout)
             agent.status = "FAILED"
             agent.result = f"[TIMEOUT] Agent could not complete goal within {timeout}s"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('delegator', e)
             from core.utils.exceptions import capture_and_log
             capture_and_log(e, {"module": "AgentDelegator", "method": "_run_agentic_agent"})
@@ -504,7 +504,7 @@ FINAL SYNTHESIS:"""
             agent.status = "FAILED"
             agent.result = "[CRITICAL] Cognitive timeout. Agent failed to reach consensus."
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('delegator', e)
             from core.utils.exceptions import capture_and_log
             capture_and_log(e, {"module": "AgentDelegator", "method": "_run_agent"})

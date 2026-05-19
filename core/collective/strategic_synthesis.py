@@ -146,7 +146,7 @@ class StrategicSynthesizer:
             logger.info("✅ Strategic Synthesis complete. Produced plan with %d steps.", len(plan.plan_steps))
             return plan
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('strategic_synthesis', e)
             from core.utils.exceptions import capture_and_log
             capture_and_log(e, {"module": "StrategicSynthesis", "method": "synthesize_strategic_plan"})

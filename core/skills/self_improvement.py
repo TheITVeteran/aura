@@ -43,7 +43,7 @@ class SelfImprovementSkill(BaseSkill):
         try:
             with open(self.learning_log_path, "w") as f:
                 json.dump(history, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_improvement', e)
             logger.error("Failed to write learning log: %s", e)
 
@@ -59,14 +59,14 @@ class SelfImprovementSkill(BaseSkill):
             brain = ServiceContainer.get("cognitive_engine", default=None)
             if brain:
                 return brain
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         try:
             from core.brain.cognitive_engine import cognitive_engine
 
             return cognitive_engine
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod
@@ -110,7 +110,7 @@ class SelfImprovementSkill(BaseSkill):
         elif isinstance(goal, dict):
             try:
                 params = ImprovementInput(**goal)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('self_improvement', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
         else:
@@ -156,7 +156,7 @@ class SelfImprovementSkill(BaseSkill):
                 "child_cycles": len(result.child_results),
                 "message": "Recursive self-improvement cycle completed.",
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_improvement', e)
             logger.error("Recursive self-improvement cycle failed: %s", e)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -177,7 +177,7 @@ class SelfImprovementSkill(BaseSkill):
                     mode=ThinkingMode.REFLECTIVE,
                 )
                 insight = reflection.content
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_improvement', e)
                 logger.warning("Cognitive analysis unavailable: %s. Using deterministic fallback.", e)
                 insight = self._fallback_learning_node(knowledge_text, goal.get("objective", ""))
@@ -225,7 +225,7 @@ class SelfImprovementSkill(BaseSkill):
 
                 reflection = await brain.think(prompt, mode=ThinkingMode.REFLECTIVE)
                 improvement_plan = [line for line in reflection.content.split("\n") if line.strip()]
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_improvement', e)
                 logger.error("Dynamic planning failed: %s", e)
                 improvement_plan = self._fallback_improvement_plan(stats, history, objective)
@@ -261,5 +261,5 @@ class SelfImprovementSkill(BaseSkill):
             with open(self.learning_log_path, "r") as f:
                 data = json.load(f)
                 return [entry.get("insight", entry.get("summary", "")) for entry in data]
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return []

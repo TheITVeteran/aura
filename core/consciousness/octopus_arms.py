@@ -267,7 +267,7 @@ class CentralArbiter:
         for cb in list(self._observers):
             try:
                 cb(result)
-            except Exception as exc:  # pragma: no cover
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover
                 logger.debug("arbiter observer failed: %s", exc)
 
         return result

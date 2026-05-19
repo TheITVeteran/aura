@@ -68,7 +68,7 @@ class WillClient:
                 for candidate in ActionDomain:
                     if candidate.value == value or candidate.name == value:
                         return candidate
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
         return domain
 
@@ -114,7 +114,7 @@ class WillClient:
         if callable(checker):
             try:
                 return bool(checker())
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return False
         if isinstance(decision, dict):
             return bool(decision.get("approved", False))

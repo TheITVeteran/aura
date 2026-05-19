@@ -295,7 +295,7 @@ class ContinuousRecurrentSelfModel:
                 "error_ema": self._error_ema,
             }
             atomic_write_text(PERSIST_PATH, json.dumps(data))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('crsm', e)
             logger.debug("CRSM save failed: %s", e)
 
@@ -308,7 +308,7 @@ class ContinuousRecurrentSelfModel:
                 self._tick_count = data.get("tick_count", 0)
                 self._error_ema = data.get("error_ema", 0.0)
                 logger.info("CRSM resumed from checkpoint (tick %d).", self._tick_count)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('crsm', e)
             logger.debug("CRSM load failed (starting fresh): %s", e)
 

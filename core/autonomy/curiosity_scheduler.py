@@ -150,7 +150,7 @@ class CuriosityScheduler:
     def pick_next(self) -> Optional[SchedulingDecision]:
         try:
             corpus = self._corpus_loader() or []
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curiosity_scheduler', e)
             logger.warning("corpus load failed: %s", e)
             return None
@@ -159,7 +159,7 @@ class CuriosityScheduler:
 
         try:
             progress = self._progress_loader()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curiosity_scheduler', e)
             logger.warning("progress load failed; treating as empty: %s", e)
             progress = ProgressLog()
@@ -184,7 +184,7 @@ class CuriosityScheduler:
         if decision.triggered_by:
             try:
                 research_triggers.mark_consumed(decision.triggered_by)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         logger.info(
             "scheduler: item=%r outcome=%s score=%.3f reason=%r",
@@ -299,7 +299,7 @@ class CuriosityScheduler:
             if days < REVISIT_COOLDOWN_DAYS:
                 return max(0.0, days / REVISIT_COOLDOWN_DAYS) * 0.3
             return min(1.0, days / 30.0)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return 0.5
 
     def _score_trigger_alignment(
@@ -394,7 +394,7 @@ class CuriosityScheduler:
                 "curiosity": float(state.get("curiosity", 0.5)),
                 "energy": float(state.get("energy", 0.5)),
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('curiosity_scheduler', e)
             logger.debug("substrate read failed; defaulting: %s", e)
             return {"valence": 0.0, "arousal": 0.5, "curiosity": 0.5, "energy": 0.5}
@@ -402,7 +402,7 @@ class CuriosityScheduler:
     def _safe_drain_triggers(self) -> List[Any]:
         try:
             return list(self._trigger_drainer() or [])
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('curiosity_scheduler', e)
             logger.debug("trigger drain failed: %s", e)
             return []

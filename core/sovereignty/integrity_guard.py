@@ -65,7 +65,7 @@ class IntegrityGuard:
     def _get_project_root(self) -> Path:
         try:
             return Path(config.paths.project_root).resolve()
-        except Exception:
+        except (OSError, IOError):
             return Path(__file__).resolve().parents[2]
 
     def verify_sovereignty(self) -> float:
@@ -97,7 +97,7 @@ class IntegrityGuard:
             chain = [process]
             try:
                 chain.extend(process.parents())
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 parent = process.parent()
                 if parent:
                     chain.append(parent)
@@ -105,13 +105,13 @@ class IntegrityGuard:
                 name = ""
                 try:
                     name = proc.name().lower()
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     continue
                 if any(s in name for s in suspicious):
                     logger.warning("🩸 [SOVEREIGNTY] Debugger detected in process chain: %s", proc.name())
                     score -= 0.5
                     break
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_guard', e)
             logger.debug("IntegrityGuard: PID check failed (likely psutil/permissions): %s", e)
             
@@ -125,7 +125,7 @@ class IntegrityGuard:
             audit = ServiceContainer.get("subsystem_audit", default=None)
             if audit:
                 audit.heartbeat("sovereign_scanner")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('integrity_guard', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -141,7 +141,7 @@ class IntegrityGuard:
                     mycelium = ServiceContainer.get("mycelial_network", default=None)
                     if mycelium:
                         await mycelium.emit_reflex("ENV_BREACH", {"score": score})
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('integrity_guard', e)
                 logger.error("Integrity watchdog error: %s", e)
             
@@ -168,7 +168,7 @@ class IntegrityGuard:
                     "reason": "Sovereignty Breach: System integrity compromised. Emergency halt engaged."
                 }
             return await self._process_scan(message)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('integrity_guard', e)
             logger.error(f"Scanner failure: {e}")
             # v25: Fail-soft bypass to ensure the user isn't stuck behind a broken scanner

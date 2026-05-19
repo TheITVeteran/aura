@@ -43,7 +43,7 @@ class Tracer:
             try:
                 with open(self.trace_file, "a", encoding="utf-8") as f:
                     f.write(json.dumps(self.current_trace) + "\n")
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('tracer', e)
                 logger.error("Failed to write trace: %s", e)
             

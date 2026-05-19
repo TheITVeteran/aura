@@ -58,7 +58,7 @@ class MemorySubsystem:
                 await asyncio.sleep(600) # Maintenance check every 10 minutes
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('memory_subsystem', e)
                 logger.error("MemorySubsystem maintenance error: %s", e)
                 await asyncio.sleep(60)

@@ -360,7 +360,7 @@ class TreeOfThoughts:
             )
             try:
                 return (await self._llm(system, user, style["temperature"])).strip()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('tree_of_thoughts', exc)
                 logger.warning("Brainstorm draft (%s) failed: %s", style["tag"], exc)
                 return ""
@@ -434,7 +434,7 @@ class TreeOfThoughts:
         try:
             raw = await self._llm(system, user, 0.2)
             scores = self._parse_scores(raw, len(drafts))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tree_of_thoughts', exc)
             logger.warning("Critique scoring failed (%s), using uniform scores", exc)
             scores = [

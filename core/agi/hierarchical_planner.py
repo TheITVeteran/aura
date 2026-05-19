@@ -176,7 +176,7 @@ class HierarchicalPlanner:
                     get_terminal_fallback().queue_autonomous_message(
                         f"[Goal check-in] {goal.to_brief()}"
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('hierarchical_planner', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
 
@@ -237,7 +237,7 @@ class HierarchicalPlanner:
             logger.info("HierarchicalPlanner: decomposed '%s' into %d sub-goals",
                         goal.title[:40], len(created))
             return created
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('hierarchical_planner', e)
             logger.debug("Goal decomposition failed: %s", e)
             return []
@@ -270,7 +270,7 @@ class HierarchicalPlanner:
                 final_action=f"Achieved: {goal.success_criteria}",
                 quality_score=min(1.0, 0.7 + goal.progress * 0.3),
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('hierarchical_planner', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         logger.info("HierarchicalPlanner: COMPLETED '%s'", goal.title[:60])
@@ -290,7 +290,7 @@ class HierarchicalPlanner:
                 for g_id, g in self._goals.items()
             }
             atomic_write_text(PERSIST_PATH, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('hierarchical_planner', e)
             logger.debug("HierarchicalPlanner save failed: %s", e)
 
@@ -312,7 +312,7 @@ class HierarchicalPlanner:
                         notes=d.get("notes", []),
                         child_ids=d.get("child_ids", []),
                     )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('hierarchical_planner', e)
             logger.debug("HierarchicalPlanner load failed: %s", e)
 

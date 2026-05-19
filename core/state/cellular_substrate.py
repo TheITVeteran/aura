@@ -66,7 +66,7 @@ class CellularSubstrate:
                 # 4. Single Unified Commit
                 await repo.commit(state, cause="cellular_unification")
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('cellular_substrate', e)
                 logger.error("🛑 [CELLULAR] Substrate crash: %s", e)
                 await asyncio.sleep(1.0)

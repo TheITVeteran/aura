@@ -90,7 +90,7 @@ class KnowledgeFormalizer:
             mem = ServiceContainer.get("memory", default=None)
             if mem and hasattr(mem, "knowledge_graph"):
                 return mem.knowledge_graph
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('formalizer', exc)
             logger.debug("KnowledgeGraph resolution failed: %s", exc)
         return None
@@ -161,7 +161,7 @@ class KnowledgeFormalizer:
                 end = result.rfind(']') + 1
                 if start != -1 and end != 0:
                     raw_claims = json.loads(result[start:end])
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation("formalizer_llm", exc)
                 logger.debug("LLM formalization JSON parse failed: %s", exc)
                 
@@ -181,7 +181,7 @@ class KnowledgeFormalizer:
                 
             return claims
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('formalizer_llm', e)
             logger.warning("LLM formalization failed: %s. Falling back to deterministic parser.", e)
             return self._extract_atomic_facts(content, source_title, source_url)
@@ -372,7 +372,7 @@ class KnowledgeFormalizer:
                     fact_ids.append(node_id)
                     committed_facts.append((node_id, fact))
                     result["facts_committed"] += 1
-                except Exception as exc:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                     record_degradation('formalizer', exc)
                     logger.debug("Formalizer: fact commit failed: %s", exc)
 
@@ -394,7 +394,7 @@ class KnowledgeFormalizer:
                         metadata={"source_url": source_url},
                     )
                     entity_ids[entity] = eid
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('formalizer', exc)
                     logger.debug("Formalizer: entity commit failed: %s", exc)
 
@@ -410,7 +410,7 @@ class KnowledgeFormalizer:
                                 strength=1.0,
                             )
                             result["relationships_created"] += 1
-                        except Exception:
+                        except (RuntimeError, AttributeError, TypeError, ValueError):
                             record_degradation(
                                 "formalizer",
                                 RuntimeError("relationship_commit_failed"),
@@ -429,7 +429,7 @@ class KnowledgeFormalizer:
                 self._total_facts_committed,
             )
 
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('formalizer', exc)
             result["error"] = str(exc)
             logger.error("Formalizer error: %s", exc, exc_info=True)

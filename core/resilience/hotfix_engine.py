@@ -39,7 +39,7 @@ class HotfixEngine:
             
             logger.info(f"✅ Hotfix applied to {module_name}. Total reloads: {self.reloads_total}")
             return {"ok": True, "reloaded": module_name}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('hotfix_engine', e)
             logger.error(f"❌ Hotfix stage fail for {module_name}: {e}")
             return {"ok": False, "error": str(e)}

@@ -88,7 +88,7 @@ class EnvironmentCapabilityMatrix:
         checker = getattr(self, f"_check_{requirement.key}")
         try:
             ok, detail = checker(kernel)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             ok, detail = False, f"{type(exc).__name__}: {exc}"
         return CapabilityFinding(requirement.key, bool(ok), detail)
 

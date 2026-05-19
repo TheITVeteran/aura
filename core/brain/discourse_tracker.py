@@ -50,7 +50,7 @@ class DiscourseTracker:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     # ── Fast heuristic update (every message) ────────────────────────────
@@ -163,7 +163,7 @@ class DiscourseTracker:
                     if trend in ("warming_up", "engaged", "cooling_off", "neutral"):
                         state.cognition.user_emotional_trend = trend
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('discourse_tracker', e)
             logger.debug("DiscourseTracker deep update failed: %s", e)
 
@@ -181,7 +181,7 @@ class DiscourseTracker:
         if self._turn_count == 1 or self._turn_count % 6 == 0:
             try:
                 await self._deep_update(state, message)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('discourse_tracker', e)
                 logger.debug("DiscourseTracker async deep update failed: %s", e)
 
@@ -201,7 +201,7 @@ class DiscourseTracker:
                 urgency=min(0.6, 0.2 + depth * 0.05),
                 discourse_depth=depth,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('discourse_tracker', e)
             logger.debug("Failed to record unresolved topic tension: %s", e)
 

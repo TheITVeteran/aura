@@ -106,7 +106,7 @@ class ConcreteStateGateway(StateGatewayBase):
                     with self._lock:
                         self._cache[key] = value
                     return value
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     continue
         return default
 
@@ -130,7 +130,7 @@ class ConcreteStateGateway(StateGatewayBase):
             )
             if asyncio.iscoroutine(decision):
                 decision = await decision
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('state_gateway', exc)
             logger.warning(
                 "StateGateway governance call failed; denying mutation (fail-closed): %s",

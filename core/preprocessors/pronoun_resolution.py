@@ -34,7 +34,7 @@ def resolve_pronouns(text: str, session=None) -> str:
                 s = summary()
                 if isinstance(s, dict) and s.get("name"):
                     name = s.get("name")
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('pronoun_resolution', exc)
             logger.debug("Suppressed: %s", exc)
     if not name:

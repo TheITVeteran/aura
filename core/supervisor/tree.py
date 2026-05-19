@@ -127,12 +127,12 @@ class SupervisionTree:
             for endpoint in pipe:
                 try:
                     endpoint.close()
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
             return
         try:
             pipe.close()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
     def record_activity(self, name: str):
@@ -208,7 +208,7 @@ class SupervisionTree:
             logger.info(f"🛑 Stopping Actor: {name}")
             try:
                 actor.process.kill()  # Immediate kill, no graceful shutdown
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('tree', e)
                 logger.debug(f"Error stopping actor {name}: {e}")
             finally:
@@ -335,7 +335,7 @@ class SupervisionTree:
         if callback and new_pipe:
             try:
                 callback(name, new_pipe)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('tree', e)
                 logger.error(f"❌ Restart callback failed for {name}: {e}")
 

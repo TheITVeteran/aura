@@ -221,7 +221,7 @@ class ComprehensionLoop:
                     last_extraction = extraction
                     cp.thinking_trace = thinking
                     break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('comprehension_loop', e)
                 logger.debug("chunk extract attempt %d failed: %s", attempt, e)
 
@@ -240,7 +240,7 @@ class ComprehensionLoop:
                     cp.shallow_read = True
                     if critique.get("revised_summary"):
                         cp.summary = str(critique["revised_summary"])
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('comprehension_loop', e)
                 logger.debug("self-critique failed: %s", e)
 
@@ -329,7 +329,7 @@ class ComprehensionLoop:
                         return val
                 if isinstance(res, dict):
                     return str(res.get("content", res.get("text", "")) or "")
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('comprehension_loop', e)
                 logger.debug("inference %s failed: %s", fn_name, e)
                 continue

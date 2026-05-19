@@ -50,7 +50,7 @@ class CriticEngine:
                 "component": "critic_engine",
                 "hooks_into": ["planner", "orchestrator", "cel"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('critic_engine', e)
             logger.debug(f"Event bus publish missed for Mycelium hook: {e}")
 
@@ -96,7 +96,7 @@ class CriticEngine:
                         "phi": 0.75,
                         "origin": "critic_engine"
                     })
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('critic_engine', e)
                     logger.debug(f"Failed to emit CEL thought: {e}")
             
@@ -104,7 +104,7 @@ class CriticEngine:
                        f"(progress: {judgment.goal_progress:.2f})")
             
             return judgment
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('critic_engine', e)
             logger.error(f"Critic generation failed: {e}")
             return CriticJudgment(len(executed_steps), 0.4, "Critique failed", [], "continue", "I'm having trouble reflecting.")
@@ -162,7 +162,7 @@ Be concise. No extra text."""
                 recommendation=rec,
                 first_person_thought=data.get("first_person_thought", "Still processing...")
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('critic_engine', e)
             logger.debug(f"Critic parse error: {e}")
             # Safe fallback
@@ -176,7 +176,7 @@ Be concise. No extra text."""
                 judgment = await self.critique_plan(plan, [])  # orchestrator passes real executed_steps in its loop usually
                 if judgment.recommendation in ("backtrack", "replan"):
                     await get_event_bus().publish("planner.force_replan", {"reason": judgment.first_person_thought})
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('critic_engine', e)
             logger.debug(f"Critic background injection error: {e}")
 

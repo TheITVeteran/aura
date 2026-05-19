@@ -113,5 +113,5 @@ class MacOSSandbox:
         finally:
             try:
                 os.remove(profile_path)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional

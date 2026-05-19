@@ -96,7 +96,7 @@ class GracefulDegradationManager:
                 state.fallback_active = True
                 state.status = ComponentStatus.DEGRADED
                 logger.info("Activated fallback for %s", component)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('graceful_degradation', e)
                 logger.error("Fallback for %s also failed: %s", component, e)
         
@@ -197,7 +197,7 @@ def safe_init(factory: Callable, component_name: str,
         result = factory()
         manager.register_component(component_name, initial_status=ComponentStatus.HEALTHY)
         return result
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('graceful_degradation', e)
         manager.report_failure(component_name, str(e))
         logger.warning("Using fallback for %s: %s", component_name, type(fallback).__name__)

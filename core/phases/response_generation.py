@@ -102,7 +102,7 @@ class ResponseGenerationPhase(BasePhase):
                     _speech_profile.multi_message,
                     _speech_profile.followup_probability,
                 )
-            except Exception as _sve_exc:
+            except (ImportError, AttributeError, RuntimeError) as _sve_exc:
                 record_degradation('response_generation', _sve_exc)
                 logger.error("SubstrateVoiceEngine compile failed: %s", _sve_exc, exc_info=True)
 
@@ -122,7 +122,7 @@ class ResponseGenerationPhase(BasePhase):
                             reason,
                         )
                         return state
-                except Exception as exc:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                     record_degradation('response_generation', exc)
                     logger.error("ResponseGeneration background policy check failed: %s", exc, exc_info=True)
 
@@ -189,13 +189,13 @@ class ResponseGenerationPhase(BasePhase):
                 mem_monitor = self.container.get("memory_monitor", default=None)
                 if mem_monitor is not None:
                     memory_pressure = getattr(mem_monitor, "pressure", None)
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 memory_pressure = None
             if memory_pressure is None:
                 try:
                     import psutil
                     memory_pressure = psutil.virtual_memory().percent
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     memory_pressure = 0.0
             
             # Affect-modulated generation parameters
@@ -313,7 +313,7 @@ class ResponseGenerationPhase(BasePhase):
                                 content = ext_content
                                 if not action:
                                     action = data.get("action")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('response_generation', e)
                     logger.debug("Proactive JSON extraction failed (normal for non-JSON): %s", e)
 
@@ -392,7 +392,7 @@ class ResponseGenerationPhase(BasePhase):
                         )
                     else:
                         cleaned_response = shaped
-                except Exception as _shape_exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _shape_exc:
                     record_degradation('response_generation', _shape_exc)
                     logger.debug("ResponseShaper failed (using raw): %s", _shape_exc)
 
@@ -464,13 +464,13 @@ class ResponseGenerationPhase(BasePhase):
                     # Queue additional shaped messages (from multi-message split)
                     if _shaped_messages:
                         new_state.response_modifiers["queued_messages"] = _shaped_messages
-                except Exception as _fu_exc:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _fu_exc:
                     record_degradation('response_generation', _fu_exc)
                     logger.debug("Follow-up decision failed: %s", _fu_exc)
 
             return new_state
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('response_generation', e)
             logger.error("❌ ResponseGeneration: LLM call failed: %s", e, exc_info=True)
             return state

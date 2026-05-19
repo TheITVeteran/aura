@@ -90,7 +90,7 @@ def _extract_history(context: Optional[Dict[str, Any]] = None) -> List[Dict[str,
                         for m in wm[-20:]
                         if m.get("content")
                     ]
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.debug("CILPatch._extract_history: %s", exc)
 
@@ -157,7 +157,7 @@ async def _run_inline_inference(
             return json.loads(m.group(0))
     except asyncio.TimeoutError:
         logger.debug("CILPatch: inline inference timed out")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.debug("CILPatch: inline inference failed — %s", exc)
     return None
@@ -182,7 +182,7 @@ def _inject_phenomenal_into_packet(packet: Any) -> None:
             pcs = experiencer.phenomenal_context_string
             if pcs:
                 fragments.append(f"[Phenomenal state: {pcs[:300]}]")
-    except Exception as _e:
+    except (ImportError, AttributeError, RuntimeError) as _e:
         record_degradation('cognitive_integration_patch', _e)
         logger.debug('Ignored Exception in cognitive_integration_patch.py: %s', _e)
 
@@ -194,7 +194,7 @@ def _inject_phenomenal_into_packet(packet: Any) -> None:
             qctx = synth.get_phenomenal_context()
             if qctx:
                 fragments.append(f"[Qualia: {qctx[:200]}]")
-    except Exception as _e:
+    except (ImportError, AttributeError, RuntimeError) as _e:
         record_degradation('cognitive_integration_patch', _e)
         logger.debug('Ignored Exception in cognitive_integration_patch.py: %s', _e)
 
@@ -245,7 +245,7 @@ async def _patched_process_turn(
         if reflex_response:
             logger.info("⚡ [REFLEX] Instant response (Thread Isolated).")
             return reflex_response
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.debug("CILPatch: reflex path error — %s", exc)
 
@@ -273,7 +273,7 @@ async def _patched_process_turn(
     except asyncio.TimeoutError:
         # Inference is still running — fire and forget, don't block response
         logger.debug("CILPatch: inference still running — not waiting")
-    except Exception as exc:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.debug("CILPatch: inference inject error — %s", exc)
 
@@ -301,7 +301,7 @@ async def _patched_process_turn(
 
         return await self.language_center.express(packet, message, history=history)
 
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.exception("CILPatch: expression error — %s", exc)
         return getattr(brief, "to_briefing_text", lambda: "")()
@@ -328,7 +328,7 @@ def _inject_modifiers(data: Dict[str, Any]) -> None:
             data.get("implicit_intent", "")[:60],
             data.get("momentum", ""),
         )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('cognitive_integration_patch', exc)
         logger.debug("CILPatch._inject_modifiers: %s", exc)
 

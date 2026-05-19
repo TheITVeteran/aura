@@ -113,7 +113,7 @@ def governance_runtime_active() -> bool:
             or ServiceContainer.has("kernel_interface")
             or bool(getattr(ServiceContainer, "_registration_locked", False))
         )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("governance_context", exc)
         logger.debug("Strict governance mode lookup failed: %s", exc)
         return False
@@ -339,7 +339,7 @@ def _record_violation(operation: str) -> None:
             "operation": operation,
             "timestamp": time.time(),
         })
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("governance_context", exc)
         logger.debug("Governance violation event publish failed for %s: %s", operation, exc)
 

@@ -170,7 +170,7 @@ class InquiryEngine:
                 "hooks_into": ["epistemic_tracker", "api_adapter", "insight_journal",
                                "cognitive_kernel", "volition_engine"]
             })
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('inquiry_engine', _e)
             logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
 
@@ -388,7 +388,7 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                 "purpose": "inquiry_research"
             })
             await self._process_research_result(q, raw)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('inquiry_engine', e)
             logger.warning("InquiryEngine research failed for '%s': %s", q.question[:40], e)
             q.research_attempts += 1
@@ -512,7 +512,7 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                 "settled":   [asdict(q) for q in self._settled[-50:]],
             }
             atomic_write_text(self._db_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('inquiry_engine', e)
             logger.debug("InquiryEngine save failed: %s", e)
 
@@ -527,7 +527,7 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                     q = OpenQuestion(**qd)
                     q.evidence = evidences
                     self._questions.append(q)
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('inquiry_engine', _e)
                     logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
             for qd in data.get("settled", []):
@@ -536,10 +536,10 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                     q = OpenQuestion(**qd)
                     q.evidence = evidences
                     self._settled.append(q)
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('inquiry_engine', _e)
                     logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('inquiry_engine', e)
             logger.debug("InquiryEngine load failed: %s", e)
 

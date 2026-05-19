@@ -172,7 +172,7 @@ class ResearchCycle:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('research_cycle', e)
                 logger.error("ResearchCycle daemon error: %s", e, exc_info=True)
                 await asyncio.sleep(60.0)  # Back off on error
@@ -196,7 +196,7 @@ class ResearchCycle:
             )
             if reason:
                 return False
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('research_cycle', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -282,7 +282,7 @@ class ResearchCycle:
                 reason="research_cycle_goal_completed",
                 source="research_cycle",
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('research_cycle', exc)
             logger.warning("ResearchCycle: executive suppression failed, leaving initiative intact: %s", exc)
 
@@ -471,7 +471,7 @@ class ResearchCycle:
         except TimeoutError:
             logger.warning("ResearchCycle: research timed out for '%s'", goal[:60])
             return None
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.error("ResearchCycle: research execution failed: %s", e)
             return None
@@ -488,7 +488,7 @@ class ResearchCycle:
                     "Provide a detailed synthesis with specific facts, insights, and implications."
                 )
                 return await llm.think(prompt)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Direct LLM research failed: %s", e)
         return None
@@ -551,7 +551,7 @@ class ResearchCycle:
                 if start != -1 and end > start:
                     findings = json.loads(raw[start:end])
                     return [str(f) for f in findings if isinstance(f, str) and len(f) > 10]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Finding extraction failed: %s", e)
 
@@ -611,7 +611,7 @@ class ResearchCycle:
                 if hasattr(result, "__await__"):
                     await result
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Knowledge integration failed: %s", e)
 
@@ -664,7 +664,7 @@ class ResearchCycle:
 
                 return impact
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Narrative update failed: %s", e)
 
@@ -704,7 +704,7 @@ class ResearchCycle:
                     dreamer.engage_sleep_cycle(),
                     name=f"aura.dream_cycle_{self._cycle_count}",
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Dream trigger failed: %s", e)
 
@@ -724,7 +724,7 @@ class ResearchCycle:
             )
             if isinstance(result, dict) and result.get("ok"):
                 return result
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('research_cycle', exc)
             logger.debug("ResearchCycle grounded search failed for %s: %s", goal[:80], exc)
         return None
@@ -800,7 +800,7 @@ class ResearchCycle:
                     content = str(item.get("content", "") or "").strip()
                     if content:
                         return content[:120]
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('research_cycle', exc)
             logger.debug("Autotelic topic derivation fell back from KG: %s", exc)
 
@@ -825,7 +825,7 @@ class ResearchCycle:
             repo = ServiceContainer.get("state_repository", default=None)
             if repo:
                 return repo.get_state()
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('research_cycle', _e)
             logger.debug('Ignored Exception in research_cycle.py: %s', _e)
         return None
@@ -834,7 +834,7 @@ class ResearchCycle:
         try:
             with open(self._record_path, "a") as f:
                 f.write(json.dumps(record.to_dict()) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('research_cycle', e)
             logger.debug("Record save failed: %s", e)
 
@@ -851,9 +851,9 @@ class ResearchCycle:
                         record = ResearchRecord.from_dict(data)
                         self._history.append(record)
                         count += 1
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError, ValueError):
                         continue
-        except Exception as _e:
+        except (json.JSONDecodeError, TypeError, ValueError) as _e:
             record_degradation('research_cycle', _e)
             logger.debug('Ignored Exception in research_cycle.py: %s', _e)
         self._cycle_count = count

@@ -128,7 +128,7 @@ class ImmuneSystem:
                         )
                     else:
                         report["healthy"].append(service_name)
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('immune_system', e)
                     report["failed"].append({
                         "service": service_name,
@@ -157,7 +157,7 @@ class ImmuneSystem:
                                    f"{len(report['degraded'])} degraded",
                     },
                 )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('immune_system', _e)
             logger.error("🛡️ IMMUNE: Failed to publish health report to event bus: %s", _e)
 
@@ -216,7 +216,7 @@ class ImmuneSystem:
             target = Path("core/cognitive_kernel.py")
             await asyncio.to_thread(shutil.copy2, snapshot, target)
             logger.info(f"✅ Rollback complete: {target} restored.")
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('immune_system', e)
             logger.error(f"Rollback error: {e}")
         finally:

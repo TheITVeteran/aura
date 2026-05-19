@@ -112,7 +112,7 @@ class ContextCompressionService:
                         last_accessed_turn=fdata.get("last_accessed_turn", 0),
                         char_count=fdata.get("char_count", 0),
                     )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('context_compression', e)
             logger.debug("Could not load compression state: %s", e)
 
@@ -135,7 +135,7 @@ class ContextCompressionService:
             }
             with open(STATE_FILE, "w") as f:
                 json.dump(data, f, indent=2)
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('context_compression', e)
             logger.debug("Could not save compression state: %s", e)
 
@@ -240,7 +240,7 @@ class ContextCompressionService:
                     if path in to_evaluate:
                         to_evaluate[path].compression_level = level_map.get(level_str, CompressionLevel.FULL)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_compression', e)
             logger.warning("LLM file routing failed, keeping all FULL: %s", e)
 
@@ -304,7 +304,7 @@ class ContextCompressionService:
                     record.summary = summary
                 self._save_state()
                 return summary
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('context_compression', e)
             logger.warning("Summary generation failed for %s: %s", path, e)
         return ""

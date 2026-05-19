@@ -85,7 +85,7 @@ Internet Awareness:
                         logger.warning("Failed to refresh world state: %s", result.get("error"))
                 else:
                     logger.warning("WebSearchSkill not available for augmentor.")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('web_augmentor', e)
                 logger.error("Error refreshing world state: %s", e)
             finally:

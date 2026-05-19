@@ -55,7 +55,7 @@ class FileOperationSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = FileOpInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('file_operation', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
         
@@ -221,7 +221,7 @@ class FileOperationSkill(BaseSkill):
                 except ValueError as ve:
                     return {"ok": False, "error": str(ve), "path": path}
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('file_operation', e)
             self.logger.error("File Op failed: %s", e)
             return {"ok": False, "error": str(e), "path": path}

@@ -36,7 +36,7 @@ class StateManager:
                 json.dump(snapshot, f, indent=2)
             logger.debug("StateManager: Snapshot saved.")
             return snapshot
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('state_manager', e)
             logger.error("StateManager: Failed to save snapshot: %s", e)
             return {}
@@ -60,7 +60,7 @@ class StateManager:
                     count = getattr(store, "count", lambda: "attached")()
                     stats[store_name] = count
             return stats if len(stats) > 1 else {"status": "no_stores"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('state_manager', e)
             logger.debug("Could not read memory stats: %s", e)
             return {"status": "error", "detail": str(e)}

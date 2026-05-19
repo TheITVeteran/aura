@@ -151,7 +151,7 @@ class CommunityLayer:
                 self._record({"event": "will_refused", "reason": getattr(wd, "reason", "")})
                 return {"ok": False, "error": "will_refused"}
             will_receipt_id = getattr(wd, "receipt_id", None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('community', exc)
             self._record({"event": "will_exception", "error": str(exc)})
             return {"ok": False, "error": "will_exception"}
@@ -184,7 +184,7 @@ class CommunityLayer:
             self._sent_recent.append(now)
             self._record({"event": "sent", "message": asdict(msg), "result": res})
             return {"ok": True, "message_id": msg.message_id, "result": res}
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('community', exc)
             store.revoke(tok.token, reason=f"send_failed:{exc}")
             self._record({"event": "send_failed", "error": str(exc)})
@@ -203,10 +203,10 @@ class CommunityLayer:
                     store = get_store()
                     dossier = store.get_or_create(msg.sender, name=msg.sender)
                     store.record_interaction_affect(dossier.relationship_id, {"platform": tname, "channel": msg.channel})
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass  # no-op: intentional
                 return msg
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('community', exc)
                 logger.debug("community receive failed (%s): %s", tname, exc)
         return None
@@ -219,9 +219,9 @@ class CommunityLayer:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
 

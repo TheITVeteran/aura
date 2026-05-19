@@ -128,7 +128,7 @@ class ConsciousnessSystem:
             from .stream_of_being import boot_stream_of_being
             self.stream_of_being = await boot_stream_of_being(orchestrator=self.orch)
             logger.info("🧠 Layer 1: StreamOfBeing ONLINE")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not boot StreamOfBeing: %s", e)
 
@@ -143,7 +143,7 @@ class ConsciousnessSystem:
             # We register it so other layers can find it.
             ServiceContainer.register_instance("affective_steering", steering_engine)
             logger.info("🧠 Layer 2: AffectiveSteering registered (awaiting model attach)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not register AffectiveSteering: %s", e)
 
@@ -156,7 +156,7 @@ class ConsciousnessSystem:
             from .closed_loop import boot_closed_loop
             self.closed_loop = await boot_closed_loop()
             logger.info("🧠 Layer 4: ClosedCausalLoop ONLINE")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not boot ClosedCausalLoop: %s", e)
 
@@ -166,7 +166,7 @@ class ConsciousnessSystem:
             self.phi_core = PhiCore()
             ServiceContainer.register_instance("phi_core", self.phi_core)
             logger.info("🧠 Layer 5: PhiCore ONLINE (recording via ClosedCausalLoop)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize PhiCore: %s", e)
 
@@ -179,7 +179,7 @@ class ConsciousnessSystem:
                 "🧠 Layer 5b: HierarchicalPhi ONLINE (32-node primary + %d×16-node subsystems)",
                 getattr(self.hierarchical_phi, '_subsystems', []).__len__(),
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize HierarchicalPhi: %s", e)
 
@@ -189,7 +189,7 @@ class ConsciousnessSystem:
             self.hemispheric_split = get_hemispheric_split()
             ServiceContainer.register_instance("hemispheric_split", self.hemispheric_split)
             logger.info("🧠 Layer 5c: HemisphericSplit ONLINE (corpus callosum intact)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize HemisphericSplit: %s", e)
 
@@ -199,7 +199,7 @@ class ConsciousnessSystem:
             self.minimal_selfhood = get_minimal_selfhood()
             ServiceContainer.register_instance("minimal_selfhood", self.minimal_selfhood)
             logger.info("🧠 Layer 5d: MinimalSelfhood ONLINE (trichoplax→dugesia)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize MinimalSelfhood: %s", e)
 
@@ -209,7 +209,7 @@ class ConsciousnessSystem:
             self.recursive_tom = get_recursive_tom()
             ServiceContainer.register_instance("recursive_tom", self.recursive_tom)
             logger.info("🧠 Layer 5e: RecursiveToM ONLINE (max_depth=3, observer-aware)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize RecursiveToM: %s", e)
 
@@ -219,7 +219,7 @@ class ConsciousnessSystem:
             self.octopus_federation = get_octopus_federation()
             ServiceContainer.register_instance("octopus_federation", self.octopus_federation)
             logger.info("🧠 Layer 5f: OctopusFederation ONLINE (8 arms, link=intact)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize OctopusFederation: %s", e)
 
@@ -232,7 +232,7 @@ class ConsciousnessSystem:
                 self.cellular_turnover.attach(mesh)
             ServiceContainer.register_instance("cellular_turnover", self.cellular_turnover)
             logger.info("🧠 Layer 5g: CellularTurnover ONLINE (attached=%s)", mesh is not None)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize CellularTurnover: %s", e)
 
@@ -245,7 +245,7 @@ class ConsciousnessSystem:
                 "🧠 Layer 5h: AbsorbedVoices ONLINE (%d voices loaded)",
                 self.absorbed_voices.voice_count(),
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not initialize AbsorbedVoices: %s", e)
 
@@ -259,7 +259,7 @@ class ConsciousnessSystem:
             ServiceContainer.register_instance("consciousness_bridge", self.bridge)
             logger.info("🧠 Layer 6: ConsciousnessBridge ONLINE (%d/7 layers)",
                         self.bridge.get_status().get("layers_active", 0))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not boot ConsciousnessBridge: %s", e)
 
@@ -270,7 +270,7 @@ class ConsciousnessSystem:
             await self.branch_manager.start()
             logger.info("🧠 Layer 7: BranchManager ONLINE (max_branches=%d)",
                         self.branch_manager.MAX_BRANCHES)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not boot BranchManager: %s", e)
 
@@ -281,7 +281,7 @@ class ConsciousnessSystem:
             await self.aura_protocol.start()
             logger.info("🧠 Layer 8: AuraProtocolServer ONLINE (port=%d)",
                         self.aura_protocol._port)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('system', e)
             logger.warning("Could not boot AuraProtocolServer: %s", e)
 
@@ -317,7 +317,7 @@ class ConsciousnessSystem:
         if self.bridge:
             try:
                 await self.bridge.stop()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('system', _e)
                 logger.debug('Ignored Exception stopping bridge: %s', _e)
 
@@ -325,7 +325,7 @@ class ConsciousnessSystem:
         if self.closed_loop:
             try:
                 await self.closed_loop.stop()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('system', _e)
                 logger.debug('Ignored Exception in system.py: %s', _e)
 
@@ -333,7 +333,7 @@ class ConsciousnessSystem:
         if self.branch_manager:
             try:
                 await self.branch_manager.stop()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('system', _e)
                 logger.debug('Ignored Exception stopping branch_manager: %s', _e)
 
@@ -341,7 +341,7 @@ class ConsciousnessSystem:
         if self.aura_protocol:
             try:
                 await self.aura_protocol.stop()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('system', _e)
                 logger.debug('Ignored Exception stopping aura_protocol: %s', _e)
 

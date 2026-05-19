@@ -123,7 +123,7 @@ class ProactivePerceptionV2:
                     self._last_frame = gray
                     
                 await asyncio.sleep(self.config.camera_interval)
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('proactive_perception_v2', e)
             logger.error("Camera loop failure: %s", e)
         finally:
@@ -153,7 +153,7 @@ class ProactivePerceptionV2:
                     await self._on_significant_change(
                         "audio", f"Sound level alert (RMS: {rms:.0f})"
                     )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('proactive_perception_v2', e)
                 logger.debug("Mic loop transient error: %s", e)
 

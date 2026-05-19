@@ -73,7 +73,7 @@ class PersonhoodEngine:
                 await self._check_and_maybe_speak()
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('personhood_engine', exc)
                 logger.debug("Personhood error: %s", exc)
 
@@ -165,7 +165,7 @@ class PersonhoodEngine:
             )
             if content:
                 return [SpontaneousThought("research_complete", content, 0.7)]
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('personhood_engine', exc)
             logger.debug("Personhood engine failed to check research findings: %s", exc)
         return []
@@ -188,7 +188,7 @@ class PersonhoodEngine:
                 timeout=10.0,
             )
             return response.content.strip() if hasattr(response, "content") else response.strip()
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('personhood_engine', exc)
             logger.debug("Failed to generate spontaneous thought: %s", exc)
             return None
@@ -220,7 +220,7 @@ class PersonhoodEngine:
             )
             if decision.get("ok"):
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('personhood_engine', exc)
             logger.debug("Personhood executive routing failed: %s", exc)
 
@@ -247,5 +247,5 @@ class PersonhoodEngine:
         try:
             kernel_interface = service_access.resolve_kernel_interface(default=None)
             return kernel_interface.kernel.state if kernel_interface and kernel_interface.is_ready() else None
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return None

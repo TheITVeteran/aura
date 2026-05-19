@@ -846,7 +846,7 @@ class PhenomenalSelfModel:
                 somatic_desc = " My history feels deep and heavy."
                 
             self._present_description += somatic_desc
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('phenomenological_experiencer', _e)
             logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -927,7 +927,7 @@ class PhenomenalSelfModel:
                     logger.warning("🪞 PSM: LLM returned non-meaty or malformed report. Skipping.")
         except asyncio.TimeoutError:
             logger.debug("PSM deep update timed out")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phenomenological_experiencer', e)
             logger.debug("PSM deep update error: %s", e)
 
@@ -999,7 +999,7 @@ class PhenomenalSelfModel:
                     return observation
                 else:
                     logger.warning("👁 Witness: LLM returned non-meaty or action-tagged observation. Skipping.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phenomenological_experiencer', e)
             logger.debug("Witness reflection error: %s", e)
         return ""
@@ -1182,7 +1182,7 @@ class PhenomenologicalExperiencer:
         if self._substrate:
             try:
                 self._substrate_velocity = self._substrate.compute_cognitive_velocity()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('phenomenological_experiencer', _e)
                 logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -1190,7 +1190,7 @@ class PhenomenologicalExperiencer:
         if self._drives:
             try:
                 self._dominant_motivation = self._drives.get_dominant_motivation()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('phenomenological_experiencer', _e)
                 logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -1240,7 +1240,7 @@ class PhenomenologicalExperiencer:
                         last_interaction = getattr(orchestrator, "_last_user_interaction_time", 0)
                         if time.time() - last_interaction < 60: # User active in last 60s
                             is_user_active = True
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('phenomenological_experiencer', _e)
                     logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -1248,7 +1248,7 @@ class PhenomenologicalExperiencer:
                 try:
                     import psutil
                     under_memory_pressure = psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('phenomenological_experiencer', _e)
                     logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -1272,7 +1272,7 @@ class PhenomenologicalExperiencer:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('phenomenological_experiencer', e)
                 logger.debug("Experiencer update loop error: %s", e)
 
@@ -1300,7 +1300,7 @@ class PhenomenologicalExperiencer:
         if self._credit_engine:
             try:
                 credit_str = self._credit_engine.get_introspection_string()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('phenomenological_experiencer', _e)
                 logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
         await self.psm.run_witness_reflection(
@@ -1319,7 +1319,7 @@ class PhenomenologicalExperiencer:
             self._current_valence  = float(getattr(self._affect_module, "valence",  0.0))
             self._current_arousal  = float(getattr(self._affect_module, "arousal",  0.3))
             self._current_emotion  = self._affect_module._get_dominant_emotion()
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError) as _e:
             record_degradation('phenomenological_experiencer', _e)
             logger.debug('Ignored Exception in phenomenological_experiencer.py: %s', _e)
 
@@ -1433,7 +1433,7 @@ class PhenomenologicalExperiencer:
             }
             with open(archive_path, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('phenomenological_experiencer', e)
             logger.debug("Phenomenal archive write error: %s", e)
 
@@ -1470,12 +1470,12 @@ class PhenomenologicalExperiencer:
                     json.dump(memory, f, indent=2)
                 os.replace(temp_path, str(target_path))
                 logger.info("💾 Phenomenal memory saved (atomic)")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('phenomenological_experiencer', e)
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise e
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('phenomenological_experiencer', e)
             logger.debug("Phenomenal memory save error: %s", e)
 
@@ -1512,7 +1512,7 @@ class PhenomenologicalExperiencer:
                 len(self.psm._phenomenal_reports),
                 bool(self.continuity.current_thread)
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('phenomenological_experiencer', e)
             logger.warning("Phenomenal memory load error: %s", e)
 

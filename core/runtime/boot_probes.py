@@ -153,7 +153,7 @@ async def probe_governance_approve_deny(*, will: Any = None) -> ProbeResult:
             from core.will import get_will
 
             will = get_will()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('boot_probes', exc)
             return ProbeResult(name="governance_approve_deny", ok=False, detail=f"will unavailable: {exc!r}")
     decide = getattr(will, "decide", None)
@@ -163,7 +163,7 @@ async def probe_governance_approve_deny(*, will: Any = None) -> ProbeResult:
         from core.will import ActionDomain
 
         smoke_domain = ActionDomain.STATE_MUTATION
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         smoke_domain = "state_mutation"
     try:
         approve = decide(
@@ -197,7 +197,7 @@ async def probe_output_gate_dry_emit(*, output_gate: Any = None) -> ProbeResult:
             from core.container import ServiceContainer
 
             output_gate = ServiceContainer.get("output_gate", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             output_gate = None
     if output_gate is None:
         return ProbeResult(name="output_gate_dry_emit", ok=False, detail="output_gate not registered")
@@ -212,7 +212,7 @@ async def probe_event_bus_loopback(*, bus: Any = None) -> ProbeResult:
             from core.container import ServiceContainer
 
             bus = ServiceContainer.get("event_bus", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             bus = None
     if bus is None:
         return ProbeResult(name="event_bus_loopback", ok=False, detail="event_bus not registered")
@@ -226,7 +226,7 @@ async def probe_actor_supervisor() -> ProbeResult:
         from core.supervisor.tree import get_tree
 
         tree = get_tree()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('boot_probes', exc)
         return ProbeResult(name="actor_supervisor", ok=False, detail=f"tree unavailable: {exc!r}")
     if not hasattr(tree, "add_actor") or not hasattr(tree, "stop_all"):
@@ -273,6 +273,6 @@ async def run_boot_probes(
                 "boot_probes.failed",
                 {"failed": [r.name for r in report.failed()]},
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
     return report

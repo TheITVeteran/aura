@@ -116,7 +116,7 @@ Draft the Python code for this highly capable new skill now:
             
             return True, f"Successfully evolved and loaded `{class_name}`.", class_name
             
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('skill_evolution', e)
             logger.error(f"Failed to evolve skill: {e}")
             return False, f"Exception during skill evolution: {e}", ""

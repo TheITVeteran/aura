@@ -29,7 +29,7 @@ class ReadinessGate:
                 validator_report = CAA32BValidator(vectors_dir=vectors_dir, model_path=model_path or "unknown").run(
                     behavioral_results=behavioral_path
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 validator_report = {"available": False, "error": f"{type(exc).__name__}: {exc}"}
         coverage = float(registry_status.get("coverage_ratio", 0.0) or 0.0)
         exact = int(registry_status.get("exact_match_count", 0) or 0)

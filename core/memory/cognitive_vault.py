@@ -120,7 +120,7 @@ class CognitiveVault:
                 continue
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('cognitive_vault', e)
                 logger.error("Vault worker error: %s", e)
 
@@ -143,7 +143,7 @@ class CognitiveVault:
             query = f"INSERT INTO {tx.table} ({keys}, timestamp) VALUES ({placeholders}, ?)"
             conn.execute(query, values + [tx.timestamp])
             conn.commit()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_vault', e)
             logger.error("Database commit failure: %s", e)
         finally:

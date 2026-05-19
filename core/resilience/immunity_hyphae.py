@@ -120,7 +120,7 @@ class SignatureRepairRegistry:
                     sig["fn"]()
                     logger.info("✅ [IMMUNE] Deterministic repair successful: %s", sig["name"])
                     return True
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('immunity_hyphae', e)
                     logger.error("❌ [IMMUNE] Repair failed for %s: %s", sig["name"], e)
         return False
@@ -163,7 +163,7 @@ class SignatureRepairRegistry:
                 zombie_pid = res.stdout.strip().split('\n')[0]
                 logger.warning("💉 [IMMUNE] Found zombie process %s on port %s. Cleaning up...", zombie_pid, port)
                 subprocess.run(["kill", "-9", zombie_pid])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('immunity_hyphae', e)
             logger.debug("Port repair probe failed: %s", e)
 
@@ -178,7 +178,7 @@ class SignatureRepairRegistry:
                 if ext_path.exists():
                     logger.info("💉 Removing stale SQLite file: %s", ext_path)
                     ext_path.unlink()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('immunity_hyphae', e)
             logger.error("💉 Lock cleanup failed: %s", e)
 
@@ -205,7 +205,7 @@ class SignatureRepairRegistry:
                     for line in lines:
                         if any(p in line for p in critical_patterns):
                             hidden_bugs.append(f"[{log_path.name}] {line.strip()}")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('immunity_hyphae', e)
                 logger.error("💉 Log Sieve failed for %s: %s", log_path, e)
         
@@ -273,7 +273,7 @@ class ImmunityHyphae:
                     "component": component,
                     "stack_trace": traceback.format_exc(),
                 })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('immunity_hyphae', exc)
             logger.debug("Adaptive immune escalation skipped: %s", exc)
 

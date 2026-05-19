@@ -34,7 +34,7 @@ class SelfReportEngine:
         try:
             unity_state = ServiceContainer.get("unity_state", default=None)
             unity_report = ServiceContainer.get("unity_fragmentation_report", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             unity_state = None
             unity_report = None
 
@@ -122,7 +122,7 @@ class SelfReportEngine:
                 total = max(1, summary.get("total_beliefs", 1))
                 weak = summary.get("weak", 0)
                 epistemic_uncertainty = weak / total
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('self_report', _e)
             logging.debug('Ignored Exception in self_report.py: %s', _e)
 

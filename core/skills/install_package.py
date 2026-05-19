@@ -36,7 +36,7 @@ class InstallPackageSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = InstallPackageParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('install_package', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -71,6 +71,6 @@ class InstallPackageSkill(BaseSkill):
                 "exit_code": result.exit_code,
                 "message": f"Installed {package_name}" if result.exit_code == 0 else f"Failed to install {package_name}"
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('install_package', e)
             return {"ok": False, "error": str(e)}

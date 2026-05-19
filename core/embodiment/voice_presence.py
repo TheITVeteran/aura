@@ -40,7 +40,7 @@ class MacOSTTS(TTSEngine):
                 # v Zenith: Robust check for process life
                 if proc.returncode is None:
                     proc.terminate()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_presence', e)
                 logger.debug(f"MacOSTTS: Cleanup of previous process failed: {e}")
             
@@ -51,7 +51,7 @@ class MacOSTTS(TTSEngine):
             self._speaking_proc = await asyncio.create_subprocess_exec(
                 "say", clean, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
             logger.debug("🔊 MacOSTTS: Speak exec failed: %s", e)
 
@@ -61,7 +61,7 @@ class MacOSTTS(TTSEngine):
             try:
                 if proc.returncode is None:
                     proc.terminate()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_presence', e)
                 logger.debug(f"MacOSTTS: Stop failed: {e}")
 
@@ -86,8 +86,8 @@ class LinuxTTS(TTSEngine):
                     )
                     await proc.wait()
                     return
-                except Exception: continue
-        except Exception as e:
+                except (subprocess.SubprocessError, OSError): continue
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
             logger.error("🔊 LinuxTTS: Speak failed: %s", e)
 
@@ -101,7 +101,7 @@ class WindowsTTS(TTSEngine):
                 "powershell", "-Command", ps_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             await proc.wait()
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
             logger.error("🔊 WindowsTTS: Speak failed: %s", e)
 
@@ -150,6 +150,6 @@ async def maybe_speak_response(response: str, state: Any) -> None:
         voice = ServiceContainer.get("voice_presence", default=None)
         if voice:
             await voice.speak_response(response, phi=getattr(state, "phi", 0.0))
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('voice_presence', e)
         logger.debug(f"maybe_speak_response failed: {e}")

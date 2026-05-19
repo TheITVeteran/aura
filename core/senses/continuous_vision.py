@@ -79,7 +79,7 @@ class ContinuousSensoryBuffer:
         if self.cap and self.cap.isOpened():
             try:
                 self.cap.release()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 logger.debug("ContinuousSensoryBuffer: camera release skipped", exc_info=True)
             self.cap = None
         if self._capture_task:
@@ -110,7 +110,7 @@ class ContinuousSensoryBuffer:
             else:
                 self._screen_permission_notice_at = 0.0
             return granted
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('continuous_vision', exc)
             logger.debug("ContinuousSensoryBuffer permission probe failed: %s", exc)
             return False
@@ -149,7 +149,7 @@ class ContinuousSensoryBuffer:
             else:
                 logger.warning("👁️ [VISION] No valid monitors found.")
                 return False
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('continuous_vision', exc)
             self._screen_probe_cooldown_until = time.monotonic() + 15.0
             logger.warning("👁️ [VISION] Continuous screen capture backend unavailable: %s", exc)
@@ -204,7 +204,7 @@ class ContinuousSensoryBuffer:
 
                             _, jpeg_bytes = cv2.imencode('.jpg', frame)
                             self.frame_buffer.append(("image/jpeg", jpeg_bytes.tobytes()))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuous_vision', e)
                 logger.error(f"Sensory Buffer capture failed: {e}")
 
@@ -245,7 +245,7 @@ class ContinuousSensoryBuffer:
                 return text if success else "I failed to process the visual data."
             else:
                 return "My cognitive systems are not equipped for that visual request."
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('continuous_vision', e)
             logger.error(f"Visual reasoning failed: {e}")
             return f"I had an error analyzing my vision: {e}"

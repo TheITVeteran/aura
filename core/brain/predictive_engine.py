@@ -64,7 +64,7 @@ Prediction:"""
                 is_background=kwargs.get("is_background", True),
                 prefer_tier=kwargs.get("prefer_tier", LLMTier.TERTIARY)
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('predictive_engine', e)
             logger.error(f"Prediction failed: {e}")
             prediction_text = "I predict a continuation of the current thread."
@@ -113,7 +113,7 @@ Respond with only a float."""
                 error_magnitude = float(match.group(1))
             else:
                 error_magnitude = float(error_text.strip())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             error_magnitude = 0.5
         
         # Surprise = error weighted by confidence
@@ -142,7 +142,7 @@ Respond with only a float."""
                         loop.call_soon_threadsafe(
                             lambda: get_task_tracker().create_task(affect.apply_stimulus(stimulus, intensity))
                         )
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('predictive_engine', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
 

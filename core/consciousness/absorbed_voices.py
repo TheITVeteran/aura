@@ -183,7 +183,7 @@ class AbsorbedVoices:
             p = aura_config.paths.data_dir / "memory" / PERSIST_FILENAME
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             p = Path.home() / ".aura" / "data" / "memory" / PERSIST_FILENAME
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
@@ -197,10 +197,10 @@ class AbsorbedVoices:
             for vid, d in raw.items():
                 try:
                     self._voices[vid] = Voice.from_dict(d)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('absorbed_voices', exc)
                     logger.debug("Failed to load voice %s: %s", vid, exc)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('absorbed_voices', exc)
             logger.debug("Failed to load absorbed_voices: %s", exc)
 
@@ -212,7 +212,7 @@ class AbsorbedVoices:
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp, self._storage_path)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('absorbed_voices', exc)
             logger.debug("Failed to save absorbed_voices: %s", exc)
 

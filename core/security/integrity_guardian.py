@@ -74,7 +74,7 @@ def _get_hmac_secret() -> bytes:
             if "IOPlatformUUID" in line:
                 machine_id = line.split('"')[-2]
                 break
-    except Exception as _exc:
+    except (ImportError, AttributeError, RuntimeError) as _exc:
         record_degradation('integrity_guardian', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -159,7 +159,7 @@ class IntegrityGuardian:
                         "IntegrityGuardian [bg]: %d issues detected: %s",
                         len(tampered), tampered[:3],
                     )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('integrity_guardian', e)
                 logger.debug("IntegrityGuardian background check error: %s", e)
             await asyncio.sleep(CHECK_INTERVAL)
@@ -223,7 +223,7 @@ class IntegrityGuardian:
                 try:
                     rel = str(full.relative_to(_BASE_DIR))
                     manifest[rel] = self._hash_file(full)
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('integrity_guardian', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
         self._manifest = manifest
@@ -261,7 +261,7 @@ class IntegrityGuardian:
                 if git_active:
                     tampered = [p for p in tampered if self._normalize_repo_path(p) not in git_active]
                     missing = [p for p in missing if self._normalize_repo_path(p) not in git_active]
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('integrity_guardian', exc)
                 logger.debug("IntegrityGuardian: git check failed: %s", exc)
 
@@ -290,7 +290,7 @@ class IntegrityGuardian:
         try:
             with open(ALERT_LOG_PATH, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as _exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('integrity_guardian', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -318,7 +318,7 @@ class IntegrityGuardian:
                 f"File integrity violation: {affected_files[:3]} "
                 f"({'critical' if severity == 'critical' else 'non-critical'} files)"
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_guardian', e)
             logger.debug("Emergency notification failed: %s", e)
 
@@ -362,7 +362,7 @@ class IntegrityGuardian:
             self._manifest = files
             self._manifest_hmac = stored_sig
             return True
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('integrity_guardian', e)
             logger.debug("Manifest load failed: %s", e)
             return False
@@ -378,7 +378,7 @@ class IntegrityGuardian:
                 "source_revision": self._current_source_revision(),
             }
             atomic_write_text(MANIFEST_PATH, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('integrity_guardian', e)
             logger.debug("Manifest save failed: %s", e)
 

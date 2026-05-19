@@ -60,7 +60,7 @@ class TheoryOfMindEngine:
             p = config.paths.data_dir / "memory" / "theory_of_mind.json"
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             from pathlib import Path
             p = Path.home() / ".aura" / "data" / "memory" / "theory_of_mind.json"
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -78,11 +78,11 @@ class TheoryOfMindEngine:
                         # interaction_history can grow large — cap on load
                         d["interaction_history"] = d.get("interaction_history", [])[-20:]
                         self.known_selves[uid] = AgentModel(**{k: v for k, v in d.items() if k in AgentModel.__dataclass_fields__})
-                    except Exception as _exc:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
                         record_degradation('theory_of_mind', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                 logger.debug("ToM: loaded %d user models", len(self.known_selves))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: load failed (%s), starting fresh", e)
 
@@ -98,7 +98,7 @@ class TheoryOfMindEngine:
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp, self._data_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: save failed: %s", e)
 
@@ -116,7 +116,7 @@ class TheoryOfMindEngine:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_integration", default=ServiceContainer.get("cognitive_engine", default=None))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('theory_of_mind', exc)
             logger.debug("Failed to resolve brain from ServiceContainer: %s", exc)
             return None
@@ -163,7 +163,7 @@ class TheoryOfMindEngine:
             _state = service_access.resolve_state_repository(default=None)
             _live = getattr(_state, "_current", None) if _state else None
             conv_energy = getattr(getattr(_live, "cognition", None), "conversation_energy", 0.5) if _live else 0.5
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             conv_energy = 0.5
         energy_scale = 0.5 + conv_energy  # range [0.5, 1.5]
 
@@ -220,7 +220,7 @@ class TheoryOfMindEngine:
                 social_mem = service_access.optional_service("social_memory", default=None)
                 if social_mem and hasattr(social_mem, "relationship_depth"):
                     social_mem.relationship_depth = min(1.0, social_mem.relationship_depth + rapport_delta * 0.5)
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError) as _exc:
                 record_degradation('theory_of_mind', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -262,7 +262,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
                     "emotional_state": model.emotional_state,
                     "knowledge_level": model.knowledge_level
                 }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("Deep ToM analysis failed: %s", e)
 

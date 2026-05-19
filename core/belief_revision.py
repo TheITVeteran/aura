@@ -96,7 +96,7 @@ class BeliefRevisionEngine:
                     "component": "belief_revision_engine",
                     "hooks_into": ["memory", "drive_engine", "cel", "self_model"]
                 })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_revision', e)
             logger.debug("Events publish deferred: %s", e)
 
@@ -158,7 +158,7 @@ class BeliefRevisionEngine:
                 if not self.beliefs:
                     self.seed_core_beliefs()
                 logger.info("Loaded %d beliefs and self-model.", len(self.beliefs))
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('belief_revision', e)
                 logger.error("Failed to load belief system: %s", e)
         else:
@@ -174,7 +174,7 @@ class BeliefRevisionEngine:
                 "beliefs": [asdict(b) for b in self.beliefs]
             }
             atomic_write_text(self.db_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('belief_revision', e)
             logger.error("Failed to save belief system: %s", e)
 
@@ -192,7 +192,7 @@ class BeliefRevisionEngine:
                 backoff = 60.0  # Reset on success
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('belief_revision', e)
                 logger.error("Belief revision cycle failed: %s", e)
                 backoff = min(backoff * 2, 600.0)  # Exponential backoff, cap at 10 min
@@ -264,7 +264,7 @@ class BeliefRevisionEngine:
         if self.memory_facade and hasattr(self.memory_facade, "get_episodic"):
             try:
                 recent_episodes = await self.memory_facade.get_episodic(limit=3)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('belief_revision', e)
                 logger.debug("Beliefs: Failed to fetch episodic memory: %s", e)
 
@@ -281,7 +281,7 @@ class BeliefRevisionEngine:
                             "phi": 0.85,
                             "origin": "belief_revision"
                         })
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('belief_revision', e)
                         logger.debug("Beliefs: Theory elevation (CEL) failed: %s", e)
 

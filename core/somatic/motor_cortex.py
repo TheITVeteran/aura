@@ -170,7 +170,7 @@ async def _reflex_screen_capture(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
             return {"success": True, "summary": "screen_captured", "frame_size": len(frame) if frame else 0}
         return {"success": False, "summary": "no_vision_service"}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('motor_cortex', exc)
         return {"success": False, "summary": f"capture_failed: {exc}"}
 
@@ -190,7 +190,7 @@ async def _reflex_health_check(payload: Dict[str, Any]) -> Dict[str, Any]:
                 first_key = next(iter(temps))
                 temp_c = temps[first_key][0].current
                 thermal_pressure = max(0.0, min(1.0, (temp_c - 60) / 40))
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             pass  # no-op: intentional
 
         throttle_action = None
@@ -207,7 +207,7 @@ async def _reflex_health_check(payload: Dict[str, Any]) -> Dict[str, Any]:
                     metadata={"cpu": cpu, "thermal": thermal_pressure},
                 )
                 throttle_action = "thermal_throttle_requested"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
 
         return {
@@ -219,7 +219,7 @@ async def _reflex_health_check(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
     except ImportError:
         return {"success": False, "summary": "psutil_not_available"}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('motor_cortex', exc)
         return {"success": False, "summary": f"health_check_failed: {exc}"}
 
@@ -238,7 +238,7 @@ async def _reflex_file_reaction(payload: Dict[str, Any]) -> Dict[str, Any]:
             metadata={"path": path, "event_type": event_type},
         )
         return {"success": True, "summary": f"file_{event_type}_logged", "path": path}
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('motor_cortex', exc)
         return {"success": False, "summary": f"file_reaction_failed: {exc}"}
 
@@ -254,7 +254,7 @@ async def _reflex_metric_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
             "mem_pct": psutil.virtual_memory().percent,
             "timestamp": time.time(),
         }
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('motor_cortex', exc)
         return {"success": False, "summary": f"metric_sample_failed: {exc}"}
 
@@ -495,7 +495,7 @@ class MotorCortex:
                             source="motor_cortex_periodic",
                         ))
 
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('motor_cortex', exc)
                     logger.error("MotorCortex: loop error: %s", exc, exc_info=True)
 
@@ -515,7 +515,7 @@ class MotorCortex:
                 else:
                     logger.debug("Somatic Loop (MotorCortex) reset during system initialization (uptime %.1fs).", uptime)
                 continue
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('motor_cortex', exc)
                 logger.error("MotorCortex: fatal loop error: %s", exc, exc_info=True)
                 await asyncio.sleep(1.0)
@@ -560,7 +560,7 @@ class MotorCortex:
                 )
         except asyncio.TimeoutError:
             result = {"success": False, "summary": "handler_timeout"}
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('motor_cortex', exc)
             result = {"success": False, "summary": f"handler_error: {exc}"}
 
@@ -602,7 +602,7 @@ class MotorCortex:
                 "summary": receipt.result_summary,
                 "timestamp": receipt.timestamp,
             })
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     def _emit_affect_feedback(self, receipt: MotorReceipt) -> None:
@@ -619,7 +619,7 @@ class MotorCortex:
                     "error": receipt.error,
                     "salience": 0.4,
                 })
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     @staticmethod

@@ -116,7 +116,7 @@ class CognitiveRoutingPhase(Phase):
             from core.runtime.coding_session_memory import get_coding_route_hints
 
             route_hints = dict(get_coding_route_hints(text) or {})
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             route_hints = {}
 
         active_thread = bool(route_hints.get("active_coding_thread"))
@@ -619,7 +619,7 @@ class CognitiveRoutingPhase(Phase):
                             "timestamp": time.time()
                         })
                         return new_state
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_routing_unitary', e)
             logger.debug("🧭 Routing: detect_intent check failed: %s", e)
 
@@ -727,7 +727,7 @@ class CognitiveRoutingPhase(Phase):
                 if cap and hasattr(cap, "skills"):
                     names = sorted(cap.skills.keys())[:30]
                     skill_hint = "Available skills: " + ", ".join(names) + "\n"
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('cognitive_routing_unitary', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -813,7 +813,7 @@ class CognitiveRoutingPhase(Phase):
                 analysis=analysis,
                 route_meta=route_meta,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_routing_unitary', e)
             logger.error("🧭 Routing: Classification error: %s", e)
             new_state.cognition.current_mode = CognitiveMode.REACTIVE

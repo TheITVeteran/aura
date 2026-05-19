@@ -172,7 +172,7 @@ class MetaEvolutionEngine(AuraBaseModule):
             # If we exit the context manager without returning, return a success result
             return {"ok": True, "applied": False, "message": "Cycle complete."}
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('meta_cognition', e)
             self.logger.error("Meta-Evolution cycle failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -211,7 +211,7 @@ class MetaEvolutionEngine(AuraBaseModule):
             result = await hephaestus.refine_skill(skill_name, reason)
             
             return result
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('meta_cognition', e)
             self.logger.error("Skill optimization failed: %s", e)
             return {"ok": False, "error": str(e)}

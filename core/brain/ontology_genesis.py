@@ -114,7 +114,7 @@ def register_ontology_genesis(orchestrator: Optional[Any] = None) -> OntologyGen
     if orchestrator is not None:
         try:
             setattr(orchestrator, "ontology_genesis", engine)
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('ontology_genesis', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return engine

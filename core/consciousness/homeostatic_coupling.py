@@ -129,7 +129,7 @@ class HomeostaticCoupling:
         if self._mycelium is None:
             try:
                 self._mycelium = ServiceContainer.get("mycelial_network", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('homeostatic_coupling', e)
                 capture_and_log(e, {'module': __name__})
         return self._mycelium
@@ -144,7 +144,7 @@ class HomeostaticCoupling:
                     hypha.pulse(success=success)
                 else:
                     mycelium.establish_connection("homeostasis", target, priority=1.0)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('homeostatic_coupling', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -176,7 +176,7 @@ class HomeostaticCoupling:
                         affect['arousal'] = min(1.0, affect['arousal'] + volatility * 0.1)
                     if phi > 0.6:
                         affect.setdefault('integration', phi)
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('homeostatic_coupling', e)
                     logger.debug("Substrate blending failed: %s", e)
 
@@ -309,7 +309,7 @@ class HomeostaticCoupling:
                 phenom = qualia.get_phenomenal_context()
                 if phenom:
                     parts.append(f"[PHENOMENAL STATE: {phenom}]")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostatic_coupling', e)
             capture_and_log(e, {'module': __name__})
 
@@ -326,7 +326,7 @@ class HomeostaticCoupling:
             if homeostasis and hasattr(homeostasis, 'get_status'):
                 return homeostasis.get_status()
             return {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostatic_coupling', e)
             logger.debug("Could not read homeostasis drives: %s", e)
             return {}
@@ -347,7 +347,7 @@ class HomeostaticCoupling:
                     'engagement': state.engagement,
                 }
             return {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostatic_coupling', e)
             logger.debug("Could not read affect: %s", e)
             return {}

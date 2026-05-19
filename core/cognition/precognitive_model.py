@@ -770,7 +770,7 @@ class PrecognitiveEngine:
                 elif suggestion.startswith("context:"):
                     context_key = suggestion.split(":", 1)[1]
                     self._warm_context(context_key)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('precognitive_model', e)
                 logger.debug("Pre-fetch failed for %s: %s", suggestion, e)
 
@@ -787,7 +787,7 @@ class PrecognitiveEngine:
                 logger.debug("Pre-warming memory for query: %s", query[:50])
                 # Note: actual search is sync in most Aura memory implementations
                 # For async stores, this would need to be dispatched to the event loop
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('precognitive_model', e)
             logger.debug("Memory pre-warm failed: %s", e)
 
@@ -805,7 +805,7 @@ class PrecognitiveEngine:
                 temporal = ServiceContainer.get("temporal_binding", default=None)
                 if temporal and hasattr(temporal, "get_narrative"):
                     logger.debug("Pre-warming session narrative")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('precognitive_model', e)
             logger.debug("Context pre-warm failed: %s", e)
 
@@ -823,7 +823,7 @@ class PrecognitiveEngine:
                     "Loaded precognitive patterns (%d observations) from %s",
                     self._db.total_observations, self._data_path,
                 )
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('precognitive_model', e)
             logger.warning("Failed to load precognitive patterns: %s", e)
             self._db = PatternDatabase()
@@ -837,7 +837,7 @@ class PrecognitiveEngine:
             self._last_save = time.time()
             self._db.last_saved = self._last_save
             logger.debug("Saved precognitive patterns to %s", self._data_path)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('precognitive_model', e)
             logger.warning("Failed to save precognitive patterns: %s", e)
 

@@ -228,7 +228,7 @@ class UnifiedField:
                 t0 = time.time()
                 try:
                     await asyncio.to_thread(self._tick)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('unified_field', e)
                     logger.error("UnifiedField tick error: %s", e, exc_info=True)
                 elapsed = time.time() - t0
@@ -468,7 +468,7 @@ class UnifiedField:
                     "polarity": round(float(mode_vec[dominant_dim]), 4),
                 })
             return modes
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_field', e)
             logger.debug("PCA mode extraction failed: %s", e)
             return []

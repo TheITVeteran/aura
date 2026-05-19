@@ -96,7 +96,7 @@ class OntologicalPlayEngine:
                 if len(concepts) >= 2:
                     a, b = random.sample(concepts, 2)
                     return (str(a), str(b))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('ontological_play', exc)
             logger.debug("knowledge graph sampling failed: %s", exc)
         # Fallback: pick from a built-in seed bank so play still happens
@@ -145,7 +145,7 @@ class OntologicalPlayEngine:
         try:
             from core.consciousness.predictive_coding import predict_consistency
             consistency = float(predict_consistency(a, b))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
         return PlayCombination(
             seed_a=a,
@@ -177,10 +177,10 @@ class OntologicalPlayEngine:
                             "novelty_threshold": self.NOVELTY_PROMOTE_THRESHOLD,
                         },
                     )
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('ontological_play', exc)
                     logger.debug("play memory persist failed: %s", exc)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('ontological_play', exc)
             logger.debug("play memory emit failed: %s", exc)
 
@@ -194,7 +194,7 @@ class OntologicalPlayEngine:
                 return False
             d = de.snapshot() or {}
             return float(d.get("curiosity", 0.0)) >= 0.65
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     def _cooldown_open(self) -> bool:
@@ -205,7 +205,7 @@ class OntologicalPlayEngine:
                 "priority_class": "boredom",
                 "text": "play_cycle",
             })
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return True
 
 

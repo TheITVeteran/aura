@@ -85,7 +85,7 @@ Respond in JSON: {{"coherent": bool, "score": float, "violations": [str], "metri
             score = float(data.get("score", 1.0))
             violations = data.get("violations", [])
             metrics = data.get("metrics", {"clarity": 1.0, "logic": 1.0, "factuality": 1.0, "persona": 1.0})
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return CoherenceReport(True, 1.0, [], {"clarity": 1.0, "logic": 1.0, "factuality": 1.0, "persona": 1.0}, False)
 
         # Decide whether to revise or just log
@@ -133,7 +133,7 @@ Revised response (same content intent, corrected voice/consistency):"""
                 is_background=True,
                 prefer_tier=LLMTier.TERTIARY
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return original
 
     def _affect_to_description(self, affect) -> str:

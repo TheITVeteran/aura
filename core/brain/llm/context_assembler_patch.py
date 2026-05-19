@@ -332,7 +332,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         narrative_id = ServiceContainer.get("narrative_identity", default=None)
         if narrative_id and not is_casual:
             base += f"\n{narrative_id.get_system_prompt_injection()}\n"
-    except Exception as _e:
+    except (ImportError, AttributeError, RuntimeError) as _e:
         record_degradation('context_assembler_patch', _e)
         logger.debug('Ignored Exception in context_assembler_patch.py: %s', _e)
 
@@ -373,7 +373,7 @@ def _patched_build_messages(state: "AuraState", objective: str) -> List[Dict[str
     if objective and hasattr(state, "cognition"):
         try:
             state.cognition.attention_focus = objective
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('context_assembler_patch', _e)
             logger.debug('Ignored Exception in context_assembler_patch.py: %s', _e)
 

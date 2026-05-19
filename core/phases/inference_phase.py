@@ -74,7 +74,7 @@ class InferencePhase(Phase):
                 
                 logger.info(f"Deep Inference: Intent='{data.get('implicit_intent')}', Subtext='{data.get('user_subtext')}'")
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('inference_phase', e)
             logger.warning("InferencePhase failed: %s", e)
             

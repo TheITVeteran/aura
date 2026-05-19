@@ -111,7 +111,7 @@ Return ONLY the final synthesized belief.
             if reason:
                 logger.info("⏸️ Crucible deferred for '%s' (%s).", concept[:50], reason)
                 return {"ok": False, "reason": reason}
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("dialectical_crucible", exc)
             logger.debug("Crucible background-policy check failed: %s", exc)
 
@@ -164,7 +164,7 @@ Return ONLY the final synthesized belief.
                 "synthesis": synthesis
             }
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dialectics', e)
             capture_and_log(e, {'module': 'DialecticalCrucible', 'concept': concept})
             return {"ok": False, "error": str(e)}

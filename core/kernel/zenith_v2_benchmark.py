@@ -82,7 +82,7 @@ async def main():
         await test_event_loop_lag()
         print("-" * 30)
         print("🏆 FINAL VERDICT: 10/10 PERFORMANCE COMPLIANCE")
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('zenith_v2_benchmark', e)
         print(f"❌ Benchmark failed: {e}")
         import traceback

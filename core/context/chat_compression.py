@@ -88,7 +88,7 @@ def _save_truncated_output(content: str, tool_name: str, truncation_id: str, tem
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         return filepath
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('chat_compression', e)
         logger.warning("Failed to save truncated output: %s", e)
         return "(save failed)"
@@ -386,7 +386,7 @@ class ChatCompressionService:
                 CompressionStatus.COMPRESSED, duration
             )
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('chat_compression', e)
             logger.error("Chat compression failed: %s", e, exc_info=True)
             self._has_failed_attempt = True

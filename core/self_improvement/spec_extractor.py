@@ -78,7 +78,7 @@ class SpecExtractor:
             if node.returns:
                 try:
                     ret = ast.unparse(node.returns)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass
             functions.append(FunctionSignature(
                 name=node.name, parameters=tuple(params),
@@ -104,7 +104,7 @@ class SpecExtractor:
             for base in node.bases:
                 try:
                     bases.append(ast.unparse(base))
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass
             methods: List[FunctionSignature] = []
             for item in node.body:
@@ -117,7 +117,7 @@ class SpecExtractor:
                     if item.returns:
                         try:
                             ret = ast.unparse(item.returns)
-                        except Exception:
+                        except (RuntimeError, AttributeError, TypeError, ValueError):
                             pass
                     methods.append(FunctionSignature(
                         name=item.name, parameters=tuple(params),
@@ -148,10 +148,10 @@ class SpecExtractor:
                             continue
                         try:
                             type_str = type(ast.literal_eval(node.value)).__name__
-                        except Exception:
+                        except (RuntimeError, AttributeError, TypeError, ValueError):
                             try:
                                 type_str = ast.unparse(node.value)
-                            except Exception:
+                            except (RuntimeError, AttributeError, TypeError, ValueError):
                                 type_str = "unknown"
                         constants[name] = type_str
         return constants
@@ -186,7 +186,7 @@ class SpecExtractor:
             if arg.annotation:
                 try:
                     name += f": {ast.unparse(arg.annotation)}"
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass
             params.append(name)
         for arg in node.args.kwonlyargs:
@@ -194,7 +194,7 @@ class SpecExtractor:
             if arg.annotation:
                 try:
                     name += f": {ast.unparse(arg.annotation)}"
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass
             params.append(name)
         return params
@@ -204,7 +204,7 @@ class SpecExtractor:
         for dec in node.decorator_list:
             try:
                 decorators.append(ast.unparse(dec))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 if isinstance(dec, ast.Name):
                     decorators.append(dec.id)
         return decorators
@@ -222,14 +222,14 @@ class SpecExtractor:
             try:
                 test_source = test_file.read_text(encoding="utf-8")
                 test_tree = ast.parse(test_source)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
             for node in ast.walk(test_tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     if node.name.startswith("test_"):
                         try:
                             test_src = ast.get_source_segment(test_source, node) or ""
-                        except Exception:
+                        except (RuntimeError, AttributeError, TypeError, ValueError):
                             test_src = ""
                         test_cases.append(TestCase(
                             name=node.name, source=test_src,

@@ -43,7 +43,7 @@ Respond as JSON:
         if m:
             try:
                 parsed = json.loads(m.group(1))
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 # fallback: try to extract lines
                 lines = raw.splitlines()
                 parsed["lesson"] = lines[0] if lines else ""

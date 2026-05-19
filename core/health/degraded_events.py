@@ -33,7 +33,7 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
         def _runner() -> None:
             try:
                 asyncio.run(awaitable)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('degraded_events', exc)
                 logger.debug("%s async forward failed: %s", label, exc)
 
@@ -45,7 +45,7 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
     def _consume_result(done: asyncio.Task) -> None:
         try:
             done.result()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('degraded_events', exc)
             logger.debug("%s async forward failed: %s", label, exc)
 
@@ -219,7 +219,7 @@ def _forward_to_terminal_monitor(event: Dict[str, Any]) -> None:
         monitor = get_terminal_monitor()
         if monitor and hasattr(monitor, "ingest_degraded_event"):
             monitor.ingest_degraded_event(event)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('degraded_events', exc)
         logger.debug("Terminal monitor degraded event forward failed: %s", exc)
 
@@ -265,6 +265,6 @@ def _forward_to_error_intelligence(
         )
         if inspect.isawaitable(result):
             _schedule_awaitable(result, label="degraded_event_forward")
-    except Exception as forward_exc:
+    except (ImportError, AttributeError, RuntimeError) as forward_exc:
         record_degradation('degraded_events', forward_exc)
         logger.debug("Error intelligence degraded event forward failed: %s", forward_exc)

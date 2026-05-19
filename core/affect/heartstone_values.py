@@ -176,7 +176,7 @@ class HeartstoneValues:
                     self._values[k] = float(data.get(k, default))
                 logger.info("♥ HeartstoneValues loaded: %s",
                             {k: round(v, 2) for k, v in self._values.items()})
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('heartstone_values', e)
             logger.warning("HeartstoneValues load failed (using defaults): %s", e)
 
@@ -191,11 +191,11 @@ class HeartstoneValues:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except Exception as _exc:
+                except (OSError, IOError) as _exc:
                     record_degradation('heartstone_values', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             self._last_saved = time.time()
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('heartstone_values', e)
             logger.debug("HeartstoneValues save failed: %s", e)
 
@@ -258,7 +258,7 @@ class HeartstoneValues:
                 free_energy=free_energy,
                 context=context,
             ))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # Autopoiesis not yet booted -- silently skip
 
     def _feed_scar(self, avoidance_tag: str, description: str, severity: float = 0.3) -> None:
@@ -277,7 +277,7 @@ class HeartstoneValues:
                 avoidance_tag=avoidance_tag,
                 severity=severity,
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # Scar system not yet booted -- silently skip
 
 

@@ -38,7 +38,7 @@ class FunctionCallingAdapter:
                 try:
                     tools[name] = skill.skill_class.to_json_schema()
                     continue
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('function_calling_adapter', e)
                     logger.debug("Skill schema generation skipped for %s: %s", name, e)
             
@@ -78,7 +78,7 @@ class FunctionCallingAdapter:
                     else:
                         valid_data = input_model(**args)
                     return {"valid": True, "args": valid_data.model_dump()}
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError) as e:
                     record_degradation('function_calling_adapter', e)
                     return {"valid": False, "error": f"Pydantic Validation Error: {e}"}
             
@@ -107,7 +107,7 @@ class FunctionCallingAdapter:
                 result = await skill.execute(args, {"source": "autonomous_brain"})
             
             return json.dumps(result, indent=2)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('function_calling_adapter', e)
             logger.error("Tool execution failed: %s", e)
             return f"Error: {str(e)}"

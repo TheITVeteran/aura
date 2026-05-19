@@ -144,7 +144,7 @@ class ProofObligationEngine:
                 target.write_text(source, encoding="utf-8")
                 py_compile.compile(str(target), doraise=True)
             return True, {"ok": True}
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation("proof_obligations", exc)
             logger.debug("Bytecode proof obligation failed for %s: %s", file_path, exc)
             return False, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

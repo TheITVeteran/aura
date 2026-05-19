@@ -244,14 +244,14 @@ class AuraProtocolServer:
 
         except asyncio.IncompleteReadError:
             logger.debug("AuraProtocol: connection closed by %s", peer)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('aura_protocol', e)
             logger.warning("AuraProtocol: connection error from %s -- %s", peer, e)
         finally:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception as exc:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                 record_degradation("aura_protocol", exc)
                 logger.debug("AuraProtocol: server writer close failed: %s", exc)
 
@@ -259,7 +259,7 @@ class AuraProtocolServer:
         """Validate and dispatch a received message."""
         try:
             msg = AuraMessage.from_bytes(payload)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('aura_protocol', e)
             logger.warning("AuraProtocol: malformed message -- %s", e)
             self._messages_rejected += 1
@@ -286,7 +286,7 @@ class AuraProtocolServer:
         for handler in self._handlers:
             try:
                 await handler(msg)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('aura_protocol', e)
                 logger.error("AuraProtocol handler error: %s", e)
 
@@ -324,7 +324,7 @@ class AuraProtocolServer:
                 "AuraProtocol: injected message from '%s' into workspace (priority=%.2f)",
                 msg.source_identity, candidate.priority,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aura_protocol', e)
             logger.warning("AuraProtocol: workspace injection failed -- %s", e)
 
@@ -409,7 +409,7 @@ class AuraProtocolClient:
             self._writer.close()
             try:
                 await self._writer.wait_closed()
-            except Exception as exc:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                 record_degradation("aura_protocol", exc)
                 logger.debug("AuraProtocolClient: writer close failed: %s", exc)
         self._connected = False
@@ -517,7 +517,7 @@ def build_message_from_state(
                         float(getattr(state, "arousal", 0.0)),
                         float(getattr(state, "dominance", 0.0)),
                     ]
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('aura_protocol', e)
         logger.debug("build_message_from_state: affect read failed: %s", e)
 
@@ -533,7 +533,7 @@ def build_message_from_state(
                 episodic_snapshot["recent_winner_sources"] = [
                     w.get("winner", "") for w in recent
                 ]
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('aura_protocol', e)
         logger.debug("build_message_from_state: episodic read failed: %s", e)
 
@@ -543,7 +543,7 @@ def build_message_from_state(
         if will:
             status = will.get_status()
             identity_name = status.get("identity_name", identity_name)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("aura_protocol", exc)
         logger.debug("build_message_from_state: unified will identity read failed: %s", exc)
 

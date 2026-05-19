@@ -210,7 +210,7 @@ class CounterfactualEngine:
                         f"{candidate.expected_outcome} "
                         f"[System2 value={child.mean_value:.3f} receipt={ranked.search_id}]"
                     )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("counterfactual_engine.native_system2", exc)
 
     def select(self, candidates: list[ActionCandidate]) -> ActionCandidate | None:

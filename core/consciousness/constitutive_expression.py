@@ -223,7 +223,7 @@ class ConstitutiveExpressionLayer:
             queue_depth = get_reasoning_queue()._queue.qsize()
             if queue_depth > 2:
                 queue_backlogged = True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutive_expression', e)
             capture_and_log(e, {'module': __name__})
 
@@ -291,7 +291,7 @@ class ConstitutiveExpressionLayer:
                 result = self.on_expression(se)
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('constitutive_expression', e)
                 logger.debug("CEL on_expression callback error: %s", e)
 
@@ -397,7 +397,7 @@ class ConstitutiveExpressionLayer:
                     last_user = getattr(orchestrator, "_last_user_interaction_time", 0.0)
                     if last_user and (now - last_user) < USER_ACTIVE_COOLDOWN_S:
                         return self._fallback_expression(user_content)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('constitutive_expression', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -405,7 +405,7 @@ class ConstitutiveExpressionLayer:
                 import psutil
                 if psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT:
                     return self._fallback_expression(user_content)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('constitutive_expression', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -439,7 +439,7 @@ class ConstitutiveExpressionLayer:
                 text = ". ".join(sentences[:3]) + "."
             return text
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutive_expression', e)
             logger.debug("CEL constitutive call failed: %s", e)
             return self._fallback_expression(user_content)
@@ -527,7 +527,7 @@ class CELBridge:
                         a = await affect.get()
                         arousal = float(getattr(a, 'arousal', 0.5))
                         valence = float(getattr(a, 'valence', 0.0))
-                    except Exception as e:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                         record_degradation('constitutive_expression', e)
                         capture_and_log(e, {'module': __name__})
                 else:
@@ -539,7 +539,7 @@ class CELBridge:
             if predictor and hasattr(predictor, 'get_surprise_signal'):
                 pe = float(predictor.get_surprise_signal())
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutive_expression', e)
             logger.debug("CELBridge state read failed: %s", e)
 
@@ -562,7 +562,7 @@ class CELBridge:
                     "first_person": se.first_person[:80],
                     "phi": se.phi,
                 })
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('constitutive_expression', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -582,7 +582,7 @@ class CELBridge:
                     priority=se.phi * 0.6,  # Φ-weighted priority
                     affect_weight=abs(se.valence) * 0.5,
                 ))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutive_expression', e)
             logger.debug("CELBridge→GW submission failed: %s", e)
 

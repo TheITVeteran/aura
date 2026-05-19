@@ -207,7 +207,7 @@ class HigherOrderThoughtEngine:
                 self._last_rich_at = time.time()
                 logger.debug("HOT rich: %s", hot.content[:80])
                 return hot
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('hot_engine', e)
             logger.debug("HOT rich generation failed: %s", e)
         return self._current_hot
@@ -229,7 +229,7 @@ class HigherOrderThoughtEngine:
                         current = getattr(affect_engine._state, dim, 0.0)
                         setattr(affect_engine._state, dim,
                                 float(max(-1.0, min(1.0, current + change))))
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError) as _exc:
                     record_degradation('hot_engine', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
         return delta

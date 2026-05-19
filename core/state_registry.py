@@ -103,7 +103,7 @@ class UnifiedStateRegistry:
                         else:
                             # Run sync listeners in threads to avoid blocking the dispatcher
                             await asyncio.to_thread(lambda l=listener, s=snapshot: l(s))
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('state_registry', e)
                         self.failed_notifications += 1
                         logger.error(f"StateRegistry listener failed: {e}")
@@ -111,7 +111,7 @@ class UnifiedStateRegistry:
                 self._notify_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('state_registry', e)
                 logger.error(f"StateRegistry dispatcher error: {e}")
                 await asyncio.sleep(0.1)

@@ -68,7 +68,7 @@ class LazarusBrainstem:
             logger.info("✅ LAZARUS: Brain connection re-established.")
             return True
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lazarus_brainstem', e)
             logger.error("LAZARUS: Recovery failed: %s", e)
         return False

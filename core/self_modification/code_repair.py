@@ -96,7 +96,7 @@ class CodeFixGenerator:
             # v6.2: Add AST structural context
             ast_context = await self.analyzer.analyze_file(self.code_base / file_path)
             code_context["ast_summary"] = ast_context
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('code_repair', e)
             logger.error("Failed to read code or analyze AST: %s", e)
             return None
@@ -237,7 +237,7 @@ Start your response with the first line of fixed code."""
             
             return response
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('code_repair', e)
             logger.error("Fix generation failed: %s", e)
             return None
@@ -324,7 +324,7 @@ class CodeValidator:
             
             return True, "Structure validated"
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('code_repair', e)
             return False, f"AST analysis failed: {e}"
     
@@ -370,7 +370,7 @@ class CodeValidator:
             
             return True, "Imports safe"
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('code_repair', e)
             logger.error("Import validation failed: %s", e)
             return True, "Import validation inconclusive"
@@ -434,7 +434,7 @@ class SandboxTester:
                 sandbox_ok = self._setup_sandbox(temp_path, fix)
                 if not sandbox_ok:
                     return False, {"error": "Sandbox setup failed"}
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('code_repair', e)
                 logger.error("Sandbox setup failed: %s", e)
                 return False, {"error": str(e)}
@@ -442,7 +442,7 @@ class SandboxTester:
             # Apply fix in sandbox
             try:
                 await self._apply_fix_in_sandbox(temp_path, fix)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('code_repair', e)
                 logger.error("Fix application failed: %s", e)
                 return False, {"error": f"Fix application: {e}"}
@@ -577,7 +577,7 @@ class SandboxTester:
                     return results
             results["integrity_check"] = True
             logger.info("✅ [NEURO] Pyright validation passed.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('code_repair', e)
             logger.warning("Pyright guard bypassed due to error: %s", e)
 
@@ -610,7 +610,7 @@ class SandboxTester:
                 # No tests found - pass by default but log
                 results["unit_tests"] = True # "N/A"
                 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('code_repair', e)
             logger.warning("Test execution failed: %s", e)
             # Don't fail the fix just because test runner failed, unless we want strict TDD
@@ -681,7 +681,7 @@ class SandboxTester:
                 
                 return results["success"], results
                 
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 record_degradation('code_repair', e)
                 return False, {"error": f"Probe execution error: {e}"}
 
@@ -736,7 +736,7 @@ class AutonomousCodeRepair:
                 metadata=metadata,
                 max_attempts=1,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('code_repair', exc)
             logger.warning("Deep repair fallback failed for %s: %s", file_path, exc)
             return {
@@ -795,7 +795,7 @@ class AutonomousCodeRepair:
                 cwd=self.generator.code_base,
                 timeout=30,
             )
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('code_repair', e)
             logger.warning("Mechanical repair failed: %s", e)
 

@@ -58,7 +58,7 @@ class SystemIntegrityMonitor:
         try:
             import psutil
             self._proc = psutil.Process(os.getpid())
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_monitor', e)
             capture_and_log(e, {'module': __name__})
 
@@ -105,7 +105,7 @@ class SystemIntegrityMonitor:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('integrity_monitor', e)
                 logger.error("Integrity monitor error: %s", e)
 
@@ -135,7 +135,7 @@ class SystemIntegrityMonitor:
         try:
             import psutil
             total_mb = int(psutil.virtual_memory().total / (1024 * 1024))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             total_mb = 0
 
         warning_mb = self._DEFAULT_MEMORY_WARNING_MB
@@ -190,7 +190,7 @@ class SystemIntegrityMonitor:
                 else:
                     report.db_checks[db_name] = f"error: {e}"
                     report.errors.append(f"DB check failed: {db_name} — {e}")
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('integrity_monitor', e)
                 report.db_checks[db_name] = f"error: {e}"
                 report.warnings.append(f"DB check skipped: {db_name} — {e}")
@@ -229,7 +229,7 @@ class SystemIntegrityMonitor:
                 report.service_checks[svc] = exists
                 if not exists:
                     report.warnings.append(f"Expected service missing: {svc}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_monitor', e)
             report.errors.append(f"Service check failed: {e}")
 
@@ -272,10 +272,10 @@ class SystemIntegrityMonitor:
                             mem_mb=report.memory_mb,
                             thermal_level=report.thermal_level
                         )
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('integrity_monitor', e)
                     capture_and_log(e, {'module': __name__})
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_monitor', e)
             report.warnings.append(f"Resource check failed: {e}")
 

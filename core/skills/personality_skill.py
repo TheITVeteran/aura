@@ -27,7 +27,7 @@ class PersonalitySkill(BaseSkill):
         try:
             from core.brain.persona_adapter import PersonaAdapter
             self.adapter = PersonaAdapter()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('personality_skill', e)
             self.logger.error("Failed to load PersonaAdapter: %s", e)
             self.adapter = None
@@ -43,7 +43,7 @@ class PersonalitySkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = PersonalityInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('personality_skill', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 

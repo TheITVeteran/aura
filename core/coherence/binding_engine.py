@@ -104,14 +104,14 @@ class BindingEngine:
         try:
             from core.consciousness.phenomenal_now import PhenomenalNowEngine
             self._phenomenal_engine = ServiceContainer.get("phenomenal_now_engine", default=None)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('binding_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
         try:
             from core.self.canonical_self import CanonicalSelfEngine
             self._self_engine = ServiceContainer.get("canonical_self_engine", default=None)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('binding_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -120,7 +120,7 @@ class BindingEngine:
             self._arbiter = ServiceContainer.get("initiative_arbiter", default=None)
             if not self._arbiter:
                 self._arbiter = get_initiative_arbiter()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('binding_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -129,7 +129,7 @@ class BindingEngine:
             self._tension_engine = ServiceContainer.get("tension_engine", default=None)
             if not self._tension_engine:
                 self._tension_engine = get_tension_engine()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('binding_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -138,7 +138,7 @@ class BindingEngine:
             self._intention_loop = ServiceContainer.get("intention_loop", default=None)
             if not self._intention_loop:
                 self._intention_loop = get_intention_loop()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('binding_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -172,7 +172,7 @@ class BindingEngine:
                         ))
                     else:
                         report.phenomenal_coherence = 0.5
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('binding_engine', e)
                 logger.debug("BindingEngine: PhenomenalNow tick failed: %s", e)
 
@@ -195,7 +195,7 @@ class BindingEngine:
                     if threats:
                         report.threats.extend(threats)
                         report.self_continuity = min(report.self_continuity, 0.6)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('binding_engine', e)
                 logger.debug("BindingEngine: CanonicalSelf tick failed: %s", e)
 
@@ -209,7 +209,7 @@ class BindingEngine:
                     highest = self._tension_engine.get_highest_tension()
                     if highest:
                         report.threats.append(f"High tension: {highest.description[:60]}")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('binding_engine', e)
                 logger.debug("BindingEngine: TensionEngine tick failed: %s", e)
 
@@ -224,7 +224,7 @@ class BindingEngine:
                     id_score = scores.get("identity_relevance", 0.5)
                     cont_score = scores.get("continuity", 0.5)
                     report.initiative_alignment = (id_score * 0.6 + cont_score * 0.4)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('binding_engine', e)
                 logger.debug("BindingEngine: InitiativeArbiter tick failed: %s", e)
 
@@ -244,7 +244,7 @@ class BindingEngine:
                 if stale:
                     report.threats.append(f"{len(stale)} stale intentions (>5min)")
                     report.intention_integrity = max(0.3, report.intention_integrity - len(stale) * 0.1)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('binding_engine', e)
                 logger.debug("BindingEngine: IntentionLoop review failed: %s", e)
 
@@ -291,7 +291,7 @@ class BindingEngine:
                 if getattr(unity_state, "repair_needed", False):
                     for reason in list(getattr(unity_state, "repair_reasons", []) or [])[:3]:
                         report.threats.append(f"unity:{reason}")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('binding_engine', exc)
             logger.debug("BindingEngine: Unity integration skipped: %s", exc)
 
@@ -307,7 +307,7 @@ class BindingEngine:
                         "coherence": report.overall_coherence,
                         "threats": report.threats,
                     })
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('binding_engine', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         elif report.tension_pressure > 0.7:
@@ -369,7 +369,7 @@ class BindingEngine:
                 if canonical and hasattr(self._self_engine, "assert_identity"):
                     if not self._self_engine.assert_identity(action_description):
                         return False, "Action conflicts with core identity."
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError) as _exc:
                 record_degradation('binding_engine', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 

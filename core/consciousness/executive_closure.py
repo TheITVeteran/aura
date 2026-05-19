@@ -407,7 +407,7 @@ class ExecutiveClosureEngine:
                 quality = unified_field.get_experiential_quality()
                 field_coherence = float(quality.get("coherence", 0.6))
                 field_valence = float(quality.get("valence", 0.0))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("executive_closure", exc)
             logger.debug("Unified field pressure read failed: %s", exc)
 
@@ -418,7 +418,7 @@ class ExecutiveClosureEngine:
                 chem_stress = mood.get("stress", 0.0)
                 chem_motivation = mood.get("motivation", 0.5)
                 chem_sociality = mood.get("sociality", 0.4)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("executive_closure", exc)
             logger.debug("Neurochemical pressure read failed: %s", exc)
 
@@ -428,7 +428,7 @@ class ExecutiveClosureEngine:
                 bb = intero.get_body_budget()
                 body_budget = float(bb.get("budget", 0.0))
                 body_energy = float(bb.get("energy_reserves", 0.5))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("executive_closure", exc)
             logger.debug("Interoceptive pressure read failed: %s", exc)
 
@@ -510,7 +510,7 @@ class ExecutiveClosureEngine:
                     and is_actionable_goal_text(next_goal.description)
                 ):
                     return str(next_goal.description)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosure: goal hierarchy lookup failed: %s", exc)
 
@@ -520,7 +520,7 @@ class ExecutiveClosureEngine:
                 result = getattr(volition, "_last_goal", None)
                 if result and result.get("objective") and is_actionable_goal_text(result["objective"]):
                     return str(result["objective"])
-            except Exception as _exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
                 record_degradation('executive_closure', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -534,7 +534,7 @@ class ExecutiveClosureEngine:
                     # can seed future continuity without parking the current tick.
                     loop.create_task(self._seed_from_volition(volition, current_objective))
                     self._last_volition_seed = time.time()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('executive_closure', exc)
                     logger.debug("ExecutiveClosure: volition seed failed: %s", exc)
 
@@ -554,7 +554,7 @@ class ExecutiveClosureEngine:
             if not proposal or not proposal.get("objective"):
                 return
             volition._last_goal = proposal
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: volition tick failed: %s", exc)
 
@@ -602,7 +602,7 @@ class ExecutiveClosureEngine:
                 return dict(self._cached_homeostasis_status)
         except TimeoutError:
             logger.debug("ExecutiveClosure: homeostasis pulse timed out; using cached status.")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: homeostasis pulse failed: %s", exc)
         return dict(self._cached_homeostasis_status)
@@ -620,7 +620,7 @@ class ExecutiveClosureEngine:
                     "free_energy": float(status.get("free_energy", {}).get("current", 0.0)),
                     "phi_estimate": float(status.get("phi", {}).get("estimate", 0.0)),
                 }
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosure: closed-loop read failed: %s", exc)
         return {"cycle_count": 0, "free_energy": 0.0, "phi_estimate": 0.0}
@@ -630,7 +630,7 @@ class ExecutiveClosureEngine:
         if workspace and hasattr(workspace, "get_snapshot"):
             try:
                 return dict(workspace.get_snapshot() or {})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosure: workspace snapshot failed: %s", exc)
         return {}
@@ -640,7 +640,7 @@ class ExecutiveClosureEngine:
         if interaction_signals and hasattr(interaction_signals, "get_status"):
             try:
                 return dict(interaction_signals.get_status() or {})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosure: interaction signal snapshot failed: %s", exc)
         return {}
@@ -694,7 +694,7 @@ class ExecutiveClosureEngine:
             self._self_model_sync_task = loop.create_task(
                 self._sync_self_model_payload(self_model, payload)
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: self-model sync failed: %s", exc)
 
@@ -725,12 +725,12 @@ class ExecutiveClosureEngine:
                             classification="background_degraded",
                             context={"reason": "update_belief_unavailable"},
                         )
-                    except Exception as degraded_exc:
+                    except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                         record_degradation('executive_closure', degraded_exc)
                         logger.debug("ExecutiveClosure degraded-event logging failed: %s", degraded_exc)
                     return
                 self_model.beliefs["executive_closure"] = payload
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: self-model sync task failed: %s", exc)
 
@@ -762,7 +762,7 @@ class ExecutiveClosureEngine:
                 priority=max(0.6, min(1.0, need_pressure)),
             )
             self._last_goal_sync = now
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: goal sync failed: %s", exc)
 
@@ -814,7 +814,7 @@ class ExecutiveClosureEngine:
             mods = getattr(state.cognition, "modifiers", {}) or {}
             if mods.get("task_completed") or mods.get("response_completed_task"):
                 return True
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("executive_closure", exc)
             logger.debug("Task completion modifier read failed: %s", exc)
 
@@ -825,7 +825,7 @@ class ExecutiveClosureEngine:
                 if not active and self._commitment:
                     # Don't instantly release; allow the response phase to finish.
                     return self._commitment.age_s(time.time()) > self._commitment.min_hold_s
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("executive_closure", exc)
             logger.debug("Task commitment verifier read failed: %s", exc)
 

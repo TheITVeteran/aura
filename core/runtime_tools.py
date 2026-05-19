@@ -22,7 +22,7 @@ try:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     CRYPTO_AVAILABLE = True
-except Exception:
+except (ImportError, AttributeError, RuntimeError):
     CRYPTO_AVAILABLE = False
 
 # Key path (create securely; gitignore it)
@@ -166,7 +166,7 @@ def get_runtime_state() -> dict[str, Any]:
                         return fallback_data
                     return res
                 return fallback_data
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation("runtime_tools", exc)
                 logger.debug("Runtime status sampling failed for %s: %s", type(service).__name__, exc)
                 return fallback_data
@@ -225,7 +225,7 @@ def get_runtime_state() -> dict[str, Any]:
                 )
             self_model_data = {**self_model_data, **merged_self}
 
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('runtime_tools', e)
         logger.debug("Runtime state sampling skipped (pre-init): %s", e)
 

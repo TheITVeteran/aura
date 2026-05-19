@@ -71,7 +71,7 @@ class AffordanceKnowledgeBase:
                     for entity, aff_list in data.items():
                         self.affordances[entity] = [Affordance.from_dict(a) for a in aff_list]
                 logger.info(f"Loaded {sum(len(v) for v in self.affordances.values())} affordances for {self.domain}.")
-        except Exception as e:
+        except (OSError, IOError) as e:
             logger.error(f"Failed to load affordances: {e}")
 
     def _save(self):
@@ -80,7 +80,7 @@ class AffordanceKnowledgeBase:
             data = {entity: [a.to_dict() for a in aff_list] for entity, aff_list in self.affordances.items()}
             with open(self.storage_path, 'w') as f:
                 json.dump(data, f, indent=2)
-        except Exception as e:
+        except (OSError, IOError) as e:
             logger.error(f"Failed to save affordances: {e}")
 
     def add_learned_affordance(self, affordance: Affordance):

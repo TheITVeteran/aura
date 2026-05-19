@@ -67,7 +67,7 @@ class PredictiveEngine:
                     prediction.expected_changes["total_beliefs"] = current_summary.get("total_beliefs", 0) + 2
                 elif action_type == "apply_fix":
                     prediction.expected_changes["strong"] = current_summary.get("strong", 0) + 1
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('predictive_engine', e)
                 logger.debug("World model prediction failed: %s", e)
 
@@ -186,7 +186,7 @@ class PredictiveEngine:
             fe = ServiceContainer.get("free_energy_engine", default=None)
             if fe and hasattr(fe, "accept_surprise_signal"):
                 fe.accept_surprise_signal(surprise)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_engine', e)
             logger.debug("accept_feedback → free_energy_engine: %s", e)
 

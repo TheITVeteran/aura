@@ -86,7 +86,7 @@ class BootCognitiveMixin:
 
             # Unified services are now handled in _async_init_subsystems
             pass  # no-op: intentional
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Cognitive core wiring failed: %s", e, exc_info=True)
 
@@ -97,7 +97,7 @@ class BootCognitiveMixin:
 
             self.rsi_lab = register_rsi_lab(self)
             logger.info("🔬 RSI Lab online")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.debug("🔬 RSI Lab skipped: %s", e)
 
@@ -115,7 +115,7 @@ class BootCognitiveMixin:
                 decoder.init_routes()
 
             logger.info("🛰️  Cryptolalia Decoder online")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.warning("🛰️  Cryptolalia Decoder failed: %s", e)
 
@@ -130,7 +130,7 @@ class BootCognitiveMixin:
 
             self.morphic_forking = register_morphic_forking(self)
             logger.info("🌑 Ontology & Morphic Forking online")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.warning("🌑 Ontology/Forking failed: %s", e)
 
@@ -141,7 +141,7 @@ class BootCognitiveMixin:
 
             self.belief_sync = BeliefSync(self)
             ServiceContainer.register_instance("belief_sync", self.belief_sync)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("BeliefSync init failed: %s", e)
             ServiceContainer.register_instance("belief_sync", None)
@@ -157,7 +157,7 @@ class BootCognitiveMixin:
                 self.react_loop = ReActLoop(brain=ce, orchestrator=self)
                 ServiceContainer.register_instance("react_loop", self.react_loop)
             logger.info("✓ ReAct Loop online (Multi-step reasoning)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to init ReAct Loop: %s", e)
 
@@ -177,7 +177,7 @@ class BootCognitiveMixin:
                     "continuous_learner", self.continuous_learner
                 )
             logger.info("✓ Continuous Learner online")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to init Continuous Learner: %s", e)
 
@@ -211,11 +211,11 @@ class BootCognitiveMixin:
                         structural_improver=structural,
                     ),
                 )
-            except Exception as rsi_err:
+            except (ImportError, AttributeError, RuntimeError) as rsi_err:
                 record_degradation('boot_cognitive', rsi_err)
                 logger.debug("Recursive self-improvement loop registration failed: %s", rsi_err)
             logger.info("✓ Live Learner online and buffering")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("🛑 Live Learner init failed: %s", e)
 
@@ -288,7 +288,7 @@ class BootCognitiveMixin:
                         if not ready:
                             logger.error("   ❌ CIL component not ready: %s", key)
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('boot_cognitive', e)
                 logger.error(
                     "Failed to init Advanced Cognition (attempt %d/%d): %s",
@@ -320,7 +320,7 @@ class BootCognitiveMixin:
                     self.memory, self.cognitive_engine
                 )
                 logger.info("✓ Meta-Learning Engine active")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.debug("Meta-Learning Engine optional: %s", e)
 
@@ -338,7 +338,7 @@ class BootCognitiveMixin:
                 ServiceContainer.register_instance("mental_simulator", self.simulator, required=False)
                 ServiceContainer.register_instance("aesthetic_critic", self.aesthetic_critic, required=False)
                 logger.info("✓ Mental Simulation & Intrinsic Motivation active")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.debug("Simulation/Motivation modules optional: %s", e)
 
@@ -349,7 +349,7 @@ class BootCognitiveMixin:
             self.narrative_engine = NarrativeEngine(self)
             ServiceContainer.register_instance("narrative_engine", self.narrative_engine)
             logger.info("✓ Narrative Engine initialized")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to init Narrative Memory: %s", e)
             self.narrative_engine = None
@@ -390,7 +390,7 @@ class BootCognitiveMixin:
             self.hooks.register("post_action", on_post_action_learning)
 
             logger.info("✓ Continuous Learning Engine integrated (v6.2 Unified)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to integrate continuous learning: %s", e)
 
@@ -398,7 +398,7 @@ class BootCognitiveMixin:
             from core.behavior_controller import integrate_behavior_control
 
             integrate_behavior_control(self)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to integrate behavior control: %s", e)
 
@@ -475,7 +475,7 @@ class BootCognitiveMixin:
                 try:
                     await consciousness.start()
                     logger.info("🧠 Consciousness System started in background")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot_cognitive', e)
                     logger.error(
                         "🛑 Consciousness System background start failed: %s", e
@@ -492,7 +492,7 @@ class BootCognitiveMixin:
             ServiceContainer.register_instance("consciousness_integration", integration)
             logger.info("🌟 Layer 8: Phenomenological Experiencer active")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to initialize Unified Consciousness/Affect: %s", e)
 
@@ -521,7 +521,7 @@ class BootCognitiveMixin:
 
             register_prompt_compiler()
             logger.info("✓ PromptCompiler (The Body) registered")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to register Language/Identity/Compiler services: %s", e)
 
@@ -544,7 +544,7 @@ class BootCognitiveMixin:
             self.project_store = store
             ServiceContainer.register_instance("strategic_planner", planner)
             logger.info("🎯 Strategic Planner & Neural Feed online")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_cognitive', e)
             logger.error("Failed to initialize Strategic systems: %s", e)
             self.strategic_planner = None

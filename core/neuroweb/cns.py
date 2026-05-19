@@ -128,7 +128,7 @@ class CentralNervousSystem:
                     logger.info("CNS: Stimulus silenced by GW competition bottleneck.")
             except asyncio.TimeoutError:
                 logger.debug("CNS: GW competition timed out - proceeding with stimulus.")
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('cns', e)
                 logger.error("CNS GW bottleneck error: %s", e)
 

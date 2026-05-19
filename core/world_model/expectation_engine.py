@@ -22,7 +22,7 @@ class ExpectationEngine:
             return {}
         try:
             parsed = ast.literal_eval(result)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
@@ -107,7 +107,7 @@ Expected Outcome:
             response = await self.brain.think(prompt, mode=ThinkingMode.FAST)
             response = response.content
             return response
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('expectation_engine', e)
             logger.error("Prediction failed: %s", e)
             return "Unknown"
@@ -138,7 +138,7 @@ Return ONLY the number.
             if match:
                 return float(match.group(1))
             return 0.5 # Default uncertainty
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('expectation_engine', e)
             logger.error("Surprise calc failed: %s", e)
             return 0.0
@@ -196,6 +196,6 @@ Return ONLY the pipes data, one per line.
                         
                     belief_graph.update_belief(parts[0], parts[1], parts[2], confidence_score=confidence)
                     
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('expectation_engine', e)
             logger.error("Belief update extraction failed: %s", e)

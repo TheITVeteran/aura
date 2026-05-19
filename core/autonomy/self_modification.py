@@ -285,7 +285,7 @@ class AutonomousSelfModification:
                     "simulation_passed": sim_ok,
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_modification', exc)
             receipt = ModificationReceipt(
                 proposal_id=proposal.proposal_id,
@@ -392,7 +392,7 @@ class AutonomousSelfModification:
             else:
                 return True, "Untyped change -- passed basic validation"
 
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('self_modification', exc)
             return False, f"Simulation error: {exc}"
 
@@ -417,7 +417,7 @@ class AutonomousSelfModification:
                 return "Config update noted"
             else:
                 return "No automatic application -- logged for manual review"
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('self_modification', exc)
             logger.error("Self-modification apply failed: %s", exc)
             return f"Apply error: {exc}"
@@ -437,7 +437,7 @@ class AutonomousSelfModification:
                     delta = val - old_val
                     hv._adjust(key, delta)
                     applied.append(f"{key}: {old_val:.3f} -> {val:.3f}")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('self_modification', exc)
                 return f"Heartstone adjustment failed: {exc}"
 
@@ -451,7 +451,7 @@ class AutonomousSelfModification:
                             old_level = b.level
                             b.level = max(0.0, min(b.capacity, val * b.capacity))
                             applied.append(f"{name}: {old_level:.1f} -> {b.level:.1f}")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('self_modification', exc)
                 return f"Drive engine adjustment failed: {exc}"
 
@@ -479,7 +479,7 @@ class AutonomousSelfModification:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(_AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(receipt.to_dict(), default=str) + "\n")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('self_modification', exc)
             logger.debug("Audit log write failed: %s", exc)
 
@@ -488,7 +488,7 @@ class AutonomousSelfModification:
         try:
             from core.event_bus import get_event_bus
             get_event_bus().publish_threadsafe(topic, receipt.to_dict())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     # ── Public API ──────────────────────────────────────────────────────

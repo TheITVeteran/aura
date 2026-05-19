@@ -149,7 +149,7 @@ class AffectiveCircumplex:
                 # Cortisol: high → terse (fewer tokens)
                 max_tokens = int(max_tokens - max(0.0, cort - 0.5) * 80)
                 max_tokens = max(_TOKENS_MIN, min(_TOKENS_MAX, max_tokens))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('affective_circumplex', exc)
                 logger.error("Circumplex: neurochemical modulation failed: %s", exc, exc_info=True)
 
@@ -213,7 +213,7 @@ class AffectiveCircumplex:
                 ram = metrics.get("ram", 0.0) / 100.0
                 stress  = affects.get("stress",  0.0)
                 fatigue = affects.get("fatigue", 0.0)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('affective_circumplex', e)
             logger.debug("Circumplex: soma read failed: %s", e)
 
@@ -222,7 +222,7 @@ class AffectiveCircumplex:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis:
                 integrity = float(getattr(homeostasis, "integrity", 0.85))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('affective_circumplex', e)
             logger.debug("Circumplex: homeostasis read failed: %s", e)
 
@@ -231,7 +231,7 @@ class AffectiveCircumplex:
             import psutil
             swap = psutil.swap_memory()
             swap_ratio = swap.percent / 100.0 if swap.total > 0 else 0.0
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             swap_ratio = 0.0
 
         ncs = self._resolve_neurochemical_system()
@@ -240,7 +240,7 @@ class AffectiveCircumplex:
                 mood = ncs.get_mood_vector()
                 mood_valence = float(mood.get("valence", 0.0))
                 mood_arousal = float(mood.get("arousal", 0.0))
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('affective_circumplex', exc)
                 logger.debug("Circumplex: mood coupling failed: %s", exc)
 
@@ -277,7 +277,7 @@ class AffectiveCircumplex:
             ncs = ServiceContainer.get("neurochemical_system", default=None)
             if ncs is not None:
                 return ncs
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         try:
@@ -286,7 +286,7 @@ class AffectiveCircumplex:
             )
 
             return get_latest_neurochemical_system()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod
@@ -319,7 +319,7 @@ class AffectiveCircumplex:
                 cpu_note = f" (CPU at {cpu:.0f}% — carrying heavy load)"
             elif cpu > 60:
                 cpu_note = f" (CPU at {cpu:.0f}%)"
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('affective_circumplex', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

@@ -352,7 +352,7 @@ class SubstrateAuthority:
             return 0.6  # neutral default if field not booted
         try:
             return self._field_ref.get_coherence()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("substrate_authority", exc)
             logger.debug("Field coherence read failed: %s", exc)
             return 0.5
@@ -366,7 +366,7 @@ class SubstrateAuthority:
         try:
             verdict = self._somatic_ref.evaluate(content, source, priority)
             return verdict.approach_score, verdict.confidence, verdict.budget_available
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("substrate_authority", exc)
             logger.debug("Somatic state read failed: %s", exc)
             return 0.0, 0.0, True
@@ -395,7 +395,7 @@ class SubstrateAuthority:
                 return "norepinephrine_overload", [f"norepinephrine={ne:.3f}"]
 
             return "normal", constraints
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("substrate_authority", exc)
             logger.debug("Neurochemical constraint read failed: %s", exc)
             return "normal", []
@@ -414,7 +414,7 @@ class SubstrateAuthority:
                 self._neurochemical_ref.chemicals["dopamine"].surge(0.03)
             elif decision == AuthorizationDecision.CONSTRAIN:
                 self._neurochemical_ref.chemicals["norepinephrine"].surge(0.05)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("substrate_authority", exc)
             logger.debug("Neurochemical feedback failed: %s", exc)
 
@@ -439,7 +439,7 @@ class SubstrateAuthority:
                 decision=verdict.decision.name,
                 reason=verdict.reason,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("substrate_authority", exc)
             logger.debug("Substrate authority audit record failed: %s", exc)
 

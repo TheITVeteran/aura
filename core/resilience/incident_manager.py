@@ -226,7 +226,7 @@ class IncidentManager:
         for callback in self._alert_callbacks:
             try:
                 callback(incident)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.debug("Alert callback failed: %s", e)
 
     @staticmethod

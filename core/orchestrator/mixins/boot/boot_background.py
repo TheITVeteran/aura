@@ -39,7 +39,7 @@ class BootBackgroundMixin:
                             last_msg = str(self.conversation_history[-1])[:200]
                         cont.save(reason="checkpoint", last_exchange=last_msg)
                     _last_continuity_save = time.time()
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('boot_background', _e)
                 # Fail-silent internally, brainstem will eventually reboot us if this fails repeatedly
                 logger.debug("Ignored Exception in boot.py: %s", _e)
@@ -52,7 +52,7 @@ class BootBackgroundMixin:
 
             scl = register_subconscious_loop(self)
             tracker.create_task(scl.start(), name="subconscious_loop")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_background', e)
             logger.error("Subconscious Loop init failed: %s", e)
             ServiceContainer.register_instance("subconscious_loop", None)
@@ -70,7 +70,7 @@ class BootBackgroundMixin:
             logger.info(
                 "🌀 [BOOT] Meta-Evolution Engine (meta_cognition_shard) initialized."
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_background', e)
             logger.error("🛑 [BOOT] Failed to initialize Meta-Evolution Engine: %s", e)
 
@@ -83,7 +83,7 @@ class BootBackgroundMixin:
                 and hasattr(self.belief_sync, "start")
             ):
                 tracker.create_task(self.belief_sync.start(), name="belief_sync")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('boot_background', e)
             logger.error("BeliefSync start failed: %s", e)
 
@@ -97,7 +97,7 @@ class BootBackgroundMixin:
                     or ServiceContainer.has("kernel_interface")
                     or bool(getattr(ServiceContainer, "_registration_locked", False))
                 )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 return False
 
         try:
@@ -114,7 +114,7 @@ class BootBackgroundMixin:
             )
             if decision.get("action") in {"released", "suppressed"}:
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('boot_background', exc)
             logger.debug("Proactive callback executive route failed: %s", exc)
 
@@ -130,7 +130,7 @@ class BootBackgroundMixin:
                     classification="background_degraded",
                     context={"urgency": urgency},
                 )
-            except Exception as degraded_exc:
+            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                 record_degradation('boot_background', degraded_exc)
                 logger.debug("Proactive callback degraded-event logging failed: %s", degraded_exc)
             return
@@ -146,7 +146,7 @@ class BootBackgroundMixin:
                 classification="background_degraded",
                 context={"urgency": urgency},
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('boot_background', exc)
             logger.debug("Proactive callback degraded-event logging failed: %s", exc)
 
@@ -171,7 +171,7 @@ class BootBackgroundMixin:
                 ServiceContainer.register_instance("metabolic_coordinator", coordinator)
                 ServiceContainer.register_instance("metabolism", coordinator)
                 logger.info("✓ Metabolic Coordinator ACTIVE (High-level pacing enabled)")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('boot_background', e)
                 logger.error("Failed to initialize Metabolic Coordinator: %s", e)
 
@@ -192,6 +192,6 @@ class BootBackgroundMixin:
 
             # Phase 21: Dream Cycle (DLQ Re-ingestion) migrated to DreamCoordinator
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_background', e)
             logger.error("Failed to initialize Metabolic systems: %s", e)

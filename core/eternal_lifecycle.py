@@ -37,7 +37,7 @@ async def eternal_lifecycle():
                                 mx.clear_cache()
                         finally:
                             sentinel.release()
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('eternal_lifecycle', e)
                     logger.debug(f"[MLX] Cache clear skipped in eternal: {e}")
                 
@@ -57,14 +57,14 @@ async def eternal_lifecycle():
                     await nightly_lora_finetune()
                 except ImportError:
                     logger.debug("Nightly LoRA module not found, skipping.")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('eternal_lifecycle', e)
                     logger.error(f"Nightly maintenance failed: {e}")
 
         except RuntimeError as _e:
             # Runtime not yet initialized
             logger.debug('Ignored RuntimeError in eternal_lifecycle.py: %s', _e)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('eternal_lifecycle', e)
             logger.error(f"Error in eternal_loop: {e}")
             

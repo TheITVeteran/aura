@@ -75,7 +75,7 @@ class DistillationPipe:
             )
             if content:
                 return content, teacher, "configured_deep_teacher"
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('distillation_pipe', exc)
             record_degraded_event(
                 "distillation_pipe",
@@ -101,7 +101,7 @@ class DistillationPipe:
                 content = self._extract_teacher_content(response)
                 if content:
                     return content, "local_secondary_teacher", "local_secondary_fallback"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('distillation_pipe', exc)
             record_degraded_event(
                 "distillation_pipe",
@@ -177,7 +177,7 @@ class DistillationPipe:
                         if mycelium:
                             h = mycelium.get_hypha("adaptation", "memory")
                             if h: h.pulse(success=True)
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('distillation_pipe', e)
                         capture_and_log(e, {'module': __name__})
                 else:
@@ -190,7 +190,7 @@ class DistillationPipe:
                     )
                     failed_count += 1
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('distillation_pipe', e)
                 logger.error("Distillation failed for item: %s", e)
                 failed_count += 1

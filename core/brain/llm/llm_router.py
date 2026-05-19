@@ -135,7 +135,7 @@ class LLMHealthMonitor:
                 from core.event_bus import Event
                 # Assuming Event structure or specific health event
                 logger.debug("Event fallback not implemented in router health record.") 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('llm_router', e)
                 logger.debug("Failed to emit recovery event: %s", e)
 
@@ -216,7 +216,7 @@ class LocalLLMAdapter:
                 if recent:
                     snippet = " | ".join([str(m) for m in recent])
                     context_parts.append(f"Recent Memories: {snippet}")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('llm_router', e)
             logger.debug("Context injection failed: %s", e)
             
@@ -323,7 +323,7 @@ class LocalLLMAdapter:
                             "tokens_used": data.get("usage", {}).get("total_tokens", 0)
                         }
                         return True, data.get("response", ""), metadata
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('llm_router', e)
                     logger.debug("Ollama /api/generate failed, trying /v1/chat/completions: %s", e)
 
@@ -370,7 +370,7 @@ class LocalLLMAdapter:
                     error = f"HTTP {response.status_code}: {response.text}"
                     return False, "", {"error": error}
                     
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('llm_router', e)
             return False, "", {"error": str(e)}
 
@@ -399,7 +399,7 @@ class StaticReflexClient:
             substrate = ServiceContainer.get("liquid_substrate", default=None)
             if substrate:
                 mood_desc = substrate.get_summary()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('llm_router', exc)
             logger.debug("Substrate not available for static reflex: %s", exc)
         
@@ -411,7 +411,7 @@ class StaticReflexClient:
                 if recent:
                     items = [m.content if hasattr(m, "content") else str(m) for m in recent]
                     context_snippet = " | ".join(items)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('llm_router', exc)
             logger.debug("Memory not available for static reflex: %s", exc)
             
@@ -538,7 +538,7 @@ class IntelligentLLMRouter:
         try:
             blended = (float(existing) * (1.0 - substrate_weight)) + (float(substrate) * substrate_weight)
             return round(blended, 4)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return round(float(substrate), 4)
 
     @classmethod
@@ -620,7 +620,7 @@ class IntelligentLLMRouter:
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 return str(gate._background_local_deferral_reason(origin=origin) or "").strip()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('llm_router', exc)
             logger.debug("LegacyRouter background deferral probe failed: %s", exc)
         return ""
@@ -671,7 +671,7 @@ class IntelligentLLMRouter:
                 if not is_background:
                     self.last_user_tier = "substrate"
                 return result.text
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("llm_router", exc)
             logger.debug("Substrate primary path skipped: %s", exc)
         return None
@@ -1003,7 +1003,7 @@ class IntelligentLLMRouter:
                     last_error_str = f"timeout:{endpoint_name}"
                     self.health_monitor.record_failure(endpoint_name, last_error_str)
                     break  # Don't retry timeouts — fail over to next endpoint
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('llm_router', e)
                     logger.error("🚨 Error calling %s (Attempt %d): %s", endpoint_name, attempt + 1, e)
                     last_error_str = str(e)
@@ -1145,7 +1145,7 @@ class IntelligentLLMRouter:
                     yield ChatStreamEvent(type="token", content=res)
                     return
                     
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('llm_router', e)
                 logger.warning("Streaming from %s failed: %s. Trying next...", endpoint_name, e)
                 continue
@@ -1228,7 +1228,7 @@ class IntelligentLLMRouter:
                 "I am still here, but my voice is currently limited to this static echo. "
                 f"\n\n(Core Error: {last_error})"
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return "Cognitive collapse imminent. System reboot recommended."
     
     async def think_and_act(
@@ -1309,7 +1309,7 @@ class IntelligentLLMRouter:
                     )
                     self.health_monitor.record_success(name)
                     return result
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('llm_router', e)
                     logger.warning("think_and_act on %s failed: %s", name, e)
                     self.health_monitor.record_failure(name, str(e))

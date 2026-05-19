@@ -39,7 +39,7 @@ class CognitiveContextManager:
             liquid = service_access.resolve_liquid_substrate(default=None)
             if liquid:
                 context["vitality"] = liquid.get_status()
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Vitality/Homeostasis context failed: %s", exc)
 
@@ -47,7 +47,7 @@ class CognitiveContextManager:
             identity = service_access.optional_service("identity_system", default=None)
             if identity:
                 context["identity"] = identity.get_full_system_prompt_injection()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Identity context failed: %s", exc)
 
@@ -58,7 +58,7 @@ class CognitiveContextManager:
 
                 context["personality"] = personality.get_emotional_context_for_response()
                 context["ocean_traits"] = AURA_BIG_FIVE
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Personality context failed: %s", exc)
 
@@ -70,7 +70,7 @@ class CognitiveContextManager:
                 elif hasattr(memory, "memory") and hasattr(memory.memory, "retrieve"):
                     memories = await memory.memory.retrieve(message, limit=3)
                     context["memory_context"] = "\n".join(f"- {memory_item}" for memory_item in memories)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Memory context failed: %s", exc)
 
@@ -85,7 +85,7 @@ class CognitiveContextManager:
                     "qualia": state.get("qualia"),
                     "phi": state.get("iit_phi"),
                 }
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Consciousness context failed: %s", exc)
 
@@ -97,7 +97,7 @@ class CognitiveContextManager:
                     f"- {belief['source']} {belief['relation']} {belief['target']}"
                     for belief in strong[:5]
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Belief context failed: %s", exc)
 
@@ -105,7 +105,7 @@ class CognitiveContextManager:
             theory_of_mind = service_access.optional_service("theory_of_mind", default=None)
             if theory_of_mind:
                 context["user_intent"] = await theory_of_mind.infer_intent(message, context)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("ToM context failed: %s", exc)
 
@@ -145,7 +145,7 @@ class CognitiveContextManager:
                     aura_response=response,
                     domain=domain,
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('cognitive_context_manager', exc)
             logger.debug("Automatic learning record failed: %s", exc)
 

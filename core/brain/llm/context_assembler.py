@@ -443,7 +443,7 @@ class ContextAssembler:
                 # Hard cap: prevent goal context from eating the prompt budget
                 if len(goal_execution_block) > 1200:
                     goal_execution_block = goal_execution_block[:1200] + "\n...\n\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("GoalEngine context injection skipped: %s", _e)
 
@@ -465,7 +465,7 @@ class ContextAssembler:
                 temporal_finitude_block = tf.get_context_block()
                 if temporal_finitude_block:
                     temporal_finitude_block += "\n\n"
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('context_assembler', _e)
                 logger.debug("TemporalFinitude context skipped: %s", _e)
 
@@ -481,7 +481,7 @@ class ContextAssembler:
                             f"Self-observation: confidence={mq['confidence']:.2f} coherence={mq['coherence']:.2f} "
                             f"novelty={mq['novelty']:.2f} dissonance={mq['dissonance']:.2f}\n\n"
                         )
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('context_assembler', _e)
                 logger.debug("MetaQualia context skipped: %s", _e)
 
@@ -756,7 +756,7 @@ class ContextAssembler:
                     "Calibrate register and depth to this. High rapport → lean in, "
                     "be more personal. Low rapport → earn it naturally.\n"
                 )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("ToM injection failed (non-critical): %s", _e)
 
@@ -767,7 +767,7 @@ class ContextAssembler:
                 social_ctx = social_mem.get_social_context()
                 if social_ctx:
                     base += f"\n{social_ctx}\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("SocialMemory injection failed (non-critical): %s", _e)
 
@@ -778,7 +778,7 @@ class ContextAssembler:
             sg_injection = sg.get_context_injection(max_entries=5)
             if sg_injection:
                 base += f"\n{sg_injection}\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("SharedGround injection failed (non-critical): %s", _e)
 
@@ -791,7 +791,7 @@ class ContextAssembler:
                     opinion_injection = opinion_engine.get_context_injection(topic_hint[:200])
                     if opinion_injection:
                         base += f"\n{opinion_injection}\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("OpinionEngine injection failed (non-critical): %s", _e)
 
@@ -818,7 +818,7 @@ class ContextAssembler:
                     "or shift if the energy calls for it.\n"
                 )
                 base += discourse_block
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("DiscourseState injection failed (non-critical): %s", _e)
 
@@ -857,7 +857,7 @@ class ContextAssembler:
                         "- If a needed tool is unavailable, say so plainly instead of pretending.\n"
                     )
                     base += f"\n{skills_summary}\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("Skill catalog injection failed (non-critical): %s", _e)
 
@@ -868,7 +868,7 @@ class ContextAssembler:
             commitment_block = ce.get_context_block()
             if commitment_block:
                 base += f"\n{commitment_block}\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("Commitment context injection failed (non-critical): %s", _e)
 
@@ -884,7 +884,7 @@ class ContextAssembler:
                         f"  - [{t['task_id']}] {t['objective'][:80]} — status: {t['status']}"
                     )
                 base += "\n" + "\n".join(task_lines) + "\n"
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("Active task injection failed (non-critical): %s", _e)
 
@@ -1135,7 +1135,7 @@ class ContextAssembler:
             goal_engine = ServiceContainer.get("goal_engine", default=None)
             if goal_engine and hasattr(goal_engine, "get_context_block"):
                 goal_text = "\n" + str(goal_engine.get_context_block(limit=4) or "").strip()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("GoalEngine prompt injection skipped: %s", e)
 
@@ -1159,7 +1159,7 @@ class ContextAssembler:
         if objective and hasattr(state, "cognition"):
             try:
                 state.cognition.attention_focus = str(objective)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('context_assembler', exc)
                 logger.debug("ContextAssembler attention focus update skipped: %s", exc)
 
@@ -1169,7 +1169,7 @@ class ContextAssembler:
 
                 context_window = max(8192, int(get_lane_context_window(PRIMARY_ENDPOINT) or 32768))
                 max_tokens = max(8192, context_window - 4096)  # leave headroom for generation
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 max_tokens = 16384
 
         char_limit = int(max_tokens) * 4  # Rough estimation: 1 token ~= 4 chars
@@ -1200,7 +1200,7 @@ class ContextAssembler:
                     )
                     if goals_text:
                         dynamic_system += f"\nActive Drives: {goals_text}"
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 dynamic_system = system_prompt
         
         system_msg = {"role": "system", "content": dynamic_system}
@@ -1310,7 +1310,7 @@ class ContextAssembler:
                 opening = stream.get_response_opening(context_hint=objective)
                 if opening:
                     messages.append({"role": "assistant", "content": opening.strip() + "\n\n"})
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('context_assembler', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

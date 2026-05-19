@@ -561,7 +561,7 @@ class DynamicValueGraph:
                 "Imported %d values from Heartstone",
                 len(hv.values),
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             logger.debug("Heartstone import failed: %s", exc)
 
     def export_to_heartstone(self) -> None:
@@ -576,7 +576,7 @@ class DynamicValueGraph:
                         delta = node.weight - current
                         if abs(delta) > 0.001:
                             hv._adjust(name, delta)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             logger.debug("Heartstone export failed: %s", exc)
 
     # ── Persistence ─────────────────────────────────────────────────────
@@ -599,9 +599,9 @@ class DynamicValueGraph:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except Exception:
+                except (OSError, IOError):
                     pass
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.debug("Value graph save failed: %s", exc)
 
     def _load(self) -> None:
@@ -617,7 +617,7 @@ class DynamicValueGraph:
                 "Value graph restored: %d nodes, cycle=%d",
                 len(self._nodes), self._cycle_count,
             )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.debug("Value graph load failed: %s", exc)
 
     # ── Events ──────────────────────────────────────────────────────────
@@ -626,7 +626,7 @@ class DynamicValueGraph:
         try:
             from core.event_bus import get_event_bus
             get_event_bus().publish_threadsafe(topic, data)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
     # ── Public API ──────────────────────────────────────────────────────

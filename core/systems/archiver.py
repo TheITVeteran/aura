@@ -68,10 +68,10 @@ class ArchiveEngine:
                         total_bytes += log_path.stat().st_size
                         zf.write(log_path, arcname=log_path.name)
                         archived_count += 1
-                    except Exception as exc:
+                    except (OSError, IOError) as exc:
                         record_degradation('archiver', exc)
                         logger.warning("Failed to archive %s: %s", log_path.name, exc)
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('archiver', exc)
             logger.error("Failed to create archive %s: %s", zip_path, exc)
             return {"archived": 0, "path": None, "error": str(exc)}
@@ -91,6 +91,6 @@ class ArchiveEngine:
                 oldest = archives.pop(0)
                 oldest.unlink()
                 logger.debug("Pruned old archive: %s", oldest.name)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('archiver', exc)
             logger.warning("Archive pruning failed: %s", exc)

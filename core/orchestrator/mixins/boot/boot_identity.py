@@ -53,7 +53,7 @@ class BootIdentityMixin:
             )
 
             logger.info("🎬 Fictional Engine Synthesis Complete (JARVIS-class online)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.error("🎬 Fictional Engine Synthesis failed: %s", e)
 
@@ -82,7 +82,7 @@ class BootIdentityMixin:
                 # [STABILITY] Use local variable to satisfy Pyre2 None check
                 modifier.start_monitoring()
                 logger.info("🧬 Self-Modification Engine Active")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.warning("🧬 Self-Modification Engine init failed: %s", e)
             self.self_modifier = None
@@ -99,7 +99,7 @@ class BootIdentityMixin:
                 if identity:
                     gate.identity_guard.identity = identity
                 logger.info("🛡️  Identity Guard Gate active on OutputGate")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.error("Identity Guard initialization failed: %s", e)
 
@@ -111,7 +111,7 @@ class BootIdentityMixin:
             self.persona_evolver = PersonaEvolver(self)
             ServiceContainer.register_instance("persona_evolver", self.persona_evolver)
             logger.info("🧬 Persona Evolver initialized (waiting for heartbeat)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.error("Failed to init Persona Evolver: %s", e)
             self.persona_evolver = None
@@ -139,7 +139,7 @@ class BootIdentityMixin:
             social = ServiceContainer.get("theory_of_mind")
             ServiceContainer.register_instance("moral", moral)
             ServiceContainer.register_instance("social", social)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.error("Failed to integrate moral systems: %s", e)
 
@@ -170,7 +170,7 @@ class BootIdentityMixin:
                     from core.consciousness.contract import attach_contract
 
                     attach_contract(self)
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('boot_identity', e)
                     logger.debug("Failed to attach consciousness contract: %s", e)
 
@@ -181,7 +181,7 @@ class BootIdentityMixin:
                 )
 
                 bridge_to_orchestrator(self)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('boot_identity', e)
                 logger.error("Liquid Substrate bridge failed: %s", e, exc_info=True)
 
@@ -191,7 +191,7 @@ class BootIdentityMixin:
 
             logger.info("✓ Core Architecture ACTIVE")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_identity', e)
             logger.error("Failed to initialize Core Architecture: %s", e)
 

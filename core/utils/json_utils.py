@@ -85,7 +85,7 @@ class SelfHealingJSON:
         if self.brain:
             try:
                 return await self._llm_repair(self._strip_markdown(raw_text))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('json_utils', e)
                 capture_and_log(e, {"module": __name__})
 
@@ -118,7 +118,7 @@ class SelfHealingJSON:
             return {}
         try:
             parsed = ast.literal_eval(normalized)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
 

@@ -90,7 +90,7 @@ class SocialContextPhase(Phase):
                         else:
                             state.cognition.modifiers["relational_register"] = "cordial"
                         state.cognition.modifiers["rapport_level"] = rapport
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('social_context_phase', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
 
@@ -99,7 +99,7 @@ class SocialContextPhase(Phase):
                     state.cognition.modifiers["social_context"] = injection
                     logger.debug("Social context synchronized: %s", injection)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('social_context_phase', e)
             logger.warning("SocialContextPhase failed: %s", e)
             

@@ -46,7 +46,7 @@ class HybridMemoryStore:
                 # Self-pruning periodic check
                 if await self._count_entries() > self.prune_threshold:
                     await self._prune_oldest()
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('hybrid_store', e)
                 logger.error("Memory store failed: %s", e)
 

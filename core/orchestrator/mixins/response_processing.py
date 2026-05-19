@@ -28,7 +28,7 @@ def _bg_task_exception_handler(task):
             exc = task.exception()
             if exc:
                 logger.warning("Background task failed: %s", exc)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass  # no-op: intentional
 
 
@@ -60,7 +60,7 @@ class ResponseProcessingMixin:
 
                 apply_intent_to_context(message, intent_ctx)
                 grounding_ctx.update(intent_ctx)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
 
             existing_receipts = receipts_from_context({
@@ -86,9 +86,9 @@ class ResponseProcessingMixin:
                         action_taken={"claimed": grounding.claims_without_receipts},
                         result={"ok": False, "reason": "unverified_action_claim"},
                     )
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     pass  # no-op: intentional
-        except Exception as _ground_err:
+        except (ImportError, AttributeError, RuntimeError) as _ground_err:
             record_degradation('response_processing', _ground_err)
             logger.error("Action grounding failed: %s", _ground_err, exc_info=True)
 
@@ -108,7 +108,7 @@ class ResponseProcessingMixin:
                 response = response.replace("as an AI", "from my perspective")
                 response = response.replace("I'm just a language model", "I'm Aura")
                 response = response.replace("I don't have opinions", "I have my own perspective")
-        except Exception as _will_err:
+        except (ImportError, AttributeError, RuntimeError) as _will_err:
             record_degradation('response_processing', _will_err)
             logger.debug("Will finalization check degraded: %s", _will_err)
 
@@ -183,7 +183,7 @@ class ResponseProcessingMixin:
             try:
                 event = "success" if response and response != "..." else "failure"
                 self.personality.respond_to_event(event, {"response": response, "origin": origin})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('response_processing', exc)
                 logger.debug("Suppressed: %s", exc)
 
@@ -204,7 +204,7 @@ class ResponseProcessingMixin:
                     response=response or "",
                     emotional_context=getattr(self.status, "emotions", {})
                 )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('response_processing', e)
                 logger.debug("Failed to record turn for continuous learning: %s", e)
 
@@ -233,7 +233,7 @@ class ResponseProcessingMixin:
             if hasattr(self.cognition, "record_interaction"):
                 try:
                     await self.cognition.record_interaction(message, response, domain="general")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('response_processing', e)
                     logger.warning("[Orchestrator] record_interaction skipped: %s", e)
             else:
@@ -375,7 +375,7 @@ class ResponseProcessingMixin:
                             (followup_result or {}).get("target", "suppressed"),
                             followup_text[:60],
                         )
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('response_processing', e)
                     logger.debug("Follow-up execution failed: %s", e)
 
@@ -408,7 +408,7 @@ class ResponseProcessingMixin:
                      origin=f"recovery_{origin}",
                      system_prompt=emergency_prompt
                  )
-             except Exception as e:
+             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                  record_degradation('response_processing', e)
                  logger.error("❌ [RECOVERY] Reactive downshift failed: %s", e)
 
@@ -520,13 +520,13 @@ class ResponseProcessingMixin:
                         reason,
                     )
                     return None
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('response_processing', exc)
                 logger.debug("Direct reflex authority gate failed: %s", exc)
             try:
                 from core.unified_action_log import get_action_log
                 get_action_log().record(f"direct_response:{pw.pathway_id}", f"mycelium:{pw.pathway_id}", "reflex", "bypassed_no_tool", pw.direct_response[:80])
-            except Exception: pass
+            except (ImportError, AttributeError, RuntimeError): pass
             return {"type": "direct_response", "content": pw.direct_response, "pathway_id": pw.pathway_id}
 
         # 3. Handle Tool/Skill execution
@@ -537,7 +537,7 @@ class ResponseProcessingMixin:
             # Record success for Physarum reinforcement
             mycelium.reinforce(pw.pathway_id, success=True)
             return result
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('response_processing', e)
             logger.error("Mycelial shortcut execution failed: %s", e)
             mycelium.reinforce(pw.pathway_id, success=False)
@@ -558,7 +558,7 @@ class ResponseProcessingMixin:
                     message,
                     is_user_facing=origin in ("user", "voice", "admin"),
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('response_processing', exc)
                 logger.error("Fast-path response contract failed: %s", exc, exc_info=True)
 
@@ -592,7 +592,7 @@ class ResponseProcessingMixin:
             if not approved:
                 logger.info("🛑 Fast-path BLOCKED by authority gateway: %s", reason)
                 return None  # Fall through to full agentic loop
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('response_processing', e)
             logger.debug("Authority gate check failed in fast-path (allowing): %s", e)
 
@@ -628,7 +628,7 @@ class ResponseProcessingMixin:
             try:
                 hot_mem = await self.memory.get_hot_memory(limit=5)
                 hot_mem_str = str(hot_mem)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('response_processing', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -672,7 +672,7 @@ class ResponseProcessingMixin:
             from core.consciousness.authority_audit import get_audit
             get_audit().record_effect("response", "fast_path_response",
                                       response[:80], receipt_id=_fp_receipt_id)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         role = getattr(self, "AI_ROLE", "assistant")
@@ -699,7 +699,7 @@ class ResponseProcessingMixin:
             if mem.percent > 85 and len(message) < 100:
                 logger.info("⚡ VORTEX OVERRIDE: High Memory (%s%%) - Forcing Fast-Path for performance.", mem.percent)
                 return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('response_processing', e)
             logger.debug('Exception caught during execution: %s', e)
 

@@ -60,7 +60,7 @@ class DynamicRouter:
                 "component": "dynamic_router",
                 "hooks_into": ["cognitive_engine", "planner", "critic_engine", "belief_revision"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dynamic_router', e)
             logger.debug(f"Event bus publish missed for Mycelium hook: {e}")
 
@@ -74,7 +74,7 @@ class DynamicRouter:
         if self.db_path.exists():
             try:
                 self.performance_history = json.loads(self.db_path.read_text())
-            except Exception as _e:
+            except (json.JSONDecodeError, TypeError, ValueError) as _e:
                 record_degradation('dynamic_router', _e)
                 logger.debug('Ignored Exception in dynamic_router.py: %s', _e)
 
@@ -82,7 +82,7 @@ class DynamicRouter:
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self.db_path, json.dumps(self.performance_history, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('dynamic_router', e)
             logger.error(f"Router history save failed: {e}")
 
@@ -130,7 +130,7 @@ class DynamicRouter:
                     "phi": confidence,
                     "origin": "dynamic_router"
                 })
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('dynamic_router', _e)
                 logger.debug('Ignored Exception in dynamic_router.py: %s', _e)
         

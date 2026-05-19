@@ -1431,7 +1431,7 @@ class AdaptiveImmuneSystem:
                     ),
                     "notes": artifact.notes or "",
                 }
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('adaptive_immunity', exc)
                 artifact.executed = True
                 artifact.success = False
@@ -1510,7 +1510,7 @@ class AdaptiveImmuneSystem:
                 artifact.notes = "repair executed but could not be verified as durable"
                 verification_report["notes"] = artifact.notes
             return verification_report
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('adaptive_immunity', exc)
             artifact.executed = True
             artifact.success = False
@@ -1618,7 +1618,7 @@ class AdaptiveImmuneSystem:
                 },
             )
             return bool(decision.is_approved())
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('adaptive_immunity', exc)
             logger.debug("Protected-action authorization unavailable: %s", exc)
             return False
@@ -1899,7 +1899,7 @@ class AdaptiveImmuneSystem:
         for component in matches:
             try:
                 return float(max(0.0, min(1.0, autopoiesis.get_component_health(component))))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
         return None
 
@@ -1983,7 +1983,7 @@ class AdaptiveImmuneSystem:
             return None
         try:
             return float(value)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return None
 
     @staticmethod
@@ -2066,7 +2066,7 @@ class AdaptiveImmuneSystem:
                 if hasattr(homeostasis, "compute_vitality"):
                     vitality = float(homeostasis.compute_vitality())
                 metabolism = float(getattr(homeostasis, "metabolism", metabolism))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 pass  # no-op: intentional
 
         alife_dynamics = self._get_service("alife_dynamics")
@@ -2078,7 +2078,7 @@ class AdaptiveImmuneSystem:
                     or status.get("pressure")
                     or status.get("entropy", 0.0) / max(status.get("max_entropy", 100.0), 1.0)
                 )
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 entropy_pressure = 0.0
 
         scale = max(
@@ -2132,7 +2132,7 @@ class AdaptiveImmuneSystem:
         }
         try:
             atomic_write_text(self._state_path, json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('adaptive_immunity', exc)
             logger.debug("Adaptive immune state save skipped: %s", exc)
 
@@ -2206,7 +2206,7 @@ class AdaptiveImmuneSystem:
                 }
             self._assign_species()
             return bool(self._cells)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('adaptive_immunity', exc)
             logger.warning("Adaptive immune state load failed; reseeding: %s", exc)
             return False
@@ -2318,7 +2318,7 @@ class AdaptiveImmuneSystem:
                 health = float(autopoiesis.get_component_health(subsystem))
                 if health > 0.0:
                     return float(max(0.0, min(1.0, 1.0 - health)))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         return 0.0
 
@@ -2357,7 +2357,7 @@ class AdaptiveImmuneSystem:
             from core.config import config
 
             return config.paths.data_dir / "adaptive_immunity"
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return Path.home().expanduser() / ".aura" / "data" / "adaptive_immunity"
 
     def _get_service(self, name: str) -> Any:
@@ -2365,7 +2365,7 @@ class AdaptiveImmuneSystem:
             from core.container import ServiceContainer
 
             return ServiceContainer.get(name, default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod

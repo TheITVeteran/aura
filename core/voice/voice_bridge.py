@@ -45,7 +45,7 @@ class VoiceConversationBridge:
         except asyncio.CancelledError:
             logger.debug("Voice Bridge: Task cancelled due to barge-in/new input")
             return None
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('voice_bridge', e)
             logger.error("Voice Bridge process input error: %s", e)
             return None
@@ -101,6 +101,6 @@ class VoiceConversationBridge:
                 elif hasattr(voice_engine, "speak"):
                     get_task_tracker().create_task(voice_engine.speak(buffer.strip()))
                     
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('voice_bridge', e)
             logger.error("VoiceBridge Stream Error: %s", e)

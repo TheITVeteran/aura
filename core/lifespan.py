@@ -38,7 +38,7 @@ class LifespanManager:
                 if svc and hasattr(svc, "start") and asyncio.iscoroutinefunction(svc.start):
                     await svc.start()
                     logger.info(f"✅ {name} started")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifespan', e)
                 logger.critical(f"❌ {name} failed to start: {e}")
                 await self.emergency_shutdown()
@@ -66,7 +66,7 @@ class LifespanManager:
                     logger.info(f"✅ {name} stopped (sync)")
             except asyncio.TimeoutError:
                 logger.error(f"⏰ {name} shutdown timeout — force cancelling")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifespan', e)
                 logger.error(f"⚠️ {name} shutdown error: {e}")
 

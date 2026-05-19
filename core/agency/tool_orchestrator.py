@@ -99,7 +99,7 @@ class ToolOrchestrator:
                     except (ProcessLookupError, OSError): pass
                 self._repl_process = None
                 return False, "Execution Error: Script timed out (Infinite loop or heavy resource)."
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('tool_orchestrator', e)
                 if self._repl_process:
                     try: self._repl_process.kill()
@@ -127,7 +127,7 @@ class ToolOrchestrator:
                         )
                         return await self.sanitize_output(payload or f"No results parsed for {query}.")
                     return f"FAILED: Search status: {resp.status}"
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('tool_orchestrator', e)
             return f"ERROR: Network failure during search: {str(e)}"
 
@@ -227,7 +227,7 @@ class ToolOrchestrator:
                         if current_code.endswith("```"):
                             current_code = current_code.rsplit("\n", 1)[0]
                         continue
-                    except Exception as he:
+                    except (RuntimeError, AttributeError, TypeError) as he:
                         record_degradation('tool_orchestrator', he)
                         logger.debug("Healing failed: %s", he)
                         break

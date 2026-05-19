@@ -62,7 +62,7 @@ class ProofKernelBridge:
             winner = await workspace.run_competition()
             proof_metrics["workspace"] = workspace.get_snapshot()
             proof_metrics["winner_source"] = winner.source if winner else None
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("proof_kernel_bridge", exc, severity="warning", action="reported bridge snapshot as degraded")
             errors.append(f"{type(exc).__name__}: {exc}")
 
@@ -99,7 +99,7 @@ class ProofKernelBridge:
             import aura_consciousness_proof as kernel  # type: ignore
 
             return kernel
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             root = Path(__file__).resolve().parents[2] / "proof_kernel" / "src"
             if root.exists() and str(root) not in sys.path:
                 sys.path.insert(0, str(root))
@@ -122,7 +122,7 @@ class ProofKernelBridge:
             critical = sum(1 for rec in recent if rec.severity == "critical")
             degraded = sum(1 for rec in recent if rec.severity in {"degraded", "warning"})
             inputs["degradation_pressure"] = min(1.0, (critical * 0.2 + degraded * 0.05))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proof_kernel_bridge", exc, severity="debug", action="omitted degradation pressure")
         try:
             from core.container import ServiceContainer
@@ -136,7 +136,7 @@ class ProofKernelBridge:
                     inputs["thermal_pressure"] = float(pressure.get("thermal", 0.0) or 0.0)
             will = ServiceContainer.get("unified_will", default=None) or ServiceContainer.get("will", default=None)
             inputs["governance_score"] = 1.0 if will is not None else 0.85
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proof_kernel_bridge", exc, severity="debug", action="used default live inputs")
         return inputs
 
@@ -158,7 +158,7 @@ async def start_proof_kernel_bridge() -> ProofKernelBridge:
         from core.container import ServiceContainer
 
         ServiceContainer.register_instance("proof_kernel_bridge", bridge, required=False)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("proof_kernel_bridge", exc, severity="debug", action="sampled but did not register")
     return bridge
 

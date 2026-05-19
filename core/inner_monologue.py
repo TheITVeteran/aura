@@ -197,7 +197,7 @@ class InnerMonologue:
                 "component": "inner_monologue",
                 "hooks_into": ["cognitive_kernel", "llm_router", "language_center"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('inner_monologue', e)
             logger.debug("InnerMonologue: mycelium registration failed: %s", e)
 
@@ -243,7 +243,7 @@ class InnerMonologue:
         if self._should_use_api(brief) and router:
             try:
                 packet = await self._deepen_with_api(user_input, brief, packet, history)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('inner_monologue', e)
                 logger.warning("InnerMonologue API deepening failed (using baseline): %s", e)
                 try:
@@ -258,7 +258,7 @@ class InnerMonologue:
                         context={"stage": "deepen_with_api"},
                         exc=e,
                     )
-                except Exception as degraded_exc:
+                except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                     record_degradation('inner_monologue', degraded_exc)
                     logger.debug("InnerMonologue degraded-event logging failed: %s", degraded_exc)
                 # Baseline packet still valid
@@ -272,7 +272,7 @@ class InnerMonologue:
             agency = ServiceContainer.get("agency_core", default=None)
             if agency:
                 agency._current_monologue = packet  # Store the actual ThoughtPacket
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('inner_monologue', e)
             logger.debug("Failed to push ThoughtPacket to AgencyCore: %s", e)
 
@@ -442,7 +442,7 @@ class InnerMonologue:
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 if gate._background_local_deferral_reason(origin="inner_monologue"):
                     return False
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('inner_monologue', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -452,7 +452,7 @@ class InnerMonologue:
             max_pressure = 82.0 if total_gb >= 60.0 else 78.0
             if vm.percent >= max_pressure:
                 return False
-        except Exception as _exc:
+        except (ImportError, OSError, AttributeError) as _exc:
             record_degradation('inner_monologue', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -528,7 +528,7 @@ Be concise. No preamble. Output only the JSON."""
                 allow_cloud_fallback=False,
             )
             success = True # router.think always returns a response (reflex fallback if needed)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('inner_monologue', e)
             logger.warning("InnerMonologue: Critical router failure during deepening: %s", e)
             try:
@@ -543,7 +543,7 @@ Be concise. No preamble. Output only the JSON."""
                     context={"stage": "router_think"},
                     exc=e,
                 )
-            except Exception as degraded_exc:
+            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                 record_degradation('inner_monologue', degraded_exc)
                 logger.debug("InnerMonologue router degraded-event logging failed: %s", degraded_exc)
             return baseline
@@ -561,7 +561,7 @@ Be concise. No preamble. Output only the JSON."""
                     classification="non_critical_fallback",
                     context={"stage": "router_think"},
                 )
-            except Exception as degraded_exc:
+            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                 record_degradation('inner_monologue', degraded_exc)
                 logger.debug("InnerMonologue empty degraded-event logging failed: %s", degraded_exc)
             return baseline
@@ -604,7 +604,7 @@ Be concise. No preamble. Output only the JSON."""
                     context={"stage": "parse_deepening"},
                     exc=e,
                 )
-            except Exception as degraded_exc:
+            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                 record_degradation('inner_monologue', degraded_exc)
                 logger.debug("InnerMonologue parse degraded-event logging failed: %s", degraded_exc)
             baseline.reasoning_source = "kernel+api_failed"

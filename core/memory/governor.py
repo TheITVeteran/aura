@@ -36,7 +36,7 @@ class MemoryBudget:
                             mx.clear_cache()
                     finally:
                         sentinel.release()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('governor', e)
                 logger.debug(f"[MLX] Cache clear skipped in governor: {e}")
             
@@ -59,7 +59,7 @@ class MemoryBudget:
                     except RuntimeError:
                         # No loop running, just run it
                         asyncio.run(dual_memory.episodic.evict_oldest(0.3))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('governor', e)
                 logger.error("Failed to evict episodic memory: %s", e)
             

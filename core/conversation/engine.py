@@ -116,7 +116,7 @@ class ConversationContext:
             from core.conversation.unified_transcript import UnifiedTranscript
             transcript = UnifiedTranscript.get_instance()
             transcript.add(u_role, content, channel="text", modality=u_modality)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('engine', e)
             capture_and_log(e, {'module': __name__})
 
@@ -188,7 +188,7 @@ class ConversationEngine:
                     llm_router=self.brain.llm_router if hasattr(self.brain, 'llm_router') else None
                 )
                 logger.info("🧠 [PHASE 6] Hierarchical Memory Orchestrator integrated.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('engine', e)
             logger.warning(f"⚠️ [PHASE 6] Failed to initialize Hierarchical Memory: {e}")
             self.hierarchical_memory = None
@@ -265,13 +265,13 @@ class ConversationEngine:
                         success=True,
                         importance=0.4 # Default conversation importance
                     )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('engine', e)
                 capture_and_log(e, {"context": "ConversationEngine.record_episode"})
             
             return final_response
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('engine', e)
             capture_and_log(e, {"context": "ConversationEngine.process_message"})
             # Re-raise major errors, swallow others with friendly message

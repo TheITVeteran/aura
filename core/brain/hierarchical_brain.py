@@ -424,7 +424,7 @@ class HierarchicalBrain:
 
             np.savez_compressed(str(_STATE_PATH), **save_dict)
             logger.debug("Brain state saved (step %d)", self._step_count)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Brain state save failed: %s", exc)
 
     def _load(self) -> None:
@@ -450,7 +450,7 @@ class HierarchicalBrain:
                         region.bias = data[bias_key].astype(np.float32)
 
             logger.info("Brain state restored (step %d)", self._step_count)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.debug("Brain state load failed: %s", exc)
 
     # ── Public API ──────────────────────────────────────────────────────

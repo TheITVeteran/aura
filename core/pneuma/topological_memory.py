@@ -119,7 +119,7 @@ def _compute_persistence_diagram(points: np.ndarray, use_ripser: bool = False) -
             centered = points - points.mean(axis=0)
             _, _, Vt = svd(centered, full_matrices=False)
             points = centered @ Vt[:8].T
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             points = points[:, :8]
 
     D = _pairwise_distances(points.astype(np.float32))
@@ -135,7 +135,7 @@ def _compute_persistence_diagram(points: np.ndarray, use_ripser: bool = False) -
             return PersistenceDiagram(dim0=h0, dim1=h1)
         except ImportError as _exc:
             logger.debug("Suppressed ImportError: %s", _exc)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('topological_memory', e)
             logger.debug("ripser failed, using fallback: %s", e)
 
@@ -187,7 +187,7 @@ class TopologicalMemoryEngine:
                         logger.debug("Topology recompute deferred (energy=%.2f, curiosity=%.2f).", 
                                      drive.get("energy", 1.0), drive.get("curiosity", 1.0))
                         return
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
 
             points = np.array(self._buffer)
@@ -202,7 +202,7 @@ class TopologicalMemoryEngine:
                 len(self._diagram.dim1),
                 self._diagram.total_persistence(),
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('topological_memory', e)
             logger.debug("Topology recompute error: %s", e)
 

@@ -123,7 +123,7 @@ class Memory:
                     for old_backup in backups[:-self.BACKUP_COUNT]:
                         old_backup.unlink()
                         
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Failed to create backup: %s", e)
     
@@ -163,7 +163,7 @@ class Memory:
             
             return True
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Atomic write failed: %s", e)
             
@@ -173,7 +173,7 @@ class Memory:
                     if self.storage_file.exists():
                         self.storage_file.unlink()
                     backup_file.replace(self.storage_file)
-            except Exception as rollback_error:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_error:
                 record_degradation('atomic_storage', rollback_error)
                 logger.critical("Rollback failed: %s", rollback_error)
             
@@ -181,7 +181,7 @@ class Memory:
             if temp_file.exists():
                 try:
                     temp_file.unlink()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('atomic_storage', exc)
                     logger.debug("Suppressed: %s", exc)
 
@@ -216,7 +216,7 @@ class Memory:
                     self.data = data
                     logger.info("Memory loaded successfully (%d events)", len(self.data['episodic']))
                     
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Memory load failed: %s", e)
             # Continue with default data
@@ -250,7 +250,7 @@ class Memory:
         except json.JSONDecodeError as e:
             logger.error("JSON decode error in %s: %s", file_path.name, e)
             return None
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Error reading %s: %s", file_path.name, e)
             return None
@@ -281,7 +281,7 @@ class Memory:
                 
                 return success
                 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('atomic_storage', e)
                 logger.error("Save operation failed: %s", e, exc_info=True)
                 return False
@@ -326,7 +326,7 @@ class Memory:
         except ValueError as e:
             logger.error("Invalid event data: %s", e)
             return False
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Failed to log event: %s", e)
             return False
@@ -358,7 +358,7 @@ class Memory:
                 logger.debug("Updated semantic memory: %s", key)
                 return True
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Failed to update semantic memory: %s", e)
             return False
@@ -400,7 +400,7 @@ class Memory:
                 self.save()
                 logger.info("Cleared episodic memory")
                 return True
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('atomic_storage', e)
                 logger.error("Failed to clear episodic memory: %s", e)
                 return False
@@ -434,7 +434,7 @@ def atomic_write(file_path: str, content: str) -> None:
             
         # Atomic rename
         temp_path.replace(path)
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('atomic_storage', e)
         logger.error("Standalone atomic write failed for %s: %s", file_path, e)
         if temp_path.exists():

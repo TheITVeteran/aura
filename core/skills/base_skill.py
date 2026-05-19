@@ -197,14 +197,14 @@ class BaseSkill(ABC):
                 f"Ungoverned skill execution blocked: {e}",
                 time.monotonic() - start
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # governance not booted yet
 
         # Input validation
         if self.input_model and isinstance(params, dict):
             try:
                 params = self.input_model(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('base_skill', e)
                 return self._error_result(
                     f"Invalid input: {e}",
@@ -247,7 +247,7 @@ class BaseSkill(ABC):
                 last_err = e
                 logger.warning("🔒 Skill '%s' permission denied: %s", self.name, e)
 
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('base_skill', e)
                 error_class = self._classify_error(e)
                 last_err = e

@@ -46,7 +46,7 @@ class NucleusManager(LLMProvider):
         try:
             from core.event_bus import get_event_bus
             self.bus = get_event_bus()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self.bus = None
 
     async def ensure_listener_started(self):
@@ -65,7 +65,7 @@ class NucleusManager(LLMProvider):
                 if data.get("status") == "success":
                     logger.info("🧠 [NUCLEUS] Optimization detected. Flagging Cortex for reload.")
                     self.models["cortex"]["loaded"] = False
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 await asyncio.sleep(1)
         
     async def load_model(self, name: str):
@@ -133,7 +133,7 @@ class NucleusManager(LLMProvider):
 
             logger.info("✅ [NUCLEUS] %s load success.", name.upper())
             logger.info("✅ [NUCLEUS] %s ready.", name.upper())
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('nucleus_manager', e)
             logger.error("❌ [NUCLEUS] Load failed for %s: %s", name, e)
             logger.error("Failed to load internal model %s: %s", name, e)
@@ -209,7 +209,7 @@ class NucleusManager(LLMProvider):
                 homeostasis = ServiceContainer.get("homeostatic_coupling", default=None)
                 if homeostasis:
                     temp = homeostasis.get_modifiers().temperature_mod * 0.7
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('nucleus_manager', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         sampler = make_sampler(temp=temp or 0.7)
@@ -241,7 +241,7 @@ class NucleusManager(LLMProvider):
 
             response = await asyncio.to_thread(_generate_locked)
             return response.strip()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('nucleus_manager', e)
             logger.error("Nucleus inference failed: %s", e)
             return f"Nucleus Error: {str(e)}"
@@ -286,7 +286,7 @@ class NucleusManager(LLMProvider):
                     mx.metal.clear_cache()
                 else:
                     mx.clear_cache()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 pass  # no-op: intentional
 
         temp = kwargs.get("temp", kwargs.get("temperature"))
@@ -298,7 +298,7 @@ class NucleusManager(LLMProvider):
                 homeostasis = ServiceContainer.get("homeostatic_coupling", default=None)
                 if homeostasis:
                     temp = homeostasis.get_modifiers().temperature_mod * 0.7
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('nucleus_manager', e)
                 capture_and_log(e, {'module': __name__})
         
@@ -359,7 +359,7 @@ class NucleusManager(LLMProvider):
                 for chunk in _stream_gen():
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
                 loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.error("Nucleus stream thread failed: %s", e)
                 loop.call_soon_threadsafe(queue.put_nowait, f"[NUCLEUS ERROR] {e}")
                 loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -398,7 +398,7 @@ class NucleusManager(LLMProvider):
                         mx.clear_cache()
                 finally:
                     sentinel.release()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('nucleus_manager', e)
             logger.debug(f"[NUCLEUS] Cache clear skipped: {e}")
 
@@ -417,7 +417,7 @@ class NucleusManager(LLMProvider):
                 # This is tricky in async environments, but for CLI/scripts it works
                 return "[NUCLEUS ERROR] Sync call in async loop."
             return loop.run_until_complete(self.generate_text_async(prompt, system_prompt))
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return asyncio.run(self.generate_text_async(prompt, system_prompt))
 
     def generate_json(self, prompt: str, schema: Dict[str, Any], system_prompt: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:

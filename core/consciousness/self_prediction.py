@@ -285,7 +285,7 @@ class SelfPredictionLoop:
                         topic=f"self_state_{self.get_most_unpredictable_dimension()}",
                         context=f"High prediction error (surprise: {self._smoothed_error:.2f})"
                     )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_prediction', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -335,6 +335,6 @@ class SelfPredictionLoop:
                         dampened = current_scale * (1.0 - 0.15 * self._smoothed_error)
                         mods["phi_autonomy_scale"] = round(max(0.5, dampened), 3)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_prediction', e)
             logger.debug("SelfPrediction: policy adaptation failed (non-critical): %s", e)

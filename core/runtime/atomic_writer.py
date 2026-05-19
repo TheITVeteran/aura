@@ -76,7 +76,7 @@ def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
             _fsync_file(fh.fileno())
         os.replace(tmp_path, target)
         _fsync_dir(parent)
-    except Exception:
+    except (OSError, IOError):
         try:
             if tmp_path.exists():
                 tmp_path.unlink()

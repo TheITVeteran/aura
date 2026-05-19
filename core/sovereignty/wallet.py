@@ -72,7 +72,7 @@ def _load_cap() -> SpendCap:
     try:
         d = json.loads(_CAP_PATH.read_text(encoding="utf-8"))
         return SpendCap(**d)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return SpendCap()
 
 
@@ -223,7 +223,7 @@ class Wallet:
             intent.when_authorized = time.time()
         except PermissionError:
             raise
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('wallet', exc)
             self._record(intent, f"will_exception:{exc}")
             raise
@@ -239,7 +239,7 @@ class Wallet:
             raise ValueError("adapter_missing")
         try:
             txid = await adapter.submit_spend(intent)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('wallet', exc)
             self._record(intent, f"execute_failed:{exc}")
             raise
@@ -270,9 +270,9 @@ class Wallet:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('wallet', exc)
             logger.warning("wallet ledger append failed: %s", exc)
 

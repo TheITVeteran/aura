@@ -33,7 +33,7 @@ async def run_dream_cycle():
             coordinator = get_db_coordinator()
             coordinator.checkpoint_wal()
             logger.info("  - WAL checkpoint completed.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dream_cycle', e)
             logger.debug("WAL checkpoint skipped: %s", e)
 
@@ -43,10 +43,10 @@ async def run_dream_cycle():
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("Stability 🌙", "Dream cycle complete. Cognitive debt cleared.", level="info")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('dream_cycle', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
             
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('dream_cycle', e)
         logger.error("Dream Cycle encountered an error: %s", e)

@@ -68,14 +68,14 @@ class WorldModelEngine:
             try:
                 data = json.loads(self.persist_path.read_text())
                 self.beliefs = {k: BeliefNode(**v) for k, v in data.items()}
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 logger.error("WorldModelEngine: Failed to load beliefs from %s", self.persist_path)
 
     def _save_beliefs(self):
         try:
             data = {k: asdict(v) for k, v in self.beliefs.items()}
             atomic_write_text(self.persist_path, json.dumps(data, indent=2))
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             logger.error("WorldModelEngine: Failed to save beliefs to %s", self.persist_path)
 
     def add_belief(self, claim: str, confidence: float, source_id: Optional[str] = None, tags: List[str] = None):
@@ -137,14 +137,14 @@ class NarrativeIdentityEngine:
                 data = json.loads(self.persist_path.read_text())
                 self.chapters = [IdentityChapter(**c) for c in data.get("chapters", [])]
                 self.core_essence = data.get("core_essence", self.core_essence)
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 logger.error("NarrativeIdentityEngine: Failed to load narrative from %s", self.persist_path)
 
     def _save_narrative(self):
         try:
             data = {"core_essence": self.core_essence, "chapters": [asdict(c) for c in self.chapters]}
             atomic_write_text(self.persist_path, json.dumps(data, indent=2))
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             logger.error("NarrativeIdentityEngine: Failed to save narrative to %s", self.persist_path)
 
     def append_chapter(self, title: str, content: str):

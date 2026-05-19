@@ -83,7 +83,7 @@ class ExternalTaskProofGate:
         if adapter is not None and callable(getattr(adapter, "is_alive", None)):
             try:
                 adapter_alive_known = adapter.is_alive()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 adapter_alive_known = False
                 reasons.append(f"adapter_liveness_error:{type(exc).__name__}")
         else:

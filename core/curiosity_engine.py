@@ -139,7 +139,7 @@ class CuriosityEngine:
                         await self._explore(topic)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('curiosity_engine', e)
                 logger.error("Curiosity worker error: %s", e)
                 await asyncio.sleep(60) # Backoff on error
@@ -182,7 +182,7 @@ class CuriosityEngine:
             emitter = get_emitter()
             if emitter:
                 emitter.emit("Curiosity 🔍", f"Researching: {topic.topic}", level="info")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('curiosity_engine', exc)
             logger.debug("Suppressed: %s", exc)        
         try:
@@ -238,7 +238,7 @@ class CuriosityEngine:
                                 # Phase XXII.E: Feed architecture insights into MetaEvolution
                                 self._feed_to_meta_evolution(topic.topic, result_content)
                                 
-                            except Exception as store_err:
+                            except (RuntimeError, AttributeError, TypeError, ValueError) as store_err:
                                 record_degradation('curiosity_engine', store_err)
                                 logger.warning("Failed to store curiosity finding: %s", store_err)
                         elif emitter:
@@ -246,13 +246,13 @@ class CuriosityEngine:
                     elif emitter:
                         emitter.emit("Curiosity", f"Search failed/unavailable for: {topic.topic}", level="info")
                         
-                except Exception as search_err:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as search_err:
                     record_degradation('curiosity_engine', search_err)
                     logger.error("Search failed: %s", search_err)
                     if emitter:
                         emitter.emit("Curiosity Error", str(search_err)[:80], level="warning")
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('curiosity_engine', e)
             logger.error("Exploration failed: %s", e)
         finally:
@@ -303,6 +303,6 @@ class CuriosityEngine:
                     "source": "curiosity_engine"
                 })
                 logger.info("📋 Queued curiosity insight for next evolution cycle")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('curiosity_engine', e)
             logger.debug("Could not feed to MetaEvolution: %s", e)

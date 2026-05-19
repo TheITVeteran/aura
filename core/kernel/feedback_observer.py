@@ -222,7 +222,7 @@ class FeedbackObserver:
         for cb in self._callbacks:
             try:
                 cb(entry)
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('feedback_observer', _e)
                 logging.debug('Ignored Exception in feedback_observer.py: %s', _e)
 

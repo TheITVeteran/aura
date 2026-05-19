@@ -30,7 +30,7 @@ class EmbodimentSkill(BaseSkill):
         # It may not exist if the node is running in cloud/software-only mode.
         try:
             manager: HardwareManager = ServiceContainer.get("hardware_manager", default=None)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('embodiment_skill', e)
             logger.warning("Hardware manager not available: %s", e)
             manager = None

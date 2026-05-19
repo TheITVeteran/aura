@@ -63,7 +63,7 @@ class AutonomousSleepTrigger:
                 await self._evaluate()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sleep_trigger', e)
                 logger.debug("SleepTrigger eval error (non-fatal): %s", e)
 
@@ -90,7 +90,7 @@ class AutonomousSleepTrigger:
             seeded = float(getattr(orch, "start_time", 0.0) or 0.0) or time.time()
             try:
                 orch._last_user_interaction_time = seeded
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('sleep_trigger', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             logger.debug("SleepTrigger: Primed last-user baseline at %.3f.", seeded)
@@ -106,7 +106,7 @@ class AutonomousSleepTrigger:
             if cpu > _CPU_DEFER_THRESHOLD:
                 logger.debug("SleepTrigger: CPU %.0f%% > threshold, deferring.", cpu)
                 return
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('sleep_trigger', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -127,7 +127,7 @@ class AutonomousSleepTrigger:
                 level="info",
                 category="SleepCycle",
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('sleep_trigger', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -147,12 +147,12 @@ class AutonomousSleepTrigger:
                         level="info",
                         category="SleepCycle",
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('sleep_trigger', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             else:
                 logger.warning("SleepTrigger: DreamerV2 not found — skipping cycle.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep_trigger', e)
             logger.error("SleepTrigger: Sleep cycle failed: %s", e)
         finally:
@@ -167,7 +167,7 @@ class AutonomousSleepTrigger:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("orchestrator", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod
@@ -178,7 +178,7 @@ class AutonomousSleepTrigger:
             dreamer = ServiceContainer.get("dreamer_v2", default=None)
             if dreamer:
                 return dreamer
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('sleep_trigger', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -198,7 +198,7 @@ class AutonomousSleepTrigger:
             bg    = ServiceContainer.get("belief_graph", default=None)
             if brain and kg:
                 return DreamerV2(brain=brain, knowledge_graph=kg, vector_memory=vm, belief_graph=bg)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sleep_trigger', e)
             logger.debug("SleepTrigger: could not instantiate DreamerV2: %s", e)
 

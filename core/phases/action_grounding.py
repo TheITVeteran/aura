@@ -118,7 +118,7 @@ async def ground_response(
             from core.container import ServiceContainer
 
             capability_engine = ServiceContainer.get("capability_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             capability_engine = None
 
     matches = list(_MARKER_RE.finditer(text))
@@ -167,7 +167,7 @@ async def ground_response(
                         hit["status"] = "executed_failed"
                         hit["replaced"] = True
                         replacement = _failure_text(skill_name, skill_result)
-                except Exception as exc:  # pragma: no cover - defensive
+                except (sqlite3.Error, OSError) as exc:  # pragma: no cover - defensive
                     logger.warning("Action grounding dispatch failed for %s: %s", skill_name, exc)
                     hit["status"] = "dispatch_error"
                     hit["error"] = repr(exc)
@@ -199,7 +199,7 @@ async def ground_response(
     if audit_callback is not None:
         try:
             audit_callback(result.as_dict())
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
     return result

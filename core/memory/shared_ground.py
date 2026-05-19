@@ -58,7 +58,7 @@ class SharedGroundBuffer:
             try:
                 from core.config import config
                 data_path = config.paths.data_dir / "memory" / "shared_ground.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 data_path = Path.home() / ".aura" / "data" / "memory" / "shared_ground.json"
 
         self.data_path = Path(data_path)
@@ -75,7 +75,7 @@ class SharedGroundBuffer:
                     raw = json.load(f)
                 self.entries = [SharedGroundEntry.from_dict(e) for e in raw]
                 logger.debug("SharedGround: loaded %d entries", len(self.entries))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('shared_ground', e)
                 logger.warning("SharedGround: load failed (%s), starting fresh", e)
                 self.entries = []
@@ -86,7 +86,7 @@ class SharedGroundBuffer:
             with open(tmp, "w") as f:
                 json.dump([e.to_dict() for e in self.entries], f, indent=2)
             os.replace(tmp, self.data_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('shared_ground', e)
             logger.error("SharedGround: save failed: %s", e)
 

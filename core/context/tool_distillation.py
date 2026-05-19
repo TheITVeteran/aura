@@ -72,7 +72,7 @@ class ToolOutputDistillationService:
                     f.write("# " + "=" * 70 + "\n\n")
                 f.write(content)
             return filepath
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('tool_distillation', e)
             logger.warning("Failed to save tool output: %s", e)
             return "(save failed)"
@@ -214,7 +214,7 @@ class ToolOutputDistillationService:
                         header += f"🔍 Key signals:\n{key_signals}\n"
                     return f"{header}\n{summary}"
 
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('tool_distillation', e)
                 logger.warning("LLM distillation failed, falling back to structural truncation: %s", e)
 

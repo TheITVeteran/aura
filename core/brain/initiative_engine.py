@@ -17,7 +17,7 @@ def _proactivity_suppressed_now(now: Optional[float] = None) -> bool:
         now = time.time() if now is None else now
         quiet_until = float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         return quiet_until > now
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return False
 
 class ProactiveInitiativeEngine:
@@ -64,7 +64,7 @@ class ProactiveInitiativeEngine:
                 else:
                     if "curiosity_metric" in self.affect._raw_state:
                          self.affect._raw_state["curiosity_metric"] += 1.5
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('initiative_engine', e)
                 logger.error("Proactive loop error: %s", e)
                 # --- Neural Stream Integration ---
@@ -73,7 +73,7 @@ class ProactiveInitiativeEngine:
                     self_modifier = ServiceContainer.get("self_modification_engine", default=None)
                     if self_modifier:
                         self_modifier.on_error(e, {"source": "initiative_engine", "loop": "proactive_loop"})
-                except Exception as container_err:
+                except (ImportError, AttributeError, RuntimeError) as container_err:
                     record_degradation('initiative_engine', container_err)
                     logger.debug(f"InitiativeEngine: Self-modification integration failed: {container_err}")
                 await asyncio.sleep(5)
@@ -107,7 +107,7 @@ class ProactiveInitiativeEngine:
                     if history and history[-1].get("role") in ("assistant", "aura"):
                         last_aura_said = history[-1].get("content", "")[:120]
                         awaiting_user_response = True
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('initiative_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -117,7 +117,7 @@ class ProactiveInitiativeEngine:
                     last_memory = await self.memory.get_last_entry()
                     if last_memory:
                         last_topic = getattr(last_memory, "content", "nothing recently")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('initiative_engine', e)
                 logger.debug(f"InitiativeEngine: Last entry recall failed: {e}")
 
@@ -217,7 +217,7 @@ class ProactiveInitiativeEngine:
                     },
                 )
                 delivered = bool(decision.get("ok"))
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('initiative_engine', exc)
                 logger.debug("Initiative engine executive routing failed: %s", exc)
 
@@ -237,6 +237,6 @@ class ProactiveInitiativeEngine:
             if "curiosity_metric" in self.affect._raw_state:
                 self.affect._raw_state["curiosity_metric"] = 30.0 # Drop curiosity after speaking
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_engine', e)
             logger.error(f"Proactive generation failed: {e}")

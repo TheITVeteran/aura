@@ -90,7 +90,7 @@ class EpistemicHumility:
             try:
                 await self._evaluate_failure_stream()
                 await asyncio.sleep(300)  # Run every 5 minutes
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('epistemic_humility', e)
                 logger.error("Error in critic loop: %s", e)
                 await asyncio.sleep(60)
@@ -164,11 +164,11 @@ class EpistemicHumility:
                         domain=domain,
                         source="EpistemicHumility",
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('epistemic_humility', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('epistemic_humility', e)
             logger.error(f"Failed to synthesize heuristic: {e}")
 
@@ -202,7 +202,7 @@ class EpistemicHumility:
             }
             with open(self.data_path, "w") as f:
                 json.dump(data, f, indent=4)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('epistemic_humility', e)
             logger.error(f"Failed to save epistemic humility state: {e}")
 
@@ -215,7 +215,7 @@ class EpistemicHumility:
             self.heuristics = {
                 k: LearnedHeuristic(**v) for k, v in data.get("heuristics", {}).items()
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('epistemic_humility', e)
             logger.error(f"Failed to load epistemic humility state: {e}")
 

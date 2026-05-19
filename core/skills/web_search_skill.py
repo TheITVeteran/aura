@@ -24,7 +24,7 @@ class WebSearchSkill(EnhancedWebSearchSkill):
         if isinstance(params, dict):
             try:
                 params = SearchInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('web_search_skill', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 

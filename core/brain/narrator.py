@@ -87,7 +87,7 @@ class NarratorService:
             )
             
             return response.strip() if response else f"{raw_message}"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('narrator', e)
             logger.error(f"Narration failed: {e}", exc_info=True)
             return f"{raw_message}"

@@ -26,7 +26,7 @@ class TraceLogger:
     def close(self) -> None:
         try:
             self._fh.close()
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('trace_logger', _e)
             logging.debug('Ignored Exception in trace_logger.py: %s', _e)
 

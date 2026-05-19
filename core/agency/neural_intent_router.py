@@ -110,7 +110,7 @@ def classify_neural_intent(source: str, text: str) -> NeuralIntent:
         if match:
             try:
                 params = schema["params"](match)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 params = {}
             return NeuralIntent(source=source, text=txt, matched_schema=schema, params=params)
     return NeuralIntent(source=source, text=txt)
@@ -197,7 +197,7 @@ class NeuralIntentRouter:
                 approved = WillClient.is_approved(decision)
                 approve_reason = str(getattr(decision, "reason", "")) or "will_decided"
                 will_receipt = str(getattr(decision, "receipt_id", ""))
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('neural_intent_router', exc)
                 approved = False
                 approve_reason = f"will_error:{type(exc).__name__}"
@@ -266,7 +266,7 @@ class NeuralIntentRouter:
                 success=ok,
             )
             return outcome
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation('neural_intent_router', exc)
             self._block_count += 1
             self._record_life_trace(
@@ -293,26 +293,26 @@ class NeuralIntentRouter:
         if self._will_provider is not None:
             try:
                 return self._will_provider()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return None
         try:
             from core.container import ServiceContainer
 
             return ServiceContainer.get("unified_will", default=None) or ServiceContainer.get("will", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _resolve_capability(self) -> Any:
         if self._capability_provider is not None:
             try:
                 return self._capability_provider()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return None
         try:
             from core.container import ServiceContainer
 
             return ServiceContainer.get("capability_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _record_life_trace(
@@ -351,7 +351,7 @@ class NeuralIntentRouter:
                     "will_receipt": will_receipt,
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('neural_intent_router', exc)
             logger.debug("LifeTrace write from neural router failed: %s", exc)
 

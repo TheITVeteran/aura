@@ -37,7 +37,7 @@ class ICELayer:
             try:
                 from core.container import ServiceContainer
                 self._anomaly_detector = ServiceContainer.get("anomaly_detector", default=None)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("ice_layer", exc)
                 logger.debug("[ICE] Shared anomaly detector lookup failed: %s", exc)
             if self._anomaly_detector is None:
@@ -48,7 +48,7 @@ class ICELayer:
                     try:
                         from core.container import ServiceContainer
                         ServiceContainer.register("anomaly_detector", self._anomaly_detector)
-                    except Exception as exc:
+                    except (ImportError, AttributeError, RuntimeError) as exc:
                         record_degradation("ice_layer", exc)
                         logger.debug("[ICE] Anomaly detector registration failed: %s", exc)
                 except ImportError:
@@ -112,7 +112,7 @@ class ICELayer:
                 # Blend learned threat with legacy accumulator: learned detector
                 # provides nuance, legacy accumulator provides hard safety floor.
                 self._threat_level = max(self._threat_level, learned_threat)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('ice_layer', exc)
                 logger.debug("[ICE] Anomaly detector observe failed: %s", exc)
 
@@ -150,7 +150,7 @@ class ICELayer:
                     "anomaly_type": anomaly["type"],
                     "timestamp": time.time(),
                 })
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('ice_layer', exc)
                 logger.debug("[ICE] Anomaly detector observe failed: %s", exc)
 

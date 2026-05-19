@@ -48,7 +48,7 @@ class OrganStub:
         except asyncio.TimeoutError:
             logger.warning("Organ %s load TIMEOUT — using fallback.", self.name)
             self.instance = FallbackOrgan()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('organs', e)
             logger.exception("Organ %s load failed: %s — using fallback.", self.name, e)
             self.instance = FallbackOrgan()
@@ -94,7 +94,7 @@ class OrganStub:
         try:
             from core.brain.llm.llm_router import IntelligentLLMRouter as LLMRouter
             instance = self.kernel.get(LLMRouter)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             instance = None
 
         if instance:
@@ -113,7 +113,7 @@ class OrganStub:
             instance = await asyncio.wait_for(asyncio.to_thread(_build), timeout=1.5)
             await asyncio.wait_for(instance.load(), timeout=2.5 if safe_boot else 4.0)
             return instance
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('organs', e)
             logger.warning("NeuralBridge load failed: %s", e)
             return FallbackNeural()
@@ -137,7 +137,7 @@ class OrganStub:
             instance = KnowledgeContinuity(self.kernel)
             await asyncio.wait_for(instance.load(), timeout=3.0)
             return instance
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('organs', e)
             logger.warning("Continuity organ load failed: %s", e)
             return FallbackOrgan()
@@ -151,7 +151,7 @@ class OrganStub:
             instance = cls(self.kernel)
             await instance.load()
             return instance
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return FallbackOrgan()
 
     # ── Helpers ──────────────────────────────────────────────────────────

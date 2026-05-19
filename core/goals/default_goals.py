@@ -76,7 +76,7 @@ async def seed_default_autonomy_goals(goal_engine: Any | None = None) -> list[di
                 metadata={"boot_seeded": True, "default_goal": True},
             )
             seeded.append(record)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("default_goals", exc)
     return seeded
 

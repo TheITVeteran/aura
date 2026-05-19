@@ -33,7 +33,7 @@ class HardenedReflexCore:
                     await action(metadata)
                 else:
                     action(metadata)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('reflex_core', e)
                 logger.error(f"Failed to execute reflex {signal_type}: {e}")
         else:

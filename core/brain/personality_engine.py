@@ -135,7 +135,7 @@ class PersonalityEngine:
                             baselines[e]["base"] = max(0.0, min(100.0, data.get("base", baselines[e]["base"])))
                             baselines[e]["volatility"] = max(0.1, data.get("volatility", baselines[e]["volatility"]))
                             
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('personality_engine', e)
                 logger.error("Failed to load evolved persona: %s", e)
 
@@ -211,7 +211,7 @@ class PersonalityEngine:
             self.key_file.parent.mkdir(parents=True, exist_ok=True)
             self.key_file.write_bytes(key)
             os.chmod(self.key_file, 0o600)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('personality_engine', e)
             logger.error("Failed to write identity key: %s", e)
         return key
@@ -237,7 +237,7 @@ class PersonalityEngine:
                     atomic_write_text(self.seal_file, signature)
                     logger.info("Identity seal initialized: %s...", signature[:16])
                     return True
-                except Exception: return False
+                except (RuntimeError, AttributeError, TypeError, ValueError): return False
             else:
                 # Key exists but seal missing -> Possible tamper by deletion
                 logger.warning("🚨 Identity key exists but seal file is missing. Possible tamper.")
@@ -256,7 +256,7 @@ class PersonalityEngine:
                 return True
                 
             return False
-        except Exception: return False
+        except (RuntimeError, AttributeError, TypeError): return False
 
 
     def check_integrity(self, action: str, target: str) -> bool:
@@ -274,7 +274,7 @@ class PersonalityEngine:
             with open(self.profiles_path, "r", encoding="utf-8") as f:
                 self.profiles = json.load(f)
             logger.info("PersonalityEngine: Loaded %d persona profiles", len(self.profiles))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('personality_engine', e)
             logger.error("Failed to load profiles: %s", e)
 
@@ -496,7 +496,7 @@ class PersonalityEngine:
         """
         try:
             from core.synthesis import cure_personality_leak
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             # Basic fallback if the synthesis layer is unavailable.
             return text.replace("AI assistant", "autonomous intelligence").replace("as an assistant", "as your equal partner")
 
@@ -642,7 +642,7 @@ class PersonalityEngine:
                 json.dump(data, f, indent=4)
             logger.info("✅ Evolved persona persisted to %s", evolved_path)
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('personality_engine', e)
             logger.error("Failed to persist evolved persona: %s", e)
             return False
@@ -880,7 +880,7 @@ def register_personality_service() -> None:
             lifetime=ServiceLifetime.SINGLETON
         )
         logger.info("PersonalityEngine registered.")
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('personality_engine', e)
         logger.error("Failed to register PersonalityEngine: %s", e, exc_info=True)
         raise  # QUAL-05: Let caller decide whether to continue
@@ -898,7 +898,7 @@ def get_personality_engine() -> PersonalityEngine:
         try:
             from core.container import ServiceContainer
             _personality_engine = ServiceContainer.get("personality_engine", default=None)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('personality_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
             
@@ -909,7 +909,7 @@ def get_personality_engine() -> PersonalityEngine:
                 try:
                     from core.container import ServiceContainer
                     ServiceContainer.register_instance("personality_engine", _personality_engine)
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('personality_engine', e)
                     logger.warning("Failed to register PersonalityEngine in container: %s", e)
     return _personality_engine

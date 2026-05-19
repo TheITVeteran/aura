@@ -46,7 +46,7 @@ def _background_autonomy_block_reason(orchestrator) -> str:
             require_conversation_ready=False,
             allow_no_user_anchor=False,
         )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("engine", exc)
         logger.debug("Motivation: background autonomy policy probe failed: %s", exc)
         return "policy_probe_failed"
@@ -151,7 +151,7 @@ class MotivationEngine:
 
                 # Check every 60s
                 await asyncio.sleep(60)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('engine', e)
                 logger.error("Motivation Loop Error: %s", e)
                 # --- Neural Stream Integration ---
@@ -159,7 +159,7 @@ class MotivationEngine:
                     self_modifier = ServiceContainer.get("self_modification_engine", default=None)
                     if self_modifier:
                         self_modifier.on_error(e, {"source": "motivation_engine", "loop": "will_loop"})
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('engine', exc)
                     logger.debug("Self-modification on_error failed in motivation loop: %s", exc)
                 await asyncio.sleep(10)
@@ -250,7 +250,7 @@ class MotivationEngine:
                     urgency=0.3,
                     metadata={"autonomous": True, "drive": "curiosity"},
                 )
-            except Exception as _ea_err:
+            except (ImportError, AttributeError, RuntimeError) as _ea_err:
                 record_degradation('engine', _ea_err)
                 logger.debug("Motivation: ExecutiveAuthority curiosity emission failed: %s", _ea_err)
             # Satisfy curiosity drive slightly to prevent immediate re-trigger
@@ -288,14 +288,14 @@ class MotivationEngine:
                 await self.satisfy(drive_name, 20.0)
                 self._last_activity_time = time.time()
                 return # Short-circuit
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('engine', e)
                 logger.error("Instinctual bypass failed: %s", e)
 
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("Inner Drive 🧠", intention.goal, level="info", category="Motivation")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('engine', exc)
             logger.debug("ThoughtStream emit failed in motivation engine: %s", exc)
 
@@ -323,7 +323,7 @@ class MotivationEngine:
                     },
                 )
                 logger.debug("Motivation: queued governed initiative decision=%s", decision.get("reason"))
-            except Exception as _initiative_err:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _initiative_err:
                 record_degradation('engine', _initiative_err)
                 logger.debug("Motivation: initiative queueing failed: %s", _initiative_err)
 
@@ -338,7 +338,7 @@ class MotivationEngine:
                     urgency=0.5,
                     metadata={"autonomous": True, "drive": str(intention.drive)},
                 )
-            except Exception as _ea_err:
+            except (ImportError, AttributeError, RuntimeError) as _ea_err:
                 record_degradation('engine', _ea_err)
                 logger.debug("Motivation: ExecutiveAuthority goal emission failed: %s", _ea_err)
             

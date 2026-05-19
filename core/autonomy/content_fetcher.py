@@ -190,7 +190,7 @@ class ContentFetcher:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('content_fetcher', e)
             logger.warning("attempt method=%s target=%s failed: %s", method, target, e)
             content = FetchedContent(

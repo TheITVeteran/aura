@@ -43,7 +43,7 @@ class SovereignEars:
             from ..container import ServiceContainer
 
             self._engine = ServiceContainer.get("voice_engine", default=None)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('ears', e)
             logger.debug("👂 SovereignEars: voice engine lookup deferred: %s", e)
         return self._engine
@@ -110,6 +110,6 @@ class SovereignEars:
             # No loop running, but we should not use asyncio.run inside this library
             # as it often collides with the larger service lifecycle.
             logger.warning("mock_hear: No running event loop. Transcript not dispatched.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('ears', e)
             logger.error("Mock hear failed: %s", e)

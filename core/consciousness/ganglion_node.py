@@ -144,7 +144,7 @@ class GanglionNode:
                 )
                 return action
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('ganglion_node', e)
             logger.error("Ganglion [%s]: handler error for '%s': %s", self.domain, stimulus_type, e)
 

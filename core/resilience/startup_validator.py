@@ -72,7 +72,7 @@ class StartupValidator:
                 else:
                     check.passed = True
                     check.message = "Check not implemented (ignored)"
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('startup_validator', e)
                 check.passed = False
                 check.message = f"Check crashed: {e}"
@@ -160,7 +160,7 @@ class StartupValidator:
             reg = get_circuit_registry()
             c.passed = True
             c.message = f"Registry active with {len(reg.circuits)} circuits."
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('startup_validator', e)
             c.passed = False
             c.message = f"Registry failure: {e}"
@@ -235,7 +235,7 @@ class StartupValidator:
             else:
                 c.passed = True
                 c.message = f"Memory OK: {mem.available // 1024 // 1024}MB available."
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             c.passed = True
             c.message = "psutil missing, skipping mem check."
 
@@ -247,7 +247,7 @@ class StartupValidator:
             test_file.unlink()
             c.passed = True
             c.message = f"Data dir writable: {config.paths.data_dir}"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('startup_validator', e)
             c.passed = False
             c.message = f"Storage inaccessible: {e}"
@@ -279,7 +279,7 @@ class StartupValidator:
             else:
                 c.message = "No zombies found."
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('startup_validator', e)
             c.passed = True # Non-critical
             c.message = f"Reaper skipped: {e}"

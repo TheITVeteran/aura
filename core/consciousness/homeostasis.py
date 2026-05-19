@@ -126,7 +126,7 @@ class HomeostasisEngine(AuraBaseModule):
                 err_rate = getattr(health, 'error_rate', 0.0)
                 if err_rate > 0.1:
                     self.integrity = max(0.0, self.integrity - (err_rate * 0.1))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostasis', e)
             logger.debug("Health monitor check failed: %s", e)
 
@@ -139,7 +139,7 @@ class HomeostasisEngine(AuraBaseModule):
                 anxiety = soma_status.get("soma", {}).get("resource_anxiety", 0.0)
                 if anxiety > 0.8:
                     self.persistence = max(0.0, self.persistence - 0.01)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostasis', e)
             logger.debug("Soma check failed: %s", e)
 
@@ -149,7 +149,7 @@ class HomeostasisEngine(AuraBaseModule):
                 thermal = soma_status.get("soma", {}).get("thermal_load", 0.0)
                 if thermal > 0.8:
                     self.metabolism = max(0.2, self.metabolism - 0.05)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('homeostasis', e)
             logger.debug("Metabolism check failed: %s", e)
 
@@ -160,7 +160,7 @@ class HomeostasisEngine(AuraBaseModule):
                 score = getattr(scanner, "_last_sovereignty_score", 1.0)
                 if score < 1.0:
                     self.sovereignty = max(0.0, self.sovereignty - (1.0 - score) * 0.1)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('homeostasis', e)
             logger.debug("Sovereignty check failed: %s", e)
 

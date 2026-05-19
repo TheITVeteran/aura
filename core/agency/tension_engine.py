@@ -86,7 +86,7 @@ class TensionEngine:
             try:
                 from core.config import config
                 self._persist_path = config.paths.data_dir / "tensions.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 self._persist_path = Path.home() / ".aura" / "data" / "tensions.json"
 
         self._tensions: Dict[str, Tension] = {}
@@ -102,11 +102,11 @@ class TensionEngine:
                     try:
                         t = Tension.from_dict(entry)
                         self._tensions[t.id] = t
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('tension_engine', exc)
                         logger.debug("Skipping malformed tension entry: %s", exc)
                 logger.info("TensionEngine loaded %d tensions from disk.", len(self._tensions))
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation('tension_engine', exc)
                 logger.warning("TensionEngine failed to load persisted tensions: %s", exc)
         else:
@@ -117,7 +117,7 @@ class TensionEngine:
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             payload = [t.to_dict() for t in self._tensions.values()]
             atomic_write_text(self._persist_path, json.dumps(payload, indent=2))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.error("TensionEngine failed to persist tensions: %s", exc)
 
@@ -183,35 +183,35 @@ class TensionEngine:
         # 1. Belief contradictions
         try:
             self._scan_belief_contradictions()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.debug("TensionEngine: belief scan failed: %s", exc)
 
         # 2. Goal conflicts
         try:
             self._scan_goal_conflicts(state)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.debug("TensionEngine: goal conflict scan failed: %s", exc)
 
         # 3. Stale curiosity questions
         try:
             self._scan_curiosity_gaps(now)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.debug("TensionEngine: curiosity gap scan failed: %s", exc)
 
         # 4. Broken expectations (recent failed actions)
         try:
             self._scan_broken_expectations(state)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.debug("TensionEngine: broken expectation scan failed: %s", exc)
 
         # 5. Identity drift signals
         try:
             self._scan_identity_drift()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('tension_engine', exc)
             logger.debug("TensionEngine: identity drift scan failed: %s", exc)
 
@@ -293,7 +293,7 @@ class TensionEngine:
         try:
             from core.agi.curiosity_explorer import get_curiosity_explorer
             explorer = get_curiosity_explorer()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return
 
         for item in getattr(explorer, "_queue", []):

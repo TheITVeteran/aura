@@ -49,7 +49,7 @@ class NarrativeEngine:
                 if time.time() - self._last_consolidation >= self.interval:
                     await self.consolidate_episodes()
                     
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('narrative_memory', e)
                 logger.error("Narrative loop error: %s", e)
                 await asyncio.sleep(60)
@@ -76,7 +76,7 @@ class NarrativeEngine:
             # Truncate to keep context injection concise
             snippet = text[:400].rstrip()
             return f"[Narrative Context] {snippet}"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('narrative_memory', exc)
             logger.debug("Narrative context retrieval failed: %s", exc)
             return ""
@@ -149,7 +149,7 @@ class NarrativeEngine:
 
                 self._last_consolidation = time.time()
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('narrative_memory', e)
             logger.error("Failed to consolidate narrative: %s", e)
 
@@ -237,7 +237,7 @@ class NarrativeEngine:
                     )
                 logger.info("🌌 [SINGULARITY] Eternal Record Secured.")
                 return record.content
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('narrative_memory', e)
             logger.error("Eternal Record synthesis failed: %s", e)
         return None

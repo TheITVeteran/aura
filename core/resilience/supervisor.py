@@ -53,7 +53,7 @@ class SovereignSupervisor:
                 await self._monitor_process()
             except KeyboardInterrupt:
                 await self.stop()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('supervisor', e)
                 logger.error("Supervisor loop error: %s", e)
                 await asyncio.sleep(5)
@@ -94,7 +94,7 @@ class SovereignSupervisor:
                     line = line_bytes.decode('latin-1', errors='replace').strip()
                 if line:
                     logger.log(level, "[Sub] %s", line)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('supervisor', e)
             logger.error(f"Error reading pipe {label}: {e}")
 

@@ -93,7 +93,7 @@ class AuditLog:
                 ),
             )
             con.commit()
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('audit', e)
             logger.error("Failed to record audit entry: %s", e)
         return entry_id

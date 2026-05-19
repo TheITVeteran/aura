@@ -35,7 +35,7 @@ class AutoRefactorSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = AutoRefactorParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('auto_refactor', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -60,7 +60,7 @@ class AutoRefactorSkill(BaseSkill):
                     "stdout": pytest_res.stdout[-2000:], # keep tail
                     "stderr": pytest_res.stderr[-2000:]
                 }
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('auto_refactor', e)
                 logger.warning("Dynamic test execution failed: %s", e)
                 test_results = {"ok": False, "error": str(e)}
@@ -115,7 +115,7 @@ class AutoRefactorSkill(BaseSkill):
                         
             except SyntaxError as e:
                 logger.debug("Skipping unparsable Python candidate %s: %s", file_path, e)
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('auto_refactor', e)
                 logger.warning("Failed to scan %s: %s", file_path, e)
                 
@@ -134,6 +134,6 @@ class AutoRefactorSkill(BaseSkill):
                         "issue": issue
                     }
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('auto_refactor', e)
                 logger.error("Failed to publish refactor proposal: %s", e)

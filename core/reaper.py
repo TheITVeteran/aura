@@ -68,11 +68,11 @@ class ReaperManifest:
                 with os.fdopen(fd, 'w') as f:
                     json.dump(self._data, f)
                 os.replace(temp_path, self.path)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('reaper', e)
             logger.error(f"[REAPER] Manifest save failed: {e}")
 
@@ -80,7 +80,7 @@ class ReaperManifest:
         try:
             if self.path.exists():
                 self._data = json.loads(self.path.read_text())
-        except Exception as _e:
+        except (json.JSONDecodeError, TypeError, ValueError) as _e:
             record_degradation('reaper', _e)
             # If corrupt or missing, start fresh
             logger.debug('Ignored Exception in reaper.py: %s', _e)
@@ -111,7 +111,7 @@ def reaper_loop(kernel_pid: int, manifest_path: Path):
             return
         except PermissionError as _e:
             logger.debug('Ignored PermissionError in reaper.py: %s', _e)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reaper', e)
             logger.debug(f"[REAPER] Existence check failed (non-fatal): {e}")
             
@@ -139,7 +139,7 @@ def _execute_cleanup(manifest: ReaperManifest):
                 logger.warning("[REAPER] Force-killed orphan PID %d", pid)
         except ProcessLookupError as _e:
             logger.debug('Ignored ProcessLookupError in reaper.py: %s', _e)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reaper', e)
             logger.error("[REAPER] Failed to kill PID %d: %s", pid, e)
         manifest.deregister_pid(pid)
@@ -158,7 +158,7 @@ def _execute_cleanup(manifest: ReaperManifest):
                 logger.info("[REAPER] Unlinked SHM segment: %s", name)
             except FileNotFoundError as _e:
                 logger.debug('Ignored FileNotFoundError in reaper.py: %s', _e)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reaper', e)
             logger.error("[REAPER] Failed to unlink SHM %s: %s", name, e)
         manifest.deregister_shm(name)
@@ -166,7 +166,7 @@ def _execute_cleanup(manifest: ReaperManifest):
     # 3. Clean up the manifest file itself
     try:
         manifest.path.unlink(missing_ok=True)
-    except Exception as _e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
         record_degradation('reaper', _e)
         logger.debug('Ignored Exception in reaper.py: %s', _e)
 

@@ -164,7 +164,7 @@ class OscillatoryBinding:
                         self._emit_binding_moment()
                         self._output_tick += 1
 
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('oscillatory_binding', e)
                     logger.error("Oscillatory binding error: %s", e, exc_info=True)
 

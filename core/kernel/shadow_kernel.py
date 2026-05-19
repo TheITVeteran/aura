@@ -91,7 +91,7 @@ class ShadowExecutionPhase(Phase):
             if not self._validate_state_bounds(test_copy):
                 logger.error("Sandbox: Structural integrity check failed (State Bounds violation)")
                 return False
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('shadow_kernel', e)
             logger.error(f"Sandbox: Critical failure during structural validation: {e}")
             return False
@@ -120,7 +120,7 @@ class ShadowExecutionPhase(Phase):
                 return False
                 
             return True
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             return False
 
     async def _validate_mutation(self, mutated_code: str, validator_code: str) -> bool:
@@ -165,7 +165,7 @@ class ShadowExecutionPhase(Phase):
                 
             logger.info(f"Sandbox: Mutation validated successfully: {result.get('info')}")
             return True
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('shadow_kernel', e)
             logger.error(f"Sandbox: Failed to retrieve result from worker: {e}")
             return False

@@ -50,7 +50,7 @@ class BondingPhase(Phase):
                 if tom and tom.known_selves:
                     user_model = next(iter(tom.known_selves.values()))
                     rapport = getattr(user_model, "rapport", 0.5)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('bonding_phase', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -80,7 +80,7 @@ class BondingPhase(Phase):
             
             logger.debug(f"Bonding Update: Level={state.identity.bonding_level:.4f}, Growth={growth}")
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('bonding_phase', e)
             logger.warning("BondingPhase failed: %s", e)
             

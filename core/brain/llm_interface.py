@@ -46,7 +46,7 @@ async def call_llm_with_timeout(llm_call_coro, timeout: float = 10.0, fallback_f
         return await asyncio.wait_for(llm_call_coro, timeout=timeout)
     except asyncio.TimeoutError:
         logger.warning("LLM call timed out after %.1fs", timeout)
-    except Exception as e:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
         record_degradation('llm_interface', e)
         logger.exception("LLM call exception: %s", e)
 
@@ -58,6 +58,6 @@ async def call_llm_with_timeout(llm_call_coro, timeout: float = 10.0, fallback_f
             else:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(None, fallback_fn)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             logger.exception("Fallback LLM also failed")
     return ""  # safe empty string

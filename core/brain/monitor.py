@@ -37,19 +37,19 @@ class SelfMonitor:
             if vm.percent >= self.critical_threshold and self._on_critical_memory:
                 try:
                     self._on_critical_memory(vm.percent)
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('monitor', _e)
                     logging.debug('Ignored Exception in monitor.py: %s', _e)
             elif vm.percent >= self.high_threshold and self._on_high_memory:
                 try:
                     self._on_high_memory(vm.percent)
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('monitor', _e)
                     logging.debug('Ignored Exception in monitor.py: %s', _e)
             if self._on_tick:
                 try:
                     self._on_tick()
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('monitor', _e)
                     logging.debug('Ignored Exception in monitor.py: %s', _e)
             await asyncio.sleep(self.interval)

@@ -57,7 +57,7 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
         logger.info("Vision Model loaded.")
         
         res_q.put({"status": "ok", "action": "init"})
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         logger.error(f"Failed to load vision model: {e}")
         res_q.put({"status": "error", "action": "init", "message": str(e)})
         return
@@ -86,7 +86,7 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
                     
                     try:
                         formatted_prompt = apply_chat_template(processor, config, messages)
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         formatted_prompt = prompt_text # Fallback
                         
                     response = generate(
@@ -105,7 +105,7 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
                         
                     res_q.put({"status": "ok", "action": "see", "id": job.get("id"), "response": text_output})
                     
-                except Exception as eval_e:
+                except (ImportError, AttributeError, RuntimeError) as eval_e:
                     import traceback
                     err = f"{eval_e}\n{traceback.format_exc()}"
                     logger.error(f"Vision eval error: {err}")
@@ -113,5 +113,5 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
                     
         except KeyboardInterrupt:
             break
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.error(f"Worker loop error: {e}")

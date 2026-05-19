@@ -239,7 +239,7 @@ class FreeEnergyEngine:
             n = max(1, len(beliefs))
             return min(3.0, total_kl / n)
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('free_energy', e)
             logger.debug("Belief KL computation failed: %s", e)
             return 0.1
@@ -267,7 +267,7 @@ class FreeEnergyEngine:
 
             # Normalize by max entropy (log(4))
             return min(1.0, entropy / math.log(4))
-        except Exception as exc:
+        except (ImportError, OSError, AttributeError) as exc:
             record_degradation("free_energy", exc)
             logger.debug("System entropy computation failed, using neutral fallback: %s", exc)
             return 0.3

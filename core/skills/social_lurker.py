@@ -31,7 +31,7 @@ class LurkerSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = LurkerInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('social_lurker', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -67,7 +67,7 @@ class LurkerSkill(BaseSkill):
                 finally:
                     try:
                         await browser.close()
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         pass  # no-op: intentional
                 
                 if not headlines:
@@ -78,6 +78,6 @@ class LurkerSkill(BaseSkill):
                     "posts": headlines,
                     "summary": f"Found {len(headlines)} posts on {url}"
                 }
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('social_lurker', e)
             return {"ok": False, "error": f"Lurker failed: {e}"}

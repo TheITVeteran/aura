@@ -121,7 +121,7 @@ def _resolve_safely(ref: str) -> Path | None:
     for cand in candidates:
         try:
             resolved = cand.resolve()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             continue
         try:
             resolved.relative_to(PROJECT_ROOT)
@@ -147,7 +147,7 @@ def load_referenced_files(refs: list[str], remaining_budget: int = FILE_READ_BUD
             continue
         try:
             text = resolved.read_text(encoding="utf-8", errors="replace")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('chat_preflight', e)
             logger.debug("file read failed for %s: %s", resolved, e)
             continue
@@ -195,7 +195,7 @@ class PendingChat:
 def _ensure_dir(path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass  # no-op: intentional
 
 
@@ -213,7 +213,7 @@ def _read_all(path: Path = PENDING_QUEUE_PATH) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
         return out
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return []
 
 
@@ -225,7 +225,7 @@ def _write_all(records: list[dict[str, Any]], path: Path = PENDING_QUEUE_PATH) -
             for r in records:
                 f.write(json.dumps(r) + "\n")
         os.replace(tmp, path)
-    except Exception as e:
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
         record_degradation('chat_preflight', e)
         logger.debug("pending queue write failed: %s", e)
 
@@ -289,7 +289,7 @@ def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> lis
                     answer_text=str(r.get("answer_text", "")),
                     answered_at=float(r.get("answered_at") or 0.0),
                 ))
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 continue
         else:
             remaining.append(r)
@@ -588,12 +588,12 @@ def schedule_background_retry(
                             "resume_from_last_user_message": True,
                         },
                     )
-                except Exception as emit_exc:
+                except (ImportError, AttributeError, RuntimeError) as emit_exc:
                     record_degradation('chat_preflight', emit_exc)
                     logger.error("Background retry proactive resume emit failed: %s", emit_exc, exc_info=True)
             else:
                 logger.warning("Background retry produced empty result for session %s", session_id)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('chat_preflight', e)
             logger.warning("Background retry failed for session %s: %s", session_id, e)
         finally:

@@ -96,7 +96,7 @@ def _receipt_json_safe(value: Any, *, _depth: int = 0) -> Any:
         # failure visible in the stored evidence.
         try:
             value.close()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass
         return {
             "error": "coroutine_in_receipt",
@@ -122,7 +122,7 @@ def _receipt_json_safe(value: Any, *, _depth: int = 0) -> Any:
     try:
         json.dumps(value)
         return value
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return repr(value)
 
 
@@ -153,7 +153,7 @@ class _ReceiptLog:
             try:
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(receipt.to_dict(), default=str) + "\n")
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation('agency_orchestrator', exc)
                 logger.warning("Receipt log append failed: %s", exc)
 
@@ -250,7 +250,7 @@ class AgencyOrchestrator:
         try:
             perceived = perceive() if perceive else self._default_perceive()
             state_snapshot = await perceived if inspect.isawaitable(perceived) else perceived
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('agency_orchestrator', exc)
             return await self._block(receipt, "perceive", str(exc))
         receipt.state_snapshot = state_snapshot
@@ -258,14 +258,14 @@ class AgencyOrchestrator:
         # 3. proposal already given; 4. score
         try:
             score_value = await score(proposal, state_snapshot) if score else proposal.priority
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('agency_orchestrator', exc)
             return await self._block(receipt, "score", str(exc))
 
         # 5. simulate (counterfactual; must NOT mutate live state)
         try:
             simulation = await simulate(proposal, state_snapshot) if simulate else {"score": score_value}
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('agency_orchestrator', exc)
             return await self._block(receipt, "simulate", str(exc))
         receipt.simulation_result = simulation
@@ -286,7 +286,7 @@ class AgencyOrchestrator:
                 if execute
                 else await self._default_execute(proposal)
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('agency_orchestrator', exc)
             return await self._block(receipt, "execute", str(exc))
         receipt.execution_receipt = str(exec_result.get("receipt") or exec_result)
@@ -294,7 +294,7 @@ class AgencyOrchestrator:
         # 8. observe outcome / 9. assess regret / lesson
         try:
             outcome = await assess(proposal, state_snapshot, exec_result) if assess else {"observed": exec_result}
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('agency_orchestrator', exc)
             return await self._block(receipt, "assess", str(exc))
         receipt.outcome_assessment = outcome
@@ -315,7 +315,7 @@ class AgencyOrchestrator:
             if registry and hasattr(registry, "snapshot"):
                 snap = registry.snapshot()
                 return snap if isinstance(snap, dict) else {"raw": str(snap)[:1024]}
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('agency_orchestrator', exc)
             logger.debug("default perceive snapshot failed: %s", exc)
         return {}
@@ -377,7 +377,7 @@ class AgencyOrchestrator:
                 "authority_receipt": getattr(decision, "authority_receipt", None),
                 "capability_token": getattr(decision, "capability_token", None),
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('agency_orchestrator', exc)
             return {"decision": "blocked", "reason": f"authorize_exception:{exc}"}
 
@@ -385,7 +385,7 @@ class AgencyOrchestrator:
     def _primitive_to_domain(primitive: str) -> Any:
         try:
             from core.will import ActionDomain
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return primitive
         mapping = {
             "memory_write": getattr(ActionDomain, "MEMORY_WRITE", primitive),

@@ -153,7 +153,7 @@ class CognitiveHeartbeat:
                 await self._tick()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('heartbeat', e)
                 logger.error("Heartbeat tick error (tick=%d): %s", self.tick_count, e, exc_info=True)
                 # Never stop the heartbeat for a subsystem error
@@ -311,7 +311,7 @@ class CognitiveHeartbeat:
                 h_att = mycelium.get_hypha("consciousness", "attention")
                 if h_att:
                     h_att.pulse(success=True)
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('heartbeat', _e)
             logger.debug('Ignored Exception in heartbeat.py: %s', _e)
 
@@ -375,7 +375,7 @@ class CognitiveHeartbeat:
             ph = get_predictive_hierarchy()
             ph_inputs = ph.gather_inputs_from_services()
             ph.tick(**ph_inputs)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Predictive hierarchy tick failed: %s", e)
 
@@ -406,10 +406,10 @@ class CognitiveHeartbeat:
                     drive_engine = ServiceContainer.get("drive_engine", default=None)
                     if drive_engine and hasattr(drive_engine, "tick_boredom"):
                         drive_engine.tick_boredom(fe_state.free_energy)
-                except Exception as be:
+                except (ImportError, AttributeError, RuntimeError) as be:
                     record_degradation('heartbeat', be)
                     logger.debug("Boredom accumulator tick failed: %s", be)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Free energy computation failed: %s", e)
 
@@ -424,7 +424,7 @@ class CognitiveHeartbeat:
                     hg = ServiceContainer.get("hedonic_gradient", default=None)
                     if hg and hasattr(hg, 'accept_credit_signal'):
                         hg.accept_credit_signal(credit.get_influence_scores())
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('heartbeat', e)
                 logger.debug("Credit modulation failed: %s", e)
 
@@ -443,7 +443,7 @@ class CognitiveHeartbeat:
                             fe_engine.accept_attention_complexity(
                                 min(1.0, fe_engine._last_attention_complexity + contradiction_rate * 0.3)
                             )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('heartbeat', e)
                 logger.debug("World model consistency check failed: %s", e)
 
@@ -468,7 +468,7 @@ class CognitiveHeartbeat:
 
             if hasattr(self.workspace, 'update_phi'):
                 self.workspace.update_phi(phi)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('heartbeat', e)
             capture_and_log(e, {'module': __name__})
 
@@ -479,7 +479,7 @@ class CognitiveHeartbeat:
                     self._cel_bridge = ServiceContainer.get("cel_bridge", default=None)
                 if self._cel_bridge:
                     await self._cel_bridge.tick()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('heartbeat', e)
                 logger.debug("CEL tick error: %s", e, exc_info=True)
 
@@ -488,7 +488,7 @@ class CognitiveHeartbeat:
             branch_mgr = ServiceContainer.get("branch_manager", default=None)
             if branch_mgr:
                 await branch_mgr.tick()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Branch manager tick failed: %s", e)
 
@@ -532,7 +532,7 @@ class CognitiveHeartbeat:
                 state["affect_arousal"] = affect.arousal
                 state["affect_engagement"] = affect.engagement
                 state["affect_emotion"] = affect.dominant_emotion
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('heartbeat', e)
             # logger.debug("Affect gather failed: %s", e)
             state.setdefault("affect_valence", 0.0)
@@ -551,7 +551,7 @@ class CognitiveHeartbeat:
                 if ranked:
                     state["dominant_drive"] = ranked[0][0]   # Most depleted = most urgent
                     state["drive_urgency"] = max(0.0, 1.0 - (ranked[0][1] / 100.0))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('heartbeat', e)
             # logger.debug("Drive gather failed: %s", e)
             state.setdefault("dominant_drive", "curiosity")
@@ -565,7 +565,7 @@ class CognitiveHeartbeat:
             state["body_energy"] = (1.0 - body.get("resource_anxiety", 0.0)) * 100
             state["body_heat"] = body.get("thermal_load", 0.0) * 100
             state["body_integrity"] = body.get("vitality", 1.0) * 100
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('heartbeat', e)
             capture_and_log(e, {'module': __name__})
             
@@ -701,7 +701,7 @@ class CognitiveHeartbeat:
                         priority=min(0.85, 0.5 + boredom_lvl * 0.4),
                         affect_weight=affect_weight * 1.5,
                     ))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Boredom candidate submission failed: %s", e)
 
@@ -718,7 +718,7 @@ class CognitiveHeartbeat:
                     priority=urgency,
                     affect_weight=abs(fe.valence) * 0.3,
                 ))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Free energy candidate submission failed: %s", e)
 
@@ -731,7 +731,7 @@ class CognitiveHeartbeat:
                     bias = self.attention.get_focus_bias_for_source(candidate.source)
                     if bias > 0:
                         candidate.focus_bias = min(1.0, candidate.focus_bias + bias)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Attention focus bias application failed: %s", e)
 
@@ -770,7 +770,7 @@ class CognitiveHeartbeat:
                 ),
                 level="info" if not mods.urgency_flag else "warning",
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("ThoughtStream emit failed: %s", e, exc_info=True)
 
@@ -792,7 +792,7 @@ class CognitiveHeartbeat:
                 qualia_synthesizer = ServiceContainer.get("qualia_synthesizer", default=None)
                 if qualia_synthesizer and hasattr(qualia_synthesizer, "get_snapshot"):
                     qualia_snapshot = qualia_synthesizer.get_snapshot()
-            except Exception as qs_err:
+            except (ImportError, AttributeError, RuntimeError) as qs_err:
                 record_degradation('heartbeat', qs_err)
                 logger.debug("Qualia snapshot failed: %s", qs_err)
 
@@ -864,7 +864,7 @@ class CognitiveHeartbeat:
             
             get_event_bus().publish_threadsafe("telemetry", payload.model_dump())
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Telemetry emission failed: %s", e)
 
@@ -879,7 +879,7 @@ class CognitiveHeartbeat:
                     reason=f"High prediction error ({surprise:.2f}) in self-model",
                     priority=min(0.9, surprise),
                 )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('heartbeat', e)
             capture_and_log(e, {'module': __name__})
 
@@ -897,7 +897,7 @@ class CognitiveHeartbeat:
                 self.orch._homeostatic_prompt = hud_injection
 
             logger.debug("Autobiographical narrative injected into orchestrator context.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('heartbeat', e)
             logger.debug("Narrative injection failed: %s", e)
 

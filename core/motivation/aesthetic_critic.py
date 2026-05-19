@@ -58,7 +58,7 @@ class AestheticCritic:
                 return json.loads(json_match.group(0))
             else:
                 return {"score": 5, "critique": "Could not parse critique.", "suggestions": []}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_critic', e)
             logger.error("Critique failed: %s", e)
             return {"score": 0, "error": str(e)}
@@ -95,7 +95,7 @@ class AestheticCritic:
                 return json.loads(json_match.group(0))
             else:
                 return {"score": 5, "critique": "Valid thought but could not parse explicit critique.", "suggestions": []}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aesthetic_critic', e)
             logger.error("Thought critique failed: %s", e)
             return {"score": 0, "error": str(e), "critique": "Failed to analyze reasoning."}

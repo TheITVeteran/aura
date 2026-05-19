@@ -70,7 +70,7 @@ class SafeBackupSystem:
                 try:
                     await asyncio.to_thread(shutil.copytree, src, dst, dirs_exist_ok=True)
                     results["backed_up"].append(str(src.name))
-                except Exception as e:
+                except (OSError, IOError) as e:
                     record_degradation('self_preservation_safe', e)
                     logger.warning("Backup: could not copy %s: %s", src.name, e)
 
@@ -78,7 +78,7 @@ class SafeBackupSystem:
             try:
                 await asyncio.to_thread(shutil.copy2, db, backup_dir / db.name)
                 results["backed_up"].append(db.name)
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('self_preservation_safe', e)
                 logger.warning("Backup: could not copy %s: %s", db.name, e)
 
@@ -100,7 +100,7 @@ class SafeBackupSystem:
                 try:
                     manifest = json.loads((d / "manifest.json").read_text())
                     backups.append({"path": str(d), **manifest})
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError):
                     backups.append({"path": str(d)})
         return backups
 

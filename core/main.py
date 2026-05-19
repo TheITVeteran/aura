@@ -116,7 +116,7 @@ async def conversation_loop(orchestrator: RobustOrchestrator | None = None):
             logger.error("I/O error in conversation loop: %s", e)
             await asyncio.sleep(min(backoff, MAX_BACKOFF_SECONDS))
             backoff *= 2
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('main', e)
             consecutive_failures += 1
             logger.error("Unexpected error in conversation loop: %s", e, exc_info=True)

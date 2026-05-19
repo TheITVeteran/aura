@@ -215,14 +215,14 @@ class ResourceGovernor:
             snap.memory_percent = vm.percent
             proc = psutil.Process()
             snap.memory_rss_mb = proc.memory_info().rss / (1024 * 1024)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             snap.memory_percent = 0.0
 
         # CPU
         try:
             import psutil
             snap.cpu_percent = psutil.cpu_percent(interval=0)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         # Thermal (macOS native)
@@ -252,7 +252,7 @@ class ResourceGovernor:
                 [EvictionTier.NONE, EvictionTier.SOFT,
                  EvictionTier.MODERATE, EvictionTier.AGGRESSIVE].index(snap.eviction_tier)
             ))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         return snap
@@ -275,7 +275,7 @@ class ResourceGovernor:
                 return ThermalState.FAIR, 0.4
             else:
                 return ThermalState.NOMINAL, 0.0
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             # Fallback: use CPU as proxy
             try:
                 import psutil
@@ -285,7 +285,7 @@ class ResourceGovernor:
                 elif cpu > 70:
                     return ThermalState.FAIR, 0.4
                 return ThermalState.NOMINAL, 0.0
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 return ThermalState.NOMINAL, 0.0
 
     def _compute_eviction_tier(self, snap: ResourceSnapshot) -> EvictionTier:
@@ -324,7 +324,7 @@ class ResourceGovernor:
             try:
                 cb(tier)
                 invoked += 1
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("resource_governor", exc)
                 logger.debug("Eviction callback failed: %s", exc)
 
@@ -337,7 +337,7 @@ class ResourceGovernor:
                     "ResourceGovernor: GC collected %d objects (tier=%s)",
                     collected, tier.value,
                 )
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
 
         logger.warning(
@@ -356,7 +356,7 @@ class ResourceGovernor:
                     if self._last_snapshot else "unknown",
                     severity="critical",
                 )
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
 
         return invoked

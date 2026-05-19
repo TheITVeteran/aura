@@ -136,7 +136,7 @@ class ManimRendererSkill(BaseSkill):
                 "note": "Use this absolute path to stream the video to the UI."
             }
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("manim_renderer", e)
             return {
                 "ok": False,

@@ -161,7 +161,7 @@ class HumorEngine:
             try:
                 from core.config import config
                 data_path = config.paths.data_dir / "humor_profiles.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 data_path = _DEFAULT_DATA_PATH
 
         self._data_path = Path(data_path)
@@ -196,7 +196,7 @@ class HumorEngine:
             logger.debug("HumorEngine: loaded %d profiles, %d attempt histories",
                          len(self._profiles),
                          sum(len(v) for v in self._attempts.values()))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('humor_engine', e)
             logger.warning("HumorEngine: load failed (%s), starting fresh", e)
 
@@ -215,7 +215,7 @@ class HumorEngine:
             with open(tmp, "w") as f:
                 json.dump(payload, f, indent=2)
             os.replace(tmp, self._data_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('humor_engine', e)
             logger.error("HumorEngine: save failed: %s", e)
 
@@ -656,7 +656,7 @@ class HumorEngine:
                 return jokes[0].reference
             if top:
                 return top[0].reference
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('humor_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return ""
@@ -693,7 +693,7 @@ def register_humor_engine() -> None:
             lifetime=ServiceLifetime.SINGLETON,
         )
         logger.info("HumorEngine registered in ServiceContainer.")
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('humor_engine', e)
         logger.error("Failed to register HumorEngine: %s", e, exc_info=True)
 
@@ -711,7 +711,7 @@ def get_humor_engine() -> HumorEngine:
         # Try container first
         try:
             _instance = ServiceContainer.get("humor_engine", default=None)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('humor_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -721,7 +721,7 @@ def get_humor_engine() -> HumorEngine:
                 _instance = HumorEngine()
                 try:
                     ServiceContainer.register_instance("humor_engine", _instance)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('humor_engine', e)
                     logger.warning("Failed to register HumorEngine in container: %s", e)
     return _instance

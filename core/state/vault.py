@@ -94,7 +94,7 @@ class StateVaultActor:
                         "heartbeat",
                         {"pid": os.getpid(), "ts": time.time(), "status": "healthy"},
                     )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('vault', e)
                 logger.debug("StateVault heartbeat failed: %s", e)
             await asyncio.sleep(self._heartbeat_interval)
@@ -149,7 +149,7 @@ class StateVaultActor:
                 )
 
             return {"version": committed_state.version, "state_id": committed_state.state_id}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('vault', e)
             logger.error(f"Commit failed: {e}")
             raise
@@ -169,7 +169,7 @@ class StateVaultActor:
             async with governed_scope(sync_decision):
                 mode = await self.repo._sync_to_shm(state, serialized_state)
             logger.debug("SHM Updated: Version %s (%s)", state.version, mode)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vault', e)
             logger.error(f"SHM Update Failed: {e}")
 
@@ -182,7 +182,7 @@ def vault_process_entry(db_path: str, pipe):
     """Entry point for the vault process."""
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass
     # Force basic logging to stderr so it shows up in main logs even if setup fails
     import sys
@@ -202,7 +202,7 @@ def vault_process_entry(db_path: str, pipe):
             asyncio.set_event_loop(None)
             loop.close()
         logger.debug("StateVaultActor asyncio loop exited gracefully.")
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('vault', e)
         logger.critical(f"Vault process CRASHED: {e}")
         import traceback

@@ -31,7 +31,7 @@ class SpeakSkill(BaseSkill):
                 import pyttsx3
                 self._fallback_engine = pyttsx3.init()
                 self._fallback_engine.setProperty('rate', 175) 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('speak', e)
                 logger.warning("pyttsx3 init failed: %s", e)
             
@@ -41,7 +41,7 @@ class SpeakSkill(BaseSkill):
             try:
                 from core.container import ServiceContainer
                 self._voice_engine = ServiceContainer.get("voice_engine")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('speak', e)
                 logger.error("Failed to resolve voice_engine: %s", e)
         return self._voice_engine
@@ -50,7 +50,7 @@ class SpeakSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = SpeakInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('speak', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -69,7 +69,7 @@ class SpeakSkill(BaseSkill):
             try:
                 await engine.synthesize_speech(text)
                 return {"ok": True, "mode": "sovereign", "message": "Spoken via Sovereign Voice Engine."}
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('speak', e)
                 logger.error("Sovereign synthesis failed: %s", e)
 
@@ -79,7 +79,7 @@ class SpeakSkill(BaseSkill):
                 # Use Samantha for the cool, collected AGI persona
                 await asyncio.create_subprocess_exec("say", "-v", voice, "-r", rate, text)
                 return {"ok": True, "mode": "macos_say", "message": f"Spoken via macOS ({voice})."}
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('speak', e)
                 logger.error("macOS say failed: %s", e)
 
@@ -89,7 +89,7 @@ class SpeakSkill(BaseSkill):
                 self._fallback_engine.say(text)
                 self._fallback_engine.runAndWait()
                 return {"ok": True, "mode": "pyttsx3", "message": "Spoken via local engine."}
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('speak', e)
                 logger.error("pyttsx3 failed: %s", e)
         

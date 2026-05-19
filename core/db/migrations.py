@@ -49,7 +49,7 @@ class Migrator:
                     from core.config import config
                     suffix = path_str[len("~/.aura/data/"):]
                     path_str = str(config.paths.data_dir / suffix)
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('migrations', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
         elif path_str.startswith("~/.aura"):
@@ -61,7 +61,7 @@ class Migrator:
                     from core.config import config
                     suffix = path_str[len("~/.aura/"):]
                     path_str = str(config.paths._effective_home_dir() / suffix)
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('migrations', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
         
@@ -115,7 +115,7 @@ class Migrator:
                     con.commit()
                     applied += 1
                     logger.info("✅ Migration v%d applied.", migration.version)
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
                     record_degradation('migrations', e)
                     con.rollback()
                     logger.error(
@@ -181,7 +181,7 @@ class Migrator:
                     con.execute("UPDATE knowledge SET updated_at = created_at WHERE updated_at = 0.0")
                     con.commit()
                     logger.info("✅ Added 'updated_at' column.")
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('migrations', e)
             logger.error("Failed to reconcile legacy schema: %s", e)
             con.rollback()

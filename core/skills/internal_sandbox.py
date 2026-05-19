@@ -93,7 +93,7 @@ class SandboxSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = SandboxInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('internal_sandbox', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -141,7 +141,7 @@ class SandboxSkill(BaseSkill):
                 except asyncio.TimeoutError:
                     try:
                         process.kill()
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('internal_sandbox', e)
                         logger.debug("Failed to kill sandboxed process: %s", e)
                     return {"ok": False, "error": f"Code execution timed out after {self.MAX_EXECUTION_TIME}s"}
@@ -163,10 +163,10 @@ class SandboxSkill(BaseSkill):
                 # Clean up temp file
                 try:
                     os.unlink(temp_path)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('internal_sandbox', e)
                     logger.debug("Failed to delete temp sandbox file %s: %s", temp_path, e)
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('internal_sandbox', e)
             return {"ok": False, "error": f"Sandbox Exception: {e}"}

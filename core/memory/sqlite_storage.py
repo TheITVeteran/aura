@@ -164,7 +164,7 @@ class SQLiteMemory:
             if return_decision:
                 return approved, decision
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('sqlite_storage', exc)
             if self._constitutional_runtime_live():
                 record_degraded_event(
@@ -219,7 +219,7 @@ class SQLiteMemory:
             ))
             await conn.commit()
             return True
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to log event asynchronously: %s", e)
             return False
@@ -259,7 +259,7 @@ class SQLiteMemory:
                 events.append(evt)
             
             return list(reversed(events)) # Return chronological order
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to get events asynchronously: %s", e)
             return []
@@ -294,7 +294,7 @@ class SQLiteMemory:
                 ''', (key, json.dumps(value), time.time()))
                 await conn.commit()
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to update semantic asynchronously: %s", e)
             return False
@@ -308,7 +308,7 @@ class SQLiteMemory:
                 if row:
                     return json.loads(row[0])
                 return default
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to get semantic asynchronously: %s", e)
             return default
@@ -392,7 +392,7 @@ class SQLiteMemory:
             async with conn.execute("SELECT last_insert_rowid()") as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to record episode: %s", e)
             return 0
@@ -439,7 +439,7 @@ class SQLiteMemory:
             await conn.commit()
             logger.info("Pruned %d low-salience memories from episodic store.", count)
             return count
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('sqlite_storage', e)
             logger.error("Failed to prune low salience memory: %s", e)
             return 0
@@ -474,7 +474,7 @@ class SQLiteMemory:
                     return asyncio.run_coroutine_threadsafe(coro, loop).result()
                 else:
                     return asyncio.run(coro)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sqlite_storage', e)
                 logger.error("Error in _run_sync: %s", e)
                 return None

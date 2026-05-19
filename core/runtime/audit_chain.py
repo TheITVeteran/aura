@@ -334,7 +334,7 @@ class AuditChain:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass
 
     def _should_fsync_now(self) -> bool:

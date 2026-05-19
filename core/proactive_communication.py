@@ -26,7 +26,7 @@ def _proactivity_suppressed_now(now: float | None = None) -> bool:
         now = time.time() if now is None else now
         quiet_until = float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         return quiet_until > now
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("proactive_communication", exc)
         logger.debug("Proactivity suppression probe failed: %s", exc)
         return False
@@ -177,7 +177,7 @@ class ProactiveCommunicationManager:
 
                 for msg in ready:
                     await self._send_msg(msg)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('proactive_communication', e)
                 logger.error("Proactive comm error: %s", e)
 
@@ -200,7 +200,7 @@ class ProactiveCommunicationManager:
                     or ServiceContainer.has("kernel_interface")
                     or bool(getattr(ServiceContainer, "_registration_locked", False))
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("proactive_communication", exc)
                 logger.debug("Constitutional runtime probe failed: %s", exc)
                 return False
@@ -225,7 +225,7 @@ class ProactiveCommunicationManager:
                 },
             )
             delivered = bool(decision.get("ok"))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('proactive_communication', exc)
             logger.debug("Executive authority routing failed for proactive comm: %s", exc)
 
@@ -245,7 +245,7 @@ class ProactiveCommunicationManager:
                         "constitutional_runtime_live": _constitutional_runtime_live(),
                     },
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('proactive_communication', exc)
                 logger.debug("Proactive comm degraded-event logging failed: %s", exc)
             return

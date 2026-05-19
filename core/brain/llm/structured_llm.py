@@ -116,7 +116,7 @@ class StructuredLLM:
                             classification="background_degraded",
                             context={"model_class": self.model_class.__name__, "attempt": attempt + 1},
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('structured_llm', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     # [STABILITY v54.1] Escalation Strategy:
@@ -158,7 +158,7 @@ class StructuredLLM:
                         classification="background_degraded",
                         context={"model_class": self.model_class.__name__, "attempt": attempt + 1},
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('structured_llm', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 
@@ -207,7 +207,7 @@ class StructuredLLM:
                 profile=THOUGHT_BACKGROUND_POLICY,
                 require_conversation_ready=True,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("structured_llm", exc)
             logger.debug("StructuredLLM background defer check failed: %s", exc)
             return ""
@@ -226,7 +226,7 @@ class StructuredLLM:
                 elif annotation == dict or origin is dict: example[name] = {}
                 else: example[name] = None
             return json.dumps(example)
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             return "{}"
 
 async def test_structured_llm():

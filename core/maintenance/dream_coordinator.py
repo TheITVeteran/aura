@@ -82,7 +82,7 @@ class DreamCoordinator:
                 self._last_run[name] = time.monotonic()
                 logger.info("✅ DreamCoordinator: '%s' complete in %.1fs", name, elapsed)
                 return True
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 elapsed = time.monotonic() - started
                 record_degradation(
                     "dream_coordinator",

@@ -114,7 +114,7 @@ class StabilityGuardian:
             return StabilityGuardian.MEMORY_WARNING_PCT, StabilityGuardian.MEMORY_CRITICAL_PCT
         try:
             total_gb = float(psutil.virtual_memory().total) / float(1024 ** 3)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             total_gb = 0.0
         if total_gb >= 60.0:
             return 88.0, 94.0
@@ -222,7 +222,7 @@ class StabilityGuardian:
                 self._loop(),
                 name="aura.stability_guardian",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._task = get_task_tracker().create_task(self._loop(), name="aura.stability_guardian")
         logger.info("StabilityGuardian running (interval=%ds).", int(self.CHECK_INTERVAL_S))
 
@@ -280,7 +280,7 @@ class StabilityGuardian:
                 timestamp = float(item[0])
                 duration_ms = float(item[1])
                 priority_tick = bool(item[2]) if len(item) >= 3 else False
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
             if (current_time - timestamp) <= window_s:
                 legacy_samples.append(
@@ -370,12 +370,12 @@ class StabilityGuardian:
                             classification="background_degraded",
                             context={"issue_count": len(unhealthy)},
                         )
-                    except Exception as record_exc:
+                    except (ImportError, AttributeError, RuntimeError) as record_exc:
                         record_degradation('stability_guardian', record_exc)
                         logger.debug("StabilityGuardian degraded event emit failed: %s", record_exc)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('stability_guardian', e)
                 logger.error("StabilityGuardian loop error: %s", e)
 
@@ -402,7 +402,7 @@ class StabilityGuardian:
                 result = await fn() if asyncio.iscoroutinefunction(fn) else fn()
                 if isinstance(result, HealthCheckResult):
                     checks.append(result)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('stability_guardian', e)
                 checks.append(HealthCheckResult(
                     name    = getattr(fn, "__name__", "unknown"),
@@ -473,7 +473,7 @@ class StabilityGuardian:
                 ):
                     await dual_mem.episodic.evict_oldest(0.2)
                     action = "gc.collect() + episodic eviction triggered"
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('stability_guardian', _e)
                 logger.debug('Ignored Exception in stability_guardian.py: %s', _e)
             return HealthCheckResult(
@@ -518,7 +518,7 @@ class StabilityGuardian:
                     try:
                         t.cancel()
                         cancelled_count += 1
-                    except Exception as _exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                         record_degradation('stability_guardian', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     if n - cancelled_count <= self.MAX_TASK_COUNT - 20:
@@ -530,7 +530,7 @@ class StabilityGuardian:
                 from core.utils.task_tracker import get_task_tracker
 
                 tracker_stats = get_task_tracker().get_stats()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 tracker_stats = {"active": 0, "high_water": 0}
             return HealthCheckResult(
                 "asyncio_tasks", False,
@@ -570,7 +570,7 @@ class StabilityGuardian:
                 severity="warning" if interventions else "error",
                 action_taken=f"watchdog_interventions={interventions}",
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stability_guardian', exc)
             return HealthCheckResult("lock_watchdog", False, f"Check failed: {exc}", "error")
 
@@ -587,11 +587,11 @@ class StabilityGuardian:
             live_tasks = sorted(
                 t.get_name() for t in asyncio.all_tasks(loop) if not t.done()
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             live_tasks = []
         try:
             loop.run_in_executor(None, self._dump_thread_stacks_blocking, label, live_tasks)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('stability_guardian', exc)
             logger.debug("StabilityGuardian thread dump dispatch failed: %s", exc)
             return False
@@ -642,7 +642,7 @@ class StabilityGuardian:
             ordered_blocks.extend(sorted(blocks, key=len, reverse=True)[:6])
             dump = "\n\n".join(ordered_blocks)
             logger.error("🚨 [StabilityGuardian] %s. THREAD DUMP:%s\n%s", label, task_block, dump[:6000])
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stability_guardian', exc)
             logger.debug("StabilityGuardian thread dump failed: %s", exc)
 
@@ -828,7 +828,7 @@ class StabilityGuardian:
                         if state:
                             state.compact(trigger_threshold=100, keep_turns=50)
                             action = "Forced state.compact()"
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('stability_guardian', e)
                         action = f"Compact failed: {e}"
                         
@@ -841,7 +841,7 @@ class StabilityGuardian:
 
             return HealthCheckResult("state_integrity", True, f"State v{getattr(state, 'version', 0)} OK")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stability_guardian', e)
             return HealthCheckResult("state_integrity", False, f"Check failed: {e}", "error")
 
@@ -916,7 +916,7 @@ class StabilityGuardian:
                 ),
                 action_taken=", ".join(actions) or None,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stability_guardian', exc)
             return HealthCheckResult("state_repository", False, f"Check failed: {exc}", "error")
 
@@ -966,7 +966,7 @@ class StabilityGuardian:
                                 f"LLM organ reloaded: {new_name}",
                                 action_taken="organ.load() called",
                             )
-                    except Exception as reload_err:
+                    except (RuntimeError, AttributeError, TypeError) as reload_err:
                         record_degradation('stability_guardian', reload_err)
                         return HealthCheckResult(
                             "llm_circuit", False,
@@ -981,7 +981,7 @@ class StabilityGuardian:
 
             return HealthCheckResult("llm_circuit", True, f"LLM OK: {instance_name}")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stability_guardian', e)
             return HealthCheckResult("llm_circuit", False, f"Check failed: {e}", "error")
 
@@ -1009,7 +1009,7 @@ class StabilityGuardian:
                             "DB reconnected",
                             action_taken="aiosqlite.connect() called",
                         )
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('stability_guardian', e)
                         return HealthCheckResult(
                             "db_connections", False,
@@ -1019,7 +1019,7 @@ class StabilityGuardian:
 
             return HealthCheckResult("db_connections", True, "DB connection OK")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stability_guardian', e)
             return HealthCheckResult("db_connections", False, f"Check failed: {e}", "error")
 
@@ -1071,7 +1071,7 @@ class StabilityGuardian:
 
             latest_label = health.get("latest_backup") or "none_yet"
             return HealthCheckResult("backup_manager", True, f"Backup maintenance OK: latest={latest_label}")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stability_guardian', exc)
             return HealthCheckResult("backup_manager", False, f"Check failed: {exc}", "error")
 
@@ -1085,7 +1085,7 @@ class StabilityGuardian:
                     from core.runtime.runtime_hygiene import get_runtime_hygiene
 
                     hygiene = get_runtime_hygiene()
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     hygiene = None
 
             if hygiene is None:
@@ -1117,7 +1117,7 @@ class StabilityGuardian:
                 severity=severity,
                 action_taken=", ".join(report.get("repair_actions", []) or []) or None,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stability_guardian', exc)
             return HealthCheckResult("runtime_hygiene", False, f"Check failed: {exc}", "error")
 
@@ -1148,7 +1148,7 @@ class StabilityGuardian:
                             name="stability_guardian.autonomous_loop.restart",
                         )
                         action = "autonomous_loop.start() triggered"
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('stability_guardian', e)
                     action = f"Restart failed: {e}"
                     
@@ -1208,7 +1208,7 @@ class StabilityGuardian:
                     self._rotate_health_log()
             except OSError as _exc:
                 logger.debug("Suppressed OSError: %s", _exc)
-        except Exception as _e:
+        except (json.JSONDecodeError, TypeError, ValueError) as _e:
             record_degradation('stability_guardian', _e)
             logger.debug('Ignored Exception in stability_guardian.py: %s', _e)
 
@@ -1234,6 +1234,6 @@ class StabilityGuardian:
                 self._log_path.rename(backup_1)
             logger.info("🧹 [StabilityGuardian] Rotated health_log.jsonl (exceeded %dMB).",
                         self._HEALTH_LOG_MAX_BYTES // (1024 * 1024))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('stability_guardian', e)
             logger.debug("Health log rotation failed: %s", e)

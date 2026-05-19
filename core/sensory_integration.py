@@ -76,7 +76,7 @@ class SensorySystem:
             self._store_in_memory(perception)
             return perception
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('sensory_integration', e)
             logger.error("Perception failed: %s", e)
             perception["error"] = str(e)
@@ -99,7 +99,7 @@ class SensorySystem:
             
             return expression
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('sensory_integration', e)
             logger.error("Expression failed: %s", e)
             expression["error"] = str(e)
@@ -159,7 +159,7 @@ class VisionSystem:
         except ImportError:
             logger.debug("OpenCV is unavailable; camera capture disabled.")
             return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             logger.debug("Camera availability probe failed: %s", exc)
             return False
@@ -199,7 +199,7 @@ class VisionSystem:
                     cap.release()
                     out.release()
                     return {"type": "video", "path": path, "duration": duration, "timestamp": time.time()}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sensory_integration', e)
                 return {"error": str(e)}
 
@@ -251,7 +251,7 @@ class VisionSystem:
                         "text_detected": [],
                         "faces_detected": 0,
                     }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_integration', e)
             logger.debug("Vision analysis via brain failed: %s", e)
 
@@ -302,7 +302,7 @@ class HearingSystem:
         except ImportError:
             logger.debug("sounddevice is unavailable; microphone capture disabled.")
             return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             logger.debug("Microphone availability probe failed: %s", exc)
             return False
@@ -328,7 +328,7 @@ class HearingSystem:
                 sf.write(path, recording, rate)
                 
                 return {"type": "audio", "path": path, "duration": duration, "timestamp": time.time()}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sensory_integration', e)
                 return {"error": str(e)}
 
@@ -357,7 +357,7 @@ class HearingSystem:
                         audio = recognizer.record(src)
                     text = recognizer.recognize_google(audio)
                     return {"text": text, "confidence": 0.8, "language": "en"}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sensory_integration', e)
                 return {"text": "[Transcription failed]", "error": str(e)}
 
@@ -414,7 +414,7 @@ class SpeechSystem:
                         engine.say(text)
                         engine.runAndWait()
                         return {"success": True}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sensory_integration', e)
                 return {"success": False, "error": str(e)}
 
@@ -483,7 +483,7 @@ class AVProductionSystem:
                 "source": "local_renderer",
                 "timestamp": time.time(),
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             manifest = path.with_suffix(".txt")
             manifest.write_text(
@@ -508,7 +508,7 @@ class AVProductionSystem:
                 result = await brain.generate_image(description, style=style)
                 if result:
                     return {"path": result, "description": description, "timestamp": time.time()}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_integration', e)
             logger.debug("Image generation via brain failed: %s", e)
 
@@ -539,7 +539,7 @@ class AVProductionSystem:
                         return {"path": output, "edits_applied": len(edits)}
                     return {"error": proc.stderr.decode()[:200]}
             return {"error": "no_supported_edits", "supported": ["trim"]}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('sensory_integration', e)
             return {"error": str(e)}
 
@@ -560,7 +560,7 @@ def get_sensory_system() -> SensorySystem:
             if res is not None:
                 return res
             return SensorySystem()
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('sensory_integration', e)
         logger.debug("ServiceContainer unavailable or failed: %s. Using transient SensorySystem.", e)
         return SensorySystem()

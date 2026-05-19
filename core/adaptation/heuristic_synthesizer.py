@@ -39,7 +39,7 @@ class HeuristicSynthesizer:
                     data = json.load(f)
                 self._active_heuristics = data.get("heuristics", [])[:MAX_ACTIVE_HEURISTICS]
                 logger.info("📐 Loaded %d active heuristics", len(self._active_heuristics))
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('heuristic_synthesizer', e)
                 logger.error("Failed to load heuristics: %s", e)
                 self._active_heuristics = []
@@ -86,7 +86,7 @@ class HeuristicSynthesizer:
             if hasattr(emitter, "recent_events"):
                 errors = [e for e in emitter.recent_events if e.get("level") in ("error", "warning")]
                 error_signals.extend([e.get("message", "")[:200] for e in errors[-20:]])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heuristic_synthesizer', e)
             capture_and_log(e, {'module': __name__})
 
@@ -96,7 +96,7 @@ class HeuristicSynthesizer:
             if dlq and hasattr(dlq, "recent_failures"):
                 for f in dlq.recent_failures[-10:]:
                     error_signals.append(f"DLQ: {f.get('error', '')[:150]}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heuristic_synthesizer', e)
             capture_and_log(e, {'module': __name__})
 
@@ -164,7 +164,7 @@ class HeuristicSynthesizer:
                         if mycelium:
                             h = mycelium.get_hypha("adaptation", "cognition")
                             if h: h.pulse(success=True)
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('heuristic_synthesizer', e)
                         capture_and_log(e, {'module': __name__})
                         
@@ -173,7 +173,7 @@ class HeuristicSynthesizer:
 
             return {"ok": True, "new_heuristics": 0, "reason": "no_parseable_rules"}
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('heuristic_synthesizer', e)
             logger.error("Heuristic synthesis failed: %s", e)
             return {"ok": False, "error": str(e)}

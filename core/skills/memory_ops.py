@@ -61,7 +61,7 @@ class MemoryOpsSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = MemoryOpsInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_ops', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -78,7 +78,7 @@ class MemoryOpsSkill(BaseSkill):
                 return await self._execute_archival_memory(params, context, action)
             else:
                 return {"ok": False, "error": f"Unknown memory action: {action}"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('memory_ops', e)
             logger.error("MemoryOps failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -148,7 +148,7 @@ class MemoryOpsSkill(BaseSkill):
                 else:
                     return {"ok": False, "error": "Facade missing insertion capability."}
                 return {"ok": True, "summary": "Committed to archival storage."}
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_ops', e)
                 return {"ok": False, "error": f"Archival insertion failed: {e}"}
 
@@ -182,7 +182,7 @@ class MemoryOpsSkill(BaseSkill):
                     "results": formatted if formatted else ["No archival memories found."],
                     "summary": f"Found {len(formatted)} artifacts."
                 }
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('memory_ops', e)
                 return {"ok": False, "error": f"Archival search failed: {e}"}
 

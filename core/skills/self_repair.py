@@ -69,7 +69,7 @@ class SelfRepairSkill(BaseSkill):
         # 2. Read the source
         try:
             source_code = Path(target_path).read_text(errors="replace")
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('self_repair', e)
             return {"ok": False, "error": f"Could not read {target_path}: {e}"}
 
@@ -98,7 +98,7 @@ class SelfRepairSkill(BaseSkill):
             )
             result = await brain.think(prompt, mode=ThinkingMode.CRITICAL)
             fix_content = getattr(result, "content", str(result))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_repair', e)
             return {"ok": False, "error": f"Diagnosis failed: {e}"}
 
@@ -131,7 +131,7 @@ class SelfRepairSkill(BaseSkill):
                     fix=fix_content[:500],
                     success=True,
                 )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         # 7. Record in WorldState
@@ -143,7 +143,7 @@ class SelfRepairSkill(BaseSkill):
                 salience=0.5,
                 ttl=3600,
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         return {

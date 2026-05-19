@@ -81,7 +81,7 @@ class SharedMemoryTransport:
             from core.reaper import ReaperManifest
 
             ReaperManifest().deregister_shm(name)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('shared_mem_bus', exc)
             logger.warning(
                 "🚌 SharedMem: Failed to deregister from Reaper during close: %s",
@@ -94,12 +94,12 @@ class SharedMemoryTransport:
         try:
             shm.unlink()
             logger.debug("Shared Memory Segment Unlinked by finalizer: %s", name)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('shared_mem_bus', exc)
             logger.debug("Finalizer unlink skipped for %s: %s", name, exc)
         try:
             shm.close()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('shared_mem_bus', exc)
             logger.debug("Finalizer close skipped for %s: %s", name, exc)
 
@@ -162,7 +162,7 @@ class SharedMemoryTransport:
         try:
             os.ftruncate(fd, self.size)
             mm = mmap.mmap(fd, self.size, access=mmap.ACCESS_WRITE)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             os.close(fd)
             path.unlink(missing_ok=True)
             raise
@@ -180,7 +180,7 @@ class SharedMemoryTransport:
         finally:
             try:
                 buf.release()
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('shared_mem_bus', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -199,7 +199,7 @@ class SharedMemoryTransport:
         try:
             size = max(16, int(path.stat().st_size))
             mm = mmap.mmap(fd, size, access=mmap.ACCESS_WRITE)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             os.close(fd)
             raise
 
@@ -221,7 +221,7 @@ class SharedMemoryTransport:
             try:
                 from core.reaper import register_reaper_shm
                 register_reaper_shm(self.name)
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('shared_mem_bus', _e)
                 logger.debug('Ignored Exception in shared_mem_bus.py: %s', _e)
 
@@ -233,7 +233,7 @@ class SharedMemoryTransport:
         except FileExistsError:
             # Already exists, just attach
             await self.attach()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('shared_mem_bus', e)
             if self._should_use_file_fallback(e):
                 logger.warning(
@@ -271,7 +271,7 @@ class SharedMemoryTransport:
                 else:
                     logger.error(f"❌ Shared memory segment not found after {max_retries} attempts: {self.name}")
                     raise
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('shared_mem_bus', e)
                 if self._should_use_file_fallback(e):
                     if fallback_path.exists():
@@ -352,7 +352,7 @@ class SharedMemoryTransport:
                 buf.obj.flush()
                 
             logger.debug(f"Wrote {length} bytes to {self.name} (Ver: {current_ver + 2})")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('shared_mem_bus', e)
             # [RECOVERY] Always restore to a known-even version on failure to unblock readers
             logger.error(f"Write failure on {self.name}: {e}. Restoring version {current_ver}.")
@@ -360,7 +360,7 @@ class SharedMemoryTransport:
                 buf[0:8] = current_ver.to_bytes(8, byteorder='big')
                 if hasattr(buf, 'obj') and isinstance(buf.obj, mmap.mmap):
                     buf.obj.flush()
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError) as _e:
                 record_degradation('shared_mem_bus', _e)
                 logger.debug('Ignored Exception in shared_mem_bus.py: %s', _e)
             raise
@@ -415,7 +415,7 @@ class SharedMemoryTransport:
                 
             logger.warning(f"Failed to read atomic state from {self.name} after 10 attempts.")
             return None
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('shared_mem_bus', e)
             logger.error(f"Read failure on {self.name}: {e}")
             return None
@@ -434,7 +434,7 @@ class SharedMemoryTransport:
                     self._deregister_from_reaper(self.name)
                     shm.unlink()
                     logger.debug(f"Shared Memory Segment Unlinked: {self.name}")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('shared_mem_bus', e)
                     logger.debug(f"Unlink failed (already gone?): {e}")
             shm.close()

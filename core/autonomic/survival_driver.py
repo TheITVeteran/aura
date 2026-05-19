@@ -64,6 +64,6 @@ class SurvivalDriver:
                 }
             )
             logger.warning("🚨 Survival Imperative Published: %s", imperative)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('survival_driver', e)
             logger.error("Failed to publish survival threat: %s", e)

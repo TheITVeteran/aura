@@ -105,9 +105,9 @@ def _record(p: PipelineProposal, event: str, payload: Optional[Dict[str, Any]] =
             fh.flush()
             try:
                 os.fsync(fh.fileno())
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
-    except Exception as exc:
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('safe_pipeline', exc)
         logger.warning("self-mod pipeline ledger append failed: %s", exc)
 
@@ -181,7 +181,7 @@ class SafePipeline:
                 if not vr.ok:
                     return self._block(proposal, Stage.FORMAL_VERIFY, "; ".join(vr.invariants_violated))
                 proposal.stages_completed.append(Stage.FORMAL_VERIFY.value)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('safe_pipeline', exc)
                 return self._block(proposal, Stage.FORMAL_VERIFY, f"verify_exception:{exc}")
 
@@ -205,7 +205,7 @@ class SafePipeline:
                 organ = "selfmod_target_" + Path(file_path).stem
                 reg.register(organ)
                 reg.capture(organ, before_source, schema_version="1")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('safe_pipeline', exc)
                 logger.debug("stem-cell capture during rollback plan failed: %s", exc)
             proposal.rollback_plan = f"stem_cell:selfmod_target_{Path(file_path).stem}"
@@ -238,7 +238,7 @@ class SafePipeline:
                 if not WillClient.is_approved(wd):
                     return self._block(proposal, Stage.APPROVAL, f"will_refused:{getattr(wd, 'reason', '')}")
                 proposal.will_receipt_id = getattr(wd, "receipt_id", None)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('safe_pipeline', exc)
                 return self._block(proposal, Stage.APPROVAL, f"approval_exception:{exc}")
             proposal.stages_completed.append(Stage.APPROVAL.value)
@@ -256,7 +256,7 @@ class SafePipeline:
         finally:
             try:
                 shutil.rmtree(sandbox, ignore_errors=True)
-            except Exception:
+            except (OSError, IOError):
                 pass  # no-op: intentional
 
     # ─── helpers ────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ class SafePipeline:
             if proc.returncode != 0:
                 return False, f"shadow_rc={proc.returncode} stderr={err.decode('utf-8', 'replace')[:240]}"
             return True, out.decode("utf-8", "replace")[:240]
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             record_degradation('safe_pipeline', exc)
             return False, f"shadow_exception:{exc}"
 
@@ -319,7 +319,7 @@ class SafePipeline:
         try:
             from core.container import ServiceContainer
             guardian = ServiceContainer.get("stability_guardian", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             guardian = None
 
         deadline = time.time() + 60.0
@@ -331,7 +331,7 @@ class SafePipeline:
                     if r is not None and not getattr(r, "overall_healthy", True):
                         regression = True
                         break
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 pass  # no-op: intentional
             await asyncio.sleep(2.0)
 
@@ -339,7 +339,7 @@ class SafePipeline:
             try:
                 atomic_write_text(target, before_source, encoding="utf-8")
                 _record(proposal, "rolled_back", {"reason": "regression_after_deploy"})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('safe_pipeline', exc)
                 _record(proposal, "rollback_failed", {"error": str(exc)})
         else:

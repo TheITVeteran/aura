@@ -126,7 +126,7 @@ def register_all_services(is_proxy: bool = False):
         # Materialize during boot registration so deep repair is available even
         # before another subsystem lazily asks for it.
         container.get("reimplementation_lab", default=None)
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         record_degradation('service_registration', exc)
         logger.warning("ReimplementationLab boot singleton unavailable: %s", exc)
 
@@ -315,7 +315,7 @@ def _finalize_wiring(container):
                 hardware_id = "gpu_metal" if metal_enabled else f"cpu_safe:{reason}"
                 mycelial.establish_neural_root("llm", hardware_id=hardware_id)
             
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('service_registration', e)
         logger.debug("Wiring deferred: %s", e)
 

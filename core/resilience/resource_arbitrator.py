@@ -60,7 +60,7 @@ class ResourceArbitrator:
         try:
             fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o666)
             return fd
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('resource_arbitrator', e)
             logger.error(f"Failed to open VRAM lock file: {e}")
             return None
@@ -170,7 +170,7 @@ class ResourceArbitrator:
             self._mp_fd = fd
             return True
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('resource_arbitrator', e)
             logger.error(f"Error acquiring VRAM lock: {e}")
             os.close(fd)
@@ -185,7 +185,7 @@ class ResourceArbitrator:
                 self._mp_fd = None
                 self._evolution_active = False
                 logger.info("🧬 EVOLUTION token released.")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('resource_arbitrator', e)
                 logger.error(f"Error releasing VRAM lock: {e}")
 

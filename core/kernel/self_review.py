@@ -44,7 +44,7 @@ class SelfReviewPhase(Phase):
 
         try:
             loop_state = loop_state_fn()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_review', e)
             logger.warning("SelfReview: loop_state() raised: %s", e)
             return state

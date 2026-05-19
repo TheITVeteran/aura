@@ -687,7 +687,7 @@ class TaskCommitmentVerifier:
                 ),
                 elapsed_ms=elapsed,
             )
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('task_commitment_verifier', e)
             self._update_task_entry(task_id, status="failed", error=str(e))
             await self._update_goal_dispatch(
@@ -797,21 +797,21 @@ class TaskCommitmentVerifier:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("capability_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _get_task_engine(self) -> Optional[Any]:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("task_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _get_goal_engine(self) -> Optional[Any]:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("goal_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _register_commitment(self, objective: str) -> Optional[str]:
@@ -825,7 +825,7 @@ class TaskCommitmentVerifier:
                 commitment_type=CommitmentType.AUTONOMOUS,
             )
             return commitment.id
-        except Exception as ex:
+        except (ImportError, AttributeError, RuntimeError) as ex:
             record_degradation('task_commitment_verifier', ex)
             logger.debug("TaskCommitmentVerifier: CommitmentEngine registration failed: %s", ex)
             return None
@@ -893,7 +893,7 @@ class TaskCommitmentVerifier:
                     commitment_id=commitment_id,
                     quick_win=quick_win,
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('task_commitment_verifier', exc)
                 logger.debug("TaskCommitmentVerifier: goal dispatch tracking failed: %s", exc)
 
@@ -916,7 +916,7 @@ class TaskCommitmentVerifier:
                     error=error,
                     evidence=evidence,
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('task_commitment_verifier', exc)
                 logger.debug("TaskCommitmentVerifier: goal lifecycle update failed: %s", exc)
 
@@ -951,7 +951,7 @@ class TaskCommitmentVerifier:
                     error="" if succeeded else summary,
                     evidence=evidence,
                 )
-            except Exception as goal_exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as goal_exc:
                 record_degradation('task_commitment_verifier', goal_exc)
                 logger.error("TaskCommitmentVerifier: goal dispatch failed for %s: %s", task_id, goal_exc)
             if commitment_id:
@@ -966,7 +966,7 @@ class TaskCommitmentVerifier:
                             note=f"Task failed: {summary[:160]}",
                             progress=0.0,
                         )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('task_commitment_verifier', exc)
                     logger.debug("TaskCommitmentVerifier: commitment settlement failed: %s", exc)
             logger.info(
@@ -984,7 +984,7 @@ class TaskCommitmentVerifier:
                     summary="Task was cancelled",
                     error="cancelled",
                 )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
             if commitment_id:
                 try:
@@ -995,11 +995,11 @@ class TaskCommitmentVerifier:
                         note="Task was cancelled before completion.",
                         progress=0.0,
                     )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('task_commitment_verifier', exc)
                     logger.debug("TaskCommitmentVerifier: cancelled commitment settlement failed: %s", exc)
             logger.warning("TaskCommitmentVerifier: async task %s was cancelled", task_id)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('task_commitment_verifier', e)
             self._update_task_entry(
                 task_id,
@@ -1014,7 +1014,7 @@ class TaskCommitmentVerifier:
                     summary=f"Task execution failed: {e}",
                     error=str(e),
                 )
-            except Exception as goal_exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as goal_exc:
                 record_degradation('task_commitment_verifier', goal_exc)
                 logger.error("TaskCommitmentVerifier: goal dispatch failed during error handling for %s: %s", task_id, goal_exc)
             if commitment_id:
@@ -1026,7 +1026,7 @@ class TaskCommitmentVerifier:
                         note=f"Task execution raised: {str(e)[:160]}",
                         progress=0.0,
                     )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('task_commitment_verifier', exc)
                     logger.debug("TaskCommitmentVerifier: exception commitment settlement failed: %s", exc)
             logger.warning("TaskCommitmentVerifier: async task %s failed: %s", task_id, e)
@@ -1060,7 +1060,7 @@ class TaskCommitmentVerifier:
             return []
         try:
             snapshot = list(task_engine.get_active_plans() or [])
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('task_commitment_verifier', exc)
             logger.debug("TaskCommitmentVerifier: task engine snapshot skipped: %s", exc)
             return []
@@ -1302,7 +1302,7 @@ class TaskCommitmentVerifier:
             if not self.persist_path.exists():
                 return
             raw = json.loads(self.persist_path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('task_commitment_verifier', exc)
             logger.debug("TaskCommitmentVerifier: state load skipped: %s", exc)
             return

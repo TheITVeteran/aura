@@ -92,7 +92,7 @@ class ContinuousCognitionLoop:
             t0 = time.monotonic()
             try:
                 self._cognitive_step()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('continuous_cognition', e)
                 if self._tick_count % 100 == 0:
                     logger.debug("CognitionLoop step error: %s", e)
@@ -117,7 +117,7 @@ class ContinuousCognitionLoop:
                 ws = self._get_world_state()
                 if ws:
                     ws.update()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("continuous_cognition", exc)
                 logger.debug("CognitionLoop: world-state update failed: %s", exc)
 
@@ -129,7 +129,7 @@ class ContinuousCognitionLoop:
                 # but we explicitly update to ensure freshness
                 for budget in drive.budgets.values():
                     budget.tick()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("continuous_cognition", exc)
             logger.debug("CognitionLoop: drive pressure update failed: %s", exc)
 
@@ -139,7 +139,7 @@ class ContinuousCognitionLoop:
                 nchem = self._get_neurochemical()
                 if nchem and hasattr(nchem, "tick"):
                     nchem.tick(dt=0.5)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation("continuous_cognition", exc)
                 logger.debug("CognitionLoop: neurochemical tick failed: %s", exc)
 
@@ -149,7 +149,7 @@ class ContinuousCognitionLoop:
                 affect = self._get_affect()
                 if affect and hasattr(affect, "drift_toward_baseline"):
                     affect.drift_toward_baseline(dt=2.0)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation("continuous_cognition", exc)
                 logger.debug("CognitionLoop: affect drift failed: %s", exc)
 
@@ -208,7 +208,7 @@ class ContinuousCognitionLoop:
             self._last_initiative_seed = now
             logger.debug("CognitionLoop: seeded impulse from %s pressure (%.2f)",
                         lowest_name, lowest_level)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('continuous_cognition', e)
             logger.debug("CognitionLoop: initiative seeding failed: %s", e)
 
@@ -230,7 +230,7 @@ class ContinuousCognitionLoop:
 
             # Check for time-of-day transitions
             # (WorldState.update() handles this, we just note it)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("continuous_cognition", exc)
             logger.debug("CognitionLoop: salient-change check failed: %s", exc)
 
@@ -248,7 +248,7 @@ class ContinuousCognitionLoop:
             try:
                 from core.world_state import get_world_state
                 self._world_state = get_world_state()
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("continuous_cognition", exc)
                 logger.debug("CognitionLoop: world-state service unavailable: %s", exc)
         return self._world_state
@@ -274,7 +274,7 @@ class ContinuousCognitionLoop:
             try:
                 from core.initiative_synthesis import get_initiative_synthesizer
                 self._synthesizer = get_initiative_synthesizer()
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("continuous_cognition", exc)
                 logger.debug("CognitionLoop: initiative synthesizer unavailable: %s", exc)
         return self._synthesizer

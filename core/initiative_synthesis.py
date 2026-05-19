@@ -223,7 +223,7 @@ class InitiativeSynthesizer:
                     content=imperative, source="drive_engine",
                     urgency=0.6, drive=lowest_drive,
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: DriveEngine gather failed: %s", e)
 
@@ -259,7 +259,7 @@ class InitiativeSynthesizer:
                             goal_id=goal.get("id"),
                             status=status_str,
                         )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: GoalEngine gather failed: %s", e)
 
@@ -281,7 +281,7 @@ class InitiativeSynthesizer:
                         urgency=0.7, drive="competence",
                         commitment_id=c_id,
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: CommitmentEngine gather failed: %s", e)
 
@@ -297,7 +297,7 @@ class InitiativeSynthesizer:
                             urgency=event.get("salience", 0.5),
                             drive="curiosity",
                         )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: WorldState gather failed: %s", e)
 
@@ -313,28 +313,28 @@ class InitiativeSynthesizer:
                             urgency=float(init.get("urgency", 0.5)),
                             drive=init.get("triggered_by", ""),
                         )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: pending_initiatives gather failed: %s", e)
 
         # 6. Boredom-driven exploration impulses
         try:
             self._gather_boredom_impulses()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: boredom gather failed: %s", e)
 
         # 7. Opportunity detection from WorldState
         try:
             self._gather_opportunity_impulses()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: opportunity gather failed: %s", e)
 
         # 8. Unresolved tension resurfacing
         try:
             self._gather_tension_impulses()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: tension gather failed: %s", e)
 
@@ -352,7 +352,7 @@ class InitiativeSynthesizer:
                         subgoal_id=getattr(subgoal, "id", ""),
                         plan_active=True,
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: planner gather failed: %s", e)
 
@@ -592,7 +592,7 @@ class InitiativeSynthesizer:
         try:
             from core.config import config
             p = config.paths.data_dir / "unresolved_tensions.json"
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             p = Path.home() / ".aura" / "data" / "unresolved_tensions.json"
         self._tension_persistence_path = p
         return p
@@ -618,7 +618,7 @@ class InitiativeSynthesizer:
                 if not t.resolved  # only persist unresolved
             ]
             atomic_write_text(path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Tension save failed: %s", e)
 
@@ -646,7 +646,7 @@ class InitiativeSynthesizer:
                 if not tension.resolved:
                     self._unresolved_tensions.append(tension)
             logger.info("Loaded %d persisted unresolved tensions", len(self._unresolved_tensions))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Tension load failed: %s", e)
 
@@ -702,7 +702,7 @@ class InitiativeSynthesizer:
                 ServiceContainer.register_instance("initiative_arbiter", arbiter, required=False)
 
             scored = await arbiter.arbitrate(state)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.warning("Synth: arbiter failed: %s", e)
             scored = None
@@ -730,7 +730,7 @@ class InitiativeSynthesizer:
                         winner=None, impulse_count=impulse_count,
                         rationale=f"simulator_veto: score={sim_score:.3f}",
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: simulation failed (degraded): %s", e)
 
@@ -749,7 +749,7 @@ class InitiativeSynthesizer:
             approved = decision.is_approved()
             if not approved:
                 logger.info("Synth: Will refused initiative: %s", decision.reason)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: Will authorization degraded: %s", e)
             approved = True  # fail-open

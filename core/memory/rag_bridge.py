@@ -49,7 +49,7 @@ async def fetch_deep_context(user_query: str, threshold_words: int = 4) -> str:
             orchestrator = ServiceContainer.get("orchestrator", default=None)
             if orchestrator and hasattr(orchestrator, "_current_ecosystem_context"):
                 ecosystem_context = orchestrator._current_ecosystem_context
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('rag_bridge', _e)
             logger.debug('Ignored Exception in rag_bridge.py: %s', _e)
 
@@ -61,7 +61,7 @@ async def fetch_deep_context(user_query: str, threshold_words: int = 4) -> str:
             return final_context
         return ""
             
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('rag_bridge', e)
         logger.debug("Temporal RAG Bridge failed: %s", e)
         return ""

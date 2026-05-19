@@ -134,7 +134,7 @@ class AdapterRegistry:
         if self._registry_path.exists():
             try:
                 return json.loads(self._registry_path.read_text())
-            except Exception as _e:
+            except (json.JSONDecodeError, TypeError, ValueError) as _e:
                 record_degradation('live_learner', _e)
                 logger.debug('Ignored Exception in live_learner.py: %s', _e)
         return []
@@ -592,7 +592,7 @@ class LiveLearner:
             self._last_train_time = time.time()
             return True
 
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('live_learner', e)
             logger.error("LiveLearner: training cycle error: %s", e, exc_info=True)
             return False
@@ -765,7 +765,7 @@ class LiveLearner:
                 return False, result.stderr
         except subprocess.TimeoutExpired:
             return False, f"timeout after {self._policy.timeout_seconds} seconds"
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('live_learner', e)
             return False, str(e)
 
@@ -797,7 +797,7 @@ class LiveLearner:
             if result.returncode == 0 and fused_path.exists():
                 return True, result.stdout, fused_path
             return False, result.stderr or result.stdout, None
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('live_learner', e)
             return False, str(e), None
 
@@ -865,7 +865,7 @@ class LiveLearner:
 
         except ImportError:
             failures.append("mlx_lm is not available; refusing to promote unverified learned weights")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('live_learner', e)
             failures.append(f"benchmark inference failed: {e}")
 
@@ -910,7 +910,7 @@ class LiveLearner:
                 )
                 return False
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('live_learner', e)
             logger.error("Hot-swap failed: %s", e)
 
@@ -978,7 +978,7 @@ class LiveLearner:
                     except json.JSONDecodeError:
                         continue
             logger.debug("LiveLearner: loaded %d buffered examples from disk.", count)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('live_learner', e)
             logger.warning("LiveLearner: failed to load buffer: %s", e)
 
@@ -1035,7 +1035,7 @@ async def patch_mlx_client_for_hot_swap():
         client.reload_model_artifact = types.MethodType(reload_model_artifact, client)
         logger.info("MLX client patched for adapter hot-swap.")
 
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('live_learner', e)
         logger.debug("Could not patch MLX client for hot-swap: %s", e)
 

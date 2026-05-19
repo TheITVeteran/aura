@@ -11,5 +11,5 @@ class CircuitBreaker(_CB):
             return await super().call(coro, *args, **kwargs)
         except ConnectionAbortedError:
             raise CircuitOpen("circuit is open")
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             raise

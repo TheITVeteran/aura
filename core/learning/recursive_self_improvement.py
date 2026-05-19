@@ -131,7 +131,7 @@ class RecursiveSelfImprovementLoop:
                 from core.config import config
 
                 ledger_path = Path(config.paths.data_dir) / "learning" / "recursive_self_improvement.jsonl"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 ledger_path = Path.home() / ".aura" / "data" / "learning" / "recursive_self_improvement.jsonl"
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -451,7 +451,7 @@ class RecursiveSelfImprovementLoop:
                 system2_reason=ranked.receipt.commitment_reason,
                 system2_receipt=ranked.receipt.to_dict(),
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("recursive_self_improvement.native_system2", exc)
             return plan
 
@@ -474,7 +474,7 @@ class RecursiveSelfImprovementLoop:
                 context={"plan": asdict(plan)},
             )
             return bool(decision.is_approved()), str(decision.reason)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("recursive_self_improvement", exc)
             if os.getenv("AURA_RSI_ALLOW_DEGRADED_OPEN", "0") == "1":
                 return True, f"authorization_degraded_open:{type(exc).__name__}"
@@ -488,7 +488,7 @@ class RecursiveSelfImprovementLoop:
             if inspect.isawaitable(result):
                 result = await result
             return bool(result)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("recursive_self_improvement", exc)
             logger.error("Recursive weight update failed: %s", exc)
             return False
@@ -503,7 +503,7 @@ class RecursiveSelfImprovementLoop:
                 )
                 if deterministic.get("repairs_successful", 0) > 0:
                     return {"ok": bool(deterministic.get("ok", False)), "result": deterministic}
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("recursive_self_improvement", exc)
                 deterministic = {"ok": False, "reason": f"structural_improver:{type(exc).__name__}:{exc}"}
 
@@ -521,7 +521,7 @@ class RecursiveSelfImprovementLoop:
             if isinstance(result, dict):
                 return {"ok": bool(result.get("success", False)), "result": result, "deterministic": deterministic}
             return {"ok": bool(result), "result": result, "deterministic": deterministic}
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("recursive_self_improvement", exc)
             return {"ok": False, "reason": f"{type(exc).__name__}:{exc}", "deterministic": deterministic}
 
@@ -529,7 +529,7 @@ class RecursiveSelfImprovementLoop:
         if self.live_learner and hasattr(self.live_learner, "rollback_adapter"):
             try:
                 return bool(self.live_learner.rollback_adapter())
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("recursive_self_improvement", exc)
         return False
 
@@ -540,7 +540,7 @@ class RecursiveSelfImprovementLoop:
                 if inspect.isawaitable(raw):
                     raw = await raw
                 return self._coerce_scorecard(raw)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("recursive_self_improvement", exc)
             return ImprovementScorecard(score=0.0, regressions=[f"evaluator_error:{type(exc).__name__}"])
 
@@ -585,7 +585,7 @@ class RecursiveSelfImprovementLoop:
         if self.live_learner and hasattr(self.live_learner, "get_learning_stats"):
             try:
                 return dict(self.live_learner.get_learning_stats() or {})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("recursive_self_improvement", exc)
         return {}
 
@@ -593,7 +593,7 @@ class RecursiveSelfImprovementLoop:
         stats = self._learning_stats()
         try:
             return int(stats.get("buffer_size", 0) or 0)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("recursive_self_improvement", exc)
             logger.debug("Learning stats buffer-size read failed: %s", exc)
             return 0
@@ -615,7 +615,7 @@ class RecursiveSelfImprovementLoop:
                 f.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation("recursive_self_improvement", exc)
             logger.debug("Failed to write RSI ledger: %s", exc)
 

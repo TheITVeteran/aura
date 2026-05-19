@@ -230,7 +230,7 @@ def record_degradation(
                 extra_data=extra or {},
             )
             store.emit(receipt)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             # If receipt emission itself fails, at least the in-memory
             # record and log are already captured.
             pass  # no-op: intentional
@@ -256,14 +256,14 @@ def record_degradation(
                 mitigation_taken=action or "no recovery action specified",
                 metadata={"extra": extra} if extra else {},
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # Incident manager unavailable — already logged
 
     # ── Metrics integration ───────────────────────────────────────
     try:
         from core.observability.metrics import get_metrics
         get_metrics().increment_counter(f"degradation_{subsystem}_{severity}")
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # Metrics unavailable — already logged
 
     return record

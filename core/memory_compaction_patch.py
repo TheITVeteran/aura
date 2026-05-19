@@ -92,7 +92,7 @@ async def compact_if_needed(
                 original_len, new_len,
             )
             return compacted
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('memory_compaction_patch', exc)
         logger.warning("MemoryCompactionPatch: compaction failed — %s", exc)
 
@@ -120,7 +120,7 @@ async def _patched_memory_consolidation_execute(
     # Run original consolidation
     try:
         state = await self._original_execute(state, objective, **kwargs)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('memory_compaction_patch', exc)
         logger.error("MemoryCompactionPatch: original execute failed — %s", exc)
         return state

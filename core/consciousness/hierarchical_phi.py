@@ -63,7 +63,7 @@ logger = logging.getLogger("Consciousness.HierarchicalPhi")
 try:
     import mlx.core as mx  # noqa: F401
     _MLX_AVAILABLE = True
-except Exception:  # pragma: no cover - hardware dependent
+except (ImportError, AttributeError, RuntimeError):  # pragma: no cover - hardware dependent
     _MLX_AVAILABLE = False
 
 
@@ -703,7 +703,7 @@ class HierarchicalPhi:
                     r = f.result(timeout=10.0)
                     if r is not None:
                         results.append(r)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('hierarchical_phi', exc)
                     logger.debug("HierarchicalPhi subsystem job failed: %s", exc)
 
@@ -760,7 +760,7 @@ class HierarchicalPhi:
             if not force and (now - self._null_baseline_time) > NULL_CHECK_INTERVAL_S:
                 try:
                     self.compute_null_baseline(history)
-                except Exception as exc:  # pragma: no cover
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover
                     logger.debug("null baseline compute failed: %s", exc)
 
             return out
@@ -828,7 +828,7 @@ class HierarchicalPhi:
     def shutdown(self) -> None:
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("hierarchical_phi", exc)
             logger.debug("HierarchicalPhi executor shutdown failed: %s", exc)
 

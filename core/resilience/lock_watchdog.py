@@ -46,7 +46,7 @@ class LockWatchdog:
                 self._monitor_loop(),
                 name="aura.lock_watchdog",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._task = get_task_tracker().create_task(self._monitor_loop(), name="aura.lock_watchdog")
         logger.info(f"🛡️ LockWatchdog ACTIVE (Threshold: {self._threshold}s).")
 
@@ -130,7 +130,7 @@ class LockWatchdog:
                 lock_id,
             )
             return True
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('lock_watchdog', exc)
             logger.error("LockWatchdog recovery failed for '%s': %s", tracked.name, exc)
             return False
@@ -167,7 +167,7 @@ class LockWatchdog:
                                         "interventions": tracked.interventions,
                                     },
                                 )
-                            except Exception as exc:
+                            except (ImportError, AttributeError, RuntimeError) as exc:
                                 record_degradation('lock_watchdog', exc)
                                 logger.debug("LockWatchdog degraded event emit failed: %s", exc)
                         if tracked.on_stall and (
@@ -178,7 +178,7 @@ class LockWatchdog:
                 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lock_watchdog', e)
                 logger.error(f"Error in LockWatchdog loop: {e}")
 

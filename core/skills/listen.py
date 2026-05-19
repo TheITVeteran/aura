@@ -16,7 +16,7 @@ import numpy as np
 try:
     import sounddevice as sd
     _SOUNDDEVICE_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on host audio bindings
+except (ImportError, AttributeError, RuntimeError) as exc:  # pragma: no cover - depends on host audio bindings
     sd = None
     _SOUNDDEVICE_IMPORT_ERROR = exc
 
@@ -49,7 +49,7 @@ def _initialize_audio():
         sd.query_devices()
         logger.info("PortAudio subsystem pre-warmed.")
         _AUDIO_INITIALIZED = True
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('listen', e)
         logger.error("Audio initialization failed: %s", e)
         raise
@@ -67,7 +67,7 @@ def _get_default_input_device():
                 if "Microphone" in device['name'] or "Built-in" in device['name']:
                     return i
         return sd.default.device[0]
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('listen', e)
         logger.error("Error querying audio devices: %s", e)
         raise RuntimeError(f"No audio input device available. Ensure a microphone is connected. Details: {e}") from e
@@ -115,7 +115,7 @@ def _record_sync(duration: float, fs: int = 16000) -> str:
                     wf.setframerate(fs)
                     wf.writeframes(recording.tobytes())
             return temp_path
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('listen', e)
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -143,7 +143,7 @@ class AudioListenerSkill(BaseSkill):
             try:
                 from core.container import ServiceContainer
                 self._voice_engine = ServiceContainer.get("voice_engine")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('listen', e)
                 logger.error("Failed to resolve voice_engine: %s", e)
         return self._voice_engine
@@ -153,7 +153,7 @@ class AudioListenerSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = ListenInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('listen', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -176,7 +176,7 @@ class AudioListenerSkill(BaseSkill):
             try:
                 # Transcribe using unified voice engine
                 text = await asyncio.to_thread(engine.transcribe, temp_wav)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('listen', e)
                 logger.error("Unified transcription failed: %s", e)
                 text = f"[Audio Recorded, Unified Transcription Failed: {e}]"
@@ -199,7 +199,7 @@ class AudioListenerSkill(BaseSkill):
                 "ok": False,
                 "error": "Microphone access timed out."
             }
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('listen', e)
             logger.error("Audio capture failed: %s", e)
             return {"ok": False, "error": f"Audio capture failed: {e}"}

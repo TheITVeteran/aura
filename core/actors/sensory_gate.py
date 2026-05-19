@@ -72,13 +72,13 @@ class SensoryGateActor:
             await self._cancel_background_tasks()
             try:
                 await self.bus.stop()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('sensory_gate', exc)
                 logger.error("❌ SensoryGate bus shutdown failed: %s", exc)
             if self.browser is not None:
                 try:
                     await self.browser.close()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('sensory_gate', exc)
                     logger.error("❌ SensoryGate browser shutdown failed: %s", exc)
             logger.info("👁️ SensoryGate Actor stopped.")
@@ -92,7 +92,7 @@ class SensoryGateActor:
                     "ts": time.time(),
                     "status": "healthy"
                 })
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sensory_gate', e)
                 logger.error("❌ Heartbeat failed: %s", e)
             await asyncio.sleep(self._heartbeat_interval)
@@ -112,7 +112,7 @@ class SensoryGateActor:
                 "observation_only": True,
                 "requires_governance_for_effects": True,
             }
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('sensory_gate', e)
             logger.error("❌ [%s] Browse failed: %s", trace_id[:8], e)
             return {"error": str(e)}
@@ -163,7 +163,7 @@ class SensoryGateActor:
                     "requires_governance_for_effects": True,
                 }
 
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('sensory_gate', e)
             logger.error("❌ [%s] Wikipedia search failed: %s", trace_id[:8], e)
             return {"error": str(e)}
@@ -176,7 +176,7 @@ def start_sensory_gate(connection, *args, **kwargs):
     """Process entry point."""
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass
     # Set up logging for the child process
     logging.basicConfig(

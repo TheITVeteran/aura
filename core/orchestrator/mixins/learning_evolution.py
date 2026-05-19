@@ -55,7 +55,7 @@ class LearningEvolutionMixin:
                     db_path = str(getattr(config.paths, 'data_dir', 'data') / 'knowledge.db')
                     self.knowledge_graph = PersistentKnowledgeGraph(db_path)
                     kg = self.knowledge_graph
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('learning_evolution', e)
                     logger.debug("Knowledge graph unavailable: %s", e)
                     return
@@ -133,7 +133,7 @@ class LearningEvolutionMixin:
                                         confidence=float(item.get('confidence', 0.6))
                                     )
                                     logger.info("📚 Learned: %s", (item.get('content') or "")[:80])
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('learning_evolution', e)
                     logger.debug("Knowledge extraction failed: %s", e)
 
@@ -162,7 +162,7 @@ class LearningEvolutionMixin:
                             kg.ask_question(sentence + "?", importance=0.5)
                             break  # Max 1 question per exchange
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('learning_evolution', e)
             logger.debug("Learning from exchange failed: %s", e)
 
@@ -178,7 +178,7 @@ class LearningEvolutionMixin:
                 get_task_tracker().create_task(
                     memory_engine.store(f"User: {user_message} → Aura: {aura_response}", valence=valence, importance=0.7)
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('learning_evolution', e)
             logger.debug("Phase 29 Long-Term Memory storage failed: %s", e)
 
@@ -188,7 +188,7 @@ class LearningEvolutionMixin:
         try:
             from core.tasks import celery_app
             celery_app.send_task("core.tasks.run_self_update")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('learning_evolution', e)
             logger.error("Self-update trigger failed: %s", e)
 
@@ -217,7 +217,7 @@ class LearningEvolutionMixin:
                 logger.info("🌀 META-EVOLUTION (direct) result: %s", str(result)[:200])
             else:
                 logger.debug("Meta-Evolution engine not available in container.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('learning_evolution', e)
             logger.error("Meta-Evolution cycle failed: %s", e)
 
@@ -250,7 +250,7 @@ class LearningEvolutionMixin:
                         await motivation.add_goal(goal_text, source="sovereign_genesis")
                         logger.info("🎯 Peer Mode: New autonomous goal persisted: %s", goal_text[:50])
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('learning_evolution', e)
             logger.error("Failed peer goal genesis: %s", e)
 
@@ -263,7 +263,7 @@ class LearningEvolutionMixin:
                 if not runtime_feature_enabled(self, "self_modification", default=True):
                     await asyncio.sleep(3600)
                     continue
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('learning_evolution', exc)
                 logger.error("Self-modification runtime-mode check failed: %s", exc, exc_info=True)
 
@@ -284,7 +284,7 @@ class LearningEvolutionMixin:
                     logger.info("🛠️ Peer Mode: Self-modification cycle deferred by authority: %s", reason)
                     await asyncio.sleep(3600)
                     continue
-            except Exception as exec_err:
+            except (ImportError, AttributeError, RuntimeError) as exec_err:
                 record_degradation('learning_evolution', exec_err)
                 logger.debug("Self-modification cycle authority gate unavailable: %s", exec_err)
 
@@ -304,7 +304,7 @@ class LearningEvolutionMixin:
                                     await ml.apply_architectural_shift(proposal)
                                     logger.info("🛠️ Peer Mode: Sovereign self-modification applied safely.")
 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('learning_evolution', e)
                 logger.warning("Sovereign self-mod loop pulse error (non-fatal): %s", e)
 

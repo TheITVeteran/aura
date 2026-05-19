@@ -246,7 +246,7 @@ class ProjectLedger:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
 
     def _load(self) -> None:
@@ -260,13 +260,13 @@ class ProjectLedger:
                         continue
                     try:
                         rec = json.loads(raw)
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError, ValueError):
                         continue
                     snap = rec.get("snapshot") or {}
                     if not snap.get("project_id"):
                         continue
                     self._cache[snap["project_id"]] = self._project_from_snap(snap)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('projects', exc)
             logger.warning("project ledger load failed: %s", exc)
 

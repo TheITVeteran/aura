@@ -107,7 +107,7 @@ class StateMachine:
                     tone_hints.append("You feel contemplative and open to influence")
                 if tone_hints:
                     blocks.append("CURRENT EMOTIONAL TONE:\n" + ". ".join(tone_hints) + ".\n")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('state_machine', e)
             capture_and_log(e, {'module': __name__})
         
@@ -125,7 +125,7 @@ class StateMachine:
                             content = r.get('content', r.get('value', str(r)))
                             mem_block += f"- {str(content)[:120]}\n"
                         blocks.append(mem_block)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('state_machine', e)
             capture_and_log(e, {'module': __name__})
         
@@ -136,7 +136,7 @@ class StateMachine:
                 focus = attention.current_focus
                 if focus and isinstance(focus, str) and focus.lower() != 'idle':
                     blocks.append(f"CURRENT ATTENTION FOCUS: {focus}\n")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('state_machine', e)
             capture_and_log(e, {'module': __name__})
         
@@ -219,7 +219,7 @@ class StateMachine:
             try:
                 repo = resolve_state_repository(self.orchestrator, default=None)
                 runtime_state = getattr(repo, "_current", None) if repo is not None else None
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('state_machine', exc)
                 logger.debug("StateMachine runtime state lookup skipped: %s", exc)
 
@@ -278,7 +278,7 @@ class StateMachine:
                                 self._emit_telemetry({"type": "chat_stream_chunk", "chunk": direct_reply})
                                 self._emit_telemetry({"type": "chat_stream_end"})
                                 return direct_reply
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('state_machine', exc)
                     logger.debug("StateMachine direct live-voice reply skipped: %s", exc)
 
@@ -342,7 +342,7 @@ class StateMachine:
                             + "\n\n".join(normalized)
                             + "\n"
                         )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('state_machine', exc)
                     logger.debug("StateMachine conversational context injection skipped: %s", exc)
             compressed_history = compress_history_block(history_block) if history_block else ""
@@ -485,7 +485,7 @@ class StateMachine:
                                     await voice_engine_snapshot.speak_stream(
                                         queue_sentence_generator(tts_queue_snapshot)
                                     )
-                                except Exception as e:
+                                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                                     record_degradation('state_machine', e)
                                     logger.debug("Background TTS failed: %s", e)
 
@@ -587,7 +587,7 @@ class StateMachine:
                     else:
                         response = "The live chat attempt timed out before a coherent answer formed; I logged the degraded turn."
                         break
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('state_machine', e)
                     logger.error("Chat attempt %d failed: %s", attempt + 1, e)
                     if attempt < max_retries:
@@ -623,7 +623,7 @@ class StateMachine:
                     voice_engine = resolve_voice_engine(default=None)
                     if voice_engine and hasattr(voice_engine, 'synthesize_speech') and response:
                         get_task_tracker().create_task(voice_engine.synthesize_speech(response))
-            except Exception as tts_err:
+            except (RuntimeError, AttributeError, TypeError) as tts_err:
                 record_degradation('state_machine', tts_err)
                 logger.debug("TTS for chat response skipped: %s", tts_err)
             
@@ -645,7 +645,7 @@ class StateMachine:
                         source="self",
                         tags=["conversation", "response"]
                     ))
-            except Exception as store_err:
+            except (RuntimeError, AttributeError, TypeError) as store_err:
                 record_degradation('state_machine', store_err)
                 logger.debug("Semantic memory storage failed: %s", store_err)
             
@@ -757,7 +757,7 @@ class StateMachine:
                             json.dumps(params), 
                             self.llm
                         )
-                except Exception as eval_err:
+                except (json.JSONDecodeError, TypeError, ValueError) as eval_err:
                     record_degradation('state_machine', eval_err)
                     logger.warning("Param validation failed for %s: %s", tool_name, eval_err)
                     # Fallback to raw params
@@ -776,7 +776,7 @@ class StateMachine:
                     try:
                         params = json.loads(params_match.group(1)) if params_match else {}
                         return await self._execute_skill_logic(tool_name, params, user_input, priority=priority, origin=origin)
-                    except Exception as exc:
+                    except (json.JSONDecodeError, TypeError, ValueError) as exc:
                         record_degradation("state_machine", exc)
                         logger.debug("Fallback skill params parse failed for %s: %s", tool_name, exc)
                         return await self._execute_skill_logic(tool_name, {}, user_input, priority=priority, origin=origin)
@@ -786,7 +786,7 @@ class StateMachine:
                 res = await self._handle_chat(user_input, context, priority=priority, origin=origin)
                 return res, []
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('state_machine', e)
             logger.error("Skill routing failed: %s", e, exc_info=True)
             self._emit("State: ERROR", f"Skill routing exception: {str(e)[:50]}")
@@ -1150,7 +1150,7 @@ class StateMachine:
                     )
                     final_response = final_response.strip()
                     logger.debug("SKILL: LLM Summary success.")
-                except Exception as e:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                     record_degradation('state_machine', e)
                     logger.warning("LLM Summary failed, using skill fallback: %s", e)
                     if isinstance(result, dict) and result.get("message"):
@@ -1165,7 +1165,7 @@ class StateMachine:
             logger.debug("SKILL: Returning final_response.")
             return final_response, ([tool_name] if success else [])
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('state_machine', e)
             logger.error("Skill execution logic failed for %s: %s", tool_name, e, exc_info=True)
             self._emit("State: ERROR", "Skill execution failed.")
@@ -1212,6 +1212,6 @@ class StateMachine:
                 "status_update",
                 {"component": status, "status": detail}
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('state_machine', e)
             logger.debug("Failed to emit status: %s", e)

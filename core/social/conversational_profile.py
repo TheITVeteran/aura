@@ -152,7 +152,7 @@ class ConversationalProfiler:
             try:
                 from core.config import config
                 storage_path = config.paths.data_dir / "conversational_profiles.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "conversational_profiles.json"
         self._storage_path = Path(storage_path)
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,13 +175,13 @@ class ConversationalProfiler:
             for uid, data in raw.get("profiles", {}).items():
                 try:
                     self._profiles[uid] = ConversationalProfile.from_dict(data)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('conversational_profile', exc)
                     logger.warning("Skipping corrupt profile for '%s': %s", uid, exc)
             # Restore phrase counters if present
             for uid, phrases in raw.get("phrase_counters", {}).items():
                 self._phrase_counter[uid] = defaultdict(int, phrases)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('conversational_profile', exc)
             logger.error("Failed to load conversational profiles: %s", exc)
 
@@ -197,7 +197,7 @@ class ConversationalProfiler:
                 json.dump(payload, f, indent=2)
             os.replace(tmp, self._storage_path)
             logger.debug("Conversational profiles saved (%d users)", len(self._profiles))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('conversational_profile', exc)
             logger.error("Failed to save conversational profiles: %s", exc)
 
@@ -679,7 +679,7 @@ class ConversationalProfiler:
                     len(updates),
                     user_id,
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('conversational_profile', exc)
             logger.debug("Deep profile analysis failed for '%s': %s", user_id, exc)
 
@@ -757,7 +757,7 @@ def get_conversational_profiler() -> ConversationalProfiler:
                 ServiceContainer.register_instance(
                     "conversational_profiler", _profiler_instance
                 )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('conversational_profile', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return _profiler_instance

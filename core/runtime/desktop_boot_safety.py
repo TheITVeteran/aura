@@ -129,7 +129,7 @@ def configure_inprocess_mlx_runtime(
 
         try:
             import mlx.core as mx
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             _INPROCESS_MLX_STATE.update(
                 {
                     "configured": True,
@@ -147,7 +147,7 @@ def configure_inprocess_mlx_runtime(
                     "reason": reason,
                 }
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('desktop_boot_safety', exc)
             _INPROCESS_MLX_STATE.update(
                 {

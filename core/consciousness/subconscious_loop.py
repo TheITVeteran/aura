@@ -39,7 +39,7 @@ class SubconsciousLoop:
                 self._run_loop(),
                 name="aura.subconscious_loop",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._task = get_task_tracker().create_task(self._run_loop(), name="aura.subconscious_loop")
         logger.info("🧠 Subconscious Loop activated")
 
@@ -80,7 +80,7 @@ class SubconsciousLoop:
                     
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('subconscious_loop', e)
                 logger.error(f"Subconscious loop fault: {e}")
 
@@ -96,7 +96,7 @@ class SubconsciousLoop:
                 logger.info("💭 Subconscious triggering Dream Cycle (DreamerV2)...")
                 await coord.run_dreamer_v2()
                 self.last_dream_cycle = now
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('subconscious_loop', e)
                 logger.debug(f"Subconscious dreaming failed: {e}")
                 self.last_dream_cycle = now + 60.0  # Back off a bit
@@ -108,7 +108,7 @@ class SubconsciousLoop:
                 logger.info("🧪 Subconscious running proactive sandbox experiment...")
                 await self._run_proactive_sandbox()
                 self.last_sandbox_experiment = now
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('subconscious_loop', e)
                 logger.debug(f"Subconscious sandbox beat failed: {e}")
                 self.last_sandbox_experiment = now + 120.0
@@ -124,7 +124,7 @@ class SubconsciousLoop:
 try:
     import platform
     print(f"Subconscious ping: Running on {platform.system()} {platform.release()}")
-except Exception as e:
+except (ImportError, AttributeError, RuntimeError) as e:
     print(f"Subconscious error: {e}")
 """
         handle = None
@@ -154,7 +154,7 @@ except Exception as e:
                     context={"reason": handle.decision.reason},
                 )
                 return
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('subconscious_loop', e)
             logger.debug("Subconscious constitutional gate failed: %s", e)
 
@@ -184,7 +184,7 @@ except Exception as e:
                     logger.info(f"🌌 [Latent Transmission {thought_id}] {translation}")
                 else:
                     logger.debug(f"Subconscious Sandbox Result: {result}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('subconscious_loop', e)
             logger.debug(f"Subconscious sandbox run failed: {e}")
             error_text = f"{type(e).__name__}: {e}"
@@ -199,7 +199,7 @@ except Exception as e:
                         duration_ms=duration_ms,
                         error=error_text,
                     )
-                except Exception as finish_exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as finish_exc:
                     record_degradation('subconscious_loop', finish_exc)
                     logger.debug("Subconscious sandbox finish skipped: %s", finish_exc)
 

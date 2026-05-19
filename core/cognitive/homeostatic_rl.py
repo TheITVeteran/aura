@@ -210,7 +210,7 @@ class HomeostaticRL:
             try:
                 from core.common.paths import aura_data_dir
                 data_dir = aura_data_dir() / "cognitive"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 data_dir = Path.home() / ".aura" / "data" / "cognitive"
         data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path: Path = data_dir / _STATE_FILENAME
@@ -859,7 +859,7 @@ class HomeostaticRL:
                 json.dump(data, f, indent=2)
             tmp_path.replace(self._state_path)
             logger.debug("HomeostaticRL state saved to %s", self._state_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('homeostatic_rl', e)
             logger.error("Failed to save HomeostaticRL state: %s", e)
             # Clean up partial write
@@ -936,7 +936,7 @@ class HomeostaticRL:
                 "Failed to load HomeostaticRL state from %s: %s",
                 self._state_path, e,
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('homeostatic_rl', e)
             logger.error("Unexpected error loading HomeostaticRL state: %s", e)
 

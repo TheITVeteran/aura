@@ -41,7 +41,7 @@ class SwarmProtocol:
             logger.warning("🕸️ SwarmProtocol bind failed on %s:%d (%s). Running offline.", bind_host, self.port, exc)
             self._server = None
             self.offline_only = True
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             logger.warning("🕸️ SwarmProtocol unexpected bind error: %s. Running offline.", exc)
             self._server = None
             self.offline_only = True
@@ -67,7 +67,7 @@ class SwarmProtocol:
             if peer_id:
                 self.peers.add(writer.get_extra_info('peername')[0])
                 await self._process_gossip(message)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('swarm_protocol', e)
             logger.debug(f"Swarm gossip error: {e}")
         finally:
@@ -90,7 +90,7 @@ class SwarmProtocol:
                     contagion_weight = 0.05
                     affect.modify(valence_delta=peer_valence * contagion_weight)
                     logger.debug("Swarm mood contagion from %s: valence nudge %.3f", peer_id, peer_valence * contagion_weight)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('swarm_protocol', e)
                 logger.debug("Mood contagion failed: %s", e)
         elif msg_type == "skill_verification":
@@ -113,7 +113,7 @@ class SwarmProtocol:
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
                 self.peers.remove(peer)
 
     async def _broadcast_loop(self):

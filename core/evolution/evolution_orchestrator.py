@@ -162,7 +162,7 @@ class EvolutionOrchestrator:
                         ax.milestones.append(m)
                         logger.info("🏆 [EVOLUTION] %s milestone: %s", axis.value, m)
                 ax.blockers = blockers
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('evolution_orchestrator', exc)
                 logger.debug("Evolution eval %s failed: %s", axis.value, exc)
 
@@ -181,7 +181,7 @@ class EvolutionOrchestrator:
             ladder = ServiceContainer.get("growth_ladder", default=None)
             if ladder:
                 await ladder.evaluate_advancement()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('evolution_orchestrator', exc)
             logger.debug("Growth ladder eval skipped: %s", exc)
 
@@ -343,7 +343,7 @@ class EvolutionOrchestrator:
             if voice:
                 level += 0.15
                 milestones.append("voice_communication_active")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('evolution_orchestrator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -382,7 +382,7 @@ class EvolutionOrchestrator:
                 if "sovereign_browser" in cap.skills:
                     level += 0.1
                     milestones.append("web_access_active")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('evolution_orchestrator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -532,7 +532,7 @@ class EvolutionOrchestrator:
                         milestones=ax_data.get("milestones", []),
                         blockers=ax_data.get("blockers", []),
                     )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('evolution_orchestrator', exc)
             logger.debug("Evolution state load failed: %s", exc)
 
@@ -555,7 +555,7 @@ class EvolutionOrchestrator:
                 },
             }
             atomic_write_text(self._STATE_FILE, json.dumps(data, indent=2))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('evolution_orchestrator', exc)
             logger.debug("Evolution state save failed: %s", exc)
 
@@ -571,7 +571,7 @@ class EvolutionOrchestrator:
                     self._snapshot.phase_label,
                     self._snapshot.overall_progress * 100,
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('evolution_orchestrator', exc)
                 logger.error("Evolution tick failed: %s", exc)
             try:
@@ -594,7 +594,7 @@ def get_evolution_orchestrator() -> EvolutionOrchestrator:
             ServiceContainer.register_instance(
                 "evolution_orchestrator", _instance, required=False
             )
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('evolution_orchestrator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return _instance

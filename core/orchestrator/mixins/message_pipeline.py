@@ -51,7 +51,7 @@ class MessagePipelineMixin:
                 if not check_result:
                     logger.warning("🛑 Constitutional Block: %s vetoed by alignment layer.", tool_name)
                     return {"break": True, "response": "Constitutional Block: Action violates core principles."}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_pipeline', e)
             logger.debug("Constitutional check failed: %s", e)
             
@@ -63,7 +63,7 @@ class MessagePipelineMixin:
             await self.hooks.trigger("post_action", tool_name=tool_name, params=params, result=result)
             await self._record_reliability(tool_name, True)
             successful_tools.append(tool_name)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('message_pipeline', e)
             await self._record_reliability(tool_name, False, str(e))
             result = f"Error: {e}"
@@ -94,7 +94,7 @@ class MessagePipelineMixin:
             if not is_safe:
                 logger.warning("🛑 Simulation block: %s", reason)
             return {"allowed": is_safe, "reason": reason}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('message_pipeline', e)
             logger.warning("Safety validation error (fail-closed): %s", e)
             return {"allowed": False, "reason": f"Internal safety verification fault: {str(e)}"}
@@ -121,7 +121,7 @@ class MessagePipelineMixin:
                     if _bv.decision == AuthorizationDecision.BLOCK:
                         _belief_update_allowed = False
                         logger.debug("Belief update blocked by substrate authority")
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # fail-open
 
             if _belief_update_allowed:
@@ -137,7 +137,7 @@ class MessagePipelineMixin:
                         "content": f"[ALERT] {tool_name} result highly unexpected. Expected: {thought.expectation}."
                     })
                 return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('message_pipeline', exc)
             logger.debug("Suppressed: %s", exc)
 
@@ -152,7 +152,7 @@ class MessagePipelineMixin:
             if not t or not hasattr(t, "content") or not t.content:
                 return "I recorded a degraded cognitive cycle instead of inventing an answer."
             return t.content
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_pipeline', e)
             logger.warning("Fallback generation also failed: %s", e)
             return "I recorded a cognitive engine error and withheld a speculative answer."
@@ -168,7 +168,7 @@ class MessagePipelineMixin:
         except asyncio.TimeoutError:
             logger.warning("[ConstitutionalGuard] Timed out after 5s — passing raw response.")
             return response
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('message_pipeline', e)
             logger.warning(f"[ConstitutionalGuard] Error — passing raw response. Reason: {e}")
             return response
@@ -178,7 +178,7 @@ class MessagePipelineMixin:
             from core.security.constitutional_guard import constitutional_guard
             if not constitutional_guard.check_output(response):
                 return "My safety filters blocked the formulated response. How else can I help?"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('message_pipeline', exc)
             logger.error("Constitutional guard evaluation failed, failing closed: %s", exc)
             return "My safety filters encountered an error and blocked the response as a precaution."
@@ -268,7 +268,7 @@ class MessagePipelineMixin:
             ctx["date"] = datetime.datetime.now().strftime("%Y-%m-%d")
             
             return ctx
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_pipeline', e)
             logger.error("Environment Context Error: %s", e)
             return {}
@@ -287,7 +287,7 @@ class MessagePipelineMixin:
                 return ""
             attrs = self_node.get("attributes", {})
             return f"MOOD: {attrs.get('emotional_valence')}, ENERGY: {attrs.get('energy_level')}"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_pipeline', e)
             logger.warning("World context retrieval failed: %s", e)
             return ""
@@ -296,7 +296,7 @@ class MessagePipelineMixin:
         try:
             from core.reliability_tracker import reliability_tracker
             reliability_tracker.record_attempt(tool, success, error)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_pipeline', e)
             logger.debug("Reliability record failed: %s", e)
             

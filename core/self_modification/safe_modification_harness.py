@@ -235,13 +235,13 @@ class SafeModificationHarness:
             import psutil
 
             return float(psutil.Process(os.getpid()).memory_info().rss) / (1024 * 1024)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             try:
                 usage = resource.getrusage(resource.RUSAGE_SELF)
                 if os.name == "darwin":
                     return float(usage.ru_maxrss) / (1024 * 1024)
                 return float(usage.ru_maxrss) / 1024
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return 0.0
 
     def _check_resource_delta(self, baseline_rss_mb: float = 0.0) -> tuple[bool, list[str]]:

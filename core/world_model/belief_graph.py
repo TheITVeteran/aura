@@ -185,7 +185,7 @@ class BeliefGraph:
                             classification="background_degraded",
                             context={"reason": reason},
                         )
-                    except Exception as degraded_exc:
+                    except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                         record_degradation('belief_graph', degraded_exc)
                         logger.debug("BeliefGraph degraded-event logging failed: %s", degraded_exc)
                     logger.debug(  # Reduced from info to avoid log flooding
@@ -205,7 +205,7 @@ class BeliefGraph:
                     target,
                     note=f"confidence={confidence_score:.3f}; centrality={centrality:.3f}; is_goal={is_goal}",
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('belief_graph', exc)
             if constitutional_runtime_live:
                 try:
@@ -220,7 +220,7 @@ class BeliefGraph:
                         context={"error": type(exc).__name__},
                         exc=exc,
                     )
-                except Exception as degraded_exc:
+                except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                     record_degradation('belief_graph', degraded_exc)
                     logger.debug("BeliefGraph degraded-event logging failed: %s", degraded_exc)
                 return
@@ -522,7 +522,7 @@ class BeliefGraph:
                 
             with open(self._persist_path, "w") as f:
                 json.dump(data, f, indent=2)
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.error("Failed to save world model: %s", e)
 
@@ -543,7 +543,7 @@ class BeliefGraph:
                     self.graph.add_edge(source, target, **edge)
                     
                 logger.info("Loaded %d beliefs from disk", self.graph.number_of_edges())
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('belief_graph', e)
             logger.warning("Failed to load world model: %s", e)
 
@@ -573,7 +573,7 @@ class BeliefGraph:
                 # but we can record the binary outcome for now.
                 # In Phase 16, this will be matched with the prediction from predict_outcome.
                 calibrator.record_prediction(confidence=0.5, actual_correctness=1.0 if success else 0.0)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_graph', e)
             logger.debug("BeliefGraph: Metacognitive feedback failed: %s", e)
 
@@ -588,7 +588,7 @@ class BeliefGraph:
                 goals.reinforce_goal(action_name, f"Successfully executed {action_name} in context: {context[:50]}")
             else:
                 goals.challenge_goal(action_name, f"Failed execution of {action_name} in context: {context[:50]}")
-        except Exception as g_err:
+        except (ImportError, AttributeError, RuntimeError) as g_err:
             record_degradation('belief_graph', g_err)
             logger.debug("Goal reinforcement failed: %s", g_err)
 
@@ -623,7 +623,7 @@ class BeliefGraph:
             os.makedirs(os.path.dirname(self._causal_path), exist_ok=True)
             with open(self._causal_path, "w") as f:
                 json.dump(self.causal_links, f, indent=2)
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.error("Failed to save ACG: %s", e)
 
@@ -633,7 +633,7 @@ class BeliefGraph:
                 with open(self._causal_path, "r") as f:
                     self.causal_links = json.load(f)
                 logger.info("Loaded %d causal links from disk", len(self.causal_links))
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.debug("BeliefGraph: Failed to load causal links: %s", e)
 
@@ -644,7 +644,7 @@ class BeliefGraph:
             from core.brain.cognitive_engine import ThinkingMode
             response = await brain.think(prompt, mode=ThinkingMode.FAST)
             return response.content
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_graph', e)
             logger.debug("BeliefGraph: Prediction failed: %s", e)
             return "Unknown"
@@ -656,7 +656,7 @@ class BeliefGraph:
             response = await brain.think(prompt, mode=ThinkingMode.FAST)
             match = re.search(r"(\d+(\.\d+)?)", response.content)
             return float(match.group(1)) if match else 0.5
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_graph', e)
             logger.debug("BeliefGraph: Surprise calculation failed: %s", e)
             return 0.5

@@ -39,7 +39,7 @@ class ThoughtTracer:
         try:
             with open(self.current_trace_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write trace: %s", e)
 
@@ -53,7 +53,7 @@ class ThoughtTracer:
         try:
             with open(self.current_trace_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write event trace: %s", e)
 

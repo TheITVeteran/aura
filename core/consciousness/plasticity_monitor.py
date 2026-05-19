@@ -125,7 +125,7 @@ class PlasticityMonitor:
             return None
         try:
             mat = np.asarray(W, dtype=np.float64)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('plasticity_monitor', e)
             logger.debug("plasticity: cast failed: %s", e)
             return None

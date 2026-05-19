@@ -47,7 +47,7 @@ class SovereignPruner:
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 return bool(gate._background_local_deferral_reason(origin="sovereign_pruner"))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sovereign_pruner", exc)
             logger.debug("Inference deferral guard unavailable: %s", exc)
             return False
@@ -180,7 +180,7 @@ class SovereignPruner:
             record_degradation("sovereign_pruner", e)
             logger.debug("Consolidation for %s timed out: %s", mem.id[:8], e)
             return None
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("sovereign_pruner", e)
             logger.debug("Consolidation for %s failed: %s", mem.id[:8], e)
             return None
@@ -191,7 +191,7 @@ class SovereignPruner:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sovereign_pruner", exc)
             logger.debug("Cognitive engine lookup failed: %s", exc)
             return None

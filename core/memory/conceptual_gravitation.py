@@ -94,7 +94,7 @@ class ConceptualGravitationEngine:
             try:
                 emb_a = memory_store.get_embedding(id_a)
                 emb_b = memory_store.get_embedding(id_b)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("conceptual_gravitation", exc)
                 logger.debug("Gravitation embedding lookup failed for %s: %s", pair, exc)
                 continue
@@ -130,7 +130,7 @@ class ConceptualGravitationEngine:
                 memory_store.set_embedding(id_a, emb_a_new)
                 memory_store.set_embedding(id_b, emb_b_new)
                 nudged += 1
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('conceptual_gravitation', e)
                 logger.debug("Gravitation nudge failed for %s: %s", pair, e)
 

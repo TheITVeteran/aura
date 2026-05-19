@@ -43,7 +43,7 @@ class AuraEmbeddingFunction:
             for text in input:
                 embeddings.append(adapter.embed_sync(text))
             return embeddings
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vector_memory', e)
             logger.error("AuraEmbeddingFunction failed: %s", e)
             return [self._pseudo_embed(text) for text in input]
@@ -123,7 +123,7 @@ class VectorMemory:
                 self._upsert_queue = queue.Queue(maxsize=1000)
                 self._upsert_thread = threading.Thread(target=self._async_upsert_loop, daemon=True, name="ChromaUpsert")
                 self._upsert_thread.start()
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('vector_memory', e)
                 logger.error("ChromaDB init failed, falling back to Sovereign Persistence: %s", e)
                 self._fallback_mode = True
@@ -235,12 +235,12 @@ class VectorMemory:
                     metadatas = [i[2] for i in batch]
                     try:
                         self._collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('vector_memory', e)
                         logger.error("Async Chroma upsert failed: %s", e)
             except queue.Empty:
                 continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 logger.debug("Async Chroma writer error: %s", e)
                 time.sleep(1.0)
 
@@ -275,7 +275,7 @@ class VectorMemory:
                             neg = w.get("fear", 0) + w.get("sadness", 0) + w.get("anger", 0)
                             meta["valence"] = float(pos - neg)
                             meta["arousal"] = float(max(w.values()) if w else 0.0)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vector_memory', e)
             logger.debug("Emotional salience stamping failed: %s", e)
 
@@ -295,7 +295,7 @@ class VectorMemory:
         except queue.Full:
             logger.warning("VectorMemory upsert queue full, dropping memory: %s", doc_id)
             return False
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('vector_memory', e)
             logger.error("VectorMemory.add_memory enqueue failed: %s", e)
             return False
@@ -410,7 +410,7 @@ class VectorMemory:
                         m = metas[idx]
                         m["last_accessed"] = time.time()
                         self._collection.update(ids=[tid], metadatas=[m])
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('vector_memory', e)
                     logger.debug("Failed to update last_accessed: %s", e)
             elif self._fallback_mode:
@@ -422,7 +422,7 @@ class VectorMemory:
 
             return scored_results[:limit]
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vector_memory', e)
             logger.error("VectorMemory.search_similar failed: %s", e)
             return []
@@ -435,7 +435,7 @@ class VectorMemory:
         try:
             count = self._collection.count()
             return {"total_vectors": count, "engine": "chromadb", "status": "active"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('vector_memory', e)
             logger.debug("ChromaDB count failed: %s", e)
             return {"total_vectors": -1, "engine": "chromadb", "status": "error"}
@@ -467,7 +467,7 @@ class VectorMemory:
             if ids:
                 self._collection.delete(ids=ids)
             logger.info("VectorMemory: cleared collection '%s'", self.collection_name)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('vector_memory', e)
             logger.error("VectorMemory.clear failed: %s", e)
 
@@ -529,7 +529,7 @@ class VectorMemory:
                 logger.info("✅ Pruned %s low-salience vectors.", len(ids_to_prune))
             
             return len(ids_to_prune)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('vector_memory', e)
             logger.error("VectorMemory.prune_low_salience failed: %s", e)
             return 0

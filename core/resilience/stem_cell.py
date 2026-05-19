@@ -103,7 +103,7 @@ def _key() -> bytes:
     _STEM_KEY_FILE.write_bytes(raw)
     try:
         os.chmod(_STEM_KEY_FILE, 0o600)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass  # no-op: intentional
     return raw
 
@@ -249,7 +249,7 @@ class StemCellRegistry:
                 payload=payload,
                 signature=bytes.fromhex(header["signature_hex"]),
             )
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('stem_cell', exc)
             logger.debug("stem cell read failed for %s: %s", path, exc)
             return None

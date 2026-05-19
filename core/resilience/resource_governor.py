@@ -73,19 +73,19 @@ class ResourceGovernor:
             freed = self._cap_collections()
             report["items_freed"] = freed
             self._total_freed += freed
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('resource_governor', e)
             logger.warning("ResourceGovernor: _cap_collections error: %s", e)
 
         try:
             report["ledger_compacted"] = self._compact_ledger()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('resource_governor', e)
             logger.warning("ResourceGovernor: _compact_ledger error: %s", e)
 
         try:
             report["memory"] = self._check_memory_pressure()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('resource_governor', e)
             logger.warning("ResourceGovernor: _check_memory_pressure error: %s", e)
 
@@ -94,7 +94,7 @@ class ResourceGovernor:
                 tasks_list = getattr(self._kernel, "_background_tasks", None)
                 if tasks_list is not None:
                     report["bg_tasks_cleaned"] = self._cleanup_background_tasks(tasks_list)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('resource_governor', e)
             logger.warning("ResourceGovernor: _cleanup_background_tasks error: %s", e)
 
@@ -184,7 +184,7 @@ class ResourceGovernor:
             if removed > 0:
                 logger.info("ResourceGovernor: trimmed %d commitments", removed)
             return removed
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: commitment trim skipped: %s", e)
             return 0
@@ -225,7 +225,7 @@ class ResourceGovernor:
             if removed > 0:
                 logger.info("ResourceGovernor: trimmed %d task records", removed)
             return removed
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: task verifier trim skipped: %s", e)
             return 0
@@ -242,7 +242,7 @@ class ResourceGovernor:
             del records[:excess]
             logger.info("ResourceGovernor: trimmed %d counterfactual records", excess)
             return excess
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: counterfactual trim skipped: %s", e)
             return 0
@@ -261,7 +261,7 @@ class ResourceGovernor:
             del history[:excess]
             logger.info("ResourceGovernor: trimmed %d confidence_history entries", excess)
             return excess
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: metacognitive trim skipped: %s", e)
             return 0
@@ -291,7 +291,7 @@ class ResourceGovernor:
                 if hasattr(wm, "_save_beliefs"):
                     wm._save_beliefs()
             return removed
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: world model trim skipped: %s", e)
             return 0
@@ -312,7 +312,7 @@ class ResourceGovernor:
                 ni._save_narrative()
             logger.info("ResourceGovernor: trimmed %d narrative chapters", excess)
             return excess
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: narrative trim skipped: %s", e)
             return 0
@@ -337,7 +337,7 @@ class ResourceGovernor:
                 try:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                     compacted = True
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
                     record_degradation('resource_governor', e)
                     logger.debug("ResourceGovernor: WAL checkpoint failed: %s", e)
 
@@ -365,12 +365,12 @@ class ResourceGovernor:
                             _LEDGER_PRUNE_DAYS,
                         )
                         compacted = True
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
                     record_degradation('resource_governor', e)
                     logger.debug("ResourceGovernor: ledger prune failed: %s", e)
 
             return compacted
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: ledger compaction skipped: %s", e)
             return False
@@ -427,7 +427,7 @@ class ResourceGovernor:
             else:
                 result["status"] = "healthy"
 
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('resource_governor', e)
             result["status"] = f"error: {e}"
             logger.debug("ResourceGovernor: memory check failed: %s", e)
@@ -457,11 +457,11 @@ class ResourceGovernor:
                 from core.brain.llm.context_assembler import ContextAssembler
                 if hasattr(ContextAssembler, "_cache"):
                     ContextAssembler._cache.clear()
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('resource_governor', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: cache clearing error: %s", e)
 
@@ -486,7 +486,7 @@ class ResourceGovernor:
             logger.critical(
                 "ResourceGovernor: EMERGENCY EVENT emitted (RSS=%.1f%%)", rss_pct
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: emergency event emission failed: %s", e)
 

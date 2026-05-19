@@ -149,7 +149,7 @@ class MemorySynthesizer:
                 "component": "memory_synthesizer",
                 "hooks_into": ["memory_facade", "cognitive_kernel", "belief_revision_engine"]
             })
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('memory_synthesizer', _e)
             logger.debug('Ignored Exception in memory_synthesizer.py: %s', _e)
 
@@ -264,7 +264,7 @@ class MemorySynthesizer:
                             "%d domains, %d topics, %d open questions",
                             elapsed, len(domains), len(topics), len(open_q))
 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_synthesizer', e)
                 logger.error("MemorySynthesizer synthesis failed: %s", e, exc_info=True)
 
@@ -280,7 +280,7 @@ class MemorySynthesizer:
                 if hasattr(memories, "memories"):
                     return [vars(m) if not isinstance(m, dict) else m
                             for m in list(memories.memories)[-limit:]]
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('memory_synthesizer', e)
             logger.debug("Episodic memory retrieval error: %s", e)
         return []
@@ -297,7 +297,7 @@ class MemorySynthesizer:
                 if hasattr(sm, "data"):
                     facts = sm.data.get("facts", {})
                     return [{"concept": k, "content": str(v)} for k, v in list(facts.items())[-limit:]]
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('memory_synthesizer', e)
             logger.debug("Semantic fact retrieval error: %s", e)
         return []
@@ -465,7 +465,7 @@ class MemorySynthesizer:
             self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             data = asdict(self._snapshot)
             atomic_write_text(self._snapshot_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('memory_synthesizer', e)
             logger.debug("Failed to save worldview snapshot: %s", e)
 
@@ -480,7 +480,7 @@ class MemorySynthesizer:
                 logger.info("MemorySynthesizer: cached snapshot expired, will rebuild.")
                 return None
             return snapshot
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('memory_synthesizer', e)
             logger.debug("Failed to load worldview snapshot: %s", e)
         return None

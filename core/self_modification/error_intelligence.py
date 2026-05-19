@@ -112,7 +112,7 @@ class StructuredErrorLogger:
                     file_path = file_part
                     line_number = int(line_part)
                     break
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     logger.debug("Traceback line parse failed: %s", line)
         # Create error event
         event = ErrorEvent(
@@ -183,7 +183,7 @@ class StructuredErrorLogger:
             await asyncio.to_thread(_write)
         except asyncio.CancelledError:
             logger.debug("Log append cancelled for %s", path)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('error_intelligence', e)
             logger.error("Failed to append to log %s: %s", path, e)
     
@@ -200,7 +200,7 @@ class StructuredErrorLogger:
                     try:
                         data = json.loads(line)
                         errors.append(ErrorEvent(**data))
-                    except Exception as e:
+                    except (json.JSONDecodeError, TypeError, ValueError) as e:
                         record_degradation('error_intelligence', e)
                         logger.error("Failed to parse error event: %s", e)
         return errors
@@ -473,7 +473,7 @@ class AutomatedDiagnosisEngine:
             logger.info("Generated %d hypotheses", len(diagnosis.get('hypotheses', [])))
             return diagnosis
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('error_intelligence', e)
             logger.error("Diagnosis failed: %s", e)
             return {

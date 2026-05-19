@@ -72,7 +72,7 @@ class MemoryConsolidator:
             report.clusters_found = len(clusters)
             for cluster in clusters:
                 self._merge_cluster(cluster, report)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('memory_management', exc)
             msg = f"Consolidation error: {exc}"
             logger.error(msg, exc_info=True)
@@ -84,7 +84,7 @@ class MemoryConsolidator:
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("Memory Consolidation 🧠", str(report), level="info")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('memory_management', exc)
             logger.debug("Suppressed thought-stream emit: %s", exc)
 
@@ -119,7 +119,7 @@ class MemoryConsolidator:
                     {"id": mid, "content": data.get("content", ""), "metadata": data.get("metadata", {})}
                     for mid, data in items
                 ]
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('memory_management', exc)
             logger.warning("Failed to fetch memories: %s", exc)
         return []
@@ -151,7 +151,7 @@ class MemoryConsolidator:
                         merged_ids.add(mem["id"])
                         clusters.append(cluster)
                 return clusters
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_management', e)
                 logger.debug("Vectorized similarity check failed: %s", e)
 
@@ -174,7 +174,7 @@ class MemoryConsolidator:
                         if score >= self.similarity_threshold:
                             cluster.append(result)
                             merged_ids.add(result_id)
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('memory_management', exc)
                 logger.debug("Similarity search failed for %s: %s", mem["id"], exc)
             if len(cluster) > 1:
@@ -205,7 +205,7 @@ class MemoryConsolidator:
                     ids=[winner_id],
                     metadatas=[new_meta]
                 )
-            except Exception as _e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
                 record_degradation('memory_management', _e)
                 logger.debug('Ignored Exception in memory_management.py: %s', _e)
 
@@ -222,6 +222,6 @@ class MemoryConsolidator:
                         self.vector_memory._save_fallback()
                 report.duplicates_merged += 1
                 logger.debug("Merged memory %s into %s", loser_id[:12], winner_id[:12])
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('memory_management', exc)
                 report.errors.append(f"merge delete {loser_id}: {exc}")

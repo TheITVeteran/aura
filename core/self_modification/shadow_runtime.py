@@ -171,7 +171,7 @@ sys.path.insert(0, '{shadow_dir.as_posix()}')
 try:
     import {module_name}
     print("SHADOW_OK: Import successful")
-except Exception as e:
+except (ImportError, AttributeError, RuntimeError) as e:
     print(f"SHADOW_FAIL: Import error: {{e}}")
     import traceback
     traceback.print_exc()
@@ -207,7 +207,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
             except asyncio.TimeoutError:
                 result.errors.append(f"Shadow runtime timed out after {soak_seconds}s")
                 logger.warning("⏰ Shadow runtime timed out for %s", file_path)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('shadow_runtime', e)
                 result.errors.append(f"Shadow runtime error: {e}")
                 logger.error("Shadow runtime failed: %s", e)
@@ -217,7 +217,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                 if shadow_dir and shadow_dir.exists():
                     try:
                         shutil.rmtree(shadow_dir, ignore_errors=True)
-                    except Exception as e:
+                    except (OSError, IOError) as e:
                         record_degradation('shadow_runtime', e)
                         capture_and_log(e, {'module': __name__})
                 self._active_shadow = None
@@ -256,7 +256,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                         )
                     else:
                         shutil.copy2(item, dest)
-                except Exception as e:
+                except (OSError, IOError) as e:
                     record_degradation('shadow_runtime', e)
                     logger.debug("Shadow copy skip %s: %s", item.name, e)
 

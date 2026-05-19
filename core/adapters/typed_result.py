@@ -19,7 +19,7 @@ Usage:
                 return WorldResult.ok(results)
             except TimeoutError as e:
                 return WorldResult.fail("timeout", str(e))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 return WorldResult.fail("adapter_failure", str(e))
 """
 from __future__ import annotations
@@ -213,7 +213,7 @@ def wrap_adapter_call(func):
                     retryable=False,
                     adapter_name=func.__qualname__,
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 return WorldResult.fail(
                     "internal_error", str(e),
                     adapter_name=func.__qualname__,
@@ -246,7 +246,7 @@ def wrap_adapter_call(func):
                     retryable=False,
                     adapter_name=func.__qualname__,
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 return WorldResult.fail(
                     "internal_error", str(e),
                     adapter_name=func.__qualname__,

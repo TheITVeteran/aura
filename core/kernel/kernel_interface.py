@@ -165,7 +165,7 @@ class KernelInterface:
             config = KernelConfig()
             await ki.boot(vault=vault, config=config)
             _bind()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('kernel_interface', e)
             logger.error("KernelInterface.attach_to_orchestrator failed: %s", e)
 
@@ -221,7 +221,7 @@ class KernelInterface:
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch is not None:
                     orch._last_user_interaction_time = _time.time()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
             # Signal the subcortical core that a stimulus has arrived.
             # This raises arousal, opens the thalamic gate, and restores
@@ -229,7 +229,7 @@ class KernelInterface:
             try:
                 from core.consciousness.subcortical_core import get_subcortical_core
                 get_subcortical_core().receive_stimulus(intensity=1.0, source=origin)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
 
         # Inject user turn into working memory before tick so history builds
@@ -263,7 +263,7 @@ class KernelInterface:
         except asyncio.TimeoutError:
             logger.warning("KernelInterface.process() foreground timeout for origin=%s", origin)
             raise
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('kernel_interface', e)
             logger.error("KernelInterface.process() tick failed: %s", e, exc_info=True)
 
@@ -300,7 +300,7 @@ class KernelInterface:
             guardian = ServiceContainer.get("stability_guardian", default=None)
             if guardian:
                 state["stability"] = guardian.get_health_summary()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             logger.debug("StabilityGuardian: Failed to get health summary for loop state.")
             
         return state

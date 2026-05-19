@@ -311,7 +311,7 @@ class ChaosEngine:
             boot_time = psutil.boot_time()
             uptime_hours = (t - boot_time) / 3600.0
             signals.append((uptime_hours % 100.0) / 100.0)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             signals.append(0.5)
 
         # Memory pressure
@@ -320,7 +320,7 @@ class ChaosEngine:
             mem = psutil.virtual_memory()
             signals.append(mem.percent / 100.0)
             signals.append(mem.available / mem.total)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             signals.append(0.5)
             signals.append(0.5)
 
@@ -338,7 +338,7 @@ class ChaosEngine:
                     signals.append(0.5)
             else:
                 signals.append(0.5)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             signals.append(0.5)
 
         # Process-level signals
@@ -348,7 +348,7 @@ class ChaosEngine:
             rss_gb = proc.memory_info().rss / (1024**3)
             signals.append(min(1.0, rss_gb / 16.0))
             signals.append(min(1.0, proc.num_threads() / 100.0))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             signals.append(0.5)
             signals.append(0.5)
 
@@ -357,7 +357,7 @@ class ChaosEngine:
             import psutil
             cpu = psutil.cpu_percent(interval=0)
             signals.append(cpu / 100.0)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             signals.append(0.5)
 
         # Hash all signals into a deterministic but high-entropy vector.

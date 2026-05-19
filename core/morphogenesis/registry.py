@@ -20,7 +20,7 @@ def _default_root() -> Path:
     try:
         from core.config import config
         return Path(config.paths.data_dir) / "morphogenesis"
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return Path.home() / ".aura" / "data" / "morphogenesis"
 
 
@@ -30,7 +30,7 @@ def _atomic_write_json(path: Path, payload: Dict[str, Any], *, schema_name: str)
         from core.runtime.atomic_writer import atomic_write_json
         atomic_write_json(path, payload, schema_version=1, schema_name=schema_name)
         return
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('registry', exc)
         logger.debug("canonical atomic_write_json unavailable for %s: %s", path, exc)
 
@@ -46,7 +46,7 @@ def _atomic_write_json(path: Path, payload: Dict[str, Any], *, schema_name: str)
         try:
             if Path(tmp).exists():
                 Path(tmp).unlink()
-        except Exception:
+        except (OSError, IOError):
             pass  # no-op: intentional
 
 
@@ -63,7 +63,7 @@ def _emit_state_receipt(path: Path, *, cause: str, key: str = "morphogenesis.reg
                 metadata={"path": str(path)},
             )
         )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('registry', exc)
         logger.debug("morphogenesis receipt skipped: %s", exc)
 
@@ -174,7 +174,7 @@ class MorphogenesisRegistry:
                     for oid, organ_data in dict(payload.get("organs", {})).items()
                 }
             return True
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('registry', exc)
             logger.warning("Morphogenesis registry load failed: %s", exc)
             return False

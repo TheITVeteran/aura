@@ -139,7 +139,7 @@ class DataEngine:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2, ensure_ascii=False)
             Path(tmp_path).replace(self.dataset_file)   # atomic on POSIX; near-atomic on Windows
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('data_engine', exc)
             logger.error("Failed to save hard example: %s", exc)
             try:

@@ -43,7 +43,7 @@ async def _gracefully_stop_actor_via_bus(
             ),
             timeout=timeout,
         )
-    except Exception as exc:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
         record_degradation('shutdown', exc)
         logger.debug("Graceful stop request failed for %s: %s", actor_name, exc)
         return
@@ -59,7 +59,7 @@ async def _gracefully_stop_actor_via_bus(
         try:
             if not is_actor_running(actor_name):
                 return
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("Supervisor liveness probe failed for %s: %s", actor_name, exc)
             return
@@ -83,7 +83,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch.substrate.stop(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("Substrate failed to stop within timeout")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("Substrate stop error: %s", exc)
 
@@ -93,7 +93,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             logger.info("💓 MindTick: Stopped.")
         except asyncio.TimeoutError:
             logger.error("MindTick: Failed to stop within timeout")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.error("MindTick: Failed to stop: %s", exc)
 
@@ -102,13 +102,13 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
         from core.resilience.snapshot_manager import SnapshotManager
         snapshot_mgr = SnapshotManager(orch)
         snapshot_mgr.freeze()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('shutdown', exc)
         logger.error("Failed to freeze cognitive snapshot: %s", exc)
 
     try:
         orch._save_state("shutdown")
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('shutdown', exc)
         logger.debug("Final state save failed: %s", exc)
 
@@ -123,7 +123,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             logger.info("💾 UPSO: Shutdown state committed.")
         else:
             logger.info("💾 UPSO: Skipping shutdown state commit; state transport unavailable.")
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError) as exc:
         record_degradation('shutdown', exc)
         logger.error("UPSO: Failed to commit shutdown state: %s", exc)
 
@@ -139,7 +139,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             res = consciousness.stop()
             if inspect.isawaitable(res):
                 await res
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('shutdown', exc)
             capture_and_log(exc, {'module': __name__})
 
@@ -148,7 +148,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch.conversation_loop.stop(), timeout=5.0)
         except asyncio.TimeoutError as _exc:
             logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("Conversation loop stop error: %s", exc)
 
@@ -157,7 +157,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch.kernel_interface.shutdown(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("KernelInterface shutdown timed out")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.error("KernelInterface shutdown failed: %s", exc)
 
@@ -167,7 +167,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch._actor_bus.stop(), timeout=5.0)
         except asyncio.TimeoutError as _exc:
             logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("ActorBus stop error: %s", exc)
 
@@ -176,7 +176,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch._supervisor_tree.stop(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("Supervisor tree failed to stop within timeout")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.error("Supervisor tree shutdown failed: %s", exc)
 
@@ -185,7 +185,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch.state_repo.close(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("StateRepository close timed out")
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.error("StateRepository close failed: %s", exc)
 
@@ -202,7 +202,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch.swarm.stop(), timeout=5.0)
         except asyncio.TimeoutError as _exc:
             logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("Swarm stop error: %s", exc)
 
@@ -211,7 +211,7 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
         await asyncio.wait_for(ServiceContainer.shutdown(), timeout=5.0)
     except asyncio.TimeoutError:
         logger.error("ServiceContainer shutdown timed out")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('shutdown', exc)
         logger.error("Error during ServiceContainer shutdown: %s", exc)
 
@@ -220,14 +220,14 @@ async def orchestrator_shutdown(orch: "RobustOrchestrator") -> None:
             await asyncio.wait_for(orch._event_loop_monitor.stop(), timeout=5.0)
         except asyncio.TimeoutError as _exc:
             logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('shutdown', exc)
             logger.debug("Event loop monitor stop error: %s", exc)
 
     try:
         from core.event_bus import get_event_bus
         await get_event_bus().shutdown()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('shutdown', exc)
         logger.warning("Event bus shutdown failed: %s", exc, exc_info=True)
 

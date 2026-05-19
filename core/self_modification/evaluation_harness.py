@@ -68,7 +68,7 @@ class EvaluationHarness:
             return True, "Preflight PASSED."
         except SyntaxError as e:
             return False, f"Syntax Error in generated code: {e}"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('evaluation_harness', e)
             return False, f"Preflight error: {e}"
 
@@ -110,7 +110,7 @@ Return ONLY the Python code, no explanation, no markdown blocks.
                 probe_code = '\n'.join(lines[1:-1]) if lines[-1].startswith("```") else '\n'.join(lines[1:])
             
             return probe_code
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('evaluation_harness', e)
             logger.error("Failed to generate weakness probe: %s", e)
             return None
@@ -176,6 +176,6 @@ Return ONLY the Python code, no explanation, no markdown blocks.
                 return await self.tester.run_custom_probe(file_path, code_patch, probe_code, expect_pass)
             
             return False, {"error": "SandboxTester missing run_custom_probe method"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('evaluation_harness', e)
             return False, {"error": str(e)}

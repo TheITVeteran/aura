@@ -110,7 +110,7 @@ class BoringMode:
                 mitigation_taken="safe_degraded_operation",
                 metadata=dict(metadata or {}),
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         return True
@@ -138,7 +138,7 @@ class BoringMode:
                 "boring_mode_activated",
                 f"recovered: {reason} (duration: {duration:.0f}s)",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         return True

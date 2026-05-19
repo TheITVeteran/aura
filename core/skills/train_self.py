@@ -98,7 +98,7 @@ class TrainSelfSkill(BaseSkill):
                 "message": f"Collected {collected} high-value memories for future consolidation.",
                 "collected": collected
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('train_self', e)
             logger.error("Memory collection failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -128,7 +128,7 @@ class TrainSelfSkill(BaseSkill):
                             data = json.loads(line)
                             if "output" in data:
                                 lines.append(data['output'][:500])
-                        except Exception as e:
+                        except (json.JSONDecodeError, TypeError, ValueError) as e:
                             record_degradation('train_self', e)
                             logger.debug("TrainSelf: failed to parse memory line: %s", e)
                 return lines
@@ -163,7 +163,7 @@ class TrainSelfSkill(BaseSkill):
                 else:
                     logger.warning("Cognitive Engine absent. Falling back to raw aggregation.")
                     new_knowledge = [f"- **Raw Pattern**: {m[:100]}..." for m in raw_memories]
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('train_self', e)
                 logger.error("Distillation execution failed: %s", e)
                 new_knowledge = [f"- **Failed Pattern Extraction**: {m[:100]}..." for m in raw_memories]
@@ -182,7 +182,7 @@ class TrainSelfSkill(BaseSkill):
                 "message": f"Consolidated {len(new_knowledge)} insights into Long-Term Memory.",
                 "path": knowledge_path
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('train_self', e)
             logger.error("Consolidation failed: %s", e)
             return {"ok": False, "error": str(e)}

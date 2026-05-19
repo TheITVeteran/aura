@@ -59,7 +59,7 @@ class ToolAuditor:
                 "reasoning": thought.content[:100]
             }
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('tool_auditor', e)
             logger.error("Audit failed: %s", e)
             return {

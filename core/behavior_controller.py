@@ -104,7 +104,7 @@ class AutonomousBehaviorController:
                         self.orchestrator.execute_tool(tool_name, arguments)
                     )
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('behavior_controller', e)
                 logger.error("Real tool execution failed for %s: %s", tool_name, e)
                 return {"ok": False, "error": str(e)}

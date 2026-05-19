@@ -27,7 +27,7 @@ class TokenGovernor:
     def __init__(self, model_name: str = "gpt-4", max_tokens: int = 8192):
         try:
             self.encoding = tiktoken.encoding_for_model(model_name)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             self.encoding = tiktoken.get_encoding("cl100k_base")
             
         self.max_tokens = max_tokens

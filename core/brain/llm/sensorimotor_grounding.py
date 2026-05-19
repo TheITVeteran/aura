@@ -85,7 +85,7 @@ def observation_to_vector(observation: dict[str, Any] | None, *, dim: int = 64) 
         try:
             sample = base64.b64decode(image_data[:4096], validate=False)[:512]
             text_parts.append(hashlib.blake2b(sample, digest_size=16).hexdigest())
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             text_parts.append(hashlib.blake2b(image_data[:512].encode("utf-8"), digest_size=16).hexdigest())
 
     vec = 0.70 * _hash_features(" | ".join(text_parts), dim=dim)
@@ -110,7 +110,7 @@ def _read_sensor_file(path: Path) -> Optional[dict[str, Any]]:
         if "energy" not in payload and "rms" in payload:
             payload["energy"] = payload.get("rms")
         return payload
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         record_degradation("sensorimotor_grounding", exc)
         logger.debug("Sensor file read skipped for %s: %s", path, exc)
         return None
@@ -147,7 +147,7 @@ class SensorimotorGroundingBridge:
         while self.running:
             try:
                 self.inject_latest()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("sensorimotor_grounding", exc)
             await asyncio.sleep(max(0.1, float(self.interval_s or 1.0)))
 

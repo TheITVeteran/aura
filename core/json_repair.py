@@ -37,13 +37,13 @@ def robust_json_parse(raw_output: str) -> Dict[str, Any]:
 
         # 3. Last resort: standard parse
         return json.loads(raw_output)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         # 4. Deep Recovery: Fallback to the recursive SelfHealingJSON engine
         try:
             from core.utils.json_utils import SelfHealingJSON
             repairer = SelfHealingJSON()
             return repairer.parse_sync(raw_output)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('json_repair', e)
             logger.error(f"FATAL: JSON Repair engine failed: {e}")
             return {}

@@ -110,7 +110,7 @@ class SerializedDBWriter:
             conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             conn.commit()
             self._writes_since_checkpoint[db_path] = 0
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation('db_writer_queue', exc)
             logger.warning("DBWriter checkpoint failed for %s: %s", db_path, exc)
 
@@ -154,14 +154,14 @@ class SerializedDBWriter:
                                 h = mycelium.get_hypha("core", "memory")
                                 if h:
                                     h.pulse(success=True)
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('db_writer_queue', e)
                             capture_and_log(e, {'module': __name__})
 
                         for req, result in results:
                             if self._loop and not req.future.done():
                                 self._loop.call_soon_threadsafe(req.future.set_result, result)
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('db_writer_queue', e)
                         logger.error(
                             "DBWriter error on %s sql=%s params=%s: %s",
@@ -176,7 +176,7 @@ class SerializedDBWriter:
 
                 if stop_requested:
                     break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('db_writer_queue', e)
                 logger.error("DBWriter loop error: %s", e)
 
@@ -225,7 +225,7 @@ class SerializedDBWriter:
                     conn.execute("PRAGMA wal_checkpoint(FULL)")
                     conn.commit()
                     self._writes_since_checkpoint[db_path] = 0
-                except Exception as exc:
+                except (sqlite3.Error, OSError) as exc:
                     record_degradation('db_writer_queue', exc)
                     logger.warning("DBWriter forced checkpoint failed for %s: %s", db_path, exc)
 

@@ -20,7 +20,7 @@ class TelemetryEngine:
         try:
             from core.runtime import CoreRuntime
             rt = CoreRuntime.get_sync()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return {"type": "telemetry", "cpu_usage": 0, "memory_usage": 0}
 
         # Hardware

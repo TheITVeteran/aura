@@ -293,7 +293,7 @@ class EpistemicFilter:
                 confidence_score=confidence,
                 centrality=centrality,
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('epistemic_filter', e)
             logger.debug("EpistemicFilter write failed: %s", e)
 
@@ -330,7 +330,7 @@ class EpistemicFilter:
         try:
             from core.container import ServiceContainer
             self._belief_graph = ServiceContainer.get("belief_graph", default=None)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('epistemic_filter', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return self._belief_graph
@@ -356,7 +356,7 @@ class EpistemicFilter:
                 level="info",
                 category="EpistemicFilter",
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('epistemic_filter', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

@@ -50,7 +50,7 @@ class MindModel(AuraBaseModule):
                     self.user_state.perceived_mood = data.get("perceived_mood", "NEUTRAL")
                     self.user_state.confidence_in_projection = data.get("confidence", 0.5)
                     self.user_state.last_updated = data.get("last_updated", time.time())
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('mind_model', e)
                 self.logger.error("Failed to load mind model: %s", e)
 
@@ -58,7 +58,7 @@ class MindModel(AuraBaseModule):
         try:
             with open(self.data_path, 'w') as f:
                 json.dump(self.user_state.to_dict(), f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mind_model', e)
             self.logger.error("Failed to save mind model: %s", e)
 

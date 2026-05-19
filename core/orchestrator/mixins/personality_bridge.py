@@ -36,7 +36,7 @@ class PersonalityBridgeMixin:
                 # Handle unexpected or non-dict returns
                 return {"mood": "neutral", "tone": "balanced", "emotional_state": {}}
             return res
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('personality_bridge', e)
             logger.warning("Personality metric retrieval failed: %s", e)
             return {"mood": "neutral", "tone": "snarky", "emotional_state": {}}

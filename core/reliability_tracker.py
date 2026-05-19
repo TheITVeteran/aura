@@ -31,7 +31,7 @@ class ReliabilityTracker:
             if self.data_path.exists():
                 with open(self.data_path, 'r') as f:
                     self.stats = json.load(f)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reliability_tracker', e)
             logger.warning("Failed to load reliability data: %s", e)
             self.stats = {}
@@ -41,7 +41,7 @@ class ReliabilityTracker:
             self.data_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.data_path, 'w') as f:
                 json.dump(self.stats, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reliability_tracker', e)
             logger.error("Failed to save reliability data: %s", e)
 

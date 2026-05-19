@@ -70,12 +70,12 @@ class SensoryLocalClient:
         while not self._req_q.empty():
             try:
                 self._req_q.get_nowait()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 break
         while not self._res_q.empty():
             try:
                 self._res_q.get_nowait()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 break
 
     async def _send_command(self, cmd: str, data: Any = None, *, timeout: float = 5.0, auto_restart: bool = True) -> bool:
@@ -110,7 +110,7 @@ class SensoryLocalClient:
                 else:
                     registry.update_task(task_id, status=TaskStatus.FAILED, error=res.get("msg"))
                     return False
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('sensory_client', e)
                 logger.error("🛑 Sensory Client Command [%s] failed: %s", cmd, e)
                 registry.update_task(task_id, status=TaskStatus.FAILED, error=str(e))
@@ -124,7 +124,7 @@ class SensoryLocalClient:
         if self._process:
             try:
                 self._req_q.put({"command": "exit"})
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('sensory_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             # Issue 26: Use asyncio.to_thread for blocking process join

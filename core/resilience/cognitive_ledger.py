@@ -191,7 +191,7 @@ class CognitiveLedger:
                 "CognitiveLedger online — %d transitions loaded. DB: %s",
                 self._transition_count, self._db_path,
             )
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('cognitive_ledger', e)
             logger.error("CognitiveLedger initialization failed: %s", e)
             self._conn = None
@@ -230,7 +230,7 @@ class CognitiveLedger:
                 self._transition_count += 1
                 self._last_transition_id = t.id
                 return True
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger append failed: %s", e)
                 return False
@@ -246,7 +246,7 @@ class CognitiveLedger:
                 )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_recent failed: %s", e)
                 return []
@@ -263,7 +263,7 @@ class CognitiveLedger:
                 )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_by_subsystem failed: %s", e)
                 return []
@@ -280,7 +280,7 @@ class CognitiveLedger:
                 )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_since failed: %s", e)
                 return []
@@ -302,7 +302,7 @@ class CognitiveLedger:
                 self._conn.commit()
                 logger.debug("CognitiveLedger: snapshot saved (hash=%s)", state_hash[:12])
                 return True
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger snapshot failed: %s", e)
                 return False
@@ -319,7 +319,7 @@ class CognitiveLedger:
                 cols = [d[0] for d in cur.description]
                 row = cur.fetchone()
                 return dict(zip(cols, row)) if row else None
-            except Exception:
+            except (sqlite3.Error, OSError):
                 return None
 
     # ── Replay support ───────────────────────────────────────────────────
@@ -339,7 +339,7 @@ class CognitiveLedger:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 logger.debug("CognitiveLedger: WAL checkpoint complete.")
                 return True
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger compact failed: %s", e)
                 return False
@@ -367,7 +367,7 @@ class CognitiveLedger:
                         deleted, max_age_days,
                     )
                 return deleted
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger prune failed: %s", e)
                 return 0
@@ -392,7 +392,7 @@ class CognitiveLedger:
                 )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_intention_chain failed: %s", e)
                 return []
@@ -409,7 +409,7 @@ class CognitiveLedger:
                 )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_belief_revisions failed: %s", e)
                 return []
@@ -464,7 +464,7 @@ class CognitiveLedger:
                     "intention_completion_rate": executed / max(1, created),
                     "key_events": key_events,
                 }
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger autobiographical summary failed: %s", e)
                 return {}
@@ -488,7 +488,7 @@ class CognitiveLedger:
                     except json.JSONDecodeError as _exc:
                         logger.debug("Suppressed json.JSONDecodeError: %s", _exc)
                 return results
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('cognitive_ledger', e)
                 logger.error("CognitiveLedger get_coherence_history failed: %s", e)
                 return []
@@ -518,7 +518,7 @@ class CognitiveLedger:
                 stats["by_type"] = {row[0]: row[1] for row in cur.fetchall()}
                 cur = self._conn.execute("SELECT COUNT(*) FROM snapshots")
                 stats["snapshot_count"] = cur.fetchone()[0]
-            except Exception as _exc:
+            except (sqlite3.Error, OSError) as _exc:
                 record_degradation('cognitive_ledger', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
         return stats
@@ -542,7 +542,7 @@ def compute_state_hash(state: Any) -> str:
             "version": getattr(state, "version", 0),
         }, sort_keys=True, default=str)
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return hashlib.sha256(str(time.time()).encode()).hexdigest()[:16]
 
 

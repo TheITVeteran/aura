@@ -242,8 +242,8 @@ class IncomingLogicMixin:
             try:
                 from core.world_state import get_world_state
                 get_world_state().on_user_message(message=safe_msg if isinstance(safe_msg, str) else "")
-            except Exception:
-                pass  # no-op: intentional
+            except (ImportError, AttributeError, RuntimeError):
+                pass  # WorldState unavailable
 
             # DriveEngine: Satisfy social drive on user contact + relieve boredom
             try:
@@ -252,8 +252,8 @@ class IncomingLogicMixin:
                     self._fire_and_forget(drive.satisfy("social", 15.0), name="drive_social_satisfy")
                     if hasattr(drive, "relieve_boredom"):
                         drive.relieve_boredom("user_interaction")
-            except Exception:
-                pass  # no-op: intentional
+            except (ImportError, AttributeError, RuntimeError):
+                pass  # DriveEngine unavailable
 
             # NeurochemicalSystem: user interaction triggers novelty + social
             try:
@@ -261,8 +261,8 @@ class IncomingLogicMixin:
                 if ncs:
                     ncs.on_social_connection(0.2)
                     ncs.on_novelty(0.15)
-            except Exception:
-                pass  # no-op: intentional
+            except (ImportError, AttributeError, RuntimeError):
+                pass  # NeurochemicalSystem unavailable
 
             # Zenith Hardening: Reset boredom and learning cooldowns
             if hasattr(self, 'volition') and self.volition:
@@ -278,8 +278,7 @@ class IncomingLogicMixin:
                     mgr = SnapshotManager(self)
                     success = mgr.freeze()
                     await self.output_gate.emit(f"✅ Cognitive State Snapshot {'successful' if success else 'failed'}.", origin="admin")
-                except Exception as e:
-                    record_degradation('incoming_logic', e)
+                except (ImportError, RuntimeError, OSError) as e:
                     record_degradation('incoming_logic', e)
                     logger.error("Snapshot command failed: %s", e)
                 return None
@@ -289,8 +288,7 @@ class IncomingLogicMixin:
                     mgr = SnapshotManager(self)
                     success = mgr.thaw()
                     await self.output_gate.emit(f"🔥 Cognitive State Thaw {'successful' if success else 'failed'}.", origin="admin")
-                except Exception as e:
-                    record_degradation('incoming_logic', e)
+                except (ImportError, RuntimeError, OSError) as e:
                     record_degradation('incoming_logic', e)
                     logger.error("Thaw command failed: %s", e)
                 return None
@@ -300,8 +298,7 @@ class IncomingLogicMixin:
             from core.event_bus import EventPriority, get_event_bus
             priority_tag = EventPriority.USER if origin in ("user", "voice", "admin") else EventPriority.BACKGROUND
             get_event_bus().publish_threadsafe("chat_input", {"text": message, "origin": origin, "context": payload_context}, priority=priority_tag)
-        except Exception as e:
-            record_degradation('incoming_logic', e)
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('incoming_logic', e)
             logger.debug("Failed to publish chat_input for scanner: %s", e)
 
@@ -320,8 +317,8 @@ class IncomingLogicMixin:
                 autonomic = ServiceContainer.get("autonomic_core", default=None)
                 if autonomic and hasattr(autonomic, '_reset_idle_swap'):
                     autonomic._reset_idle_swap()
-            except Exception:
-                pass  # no-op: intentional
+            except (ImportError, AttributeError):
+                pass  # AutonomicCore unavailable
             # Standardize: Always append to conversation history early for traceability
             if not hasattr(self, 'conversation_history'):
                 self.conversation_history = []
@@ -348,8 +345,7 @@ class IncomingLogicMixin:
                         if not _mem_decision.is_approved():
                             _mem_allowed = False
                             logger.debug("Vector memory store blocked by Unified Will: %s", _mem_decision.reason)
-                    except Exception as _will_exc:
-                        record_degradation('incoming_logic', _will_exc)
+                    except (ImportError, AttributeError, RuntimeError) as _will_exc:
                         record_degradation('incoming_logic', _will_exc)
                         # Governance is the *authority*: if it cannot decide, the
                         # action does not happen. In strict mode this is fatal-by-policy
@@ -361,8 +357,8 @@ class IncomingLogicMixin:
                                 "governance.unavailable.memory_write",
                                 {"error": repr(_will_exc), "source": "vector_memory"},
                             )
-                        except Exception:
-                            pass  # no-op: intentional
+                        except (ImportError, AttributeError, RuntimeError):
+                            pass  # degraded event recording unavailable
                         logger.warning(
                             "Governance unavailable for memory_write — denying action (fail-closed): %s",
                             _will_exc,
@@ -376,8 +372,7 @@ class IncomingLogicMixin:
                             source="user",
                             tags=["conversation", "user_input"]
                         ), name="vector_memory_store")
-            except Exception as store_err:
-                record_degradation('incoming_logic', store_err)
+            except (ImportError, AttributeError, RuntimeError, TypeError) as store_err:
                 record_degradation('incoming_logic', store_err)
                 logger.debug("Semantic memory storage failed: %s", store_err)
 
@@ -409,8 +404,7 @@ class IncomingLogicMixin:
                 if not _state_decision.is_approved():
                     _internal_update_allowed = False
                     logger.debug("Background cognitive updates blocked by Unified Will: %s", _state_decision.reason)
-            except Exception as _will_exc:
-                record_degradation('incoming_logic', _will_exc)
+            except (ImportError, AttributeError, RuntimeError) as _will_exc:
                 record_degradation('incoming_logic', _will_exc)
                 _internal_update_allowed = False
                 try:
@@ -419,8 +413,8 @@ class IncomingLogicMixin:
                         "governance.unavailable.state_mutation",
                         {"error": repr(_will_exc), "source": "cognitive_background"},
                     )
-                except Exception:
-                    pass  # no-op: intentional
+                except (ImportError, AttributeError, RuntimeError):
+                    pass  # degraded event recording unavailable
                 logger.warning(
                     "Governance unavailable for state_mutation — denying internal update (fail-closed): %s",
                     _will_exc,
@@ -434,8 +428,7 @@ class IncomingLogicMixin:
                             discourse_tracker.update(_live_state, message),
                             name="discourse_tracker_update",
                         )
-                except Exception as _dt_err:
-                    record_degradation('incoming_logic', _dt_err)
+                except (ImportError, AttributeError, RuntimeError, TypeError) as _dt_err:
                     record_degradation('incoming_logic', _dt_err)
                     logger.error("DiscourseTracker update failed: %s", _dt_err, exc_info=True)
 
@@ -448,8 +441,7 @@ class IncomingLogicMixin:
                             tom.understand_user(user_id, message),
                             name="theory_of_mind_update",
                         )
-                except Exception as _tom_err:
-                    record_degradation('incoming_logic', _tom_err)
+                except (ImportError, AttributeError, RuntimeError, TypeError) as _tom_err:
                     record_degradation('incoming_logic', _tom_err)
                     logger.error("TheoryOfMind update failed: %s", _tom_err, exc_info=True)
 
@@ -533,8 +525,7 @@ class IncomingLogicMixin:
                 try:
                     hot_memory = await self.memory.get_hot_memory(limit=5)
                     payload_context["hot_memory"] = hot_memory
-                except Exception as e:
-                    record_degradation('incoming_logic', e)
+                except (RuntimeError, AttributeError, TypeError) as e:
                     record_degradation('incoming_logic', e)
                     logger.debug("Failed to fetch Hot Memory: %s", e)
 
@@ -544,8 +535,7 @@ class IncomingLogicMixin:
                 if kernel:
                     brief = await kernel.evaluate(message, history=getattr(self, 'conversation_history', []))
                     payload_context["cognitive_brief"] = brief
-            except Exception as e:
-                record_degradation('incoming_logic', e)
+            except (ImportError, AttributeError, RuntimeError, TypeError) as e:
                 record_degradation('incoming_logic', e)
                 logger.debug("Failed to fetch Cognitive Brief: %s", e)
 
@@ -564,8 +554,7 @@ class IncomingLogicMixin:
             trace = None  # Sentinel for safety
             try:
                 trace = self._init_cognitive_trace(message, origin)
-            except Exception as trace_err:
-                record_degradation('incoming_logic', trace_err)
+            except (ImportError, AttributeError, RuntimeError) as trace_err:
                 record_degradation('incoming_logic', trace_err)
                 logger.debug("Failed to initialize cognitive trace: %s", trace_err)
 
@@ -608,7 +597,7 @@ class IncomingLogicMixin:
                         return
                     if _will_decision.constraints:
                         payload_context["will_constraints"] = _will_decision.constraints
-                except Exception as _will_err:
+                except (ImportError, AttributeError, RuntimeError) as _will_err:
                     record_degradation('incoming_logic', _will_err)
                     logger.debug("Unified Will gate degraded: %s", _will_err)
 
@@ -674,13 +663,11 @@ class IncomingLogicMixin:
                                                 "blocked",
                                                 str(_emit_reason),
                                             )
-                                        except Exception as _exc:
-                                            record_degradation('incoming_logic', _exc)
+                                        except (ImportError, AttributeError, RuntimeError) as _exc:
                                             record_degradation('incoming_logic', _exc)
                                             logger.debug("Suppressed Exception: %s", _exc)
                                         hardwired_result = None
-                                except Exception as _exec_err:
-                                    record_degradation('incoming_logic', _exec_err)
+                                except (ImportError, AttributeError, RuntimeError) as _exec_err:
                                     record_degradation('incoming_logic', _exec_err)
                                     logger.error("Hardwired direct-response emission approval failed: %s", _exec_err, exc_info=True)
 
@@ -710,8 +697,7 @@ class IncomingLogicMixin:
                                             target="primary",
                                             payload={"pathway_id": pathway.pathway_id},
                                         )
-                                    except Exception as audit_exc:
-                                        record_degradation('incoming_logic', audit_exc)
+                                    except (ImportError, AttributeError, RuntimeError) as audit_exc:
                                         record_degradation('incoming_logic', audit_exc)
                                         logger.error("Hardwired direct-response audit failed: %s", audit_exc, exc_info=True)
                                     res = {"ok": True, "response": pathway.direct_response}
@@ -743,8 +729,7 @@ class IncomingLogicMixin:
 
                             try:
                                 self._record_action_in_history(pathway.skill_name, rich_res)
-                            except Exception as history_err:
-                                record_degradation('incoming_logic', history_err)
+                            except (RuntimeError, AttributeError, TypeError) as history_err:
                                 record_degradation('incoming_logic', history_err)
                                 logger.error("Hardwired action history failed: %s", history_err, exc_info=True)
 
@@ -753,8 +738,7 @@ class IncomingLogicMixin:
 
                                 ee = ExpectationEngine(getattr(self, "cognitive_engine", None))
                                 await ee.update_beliefs_from_result(pathway.skill_name, rich_res)
-                            except Exception as belief_err:
-                                record_degradation('incoming_logic', belief_err)
+                            except (ImportError, AttributeError, RuntimeError) as belief_err:
                                 record_degradation('incoming_logic', belief_err)
                                 logger.error("Hardwired belief update failed: %s", belief_err, exc_info=True)
 
@@ -784,8 +768,7 @@ class IncomingLogicMixin:
                                         if origin in ("user", "voice", "admin"):
                                             await self.output_gate.emit(final_response, origin=origin, target="primary")
                                         return
-                                except Exception as e:
-                                    record_degradation('incoming_logic', e)
+                                except (RuntimeError, AttributeError, TypeError) as e:
                                     record_degradation('incoming_logic', e)
                                     logger.warning("Error during scanner execution: %s", e)
                                     # Continue processing if scanner fails, don't block the whole flow
@@ -907,8 +890,7 @@ class IncomingLogicMixin:
                                         except asyncio.CancelledError:
                                             logger.debug("Direct match result handled.")
 
-                                except Exception as e:
-                                    record_degradation('incoming_logic', e)
+                                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                                     record_degradation('incoming_logic', e)
                                     logger.error("ReActLoop failed: %s", e)
                                     # Ensure we don't leave the user hanging if the loop crashes
@@ -967,8 +949,7 @@ class IncomingLogicMixin:
                                         successful_tools = []
                                     else:
                                         final_response = None  # Fall through to direct LLM
-                                except Exception as e:
-                                    record_degradation('incoming_logic', e)
+                                except (RuntimeError, AttributeError, TypeError, asyncio.CancelledError) as e:
                                     record_degradation('incoming_logic', e)
                                     logger.warning("CIL lazy re-init failed: %s", e)
                                     record_degraded_event(
@@ -1005,8 +986,7 @@ class IncomingLogicMixin:
                                     )
                                     final_response = res[0] if isinstance(res, (tuple, list)) else res
                                     successful_tools = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else []
-                                except Exception as e:
-                                    record_degradation('incoming_logic', e)
+                                except (RuntimeError, AttributeError, TypeError, asyncio.CancelledError) as e:
                                     record_degradation('incoming_logic', e)
                                     logger.warning("Governed StateMachine fallback failed: %s", e)
                                     record_degraded_event(
@@ -1071,8 +1051,7 @@ class IncomingLogicMixin:
                                         logger.warning("🔍 [KNOWLEDGE GAP] Web search returned no usable result.")
                                 except TimeoutError:
                                     logger.warning("🔍 [KNOWLEDGE GAP] Web search timed out (25s).")
-                                except Exception as _gap_err:
-                                    record_degradation('incoming_logic', _gap_err)
+                                except (RuntimeError, asyncio.CancelledError, AttributeError) as _gap_err:
                                     record_degradation('incoming_logic', _gap_err)
                                     logger.error("🔍 [KNOWLEDGE GAP] Web search failed: %s", _gap_err)
 
@@ -1097,8 +1076,7 @@ class IncomingLogicMixin:
                         self.status.is_processing = False
 
                         return final_response
-                    except Exception as e:
-                        record_degradation('incoming_logic', e)
+                    except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
                         record_degradation('incoming_logic', e)
                         logger.error("State machine execution failed: %s", e)
                         if self._autonomy_guardian and hasattr(self._autonomy_guardian, 'ensure_delivery'):
@@ -1120,8 +1098,7 @@ class IncomingLogicMixin:
                     logger.error("🛑 [WATCHDOG] Thinking task exceeded 300s limit. Force terminating.")
                     await self._handle_thinking_timeout(origin)
                     return "Cognitive process timed out."
-                except Exception as e:
-                    record_degradation('incoming_logic', e)
+                except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
                     record_degradation('incoming_logic', e)
                     logger.error("❌ [WATCHDOG] Thinking task failed: %s", e)
                     # GROK ZENITH HARDENING: Ensure the user is notified if cognition fails entirely.
@@ -1155,8 +1132,7 @@ class IncomingLogicMixin:
                     return None
                 raise
 
-        except Exception as e:
-            record_degradation('incoming_logic', e)
+        except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
             record_degradation('incoming_logic', e)
             logger.error("Error in handle_incoming_message: %s", e)
             self.status.is_processing = False

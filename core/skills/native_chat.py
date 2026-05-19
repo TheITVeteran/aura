@@ -23,15 +23,15 @@ def _schedule_background_task(coro: Any, *, name: str) -> None:
 
         get_task_tracker().create_task(coro, name=name)
         return
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     try:
         get_task_tracker().create_task(coro, name=name)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('native_chat', exc)
         try:
             coro.close()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
         logger.debug("NativeChat background task %s could not be scheduled: %s", name, exc)
 
@@ -104,7 +104,7 @@ class NativeChatSkill(BaseSkill):
                     cme.on_new_user_message(msg_str),
                     name="native_chat.momentum",
                 )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('native_chat', _e)
             logger.debug('Ignored Exception in native_chat.py: %s', _e)
 
@@ -171,7 +171,7 @@ class NativeChatSkill(BaseSkill):
                 try:
                     logger.info("Emitting chat response to ThoughtStream: %s...", response[:50])
                     emitter.emit("AURA", response, level="chat")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('native_chat', e)
                     logger.error("Failed to emit chat response: %s", e)
             else:
@@ -194,7 +194,7 @@ class NativeChatSkill(BaseSkill):
                         mem_sys.remember(response, metadata={"role": "aura", "mode": "chat"}),
                         name="native_chat.remember_aura",
                     )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('native_chat', e)
                 logger.warning("Memory storage failed: %s", e)
 
@@ -203,7 +203,7 @@ class NativeChatSkill(BaseSkill):
                 orchestrator = context.get("orchestrator")
                 if orchestrator and hasattr(orchestrator, "biorhythm"):
                     orchestrator.biorhythm.mark_interaction()
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('native_chat', exc)
                 logger.debug("Suppressed: %s", exc)
 
@@ -213,7 +213,7 @@ class NativeChatSkill(BaseSkill):
                 "summary": "Replied to user."
             }
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('native_chat', e)
             logger.error("Cognitive failure: %s", e, exc_info=True)
             return {"ok": False, "error": f"Cognitive failure: {e}"}

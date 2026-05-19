@@ -40,12 +40,12 @@ def append_audit(entry: str):
         with open(LOG_PATH, "a") as f:
             f.write(f"{line} | HM:{sig}\n")
             
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('logging_hmac', e)
         logger.error("AUDIT LOG FAILURE: %s", e)
         try:
             with open(LOG_PATH, "a") as f:
                 f.write(f"{ts}|LOG_FAILURE|{e}\n")
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('logging_hmac', exc)
             logger.debug("Suppressed: %s", exc)

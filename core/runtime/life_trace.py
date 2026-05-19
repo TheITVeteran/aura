@@ -93,7 +93,7 @@ class LifeTraceLedger:
             try:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "life_trace.sqlite3"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 db_path = Path.home() / ".aura" / "life_trace.sqlite3"
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,7 +225,7 @@ class LifeTraceLedger:
     def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         try:
             payload = json.loads(row["payload"])
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             payload = {}
         payload["event_id"] = row["event_id"]
         payload["prev_hash"] = row["prev_hash"]
@@ -252,7 +252,7 @@ class LifeTraceLedger:
         for row in rows:
             try:
                 payload = json.loads(row["payload"])
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 return False
             if row["prev_hash"] != prev:
                 return False

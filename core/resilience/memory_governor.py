@@ -59,7 +59,7 @@ class MemoryGovernor:
                 for proc in children
                 if getattr(proc, "pid", None) is not None
             }
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('memory_governor', exc)
             logger.debug("Memory Governor: could not inspect child process tree: %s", exc)
             descendant_pids = set()
@@ -99,7 +99,7 @@ class MemoryGovernor:
                 self._run_loop(),
                 name="aura.memory_governor",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._task = get_task_tracker().create_task(self._run_loop(), name="aura.memory_governor")
         logger.info("🛡️ Memory Governor active. Thresholds: Prune=%dMB, Unload=%dMB, Critical=%dMB", 
                     self.threshold_prune, self.threshold_unload, self.threshold_critical)
@@ -120,7 +120,7 @@ class MemoryGovernor:
         try:
             await self._critical_cleanup()
             logger.info("🛡️ Memory Governor shutdown complete. All worker handles purged.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('memory_governor', e)
             logger.error(f"Error during Memory Governor shutdown: {e}")
 
@@ -134,7 +134,7 @@ class MemoryGovernor:
                 await asyncio.sleep(self.check_interval)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_governor', e)
                 logger.error("Memory Governor loop error: %s", e)
                 await asyncio.sleep(10)
@@ -157,7 +157,7 @@ class MemoryGovernor:
         try:
             from core.utils.memory_monitor import AppleSiliconMemoryMonitor
             sys_percent = AppleSiliconMemoryMonitor()._get_pressure_sysctl()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             vm = psutil.virtual_memory()
             sys_percent = vm.percent
 
@@ -264,7 +264,7 @@ class MemoryGovernor:
                     pruned = mm.vector.prune_low_salience(threshold_days=30, min_salience=-0.2)
                     if pruned > 0:
                         logger.info("✅ Pruned %d low-salience vectors.", pruned)
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('memory_governor', e)
             logger.error("Failed to prune memory: %s", e)
 
@@ -281,7 +281,7 @@ class MemoryGovernor:
                 gate = ServiceContainer.get("inference_gate", default=None)
                 if gate and hasattr(gate, "_shed_background_workers_for_memory_pressure"):
                     await gate._shed_background_workers_for_memory_pressure()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_governor', e)
                 logger.debug("InferenceGate background shed skipped: %s", e)
 
@@ -305,7 +305,7 @@ class MemoryGovernor:
                         unloaded += 1
                 if unloaded:
                     logger.info("✅ Local runtime lanes unloaded: %d", unloaded)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_governor', e)
                 logger.debug("Local runtime unload skipped: %s", e)
             
@@ -324,7 +324,7 @@ class MemoryGovernor:
                             logger.info("🌿 [MLX] Metal cache cleared aggressively.")
                         finally:
                             sentinel.release()
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('memory_governor', e)
                     logger.debug(f"[MLX] Cache clear skipped: {e}")
             except ImportError as _e:
@@ -335,7 +335,7 @@ class MemoryGovernor:
                  ce = self.orchestrator.cognitive_engine
                  if ce and hasattr(ce, "nucleus") and ce.nucleus:
                       await ce.nucleus.unload_models()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_governor', e)
             logger.error("Failed to unload models: %s", e)
 
@@ -350,7 +350,7 @@ class MemoryGovernor:
                 # We use to_thread because VACUUM is a heavy synchronous SQLite command
                 await asyncio.to_thread(db_coord.vacuum_all_databases)
                 self._last_vacuum_time = time.monotonic()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_governor', e)
             logger.error(f"VACUUM Failed: {e}")
 
@@ -361,7 +361,7 @@ class MemoryGovernor:
                 return
             await self._prune_memory()
             self._last_vector_prune_time = time.monotonic()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('memory_governor', e)
             logger.error(f"Periodic vector prune failed: {e}")
 
@@ -380,7 +380,7 @@ class MemoryGovernor:
                     logger.warning("🚨 NEURAL PURGE: Forcible termination of heavy MLX/Metal process (PID: %d, Name: %s)", 
                                    proc.info['pid'], proc.info['name'])
                     proc.kill()
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('memory_governor', e)
             logger.error("Failed to kill heavy processes: %s", e)
 
@@ -390,7 +390,7 @@ class MemoryGovernor:
             affect = ServiceContainer.get("affect", default=None)
             if affect and hasattr(affect, "react"):
                 get_task_tracker().create_task(affect.react("critical_resource_exhaustion", {"intensity": 1.0}))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_governor', e)
             logger.debug("Failed to trigger adrenaline surcharge: %s", e)
 
@@ -406,7 +406,7 @@ class MemoryGovernor:
             metabolism = ServiceContainer.get("metabolic_monitor", default=None)
             if metabolism and hasattr(metabolism, "force_rest"):
                 await metabolism.force_rest(duration=300)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_governor', e)
             capture_and_log(e, {'module': __name__})
 
@@ -417,6 +417,6 @@ class MemoryGovernor:
             if root and hasattr(root, "force_compiler_wake"):
                 logger.info("🌿 [MEMORY GOVERNOR] Reclaiming Metal context post-purge...")
                 root.force_compiler_wake()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_governor', e)
             logger.error(f"Failed to pulse platform root: {e}")

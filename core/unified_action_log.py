@@ -32,7 +32,7 @@ class UnifiedActionLog:
             self._persist_path = config.paths.data_dir / "unified_action_log.jsonl"
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             self._load_recent_entries()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('unified_action_log', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -101,7 +101,7 @@ class UnifiedActionLog:
             try:
                 with open(self._persist_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")
-            except Exception as _exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as _exc:
                 record_degradation('unified_action_log', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 

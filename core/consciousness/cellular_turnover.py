@@ -301,7 +301,7 @@ class CellularTurnover:
                 proj = mesh.get_executive_projection()
                 sig = np.asarray(proj, dtype=np.float32)[:16]
                 sig = np.pad(sig, (0, max(0, 16 - sig.size)))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 sig = np.zeros(16, dtype=np.float32)
             return IdentityFingerprint(
                 tick=self._tick,
@@ -309,7 +309,7 @@ class CellularTurnover:
                 column_synchrony=synchrony,
                 projection_signature=sig,
             )
-        except Exception as exc:  # pragma: no cover
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover
             logger.debug("fingerprint capture failed: %s", exc)
             return None
 

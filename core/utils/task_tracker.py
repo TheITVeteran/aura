@@ -171,7 +171,7 @@ class TaskTracker:
             if not _SKIP_FACTORY_TRACK.get():
                 try:
                     tracker.observe(task, source="loop_factory")
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('task_tracker', exc)
                     logger.debug("TaskTracker[%s]: failed to observe loop task: %s", tracker.name, exc)
             return task
@@ -187,7 +187,7 @@ class TaskTracker:
                 target_loop, previous_factory = info
                 try:
                     target_loop.set_task_factory(previous_factory)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('task_tracker', exc)
                     logger.debug("TaskTracker[%s]: failed to restore loop factory: %s", self.name, exc)
             return
@@ -196,7 +196,7 @@ class TaskTracker:
             target_loop, previous_factory = info
             try:
                 target_loop.set_task_factory(previous_factory)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('task_tracker', exc)
                 logger.debug("TaskTracker[%s]: failed to restore loop factory: %s", self.name, exc)
             finally:
@@ -235,7 +235,7 @@ class TaskTracker:
             setattr(task, "_aura_supervised", True)
             setattr(task, "_aura_task_tracker", self.name)
             setattr(task, "_aura_task_supervision", "explicit")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('task_tracker', e)
             logger.debug("TaskTracker[%s]: failed to mark task supervised: %s", self.name, e)
 
@@ -281,7 +281,7 @@ class TaskTracker:
                 self._mark_supervised(task)
             elif not hasattr(task, "_aura_supervised"):
                 setattr(task, "_aura_supervised", False)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('task_tracker', exc)
             logger.debug("TaskTracker[%s]: failed to annotate task: %s", self.name, exc)
 
@@ -293,7 +293,7 @@ class TaskTracker:
     def _describe_task(self, task: asyncio.Task) -> str:
         try:
             coro = task.get_coro()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return "unknown"
         qualname = getattr(coro, "__qualname__", None)
         if qualname:
@@ -319,7 +319,7 @@ class TaskTracker:
             except asyncio.CancelledError:
                 record.cancelled = True
                 self._cancelled_total += 1
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('task_tracker', exc)
                 record.failed = True
                 record.exception = f"{type(exc).__name__}: {exc}"
@@ -360,7 +360,7 @@ class TaskTracker:
 
         try:
             await asyncio.wait(pending, timeout=timeout)
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('task_tracker', e)
             logger.error("Error during TaskTracker shutdown: %s", e)
 

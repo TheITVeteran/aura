@@ -158,7 +158,7 @@ class AutonomousCognitiveEngine:
                     client=cortex_client,
                 ))
                 logger.info("🧠 PRIMARY Tier registered: %s (%s) — Daily Brain", PRIMARY_ENDPOINT, ACTIVE_MODEL)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 logger.error("Failed to register %s pathway: %s", PRIMARY_ENDPOINT, e)
 
@@ -178,7 +178,7 @@ class AutonomousCognitiveEngine:
                     timeout=300.0,  # 72B needs more time to load/generate
                 ))
                 logger.info("🧠 SECONDARY Tier registered: %s (%s) — Deep Thinker (Hot-Swap)", DEEP_ENDPOINT, DEEP_MODEL)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 logger.error("Failed to register %s pathway: %s", DEEP_ENDPOINT, e)
 
@@ -193,7 +193,7 @@ class AutonomousCognitiveEngine:
                         if line.startswith("GEMINI_API_KEY="):
                             gemini_key = line.split("=", 1)[1].strip()
                             break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 capture_and_log(e, {'module': __name__})
         
@@ -249,7 +249,7 @@ class AutonomousCognitiveEngine:
                 ))
                 logger.info("☁️ SECONDARY Tier registered: Gemini Pro (Teacher/Oracle)")
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 logger.warning("Failed to initialize Gemini adapters: %s", e)
         else:
@@ -270,7 +270,7 @@ class AutonomousCognitiveEngine:
                     client=brainstem_client,
                 ))
                 logger.info("⚡ TERTIARY Tier registered: %s (7B) — Background/Reflex", BRAINSTEM_ENDPOINT)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 logger.error("Failed to register %s pathway: %s", BRAINSTEM_ENDPOINT, e)
         elif cortex_model_path:
@@ -299,7 +299,7 @@ class AutonomousCognitiveEngine:
                     timeout=120.0  # CPU is slow, allow more time
                 ))
                 logger.info("🚨 EMERGENCY Tier registered: %s (1.5B CPU emergency)", FALLBACK_ENDPOINT)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_brain_integration', e)
                 logger.error("Failed to register %s pathway: %s", FALLBACK_ENDPOINT, e)
         
@@ -464,7 +464,7 @@ class AutonomousCognitiveEngine:
                                 objective=objective,
                                 max_tools=8,
                             )
-                        except Exception as _exc:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                             record_degradation('autonomous_brain_integration', _exc)
                             logger.debug("Suppressed Exception: %s", _exc)
                     result = await agentic_endpoint.client.think_and_act(
@@ -489,7 +489,7 @@ class AutonomousCognitiveEngine:
                 )
                 return {"content": text, "confidence": 0.5}
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomous_brain_integration', e)
             now = time.time()
             if now - self._last_think_error_time > self._THINK_ERROR_COOLDOWN:
@@ -508,6 +508,6 @@ class AutonomousCognitiveEngine:
                     **{k: v for k, v in kwargs.items() if k != 'bypass_race'}
                 )
                 return {"content": text, "confidence": 0.5}
-            except Exception as e2:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e2:
                 record_degradation('autonomous_brain_integration', e2)
                 return {"content": f"Absolute failure: {e2}", "confidence": 0.0}

@@ -195,7 +195,7 @@ class PromotionGate:
                     reasons.append(
                         f"will_{outcome}:{will_out.get('reason', 'no_reason')}"
                     )
-            except Exception as exc:  # noqa: BLE001 — fail-closed
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:  # noqa: BLE001 — fail-closed
                 accepted = False
                 reasons.append(f"will_decide_raised:{type(exc).__name__}")
 
@@ -251,7 +251,7 @@ class PromotionGate:
                 )
             )
             return receipt.receipt_id
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("promotion_gate", exc)
             logger.debug("PromotionGate receipt emission failed: %s", exc)
             return None

@@ -61,7 +61,7 @@ class LineageManager:
             try:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "lineage.sqlite3"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 db_path = Path.home() / ".aura" / "lineage.sqlite3"
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)

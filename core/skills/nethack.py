@@ -148,7 +148,7 @@ class ExecuteNethackActionSkill(BaseSkill):
                             "ok": False,
                             "error": f"Embodied action gate selected invalid replacement: {decision.action}",
                         }
-            except Exception as gate_err:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as gate_err:
                 logger.warning("Embodied NetHack action gate unavailable: %s", gate_err)
 
         # ── PROPRIOCEPTIVE FEEDBACK ──
@@ -159,14 +159,14 @@ class ExecuteNethackActionSkill(BaseSkill):
             screen_before = adapter.get_screen_text()
             lines = screen_before.split('\n')
             msg_before = lines[0].strip() if lines else ""
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass
 
         # Execute the action
         try:
             adapter.send_action(physical_key)
             await asyncio.sleep(0.15)  # Let terminal settle
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             return {"ok": False, "error": f"Failed to send keystroke: {e}"}
 
         # Capture screen AFTER action
@@ -183,7 +183,7 @@ class ExecuteNethackActionSkill(BaseSkill):
                 status_line = non_empty[-2] + " | " + non_empty[-1]
             elif non_empty:
                 status_line = non_empty[-1]
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass
 
         # Determine if the action had an observable effect
@@ -229,7 +229,7 @@ class ExecuteNethackActionSkill(BaseSkill):
                     success=screen_changed,
                     message=result["summary"]
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.warning("Failed to record environmental outcome: %s", e)
 
         return result

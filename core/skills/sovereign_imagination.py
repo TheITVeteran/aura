@@ -67,7 +67,7 @@ class SovereignImaginationSkill(BaseSkill):
             self.pipeline.enable_attention_slicing()
             logger.info("✅ FLUX.1-schnell loaded successfully.")
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('sovereign_imagination', e)
             logger.error(f"Model load failed: {e}")
             return False
@@ -76,7 +76,7 @@ class SovereignImaginationSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = ImageInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sovereign_imagination', e)
                 return {"ok": False, "error": f"Invalid parameters: {e}"}
 
@@ -125,7 +125,7 @@ class SovereignImaginationSkill(BaseSkill):
                 "display_type": "image"
             }
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sovereign_imagination', e)
             logger.error(f"Generation failed: {e}")
             return {"ok": False, "error": f"Generation failed: {e}"}

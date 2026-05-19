@@ -156,7 +156,7 @@ if __name__ == "__main__":
                 "instruction": "If the diff looks promising, you can manually copy the files from sandbox_path, or ask the user to approve."
             }
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("branching_futures", e)
             return {
                 "ok": False,

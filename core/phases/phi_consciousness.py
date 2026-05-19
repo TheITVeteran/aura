@@ -86,7 +86,7 @@ def _normalize_percent(value: float) -> float:
 def _density(items: Any, target: int, *, floor: float = 0.0) -> float:
     try:
         size = len(items or [])
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         size = 0
     if target <= 0:
         return _clamp01(float(size))
@@ -380,7 +380,7 @@ class PhiConsciousnessPhase(Phase):
             sr = ServiceContainer.get("shadow_runtime", default=None)
             if sr is not None and isinstance(sr, ShadowRuntime):
                 sr.set_coherence_gate(phi)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # Non-critical: gate defaults to 1.0 (permissive) on failure
 
         return new_state
@@ -404,7 +404,7 @@ class PhiConsciousnessPhase(Phase):
                     phi_val = float(getattr(result, "phi_s", 0.0))
                     if phi_val > 0.001:
                         return float(f"{phi_val:.4f}")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('phi_consciousness', e)
                 logger.debug("PhiCore IIT 4.0 compute failed: %s", e)
 
@@ -413,7 +413,7 @@ class PhiConsciousnessPhase(Phase):
                 surrogate = await asyncio.to_thread(phi_core.compute_surrogate_phi)
                 if surrogate > 0.001:
                     return float(f"{surrogate:.4f}")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('phi_consciousness', e)
                 logger.debug("PhiCore surrogate failed: %s", e)
 
@@ -430,7 +430,7 @@ class PhiConsciousnessPhase(Phase):
         try:
             from core.container import ServiceContainer
             self._phi_core = ServiceContainer.get("phi_core", default=None)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phi_consciousness', e)
             logger.debug("PhiCore not available: %s", e)
         return self._phi_core
@@ -448,7 +448,7 @@ class PhiConsciousnessPhase(Phase):
                 riiu = RIIU(neuron_count=32, buffer_size=32)
                 ServiceContainer.register_instance("riiu", riiu)
             self._riiu = riiu
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phi_consciousness', e)
             logger.debug("RIIU not available: %s", e)
         return self._riiu
@@ -463,7 +463,7 @@ class PhiConsciousnessPhase(Phase):
             state = fe_engine.get_current_state() if hasattr(fe_engine, "get_current_state") else None
             if state and hasattr(state, "free_energy"):
                 return float(state.free_energy)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('phi_consciousness', e)
             logger.debug("Free energy read failed: %s", e)
         return None
@@ -475,7 +475,7 @@ class PhiConsciousnessPhase(Phase):
         try:
             from core.container import ServiceContainer
             self._fe_engine = ServiceContainer.get("free_energy_engine", default=None)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('phi_consciousness', _e)
             logger.debug('Ignored Exception in phi_consciousness.py: %s', _e)
         return self._fe_engine

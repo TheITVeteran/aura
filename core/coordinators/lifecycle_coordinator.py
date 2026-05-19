@@ -67,7 +67,7 @@ class LifecycleCoordinator:
             except asyncio.CancelledError:
                 logger.info("Orchestrator run loop cancelled.")
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('lifecycle_coordinator', e)
                 logger.error("CRITICAL LOOP ERROR: %s", e)
                 orch.status.add_error(str(e))
@@ -122,7 +122,7 @@ class LifecycleCoordinator:
                 orch.dream_cycle.start()
 
                 logger.info("💤 Dreaming Systems Active (Semantic Defrag & DLQ Recycle)")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifecycle_coordinator', e)
                 logger.error("Failed to start Dreaming Systems: %s", e)
 
@@ -133,7 +133,7 @@ class LifecycleCoordinator:
                     loaded = await SelfModel.load()
                     orch.self_model.beliefs = loaded.beliefs
                     logger.info("✓ Self-Model persistent state loaded.")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('lifecycle_coordinator', e)
                     logger.error("Failed to load Self-Model state: %s", e)
 
@@ -142,7 +142,7 @@ class LifecycleCoordinator:
                 from core.brain.llm.lazarus_brainstem import LazarusBrainstem
                 orch.brainstem = LazarusBrainstem(orch)
                 logger.info("✓ Lazarus Brainstem active")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifecycle_coordinator', e)
                 logger.error("Failed to init Lazarus: %s", e)
                 orch.brainstem = None
@@ -219,7 +219,7 @@ class LifecycleCoordinator:
 
             logger.info("✓ Orchestrator started")
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.error("Failed to start orchestrator: %s", e)
             orch.status.running = False
@@ -257,7 +257,7 @@ class LifecycleCoordinator:
                     ready += 1
                 else:
                     logger.debug("Boot barrier: %s not yet registered (optional).", name)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifecycle_coordinator', e)
                 logger.debug("Boot barrier: %s failed to instantiate: %s", name, e)
 
@@ -274,7 +274,7 @@ class LifecycleCoordinator:
             from core.continuity import get_continuity
             get_continuity().save(reason="graceful")
             logger.info("✓ Continuity record saved")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.debug("Continuity save failed: %s", e)
 
@@ -283,13 +283,13 @@ class LifecycleCoordinator:
             from core.epistemic_tracker import get_epistemic_tracker
             get_epistemic_tracker().save()
             logger.info("✓ Epistemic state saved")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.debug("Epistemic save failed: %s", e)
 
         try:
             orch._save_state("shutdown")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.debug("Final state save failed: %s", e)
 
@@ -315,7 +315,7 @@ class LifecycleCoordinator:
                 await orch.hardware_manager.stop()
             from core.container import ServiceContainer
             await ServiceContainer.shutdown()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.error("Error during ServiceContainer shutdown: %s", e)
 
@@ -345,7 +345,7 @@ class LifecycleCoordinator:
                 engine = container.get("capability_engine", None)
                 logger.info("🔄 Re-wiring cognitive engine...")
                 ce.wire(engine, router=engine)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('lifecycle_coordinator', e)
                 logger.error("Re-wire failed: %s", e)
             
@@ -357,7 +357,7 @@ class LifecycleCoordinator:
                 try:
                     from .thought_stream import get_emitter
                     get_emitter().emit("System", "Cognitive Connection Re-established", level="success")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('lifecycle_coordinator', e)
                     logger.debug("ThoughtStream emit failed during cognitive retry: %s", e)
                 return True
@@ -365,7 +365,7 @@ class LifecycleCoordinator:
                 logger.error("❌ Cognitive Retry Failed: Engine still lobotomized after re-wire")
                 logger.error("  client=%s, autonomous_brain=%s", getattr(ce, 'client', None), getattr(ce, 'autonomous_brain', None))
                 return False
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('lifecycle_coordinator', e)
             logger.error("Cognitive Retry Exception: %s", e)
             return False

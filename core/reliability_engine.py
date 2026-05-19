@@ -114,7 +114,7 @@ class ReliabilityEngine:
             rq = get_reasoning_queue()
             dropped = await rq.prune_low_priority(threshold_priority=ReasoningPriority.HIGH.value)
             logger.info(f"🛡️ Degradation: dropped {dropped} low-priority tasks")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('reliability_engine', e)
             logger.error(f"Failed to access reasoning queue during degradation: {e}")
 
@@ -122,7 +122,7 @@ class ReliabilityEngine:
         for cb in self._on_degrade_callbacks:
             try:
                 await cb()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('reliability_engine', e)
                 logger.error(f"Degradation callback failed: {e}")
 

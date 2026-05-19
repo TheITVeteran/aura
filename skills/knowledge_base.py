@@ -54,7 +54,7 @@ class KnowledgeBaseSkill(BaseSkill):
             try:
                 with open(meta_path, encoding='utf-8') as f:
                     return json.load(f)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("knowledge_base", exc)
                 logger.debug("KnowledgeBase metadata load failed: %s", exc)
                 return {}

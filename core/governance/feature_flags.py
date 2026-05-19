@@ -118,7 +118,7 @@ class FeatureFlags:
                         len(data),
                         self._config_path,
                     )
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 logger.warning("Failed to load feature flags: %s", e)
 
         # 3. Environment overrides (highest priority)
@@ -176,7 +176,7 @@ class FeatureFlags:
                 json.dumps(current, indent=2, sort_keys=True) + "\n"
             )
             logger.info("Feature flags saved to %s", self._config_path)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             logger.warning("Failed to save feature flags: %s", e)
 
     def get_change_log(self, n: int = 20) -> list[Dict[str, Any]]:

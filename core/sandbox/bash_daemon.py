@@ -56,7 +56,7 @@ class PersistentBashSession:
                     exit_code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
                     return "".join(output).strip(), exit_code
                 output.append(line_str)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('bash_daemon', e)
                 logger.error("Error reading from bash daemon: %s", e)
                 break
@@ -71,7 +71,7 @@ class PersistentBashSession:
             try:
                 self._process.stdin.write(f"{cmd}\n".encode('utf-8'))
                 await self._process.stdin.drain()
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('bash_daemon', e)
                 return False, f"Failed to write to daemon: {e}"
 
@@ -81,7 +81,7 @@ class PersistentBashSession:
                 return exit_code == 0, output
             except asyncio.TimeoutError:
                 return False, f"Command timed out after {timeout}s."
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('bash_daemon', e)
                 return False, f"Execution failed: {e}"
 

@@ -102,7 +102,7 @@ class JoySocialCoordinator:
             import psutil
             if psutil.virtual_memory().percent >= self.MEMORY_PRESSURE_THRESHOLD:
                 return False
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             logger.debug("Suppressed Exception: %s", _exc)
 
         return True
@@ -139,7 +139,7 @@ class JoySocialCoordinator:
             while True:
                 try:
                     await self.tick()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     logger.error("JoySocial background tick error: %s", exc, exc_info=True)
                 await asyncio.sleep(interval)
 
@@ -167,7 +167,7 @@ class JoySocialCoordinator:
                     "🎨 Hobby session done: %s | total_joy=%.2f",
                     session.hobby_name, total_joy,
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.error("JoySocial._maybe_hobby_session: %s", exc, exc_info=True)
 
     async def _maybe_social_cycle(self) -> None:
@@ -181,7 +181,7 @@ class JoySocialCoordinator:
             summary = {k: v for k, v in activity.items() if v}
             if summary:
                 logger.info("📱 Social cycle: %s", summary)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.error("JoySocial._maybe_social_cycle: %s", exc, exc_info=True)
 
     # ── External API — Hobby ─────────────────────────────────────────────────
@@ -215,7 +215,7 @@ class JoySocialCoordinator:
                     for s in session.joy_signals
                 ],
             }
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.error("JoySocial.run_hobby_session: %s", exc, exc_info=True)
             return None
 
@@ -273,7 +273,7 @@ class JoySocialCoordinator:
                     "url": post.url,
                     "sent": post.sent,
                 }
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.error("JoySocial.post_to_social: %s", exc, exc_info=True)
             return None
 
@@ -369,7 +369,7 @@ class JoySocialCoordinator:
                             # Shouldn't be async, but handle it
                             return None
                         return result
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError) as _exc:
             logger.debug("Suppressed Exception: %s", _exc)
         return None
 
@@ -478,7 +478,7 @@ def _register_context_hook(orchestrator: Any, coordinator: JoySocialCoordinator)
             bus.on("context_assembly", _joy_context_hook)
             logger.info("✅ JoySocial: context registered via event bus hook")
             return
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         logger.debug("JoySocial: event bus registration failed: %s", exc)
 
     # Fallback: register in orchestrator's context_hooks list if available

@@ -55,7 +55,7 @@ async def safe_think(brain, prompt: str, timeout: float = 60.0,
             error=f"LLM call timed out after {timeout}s",
             latency_ms=latency,
         )
-    except Exception as e:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
         record_degradation('safe_llm', e)
         latency = (time.monotonic() - start) * 1000
         logger.error("LLM call failed after %.1fms: %s", latency, e)

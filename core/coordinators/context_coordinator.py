@@ -51,7 +51,7 @@ class ContextCoordinator:
             from core.thought_stream import get_emitter
             cycle = self.orch.status.cycle_count if hasattr(self.orch, "status") else 0
             get_emitter().emit(flow, text, level="info", cycle=cycle)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)
             logger.debug("Telemetry emit failed: %s", e)
 
@@ -60,7 +60,7 @@ class ContextCoordinator:
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("thought", str(thought))
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('context_coordinator', _exc)
             logger.debug("Exception caught during execution", exc_info=True)
 
@@ -85,7 +85,7 @@ class ContextCoordinator:
             pe = get_personality_engine()
             pe.update()
             return pe.get_emotional_context_for_response()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)
             logger.warning("Personality metric retrieval failed: %s", e)
             return {"mood": "neutral", "tone": "snarky", "emotional_state": {}}
@@ -109,7 +109,7 @@ class ContextCoordinator:
         try:
             from core.brain.personality_engine import get_personality_engine
             return get_personality_engine().current_mood
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("context_coordinator", exc)
             logger.debug("Personality mood lookup failed: %s", exc)
             return "balanced"
@@ -119,7 +119,7 @@ class ContextCoordinator:
         try:
             from core.brain.personality_engine import get_personality_engine
             return get_personality_engine().get_time_context().get("formatted", "")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("context_coordinator", exc)
             logger.debug("Personality time-context lookup failed: %s", exc)
             return ""
@@ -137,7 +137,7 @@ class ContextCoordinator:
             ctx["time"] = datetime.datetime.now().strftime("%I:%M %p")
             ctx["date"] = datetime.datetime.now().strftime("%Y-%m-%d")
             return ctx
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)
             logger.error("Environment Context Error: %s", e)
             return {}
@@ -149,7 +149,7 @@ class ContextCoordinator:
             self_node = bg.graph.nodes.get(bg.self_node_id, {})
             attrs = self_node.get("attributes", {})
             return f"MOOD: {attrs.get('emotional_valence')}, ENERGY: {attrs.get('energy_level')}"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)
             logger.warning("World context retrieval failed: %s", e)
             return ""
@@ -162,7 +162,7 @@ class ContextCoordinator:
         try:
             from core.reliability_tracker import reliability_tracker
             reliability_tracker.record_attempt(tool, success, error)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)
             logger.debug("Reliability record failed: %s", e)
 

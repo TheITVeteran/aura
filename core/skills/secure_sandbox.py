@@ -23,7 +23,7 @@ class SecureDockerSandbox:
         try:
             self.client = docker.from_env()
             self.image_name = image_name
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('secure_sandbox', e)
             logger.error("Docker initialization failed: %s", e)
             self.client = None
@@ -60,12 +60,12 @@ class SecureDockerSandbox:
                     "exit_code": exit_code,
                     "output": logs
                 }
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('secure_sandbox', e)
                 container.kill()
                 return {"ok": False, "error": f"Execution timeout or error: {str(e)}"}
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('secure_sandbox', e)
             logger.error("Sandbox execution fatal error: %s", e)
             return {"ok": False, "error": str(e)}
@@ -73,7 +73,7 @@ class SecureDockerSandbox:
             if container:
                 try:
                     container.remove(force=True)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('secure_sandbox', exc)
                     logger.debug("Suppressed: %s", exc)
 

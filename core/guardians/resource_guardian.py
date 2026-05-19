@@ -50,7 +50,7 @@ class ResourceGuardian:
                         # In the future, this could set a 'throttle' event or signal lower batch size
                 
                 await asyncio.sleep(5)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('resource_guardian', e)
                 logger.error("ResourceGuardian monitor error: %s", e)
                 await asyncio.sleep(10)

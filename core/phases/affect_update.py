@@ -90,7 +90,7 @@ class AffectUpdatePhase(Phase):
                 # Fire and forget update
                 import asyncio
                 get_task_tracker().create_task(ls.update(valence=affect.valence, arousal=affect.arousal))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('affect_update', e)
                 logger.debug("Failed to push VAD to substrate: %s", e)
         
@@ -283,7 +283,7 @@ class AffectUpdatePhase(Phase):
                 elif rapport < 0.3:
                     # Low rapport → slight anxiety
                     affect.emotions["fear"] = min(1.0, affect.emotions.get("fear", 0.0) + 0.02)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('affect_update', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -353,7 +353,7 @@ class AffectUpdatePhase(Phase):
                 interaction_signals = ServiceContainer.get("interaction_signals", default=None)
                 if interaction_signals and hasattr(interaction_signals, "get_status"):
                     signal_status = interaction_signals.get_status() or {}
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('affect_update', exc)
                 logger.debug("Interaction signal affect feedback skipped: %s", exc)
                 signal_status = {}

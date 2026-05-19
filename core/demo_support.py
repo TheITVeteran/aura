@@ -132,7 +132,7 @@ def _load_last_activity() -> Optional[Dict[str, Any]]:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Failed to read demo activity state: %s", exc)
         return None
@@ -158,7 +158,7 @@ def _resolve_target_path(target: str, repo_root: Optional[Path] = None) -> Optio
             dirnames[:] = [d for d in dirnames if d not in _SEARCH_EXCLUDED_DIRS]
             if name in filenames:
                 return (Path(current_root) / name).resolve()
-    except Exception as exc:
+    except (OSError, IOError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Target resolution fallback failed for %s: %s", target, exc)
     return None
@@ -305,7 +305,7 @@ async def _record_recent_activity(orchestrator: Any, payload: Dict[str, Any]) ->
                 lessons=["User-requested background work completed without a follow-up prompt."],
                 importance=0.95,
             )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Failed to record demo background episode: %s", exc)
 
@@ -314,7 +314,7 @@ async def _record_recent_activity(orchestrator: Any, payload: Dict[str, Any]) ->
     setattr(orchestrator, "_suppress_unsolicited_proactivity_until", time.time() + 180.0)
     try:
         _save_last_activity(payload)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Failed to persist demo background state: %s", exc)
 
@@ -346,7 +346,7 @@ async def _record_recent_activity(orchestrator: Any, payload: Dict[str, Any]) ->
             state.cognition.modifiers = modifiers
             if hasattr(state_repo, "commit"):
                 await state_repo.commit(state, cause=f"Background diagnostic complete: {payload['target_name']}")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Failed to inject demo background state into runtime: %s", exc)
 
@@ -369,14 +369,14 @@ async def _surface_activity(orchestrator: Any, summary: str) -> None:
                 },
             )
             return
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Direct output gate emission failed: %s", exc)
 
     try:
         if hasattr(orchestrator, "emit_spontaneous_message"):
             await orchestrator.emit_spontaneous_message(summary, modality="chat", origin="user")
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Fallback spontaneous emission failed: %s", exc)
 
@@ -409,7 +409,7 @@ async def run_background_file_diagnostic(
     ok = True
     try:
         summary = await asyncio.to_thread(_summarize_target, resolved)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('demo_support', exc)
         ok = False
         logger.exception("Background diagnostic failed for %s", resolved)
@@ -515,7 +515,7 @@ async def maybe_build_recent_activity_reply(message: str, orchestrator: Any) -> 
                         f"{preamble} `{Path(target_name).name}`. "
                         f"{_truncate(str(getattr(ep, 'outcome', '') or getattr(ep, 'full_description', '') or ''), 320)}"
                     )
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Recent activity recall fallback failed: %s", exc)
     return None
@@ -554,7 +554,7 @@ async def maybe_build_priority_focus_reply(message: str, orchestrator: Any) -> O
             current_objective = _sanitize_focus_label(getattr(state.cognition, "current_objective", ""))
             active_goals = list(getattr(state.cognition, "active_goals", []) or [])
             pending = list(getattr(state.cognition, "pending_initiatives", []) or [])
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Priority probe state lookup failed: %s", exc)
 
@@ -566,7 +566,7 @@ async def maybe_build_priority_focus_reply(message: str, orchestrator: Any) -> O
         if gate and hasattr(gate, "get_conversation_status"):
             lane = gate.get_conversation_status()
             lane_state = str(lane.get("state", "") or "").strip().lower()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('demo_support', exc)
         logger.debug("Priority probe lane lookup failed: %s", exc)
 

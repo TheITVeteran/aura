@@ -195,11 +195,11 @@ class KnowledgeEnricher:
                             level="info",
                             category="Memory"
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('knowledge_enrichment', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('knowledge_enrichment', e)
                 logger.debug("Knowledge enrichment failed (non-critical): %s", e)
 
@@ -233,7 +233,7 @@ class KnowledgeEnricher:
                 items = json.loads(json_match.group(0))
                 if isinstance(items, list):
                     return items[:15]  # Cap at 15 items per extraction
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('knowledge_enrichment', e)
             logger.debug("Knowledge extraction LLM call failed: %s", e)
 

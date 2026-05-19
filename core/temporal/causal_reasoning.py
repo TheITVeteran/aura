@@ -337,7 +337,7 @@ Return JSON:
             # Hardening: Use robust extraction
             from core.utils.json_utils import extract_json
             return extract_json(response) or {}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('causal_reasoning', e)
             logger.error("Impact analysis failed: %s", e)
             return {

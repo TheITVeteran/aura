@@ -43,7 +43,7 @@ class WillEngine:
                 self._metabolic_loop(),
                 name="aura.will_engine",
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self._tick_task = get_task_tracker().create_task(self._metabolic_loop(), name="aura.will_engine")
         logger.info("☘️ [WILL] Metabolic Loop active (interval=%.1fs).", self._tick_interval)
         
@@ -66,7 +66,7 @@ class WillEngine:
                 await self.process_cycle()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('will_engine', e)
                 logger.error("🛑 [WILL] Error in metabolic loop: %s", e)
                 await asyncio.sleep(5.0)
@@ -105,7 +105,7 @@ class WillEngine:
             try:
                 ls = ServiceContainer.get("liquid_substrate")
                 arousal = float((ls.x[ls.idx_arousal] + 1.0) / 2.0) if hasattr(ls, 'x') else 0.5
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 arousal = 0.5
                 
             flow_state = old_curiosity * arousal
@@ -150,7 +150,7 @@ class WillEngine:
             for name, handler in self._evolution_registry.items():
                 try:
                     await handler(state, elapsed)
-                except Exception as eval_err:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as eval_err:
                     record_degradation('will_engine', eval_err)
                     logger.warning("⚠️ [WILL] Evolution handler '%s' failed: %s", name, eval_err)
 
@@ -183,11 +183,11 @@ class WillEngine:
                         ls.x[ls.idx_energy] = (0.8 * ls.x[ls.idx_energy]) + (0.2 * energy_val)
                         ls.x[ls.idx_curiosity] = (0.8 * ls.x[ls.idx_curiosity]) + (0.2 * curiosity_val)
                         logger.debug("🧠 [WILL] Synced metabolic state to LiquidSubstrate.")
-            except Exception as sub_err:
+            except (ImportError, AttributeError, RuntimeError) as sub_err:
                 record_degradation('will_engine', sub_err)
                 logger.debug("⚠️ [WILL] Substrate coupling failed: %s", sub_err)
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will_engine', e)
             logger.error("🛑 [WILL] Failed to process metabolic cycle: %s", e)
 

@@ -339,7 +339,7 @@ class SelfImprovementLearning:
             
             logger.info("Loaded %d learned strategies", len(self.strategies))
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('learning_system', e)
             logger.error("Failed to load learning database: %s", e)
     
@@ -355,7 +355,7 @@ class SelfImprovementLearning:
             with open(self.db_path, 'w') as f:
                 json.dump(data, f, indent=2)
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('learning_system', e)
             logger.error("Failed to save learning database: %s", e)
 

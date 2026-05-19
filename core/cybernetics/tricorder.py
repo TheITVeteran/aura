@@ -130,7 +130,7 @@ class Tricorder:
                 await self._on_violation(item)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('tricorder', e)
                 logger.debug("Tricorder violation processing error: %s", e)
 
@@ -149,7 +149,7 @@ class Tricorder:
                 await self._on_empathy_update(item)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('tricorder', e)
                 logger.debug("Tricorder empathy processing error: %s", e)
 

@@ -25,6 +25,6 @@ Estimate confidence between 0 and 1.
         content = response.content if hasattr(response, 'content') else str(response)
         try:
             return float(content.strip())
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Fallback for non-numeric responses
             return 0.5

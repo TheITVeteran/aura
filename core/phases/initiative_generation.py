@@ -34,7 +34,7 @@ class InitiativeGenerationPhase(BasePhase):
                 reason = str(gate._background_local_deferral_reason(origin="initiative_generation") or "").strip()
                 if reason:
                     return reason
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('initiative_generation', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return ""
@@ -58,7 +58,7 @@ class InitiativeGenerationPhase(BasePhase):
         try:
             from core.container import ServiceContainer
             orch = ServiceContainer.get("orchestrator", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             orch = None
         if not background_activity_allowed(
             orch,

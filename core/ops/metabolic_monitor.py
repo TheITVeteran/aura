@@ -70,7 +70,7 @@ class MetabolicMonitor:
             try:
                 self.get_current_metabolism()
                 time.sleep(interval)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('metabolic_monitor', e)
                 logger.error("Metabolic background loop error: %s", e)
                 time.sleep(interval * 2)
@@ -142,7 +142,7 @@ class MetabolicMonitor:
                     cpu_load=cpu,
                     memory_usage=rss_mb
                 )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('metabolic_monitor', e)
                 logger.debug("Registry sync failed in metabolism: %s", e)
             
@@ -152,7 +152,7 @@ class MetabolicMonitor:
             
             return snapshot
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('metabolic_monitor', e)
             logger.error("Failed to collect metabolic data: %s", e)
             return MetabolismSnapshot(0, 0, 0, 0, 0, 0.5)
@@ -197,7 +197,7 @@ class PersistentComputeCostTracker:
                 data = json.loads(self.state_path.read_text())
                 self.total_ergs = data.get("total_ergs", 0.0)
                 logger.info("🔋 Loaded %.2f persistent ergs.", self.total_ergs)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('metabolic_monitor', e)
                 logger.warning("Failed to load metabolic state: %s", e)
 
@@ -209,7 +209,7 @@ class PersistentComputeCostTracker:
                 "total_ergs": self.total_ergs,
                 "last_updated": time.time()
             }))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('metabolic_monitor', e)
             logger.debug("Failed to save metabolic state: %s", e)
 

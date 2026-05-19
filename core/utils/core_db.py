@@ -53,7 +53,7 @@ class AuraCoreDB:
                 # Indexing for performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_vfallback_coll ON vector_fallback(collection)")
             logger.info("✓ Aura Core DB Initialized at %s", self.db_path)
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('core_db', e)
             logger.error("Failed to initialize core DB: %s", e)
         finally:

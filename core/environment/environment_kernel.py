@@ -314,7 +314,7 @@ class EnvironmentKernel:
             return frame
         try:
             command = self.command_compiler.compile(intent, trace_id=receipt.receipt_id, receipt_id=receipt.receipt_id)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             result = ExecutionResult(False, receipt.receipt_id, None, error=f"action_compilation_error:{type(exc).__name__}:{exc}")
             frame.execution_result = result
             receipt.finalize(status="failed", belief_hash_after=frame.belief_hash_after)
@@ -424,7 +424,7 @@ class EnvironmentKernel:
                     score=outcome.success_score,
                     consequences=observed_events,
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 from core.runtime.errors import record_degradation
                 record_degradation("environment_kernel", exc, severity="warning", action="continued after outcome ledger write failed")
 
@@ -443,7 +443,7 @@ class EnvironmentKernel:
                     risk_score=max(outcome.harm_score, outcome.surprise if outcome.surprise >= 0.5 else 0.0),
                     failure_conditions=[] if outcome.success_score > 0.5 else [outcome.lesson or "low_outcome_score"],
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 from core.runtime.errors import record_degradation
                 record_degradation("environment_kernel", exc, severity="warning", action="continued after procedural memory write failed")
 
@@ -455,7 +455,7 @@ class EnvironmentKernel:
                     importance=1.0 if outcome.is_death else outcome.surprise,
                     tags=[self.environment_id, intent.name] + observed_events[:3],
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 from core.runtime.errors import record_degradation
                 record_degradation("environment_kernel", exc, severity="warning", action="continued after episodic memory write failed")
 
@@ -491,7 +491,7 @@ class EnvironmentKernel:
         if self.macro_inducer:
             try:
                 self.macro_inducer.record_step(intent.name)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 from core.runtime.errors import record_degradation
                 record_degradation("environment_kernel", exc, severity="debug", action="skipped macro induction for this step")
 
@@ -557,12 +557,12 @@ class EnvironmentKernel:
         if self.outcome_ledger:
             try:
                 self.outcome_ledger.save()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("environment_kernel", exc, severity="warning", action="continued after outcome ledger save failed")
         if self.procedural_store:
             try:
                 self.procedural_store.save()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("environment_kernel", exc, severity="warning", action="continued after procedural store save failed")
 
     def _trace(self, frame: EnvironmentFrame, *, latency_ms: float = 0.0) -> None:
@@ -825,7 +825,7 @@ class EnvironmentKernel:
                 source="environment_kernel",
                 ttl=900.0,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("environment_kernel", exc, severity="warning", action="continued after observation publish failed")
 
     def _publish_outcome(self, frame: EnvironmentFrame, semantic_events: list, resource_delta: dict[str, float]) -> None:
@@ -842,7 +842,7 @@ class EnvironmentKernel:
                 resource_delta=resource_delta,
                 receipt_id=frame.receipt.receipt_id if frame.receipt else None,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("environment_kernel", exc, severity="warning", action="continued after outcome publish failed")
 
     def _publish_experience_outcome(

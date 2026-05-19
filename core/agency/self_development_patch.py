@@ -115,7 +115,7 @@ def _derive_initiatives_from_audit() -> List[Dict[str, Any]]:
     try:
         from core.consciousness.unified_audit import get_audit_suite
         suite = get_audit_suite()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('self_development_patch', exc)
         logger.debug("SelfDevPatch: could not import audit suite — %s", exc)
         return []

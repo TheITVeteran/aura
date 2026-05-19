@@ -58,7 +58,7 @@ class BeliefChallenger:
                 "component": "belief_challenger",
                 "hooks_into": ["belief_revision_engine", "epistemic_tracker", "api_adapter"]
             })
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('belief_challenger', _e)
             logger.error("🛑 BeliefChallenger: Failed to register with event bus: %s", _e)
 
@@ -88,7 +88,7 @@ class BeliefChallenger:
             except asyncio.CancelledError:
                 logger.debug("BeliefChallenger loop cancelled")
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('belief_challenger', e)
                 logger.error("Error in BeliefChallenger loop: %s", e)
                 await asyncio.sleep(60) # Back off on error
@@ -142,7 +142,7 @@ Response format: Synthesis focused on resolving the logical tension."""
             synthesis = await self._api.generate(prompt, {"model_tier": "api_deep", "purpose": "contradiction_resolution"})
             if synthesis and self._beliefs:
                 await self._beliefs.process_new_claim(claim=synthesis, confidence=0.7, domain="logic", source="dialectical_synthesis")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('belief_challenger', e)
             logger.warning("Contradiction resolution failed: %s", e)
 
@@ -207,7 +207,7 @@ Be intellectually honest. Growth requires being wrong sometimes."""
                             source="belief_challenger",
                             tags=["belief_revision", "growth"],
                         )
-                except Exception as persist_err:
+                except (ImportError, AttributeError, RuntimeError) as persist_err:
                     record_degradation('belief_challenger', persist_err)
                     logger.debug("Belief revision persistence failed: %s", persist_err)
             else:
@@ -216,7 +216,7 @@ Be intellectually honest. Growth requires being wrong sometimes."""
                     self._epistemic.update_node(belief_text, confidence_delta=0.05, depth_delta=0.1)
                 logger.info("🛡️ Belief survived challenge. Conviction increased.")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_challenger', e)
             logger.warning("Dialectical pass failed: %s", e)
 

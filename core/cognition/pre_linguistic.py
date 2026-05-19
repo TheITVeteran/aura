@@ -223,7 +223,7 @@ class PreLinguisticEngine:
             a = float(getattr(affect, "arousal", 0.5))
             e = str(getattr(affect, "dominant_emotion", "neutral"))
             return v, a, e
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("affect", exc)
             return 0.0, 0.5, "neutral"
 
@@ -256,7 +256,7 @@ class PreLinguisticEngine:
                         max_urgency = depletion
                         strongest = drive_name
             return strongest, round(max_urgency, 3)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("drives", exc)
             return "", 0.0
 
@@ -274,7 +274,7 @@ class PreLinguisticEngine:
                 if not getattr(ev, "expired", True):
                     max_sal = max(max_sal, float(getattr(ev, "salience", 0.0)))
             return round(max_sal, 3)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("world_salience", exc)
             return 0.0
 
@@ -287,7 +287,7 @@ class PreLinguisticEngine:
             coherence = float(getattr(sa, "field_coherence", 0.6))
             approach = float(getattr(sa, "somatic_approach", 0.0))
             return coherence, approach
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("substrate", exc)
             return 0.6, 0.0
 
@@ -302,7 +302,7 @@ class PreLinguisticEngine:
             if hasattr(memory, "has_relevant_context"):
                 return float(memory.has_relevant_context(objective[:100]))
             return 0.3
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("memory_relevance", exc)
             return 0.0
 
@@ -314,7 +314,7 @@ class PreLinguisticEngine:
                 return 0
             reports = mc.drain_pending_reports()
             return sum(1 for r in reports if not r.success)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("motor_cortex", exc)
             return 0
 
@@ -436,7 +436,7 @@ class PreLinguisticEngine:
                 "limb": limb,
                 "latency_ms": round(latency_ms, 3),
             })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             self._record_signal_degradation("event_publish", exc)
 
         logger.debug(

@@ -92,7 +92,7 @@ Do NOT mention the critique process — just deliver the refined answer."""
             )
             try:
                 critique = await self.think_fn(critique_prompt)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('critic', exc)
                 logger.warning("Critique failed (round %d): %s", round_num + 1, exc)
                 break
@@ -112,7 +112,7 @@ Do NOT mention the critique process — just deliver the refined answer."""
                 refined = await self.think_fn(refine_prompt)
                 current = refined
                 logger.info("🔍 Response refined (round %d, %d chars)", round_num + 1, len(current))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('critic', exc)
                 logger.warning("Refinement failed (round %d): %s", round_num + 1, exc)
                 break

@@ -117,7 +117,7 @@ class AddBeliefSkill(BaseSkill):
                     source=source,
                 )
                 stored_layers.append("belief_engine")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("BeliefRevisionEngine store failed: %s", e)
 
@@ -131,7 +131,7 @@ class AddBeliefSkill(BaseSkill):
                     confidence=confidence,
                 )
                 stored_layers.append("world_model")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("EpistemicState store failed: %s", e)
 
@@ -147,7 +147,7 @@ class AddBeliefSkill(BaseSkill):
             )
             if mem_resp.get("ok"):
                 stored_layers.append(f"memfs:{block}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("MemFS store failed: %s", e)
 
@@ -163,7 +163,7 @@ class AddBeliefSkill(BaseSkill):
                     tags=["belief", source.lower(), relation.lower()],
                 )
                 stored_layers.append("vector_memory")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("Vector memory store failed: %s", e)
 
@@ -177,7 +177,7 @@ class AddBeliefSkill(BaseSkill):
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("Belief Updated", summary, level="info", category="WorldModel")
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         return {
@@ -236,7 +236,7 @@ class QueryBeliefsSkill(BaseSkill):
                         conf = getattr(b, "confidence", 0.5)
                         beliefs.append(f"{content} (confidence: {conf:.2f})")
                 sources_checked.append("belief_engine")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("BeliefRevisionEngine query failed: %s", e)
 
@@ -251,7 +251,7 @@ class QueryBeliefsSkill(BaseSkill):
                     if belief_str not in beliefs:
                         beliefs.append(belief_str)
                 sources_checked.append("world_model")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("EpistemicState query failed: %s", e)
 
@@ -271,7 +271,7 @@ class QueryBeliefsSkill(BaseSkill):
                         if content not in beliefs:
                             beliefs.append(content[:200])
                     sources_checked.append("vector_memory")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("Vector memory query failed: %s", e)
 
@@ -288,7 +288,7 @@ class QueryBeliefsSkill(BaseSkill):
                         if subject.lower() in line.lower() and line.strip() not in beliefs:
                             beliefs.append(line.strip())
             sources_checked.append("memfs")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_ops', e)
             logger.debug("MemFS query failed: %s", e)
 

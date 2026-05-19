@@ -95,7 +95,7 @@ class BenchmarkRunner:
                 if kernel.episode and kernel.episode.terminal:
                     success = kernel.episode.success if hasattr(kernel.episode, 'success') else False
                     break
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             self.log.error(f"Benchmark run {run_id} failed with error: {e}")
         finally:
             await kernel.close()

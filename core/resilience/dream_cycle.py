@@ -44,7 +44,7 @@ class DreamCycle:
                 coord = get_dream_coordinator()
                 # Run via coordinator lock
                 await coord.run_resilience_dream()
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('dream_cycle', e)
                 logger.error("Dream Cycle failed: %s", e)
 
@@ -56,7 +56,7 @@ class DreamCycle:
             if not runtime_feature_enabled(self.orchestrator, "dream_cycle", default=True):
                 logger.debug("Dream cycle skipped by runtime mode configuration.")
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('dream_cycle', exc)
             logger.debug("Dream cycle runtime-mode check skipped: %s", exc)
 
@@ -82,10 +82,10 @@ class DreamCycle:
                     msg = data.get("message")
                     if msg:
                         valid_messages.append(msg)
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     continue
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('dream_cycle', e)
             logger.error("Failed to read DLQ: %s", e)
             return

@@ -53,7 +53,7 @@ class Soul:
             spl = ServiceContainer.get("self_prediction", default=None)
             if spl and hasattr(spl, "get_surprise_signal"):
                 surprise_boost = spl.get_surprise_signal() * 0.5 # Boost curiosity by 50% of surprise
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('soul', e)
             capture_and_log(e, {'module': __name__})
 
@@ -120,7 +120,7 @@ class Soul:
                     # Fallback if Workspace is offline
                     self.orchestrator.volition.last_speak_time = 0
                     logger.info("✨ SOUL: Signaled Volition to prioritize connection (fallback).")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('soul', e)
                 logger.error("✨ SOUL: Error satisfying connection drive: %s", e)
             
@@ -131,6 +131,6 @@ class Soul:
                 try:
                     # In a real system, this would be a specialized diagnostic skill
                     await self.orchestrator.execute_tool("system_health", {})
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     # Fallback log if tool doesn't exist
                     logger.info("✨ SOUL: competence drive signaled — system analysis recommended.")

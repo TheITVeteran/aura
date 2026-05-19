@@ -31,7 +31,7 @@ class DreamCoordinator:
                 self._last_run[name] = time.time()
                 logger.info(f"DreamCoordinator: Finished {name} in {elapsed:.2f}s")
                 return result
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation("dream_coordinator", e)
                 logger.error(f"DreamCoordinator: Failed {name}: {e}")
                 return None

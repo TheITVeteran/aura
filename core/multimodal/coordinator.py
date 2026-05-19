@@ -84,7 +84,7 @@ class StreamingCoordinator:
         for q in list(self._subscribers.get(turn_id, [])):
             try:
                 q.put_nowait(ev)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         return ev
 

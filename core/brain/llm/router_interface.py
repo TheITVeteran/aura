@@ -50,7 +50,7 @@ class RouterLLMInterface(LLMInterface):
                 return result[0]
             else:
                 return loop.run_until_complete(self.generate(prompt, **opts))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             # Last resort
             new_loop = asyncio.new_event_loop()
             return new_loop.run_until_complete(self.generate(prompt, **opts))

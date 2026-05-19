@@ -141,7 +141,7 @@ class LiquidSubstrate:
             self._chaos_engine = get_chaos_engine(
                 ChaosConfig(state_dim=self.config.neuron_count)
             )
-        except Exception as _chaos_err:
+        except (ImportError, AttributeError, RuntimeError) as _chaos_err:
             record_degradation('liquid_substrate', _chaos_err)
             logger.debug("ChaosEngine not available: %s", _chaos_err)
 
@@ -169,7 +169,7 @@ class LiquidSubstrate:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             self._load_state()
             self._init_soma()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('liquid_substrate', e)
             logger.error("Failed to initialize substrate directory: %s", e)
         
@@ -188,7 +188,7 @@ class LiquidSubstrate:
                 hypha = mycelium.get_hypha("consciousness", "substrate")
                 if hypha:
                     hypha.pulse(success=success)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('liquid_substrate', e)
             logger.debug("Substrate pulse failed: %s", e)
 
@@ -254,7 +254,7 @@ class LiquidSubstrate:
                     try:
                         from core.consciousness.subcortical_core import get_subcortical_core
                         dt *= get_subcortical_core().get_substrate_gain_multiplier()
-                    except Exception as _sub_exc:
+                    except (ImportError, AttributeError, RuntimeError) as _sub_exc:
                         record_degradation('liquid_substrate', _sub_exc)
                         # Degrade gracefully if subcortical core unavailable
 
@@ -299,7 +299,7 @@ class LiquidSubstrate:
                                 coherence=float(_coh),
                                 em_field=float(_em)
                             )
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('liquid_substrate', e)
                             logger.debug("Registry sync failed in substrate: %s", e)
 
@@ -311,7 +311,7 @@ class LiquidSubstrate:
                     await asyncio.sleep(sleep_time)
                 except asyncio.CancelledError:
                     raise
-                except Exception as loop_e:
+                except (ImportError, AttributeError, RuntimeError) as loop_e:
                     record_degradation('liquid_substrate', loop_e)
                     logger.error("Liquid Substrate loop error: %s", loop_e)
                     await asyncio.sleep(1.0) # Backoff on error
@@ -372,7 +372,7 @@ class LiquidSubstrate:
                 try:
                     chaos_perturbation = self._chaos_engine.tick(dt)
                     new_x_np = np.clip(new_x_np + chaos_perturbation, -1.0, 1.0)
-                except Exception as _ce:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _ce:
                     record_degradation('liquid_substrate', _ce)
                     logger.debug("Controlled chaos perturbation skipped: %s", _ce)
 
@@ -444,7 +444,7 @@ class LiquidSubstrate:
                     self.x[self.idx_frustration] = min(1.0, self.x[self.idx_frustration] + (0.01 * fatigue * dt))
             else:
                 self.x[self.idx_energy] = min(1.0, self.x[self.idx_energy] + (0.005 * dt))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('liquid_substrate', e)
             capture_and_log(e, {'module': __name__})
 
@@ -481,7 +481,7 @@ class LiquidSubstrate:
                     if _sv.decision == AuthorizationDecision.BLOCK:
                         logger.debug("Substrate update BLOCKED by authority (magnitude=%.3f)", _magnitude)
                         return
-        except Exception as _gate_err:
+        except (ImportError, AttributeError, RuntimeError) as _gate_err:
             record_degradation('liquid_substrate', _gate_err)
             logger.warning("Substrate authority gate FAILED — BLOCKING update (fail-closed): %s", _gate_err)
             # Form a scar so the system remembers this gate failure
@@ -496,7 +496,7 @@ class LiquidSubstrate:
                     verified_threat=True,
                     confidence=0.9,
                 )
-            except Exception as scar_exc:
+            except (ImportError, AttributeError, RuntimeError) as scar_exc:
                 record_degradation("liquid_substrate", scar_exc)
                 logger.debug("Scar formation skipped after substrate gate failure: %s", scar_exc)
             return  # FAIL-CLOSED: gate exception → block the mutation
@@ -691,7 +691,7 @@ class LiquidSubstrate:
                 self._current_phi = phi
             else:
                 self._current_phi = 0.0
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('liquid_substrate', e)
             logger.debug("RIIU Φ computation skipped: %s", e)
 
@@ -730,7 +730,7 @@ class LiquidSubstrate:
                             pred_error = float(getattr(current, "prediction_error", 0.0))
                             dw = stdp.deliver_reward(surprise, pred_error)
                             self.W = stdp.apply_to_connectivity(self.W, dw)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('liquid_substrate', e)
                 logger.debug("STDP plasticity step skipped: %s", e)
 
@@ -797,7 +797,7 @@ class LiquidSubstrate:
                         original_weight,
                         weight,
                     )
-        except Exception as _stim_gate_err:
+        except (ImportError, AttributeError, RuntimeError) as _stim_gate_err:
             record_degradation('liquid_substrate', _stim_gate_err)
             logger.warning("Stimulus injection gate FAILED — BLOCKING injection (fail-closed): %s", _stim_gate_err)
             # Form a scar so the system remembers this gate failure
@@ -812,7 +812,7 @@ class LiquidSubstrate:
                     verified_threat=True,
                     confidence=0.85,
                 )
-            except Exception as scar_exc:
+            except (ImportError, AttributeError, RuntimeError) as scar_exc:
                 record_degradation("liquid_substrate", scar_exc)
                 logger.debug("Scar formation skipped after stimulus gate failure: %s", scar_exc)
             return  # FAIL-CLOSED: gate exception → block the injection
@@ -873,12 +873,12 @@ class LiquidSubstrate:
                     np.savez_compressed(f, x=self.x, W=self.W, tick=self.tick_count)
                 os.replace(temp_path, str(self.state_path))
                 logger.info("💾 Substrate state saved (atomic)")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('liquid_substrate', e)
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise e
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('liquid_substrate', e)
             logger.error("Failed to save substrate state: %s", e)
 
@@ -942,7 +942,7 @@ class LiquidSubstrate:
                 self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
                 self.tick_count = int(data['tick'])
             logger.info("Substrate state restored.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('liquid_substrate', e)
             logger.error("Failed to load substrate state: %s", e)
             self.x = np.zeros(self.config.neuron_count)
@@ -1011,7 +1011,7 @@ class LiquidSubstrate:
                     multiplier = max(multiplier, 4.0)
                 elif idle_seconds >= 180.0:
                     multiplier = max(multiplier, 2.0)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('liquid_substrate', e)
             logger.debug("Idle throttling check failed: %s", e)
 

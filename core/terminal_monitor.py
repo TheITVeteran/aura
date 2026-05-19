@@ -123,11 +123,11 @@ class TerminalMonitor:
                     schema_version=1,
                     schema_name="terminal_error_blacklist",
                 )
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 tmp = BLACKLIST_PATH.with_suffix(BLACKLIST_PATH.suffix + ".tmp")
                 atomic_write_text(tmp, json.dumps(payload), encoding="utf-8")
                 tmp.replace(BLACKLIST_PATH)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('terminal_monitor', e)
             logger.error(f"Failed to save blacklist: {e}")
 
@@ -151,7 +151,7 @@ class TerminalMonitor:
                         source=record.name,
                     )
                     self.monitor._ingest_error(entry)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('terminal_monitor', e)
                     import sys
                     print(f"TerminalMonitor Log Error: {e}", file=sys.stderr)
@@ -235,7 +235,7 @@ class TerminalMonitor:
                         ttl=1800,
                     )
                     break
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("terminal_monitor", exc)
             logger.debug("TerminalMonitor world-state integration skipped: %s", exc)
 
@@ -264,7 +264,7 @@ class TerminalMonitor:
                 },
             )
             self._ingest_error(entry)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('terminal_monitor', e)
             logger.debug("TerminalMonitor degraded-event ingest failed: %s", e)
 
@@ -281,7 +281,7 @@ class TerminalMonitor:
         try:
             from core.container import ServiceContainer
             reliability = ServiceContainer.get("reliability_engine", default=None)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('terminal_monitor', _e)
             logger.debug('Ignored Exception in terminal_monitor.py: %s', _e)
 

@@ -70,7 +70,7 @@ class CodingSkill(BaseSkill):
                 "thought_process": thought,
                 "note": "Generated through foreground coding reasoning",
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('coding_skill', e)
             logger.error(f"Coding skill failed: {e}")
             return {"ok": False, "error": str(e)}

@@ -83,7 +83,7 @@ class MemoryGuard:
                                         (hasattr(gate, "_foreground_user_turn_active") and gate._foreground_user_turn_active())
                                         or (hasattr(gate, "_foreground_owner_active") and gate._foreground_owner_active())
                                     )
-                                except Exception:
+                                except (RuntimeError, AttributeError, TypeError):
                                     foreground_busy = False
                             if foreground_busy:
                                 logger.warning(
@@ -93,7 +93,7 @@ class MemoryGuard:
                             elif router and hasattr(router, "clear_cache"):
                                 logger.info("MemoryGuard: Clearing LLM Router cache")
                                 router.clear_cache()
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('memory_guard', e)
                             logger.error("MemoryGuard: Cache purge failed: %s", e)
                     
@@ -110,7 +110,7 @@ class MemoryGuard:
                         if router and not getattr(router, "high_pressure_mode", False):
                             logger.warning("MemoryGuard: Triggering HIGH PRESSURE mode in LLM Router (%s%%)", pressure)
                             router.high_pressure_mode = True
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('memory_guard', e)
                         logger.error("MemoryGuard: Setting high pressure mode failed: %s", e)
 
@@ -120,7 +120,7 @@ class MemoryGuard:
                             if gate and hasattr(gate, "_shed_background_workers_for_memory_pressure"):
                                 logger.warning("MemoryGuard: Shedding background local-runtime workers to protect Cortex (%s%%)", pressure)
                                 await gate._shed_background_workers_for_memory_pressure()
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('memory_guard', e)
                             logger.error("MemoryGuard: Background MLX shed failed: %s", e)
 
@@ -132,7 +132,7 @@ class MemoryGuard:
                             if router and getattr(router, "high_pressure_mode", False):
                                 logger.info("MemoryGuard: System stabilized. Disabling HIGH PRESSURE mode.")
                                 router.high_pressure_mode = False
-                        except Exception:
+                        except (ImportError, AttributeError, RuntimeError):
                             logger.debug("MemoryGuard: Manual gc.collect() failed.")
                         
                         self.consecutive_strikes = 0
@@ -147,7 +147,7 @@ class MemoryGuard:
                 sleep_time = 5 if self.consecutive_strikes > 0 else 15
                 await asyncio.sleep(sleep_time)
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_guard', e)
                 # Focus Area 3 - Catch Exception (not BaseException) to allow CancelledError
                 # to propagate and shut down the task cleanly.

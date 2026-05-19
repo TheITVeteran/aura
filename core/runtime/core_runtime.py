@@ -16,7 +16,7 @@ from core.resilience.state_manager import StateManager
 def _get_mx():
     try:
         import mlx.core as mx
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return None
     return mx
 
@@ -64,7 +64,7 @@ class CoreRuntime:
                                     mx.clear_cache()
                                 finally:
                                     sentinel.release()
-                        except Exception as _exc:
+                        except (ImportError, AttributeError, RuntimeError) as _exc:
                             record_degradation('core_runtime', _exc)
                             logger.debug("Suppressed Exception: %s", _exc)
 

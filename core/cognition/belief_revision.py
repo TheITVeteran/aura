@@ -96,7 +96,7 @@ class BeliefRevisionEngine:
                 )
                 self._beliefs[belief.id] = belief
             logger.info("📖 Loaded %d beliefs from knowledge graph", len(self._beliefs))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('belief_revision', e)
             logger.warning("Failed to load beliefs: %s", e)
 
@@ -151,7 +151,7 @@ class BeliefRevisionEngine:
                 level="info",
                 category="Cognition"
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('belief_revision', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -224,7 +224,7 @@ class BeliefRevisionEngine:
                         level="warning" if abs(old_conf - belief.confidence) > 0.2 else "info",
                         category="Cognition"
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('belief_revision', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
 
@@ -236,7 +236,7 @@ class BeliefRevisionEngine:
                     "active": belief.active,
                 }
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('belief_revision', e)
             logger.debug("LLM belief revision failed: %s", e)
 
@@ -319,7 +319,7 @@ class BeliefRevisionEngine:
                 confidence=belief.confidence,
                 metadata=metadata,
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('belief_revision', e)
             logger.warning("Failed to persist belief: %s", e)
 

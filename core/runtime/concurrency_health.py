@@ -107,7 +107,7 @@ class ConcurrencyHealthMonitor:
             stats = tracker.get_stats()
             stats["stale_tasks"] = tracker.get_stale_tasks(min_age_s=self.stale_task_age_s, include_supervised=True)[:10]
             return stats
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("concurrency_health", exc, severity="warning", action="task tracker unavailable in health sample")
             return {"active": 0, "failed_total": 0, "recently_completed": [], "stale_tasks": [], "error": repr(exc)}
 
@@ -117,7 +117,7 @@ class ConcurrencyHealthMonitor:
             from core.resilience.lock_watchdog import get_lock_watchdog
 
             return get_lock_watchdog().get_snapshot()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("concurrency_health", exc, severity="warning", action="lock watchdog unavailable in health sample")
             return {"active_count": 0, "locks": [], "threshold_s": 0.0, "error": repr(exc)}
 
@@ -128,7 +128,7 @@ class ConcurrencyHealthMonitor:
             queue = get_dlq()
             stats = queue.stats(recent_window_s=self.recent_window_s)
             return stats
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("concurrency_health", exc, severity="warning", action="dead letter queue unavailable in health sample")
             return {"total": 0, "recent_count": 0, "recent": [], "error": repr(exc)}
 
@@ -138,7 +138,7 @@ class ConcurrencyHealthMonitor:
             from core.runtime.errors import get_degradation_tracker
 
             return get_degradation_tracker().status()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("concurrency_health", exc, severity="warning", action="degradation tracker unavailable in health sample")
             return {"total_degradations": 0, "error": repr(exc)}
 

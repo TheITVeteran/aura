@@ -380,7 +380,7 @@ class TrustEngine:
                             "level": new_level.value,
                             "metadata": {"system": True},
                         })
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation("trust_engine", exc)
                     logger.debug("Trust UI notification failed: %s", exc)
 
@@ -407,7 +407,7 @@ class TrustEngine:
             ep.flag_threat("hostile_user_interaction",
                            f"Trust engine detected {self._context.hostile_signals} hostile signals. "
                            f"Suspicious signals: {self._context.suspicious_signals}.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('trust_engine', e)
             logger.debug("Emergency notification failed: %s", e)
 
@@ -416,7 +416,7 @@ class TrustEngine:
             entry = {"timestamp": time.time(), "event": event_type, **data}
             with open(TRUST_LOG_PATH, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as _exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('trust_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

@@ -51,7 +51,7 @@ class ActionConsequenceGraph:
             if not approved:
                 logger.warning("🚫 ACG write blocked: %s", reason)
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('acg', exc)
             logger.debug("ACG constitutional gate skipped: %s", exc)
             runtime_live = bool(
@@ -122,7 +122,7 @@ class ActionConsequenceGraph:
             os.makedirs(os.path.dirname(self.persist_path), exist_ok=True)
             with open(self.persist_path, "w") as f:
                 json.dump(self.links, f, indent=2)
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('acg', e)
             logger.error("Failed to save ACG: %s", e)
 
@@ -132,7 +132,7 @@ class ActionConsequenceGraph:
                 with open(self.persist_path, "r") as f:
                     self.links = json.load(f)
                 logger.info("Loaded %d causal links from disk", len(self.links))
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('acg', e)
             logger.warning("Failed to load ACG: %s", e)
 

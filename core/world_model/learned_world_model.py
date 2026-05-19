@@ -376,7 +376,7 @@ class LearnedWorldModel:
                 step_count=np.array([self._step_count]),
             )
             logger.debug("World model saved (step %d)", self._step_count)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("World model save failed: %s", exc)
 
     def _load(self) -> None:
@@ -404,7 +404,7 @@ class LearnedWorldModel:
                 logger.info("World model restored (step %d)", self._step_count)
             else:
                 logger.warning("World model dimension mismatch — reinitializing")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("World model load failed: %s", exc)
 
     # ── Public API ──────────────────────────────────────────────────────

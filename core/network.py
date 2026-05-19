@@ -100,7 +100,7 @@ class RobustHTTP:
             else:
                 self.stats.failed_requests += 1
             return response
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('network', e)
             self.stats.failed_requests += 1
             logger.error("GET %s failed: %s", url, e)
@@ -120,7 +120,7 @@ class RobustHTTP:
             else:
                 self.stats.failed_requests += 1
             return response
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('network', e)
             self.stats.failed_requests += 1
             logger.error("POST %s failed: %s", url, e)

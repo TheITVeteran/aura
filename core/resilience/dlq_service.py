@@ -57,7 +57,7 @@ class DeadLetterQueue:
                 f.flush()
                 os.fsync(f.fileno())
             logger.info("💀 DLQ: Captured cognitive failure (%s)", err_key)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dlq_service', e)
             logger.error("Failed to write to DLQ: %s", e)
 

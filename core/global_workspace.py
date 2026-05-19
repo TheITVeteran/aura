@@ -111,7 +111,7 @@ class GlobalWorkspace:
                 return priority * (1.0 - (hunger * 0.5))
 
             return priority
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('global_workspace', e)
             logger.debug("Negotiation error (defaulting to raw priority): %s", e)
             return priority
@@ -137,7 +137,7 @@ class GlobalWorkspace:
                 r = s(wi)
                 if asyncio.iscoroutine(r):
                     await r
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('global_workspace', e)
                 logger.error("Subscriber failed processing %s: %s", wi.id, e)
         

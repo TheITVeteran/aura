@@ -138,7 +138,7 @@ class RuntimeHygieneManager:
         if self._tracemalloc_started_by_hygiene and tracemalloc.is_tracing():
             try:
                 tracemalloc.stop()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: tracemalloc stop failed: %s", exc)
             finally:
@@ -165,14 +165,14 @@ class RuntimeHygieneManager:
         if self._proc is not None:
             try:
                 rss_bytes = int(self._proc.memory_info().rss)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: failed to read RSS: %s", exc)
         traced_bytes = 0
         try:
             if tracemalloc.is_tracing():
                 traced_bytes, _peak = tracemalloc.get_traced_memory()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: tracemalloc snapshot failed: %s", exc)
 
@@ -255,7 +255,7 @@ class RuntimeHygieneManager:
             loop = self._original_new_event_loop()
             try:
                 tracker.install_loop_hygiene(loop)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: failed to install task factory on new loop: %s", exc)
             return loop
@@ -324,7 +324,7 @@ class RuntimeHygieneManager:
         try:
             tracemalloc.start(self.tracemalloc_frames)
             self._tracemalloc_started_by_hygiene = True
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: tracemalloc start failed: %s", exc)
 
@@ -333,7 +333,7 @@ class RuntimeHygieneManager:
             return
         try:
             children = list(self._proc.children(recursive=True))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: existing child adoption skipped: %s", exc)
             return
@@ -346,7 +346,7 @@ class RuntimeHygieneManager:
                     for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline", "status"])
                     if int((proc.info or {}).get("ppid") or 0) == parent_pid
                 ]
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: process_iter child adoption skipped: %s", exc)
                 children = []
@@ -359,17 +359,17 @@ class RuntimeHygieneManager:
         for child in children:
             try:
                 pid = int(getattr(child, "pid", 0) or 0)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 pid = 0
             if pid and pid in tracked_pids:
                 continue
             try:
                 command_parts = list(child.cmdline() or [])
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 command_parts = []
             try:
                 name = str(child.name() or f"pid:{pid}")
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 name = f"pid:{pid}" if pid else "unknown_child"
             key = -(pid or len(self._process_records) + 1)
             self._process_records[key] = ProcessRecord(
@@ -476,7 +476,7 @@ class RuntimeHygieneManager:
             if hasattr(proc, "poll"):
                 try:
                     return_code = proc.poll()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: subprocess poll failed: %s", exc)
                     return_code = None
@@ -486,7 +486,7 @@ class RuntimeHygieneManager:
             elif hasattr(proc, "is_alive"):
                 try:
                     alive = proc.is_alive()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: multiprocessing liveness failed: %s", exc)
                     alive = False
@@ -499,7 +499,7 @@ class RuntimeHygieneManager:
                 try:
                     alive = bool(proc.is_running())
                     status = proc.status() if alive else "stopped"
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: adopted child liveness failed: %s", exc)
                     alive = False
@@ -547,7 +547,7 @@ class RuntimeHygieneManager:
             if getattr(record, "pid", None):
                 try:
                     active_registered_pids.add(int(record.pid))
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
             if record.kind == "subprocess":
                 active_subprocesses += 1
@@ -557,7 +557,7 @@ class RuntimeHygieneManager:
         if self._proc is not None:
             try:
                 active_children = list(self._proc.children(recursive=True))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
                 active_children = []
@@ -624,7 +624,7 @@ class RuntimeHygieneManager:
             try:
                 module = __import__(module_name, fromlist=[registry_attr])
                 registry = dict(getattr(module, registry_attr, {}) or {})
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 continue
 
             for client_path, client in registry.items():
@@ -632,7 +632,7 @@ class RuntimeHygieneManager:
                     continue
                 try:
                     lane = client.get_lane_status()
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     continue
                 state = str(lane.get("state", "") or "").strip().lower()
                 current_request = float(lane.get("current_request_started_at", 0.0) or 0.0)
@@ -663,7 +663,7 @@ class RuntimeHygieneManager:
             return 0
         try:
             return len(self._proc.children(recursive=True))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
             return 0
@@ -676,9 +676,9 @@ class RuntimeHygieneManager:
                         proc.terminate()
                         try:
                             await asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s)
-                        except Exception:
+                        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
                             proc.kill()
-                except Exception as exc:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: subprocess cleanup failed: %s", exc)
             elif hasattr(proc, "is_alive"):
@@ -688,7 +688,7 @@ class RuntimeHygieneManager:
                         await asyncio.to_thread(proc.join, self.process_shutdown_timeout_s)
                         if proc.is_alive():
                             proc.kill()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: multiprocessing cleanup failed: %s", exc)
 
@@ -702,7 +702,7 @@ class RuntimeHygieneManager:
                 continue
             try:
                 await asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: thread join failed: %s", exc)
 

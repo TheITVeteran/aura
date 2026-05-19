@@ -117,7 +117,7 @@ class IdentityChronicle:
                 from core.config import config
 
                 db_path = config.paths.data_dir / "identity_chronicle.db"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 db_path = Path.home() / ".aura" / "identity_chronicle.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -321,7 +321,7 @@ class IdentityChronicle:
                             )
             except queue.Empty:
                 continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 logger.debug("ID-RAG async writer error: %s", e)
                 time.sleep(1.0)
 
@@ -329,7 +329,7 @@ class IdentityChronicle:
     def _row_to_fact(row: sqlite3.Row) -> IdentityFact:
         try:
             tags = tuple(json.loads(row["tags"] or "[]"))
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             tags = ()
         return IdentityFact(
             subject=row["subject"],

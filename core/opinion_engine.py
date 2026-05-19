@@ -112,7 +112,7 @@ Respond in JSON only:
             # Try to parse directly or via self-healing
             try:
                 data = json.loads(response)
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('opinion_engine', e)
                 logger.debug("Failed to form opinion on segment: %s", e)
                 from core.utils.json_utils import SelfHealingJSON
@@ -141,7 +141,7 @@ Respond in JSON only:
             )
             return opinion
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('opinion_engine', e)
             logger.debug("[Opinion] Formation failed for '%s': %s", topic, e)
             return None
@@ -234,7 +234,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
             opinion.last_updated = time.time()
             self._save()
             return response.strip()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('opinion_engine', e)
             logger.debug("[Opinion] Surface failed: %s", e)
             return None
@@ -303,7 +303,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("opinion_engine", exc)
             logger.debug("[Opinion] Cognitive engine lookup failed: %s", exc)
             return None
@@ -322,7 +322,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
             atomic_write_text(self._db_path, 
                 json.dumps([asdict(o) for o in self._opinions.values()], indent=2)
             )
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('opinion_engine', e)
             logger.debug("[Opinion] Save failed: %s", e)
 
@@ -335,7 +335,7 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
                 o = Opinion(**item)
                 self._opinions[o.topic] = o
             logger.info("[Opinion] Loaded %d opinions from disk.", len(self._opinions))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('opinion_engine', e)
             logger.debug("[Opinion] Load failed: %s", e)
 

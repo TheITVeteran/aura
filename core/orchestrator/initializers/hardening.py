@@ -19,7 +19,7 @@ async def init_hardening_layer(orchestrator: Any):
         #     get_task_tracker().create_task(platform_root.start_monitor())
         #     logger.info("🌿 [BOOT] Platform Root persistence monitor started.")
         logger.info("🌿 [BOOT] Platform Root DEFERRED to prevent spawn corruption.")
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('hardening', e)
         logger.warning("🌿 [BOOT] Platform Root monitor failed to start: %s", e)
     
@@ -43,7 +43,7 @@ async def init_hardening_layer(orchestrator: Any):
         await asyncio.wait_for(orchestrator.reaper.start(), timeout=10.0)
     except asyncio.TimeoutError:
         logger.error("🛑 Reaper boot timed out. Proceeding in degraded state.")
-    except Exception as e:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
         record_degradation('hardening', e)
         logger.error("❌ Reaper boot failed: %s", e)
 
@@ -51,7 +51,7 @@ async def init_hardening_layer(orchestrator: Any):
         await asyncio.wait_for(orchestrator.hypervisor.start(), timeout=10.0)
     except asyncio.TimeoutError:
         logger.error("🛑 Hypervisor boot timed out. Proceeding in degraded state.")
-    except Exception as e:
+    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
         record_degradation('hardening', e)
         logger.error("❌ Hypervisor boot failed: %s", e)
         
@@ -65,7 +65,7 @@ async def init_hardening_layer(orchestrator: Any):
         monitor.start()
         ServiceContainer.register_instance("event_loop_monitor", monitor)
         logger.info("🛡️ [BOOT] EventLoopMonitor active (threshold=%.2fs)", monitor.threshold)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('hardening', e)
         logger.error("❌ [BOOT] EventLoopMonitor failed to start: %s", e)
 

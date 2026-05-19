@@ -367,7 +367,7 @@ class HobbyEngine:
                 valid = {k: v for k, v in data.items() if k in HobbyProfile.__dataclass_fields__}
                 self._profiles[name] = HobbyProfile(**valid)
             logger.debug("🎨 Loaded %d hobby profiles from disk", len(self._profiles))
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.warning("HobbyEngine: state load failed — %s", exc)
 
     def _save_state(self) -> None:
@@ -378,7 +378,7 @@ class HobbyEngine:
                 "saved_at": time.time(),
             }
             atomic_write_text(self.PERSIST_PATH, json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("HobbyEngine: state save failed — %s", exc)
 
     # ── Hobby Selection ──────────────────────────────────────────────────────
@@ -482,7 +482,7 @@ class HobbyEngine:
                 )
                 return session
 
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 logger.error("HobbyEngine.run_session failed (%s): %s", hobby_name, exc, exc_info=True)
                 session.ended_at = time.time()
                 return session
@@ -584,7 +584,7 @@ class HobbyEngine:
             self.ENTERTAINMENT_LOG.parent.mkdir(parents=True, exist_ok=True)
             raw = [asdict(i) for i in self._entertainment_queue[-100:]]
             atomic_write_text(self.ENTERTAINMENT_LOG, json.dumps(raw, indent=2), encoding="utf-8")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.debug("HobbyEngine: entertainment log save failed — %s", exc)
 
     # ── Affect Integration ───────────────────────────────────────────────────
@@ -605,7 +605,7 @@ class HobbyEngine:
                     intensity=signal.intensity,
                 )
                 logger.debug("🎨 Joy emitted → affect: %s %.2f", signal.valence, signal.intensity)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             logger.debug("HobbyEngine._emit_joy: %s", exc)
 
     # ── Brain / Tool Delegation ──────────────────────────────────────────────
@@ -626,7 +626,7 @@ class HobbyEngine:
                     brain = getattr(self.orchestrator, attr, None)
                     if brain and hasattr(brain, "search"):
                         return str(await brain.search(query))[:1200]
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 logger.debug("HobbyEngine._do_search: %s", exc)
         return ""
 
@@ -650,7 +650,7 @@ class HobbyEngine:
                 api = getattr(self.orchestrator, "api_adapter", None)
                 if api and hasattr(api, "complete"):
                     return str(await api.complete(prompt))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 logger.debug("HobbyEngine._do_generate: %s", exc)
         return f"[Generative output for: {prompt[:60]}]"
 

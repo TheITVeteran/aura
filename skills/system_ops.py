@@ -70,7 +70,7 @@ class SystemOpsSkill(BaseSkill):
 
         except subprocess.CalledProcessError as e:
             return {"ok": False, "error": f"Command failed: {e}"}
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation("system_ops", e)
             logger.debug("System operation failed: %s", e)
             return {"ok": False, "error": str(e)}

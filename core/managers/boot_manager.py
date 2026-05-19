@@ -127,7 +127,7 @@ class BootManager:
             self.logger.info("✅ BOOT COMPLETE: Orchestrator architecture online")
             self.orchestrator.status.initialized = True
             return True
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("BOOT FAILED: %s", e, exc_info=True)
             self.orchestrator.status.add_error(str(e))
@@ -154,7 +154,7 @@ class BootManager:
             watchdog.register_component("orchestrator", timeout=60.0)
             watchdog.start()
             self.orchestrator._watchdog = watchdog
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.warning("Failed to initialize System Watchdog: %s", e)
 
@@ -185,7 +185,7 @@ class BootManager:
             
             from core.brain.reasoning_queue import get_reasoning_queue
             self.orchestrator.reasoning_queue = get_reasoning_queue()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Senses init failed: %s", e)
 
@@ -199,7 +199,7 @@ class BootManager:
             )
             if config.security.auto_fix_enabled:
                 self.orchestrator.self_modifier.start_monitoring()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Self-mod failed: %s", e)
 
@@ -209,7 +209,7 @@ class BootManager:
             monitor = MetabolicMonitor(ram_threshold_mb=3072, cpu_threshold=85.0)
             monitor.start()
             ServiceContainer.register_instance("metabolic_monitor", monitor)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Metabolism init failed: %s", e)
 
@@ -223,7 +223,7 @@ class BootManager:
             store = ProjectStore(str(config.paths.data_dir / "projects.db"))
             planner = StrategicPlanner(self.orchestrator.cognitive_engine, store)
             ServiceContainer.register_instance("strategic_planner", planner)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Strategy init failed: %s", e)
 
@@ -232,7 +232,7 @@ class BootManager:
         try:
             from core.master_moral_integration import integrate_complete_moral_and_sensory_systems
             integrate_complete_moral_and_sensory_systems(self.orchestrator)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Moral integration failed: %s", e)
 
@@ -241,7 +241,7 @@ class BootManager:
             from core.autonomic.core_monitor import AutonomicCore
             core = AutonomicCore(self.orchestrator)
             ServiceContainer.register_instance("autonomic_core", core)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Autonomic Core failed: %s", e)
             
@@ -252,7 +252,7 @@ class BootManager:
             await cognition.initialize()
             ServiceContainer.register_instance("cognitive_integration", cognition)
             self.orchestrator.cognition = cognition
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("Advanced cognition failed: %s", e)
 
@@ -262,7 +262,7 @@ class BootManager:
             pending = cognitive_wal.recover_state()
             if pending:
                 self.logger.info("💾 WAL: Found %d interrupted thoughts", len(pending))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('boot_manager', e)
             self.logger.error("WAL recovery failed: %s", e)
 
@@ -273,7 +273,7 @@ class BootManager:
                 last_heartbeat = float(heartbeat_path.read_text())
                 drift = time.time() - last_heartbeat
                 self.orchestrator.status.temporal_drift_s = drift
-        except Exception as _exc:
+        except (OSError, IOError) as _exc:
             record_degradation('boot_manager', _exc)
             import logging
             logger.debug("Exception caught during execution", exc_info=True)

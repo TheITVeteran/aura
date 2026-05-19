@@ -54,9 +54,9 @@ def append(entry: WillReceiptEntry) -> None:
             fh.flush()
             try:
                 os.fsync(fh.fileno())
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
-    except Exception as exc:
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('will_receipt_log', exc)
         logger.warning("will receipt append failed: %s", exc)
 
@@ -74,12 +74,12 @@ def recent(*, days: int = 30) -> List[WillReceiptEntry]:
                     continue
                 try:
                     rec = json.loads(line)
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError):
                     continue
                 if float(rec.get("when", 0.0)) < cutoff:
                     continue
                 out.append(WillReceiptEntry(**{k: v for k, v in rec.items() if k in WillReceiptEntry.__dataclass_fields__}))
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
         record_degradation('will_receipt_log', exc)
         logger.debug("will receipt read failed: %s", exc)
     return out

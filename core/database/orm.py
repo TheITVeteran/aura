@@ -48,7 +48,7 @@ class PersistentState:
                 safe_db_url = urlunparse(parsed._replace(netloc=netloc))
             else:
                 safe_db_url = db_url
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             safe_db_url = "[REDACTED DB URL]"
             
         logger.info("Durable ORM substrate initialized", db=safe_db_url)
@@ -60,7 +60,7 @@ class PersistentState:
         try:
             yield session
             session.commit()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             session.rollback()
             raise
         finally:

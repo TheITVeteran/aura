@@ -299,7 +299,7 @@ class CognitiveRoutingPhase(BasePhase):
                             mode=str(CognitiveMode.REACTIVE.value),
                         )
                         return new_state
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_routing', exc)
             logger.debug("🧭 Routing: detect_intent fast path failed: %s", exc)
 
@@ -415,7 +415,7 @@ class CognitiveRoutingPhase(BasePhase):
                 cap = self.container.get("capability_engine", default=None)
                 if cap and hasattr(cap, "detect_intent"):
                     new_state.response_modifiers["matched_skills"] = list(cap.detect_intent(input_text) or [])
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('cognitive_routing', exc)
                 logger.debug("🧭 Routing: matched_skills cache skipped: %s", exc)
         if not is_autonomous and routing_origin in user_origins:
@@ -563,7 +563,7 @@ class CognitiveRoutingPhase(BasePhase):
                 )
                 return True
 
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_routing', exc)
             logger.debug("Substrate routing check failed, falling back to keywords: %s", exc)
 

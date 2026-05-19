@@ -81,7 +81,7 @@ def _port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.15) -> boo
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return False
 
 
@@ -96,7 +96,7 @@ def _run(cmd: list[str], root: Path, timeout: float = 45.0) -> dict[str, Any]:
             "stderr_tail": proc.stderr[-6000:],
             "duration_s": round(time.time() - started, 3),
         }
-    except Exception as exc:
+    except (subprocess.SubprocessError, OSError) as exc:
         record_degradation('flagship_doctor', exc)
         return {
             "cmd": cmd,
@@ -111,7 +111,7 @@ def _log_candidates(root: Path) -> list[Path]:
         if base.exists():
             try:
                 candidates.extend(sorted(base.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10])
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
     return candidates
 
@@ -119,7 +119,7 @@ def _log_candidates(root: Path) -> list[Path]:
 def _tail(path: Path, max_chars: int = 8000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="ignore")[-max_chars:]
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return ""
 
 

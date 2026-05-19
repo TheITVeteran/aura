@@ -27,7 +27,7 @@ _PREVIOUS_ASYNCIO_CREATE_TASK = None
 # Re-export the flag the TaskTracker uses to mark tracker-managed creations.
 try:
     from core.utils.task_tracker import _SKIP_FACTORY_TRACK  # type: ignore
-except Exception:  # pragma: no cover - defensive
+except (ImportError, AttributeError, RuntimeError):  # pragma: no cover - defensive
     _SKIP_FACTORY_TRACK = contextvars.ContextVar("aura_skip_factory_track", default=False)
 
 
@@ -118,13 +118,13 @@ def _record_unowned_task(coro) -> None:
         from core.health.degraded_events import record_degraded_event
 
         record_degraded_event("strict_runtime.unowned_task", violation)
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     if os.environ.get("AURA_STRICT_RUNTIME") == "1":
         if hasattr(coro, "close"):
             try:
                 coro.close()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         raise RuntimeError(
             f"AURA_STRICT_RUNTIME: unowned asyncio.create_task: {violation['coro']}"

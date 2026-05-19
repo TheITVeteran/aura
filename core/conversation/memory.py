@@ -111,7 +111,7 @@ If no facts found, return [].
                         confidence=f.get("confidence", 0.5),
                         domain=f.get("domain", "general")
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory', e)
             capture_and_log(e, {"context": "ConversationMemory.knowledge_extraction"})
             logger.error("Knowledge extraction failed: %s", e)

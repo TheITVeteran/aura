@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 def clamp01(value: float) -> float:
     try:
         return float(max(0.0, min(1.0, float(value))))
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return 0.0
 
 
@@ -153,7 +153,7 @@ class CellManifest:
         role = payload.get("role", CellRole.STEM)
         try:
             payload["role"] = CellRole(role)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             payload["role"] = str(role)
         return cls(**payload)
 
@@ -189,7 +189,7 @@ class CellState:
         lifecycle = payload.get("lifecycle", CellLifecycle.ACTIVE)
         try:
             payload["lifecycle"] = CellLifecycle(lifecycle)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             payload["lifecycle"] = str(lifecycle)
         return cls(**payload)
 

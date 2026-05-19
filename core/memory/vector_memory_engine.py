@@ -166,7 +166,7 @@ class EmbeddingEngine:
                 if torch.backends.mps.is_available():
                     self._model = self._model.to("mps")
                     logger.info("🧠 EmbeddingEngine: Using Apple Silicon GPU (MPS)")
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('vector_memory_engine', _e)
                 logger.debug('Ignored Exception in vector_memory_engine.py: %s', _e)
             logger.info("✅ EmbeddingEngine: sentence-transformers loaded (%s)", self.PREFERRED_MODEL)
@@ -219,7 +219,7 @@ class EmbeddingEngine:
             vec = matrix[-1].toarray()[0]
             norm = np.linalg.norm(vec)
             return vec / norm if norm > 0 else vec
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             logger.debug("TF-IDF embedding failed: %s", e)
             return np.zeros(512)
 
@@ -283,7 +283,7 @@ class MemoryVault:
                 "⚠️ chromadb not installed. Install with: pip install chromadb\n"
                 "Using local SQLite vector fallback"
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('vector_memory_engine', e)
             logger.error("ChromaDB init failed: %s. Using local SQLite vector fallback.", e)
         if self._collection is None:
@@ -317,7 +317,7 @@ class MemoryVault:
                     metadatas=[metadata],
                 )
                 return
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('vector_memory_engine', e)
                 logger.error("ChromaDB store failed: %s", e)
 
@@ -399,7 +399,7 @@ class MemoryVault:
                         results["distances"][0][i],
                     ))
                 return output
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('vector_memory_engine', e)
                 logger.error("ChromaDB query failed: %s", e)
 
@@ -570,7 +570,7 @@ class ConsolidationEngine:
                                     docs[i][:50], docs[j][:50], merged[:50]
                                 )
 
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('vector_memory_engine', e)
                 logger.error("Consolidation failed: %s", e)
 
@@ -595,7 +595,7 @@ Be concise (1-2 sentences). Extract the universal pattern."""
             from core.brain.cognitive_engine import ThinkingMode
             result = await brain.think(prompt, mode=ThinkingMode.FAST, max_tokens=150)
             return result.content if hasattr(result, 'content') else str(result)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("vector_memory_engine", exc)
             logger.debug("Memory merge failed: %s", exc)
             return None
@@ -682,7 +682,7 @@ class VectorMemoryEngine:
             if return_decision:
                 return approved, decision
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('vector_memory_engine', exc)
             if self._constitutional_runtime_live():
                 record_degraded_event(

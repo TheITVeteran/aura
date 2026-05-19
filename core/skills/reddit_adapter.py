@@ -177,7 +177,7 @@ class RedditAdapterSkill(BaseSkill):
                 if state.get("cookies") and browser.context:
                     await browser.context.add_cookies(state["cookies"])
                     logger.info("✅ Loaded Reddit session cookies")
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('reddit_adapter', e)
                 logger.debug("Could not load storage state: %s", e)
 
@@ -193,7 +193,7 @@ class RedditAdapterSkill(BaseSkill):
                     "saved_at": time.time(),
                 }))
                 logger.info("💾 Reddit session saved (%d cookies)", len(cookies))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('reddit_adapter', e)
             logger.debug("Could not save session: %s", e)
 
@@ -203,7 +203,7 @@ class RedditAdapterSkill(BaseSkill):
             return
         try:
             await asyncio.wait_for(browser.close(), timeout=10.0)
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('reddit_adapter', e)
             logger.debug("Browser close error (suppressed): %s", e)
             browser.is_active = False
@@ -250,7 +250,7 @@ class RedditAdapterSkill(BaseSkill):
 
                 try:
                     await username_input.wait_for(state="visible", timeout=3000)
-                except Exception:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
                     username_input = page.frame_locator('iframe').locator('input[name="username"], #login-username').first
                     password_input = page.frame_locator('iframe').locator('input[name="password"], #login-password').first
 
@@ -278,7 +278,7 @@ class RedditAdapterSkill(BaseSkill):
                     logger.warning("⚠️ Reddit login may have failed — still on login page")
                     return False
 
-            except Exception as login_exc:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as login_exc:
                 if "captcha" in str(login_exc).lower() or "recaptcha" in str(login_exc).lower():
                     logger.info("Reddit inbox login unavailable: CAPTCHA present.")
                     return False
@@ -286,7 +286,7 @@ class RedditAdapterSkill(BaseSkill):
                 logger.warning("Reddit login interaction failed: %s", login_exc)
                 return False
 
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             if "credentials not found" in str(e).lower() or "captcha" in str(e).lower() or "recaptcha" in str(e).lower():
                 logger.info("Reddit login unavailable: %s", type(e).__name__)
                 return False
@@ -299,7 +299,7 @@ class RedditAdapterSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = RedditInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('reddit_adapter', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -354,7 +354,7 @@ class RedditAdapterSkill(BaseSkill):
             if isinstance(result, dict):
                 result.setdefault("authority_receipt_id", getattr(auth, "will_receipt_id", None))
             return result
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             try:
                 from core.executive.authority_gateway import get_authority_gateway
 
@@ -387,7 +387,7 @@ class RedditAdapterSkill(BaseSkill):
                                 if desc and "Vision Failure" not in desc:
                                     visual_note = f" [Visual Cortex: {desc}]"
                                 mlx_vision.stop()
-                        except Exception as ve:
+                        except (ImportError, AttributeError, RuntimeError) as ve:
                             logger.debug("Visual cortex failed to analyze CAPTCHA: %s", ve)
                             
                         return {"ok": False, "error": "CAPTCHA_DETECTED", "message": f"Reddit has presented a CAPTCHA. Operation halted.{visual_note}"}
@@ -583,7 +583,7 @@ class RedditAdapterSkill(BaseSkill):
                 "message": f"Comment posted successfully on {params.url}",
             }
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reddit_adapter', e)
             return {"ok": False, "error": f"Comment interaction failed: {e}"}
 
@@ -678,7 +678,7 @@ class RedditAdapterSkill(BaseSkill):
                 "message": f"Post created on r/{params.subreddit}: {title}",
             }
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reddit_adapter', e)
             return {"ok": False, "error": f"Post interaction failed: {e}"}
 
@@ -741,7 +741,7 @@ class RedditAdapterSkill(BaseSkill):
             await self._save_session(browser)
             return {"ok": True, "message": "Reply sent.", "url": params.url}
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('reddit_adapter', e)
             return {"ok": False, "error": f"Reply failed: {e}"}
 
@@ -787,7 +787,7 @@ class RedditAdapterSkill(BaseSkill):
                 "count": len(rules),
                 "message": f"Successfully fetched {len(rules)} rules for r/{params.subreddit}",
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('reddit_adapter', e)
             return {"ok": False, "error": f"Failed to fetch rules: {e}"}
 

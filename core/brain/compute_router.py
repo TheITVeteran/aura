@@ -134,7 +134,7 @@ class ComputeRouter:
                 success=True,
                 estimated_cost_usd=0.0,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('compute_router', e)
             logger.debug("Local inference failed: %s", e)
             return InferenceResult(error=f"Local: {e}")

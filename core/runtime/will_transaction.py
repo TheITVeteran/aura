@@ -116,7 +116,7 @@ class WillTransaction:
                     self.record.action,
                     self.record.cause,
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('will_transaction', exc)
             self.record.approved = False
             self.record.failure = repr(exc)
@@ -181,7 +181,7 @@ class WillTransaction:
             from core.will import get_will
 
             return get_will()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('will_transaction', exc)
             logger.debug("UnifiedWill unavailable: %s", exc)
             return None
@@ -201,7 +201,7 @@ class WillTransaction:
                 )
             )
             return decision
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             decide = getattr(will, "decide", None)
             if decide is None:
                 return None
@@ -223,7 +223,7 @@ class WillTransaction:
         if callable(approved):
             try:
                 return bool(approved())
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return False
         if isinstance(decision, dict):
             return bool(decision.get("approved", False))

@@ -106,7 +106,7 @@ class SelfHealing:
                         break
                     logger.warning("SelfHealing loop spuriously cancelled. Ignoring.")
                     continue
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('self_healing', e)
                     logger.error("SelfHealing loop error: %s", e)
                     await asyncio.sleep(1.0)
@@ -153,7 +153,7 @@ class SelfHealing:
             if not bool(getattr(status, "is_processing", False)):
                 return False
             return not bool(getattr(orch, "_current_task_is_autonomous", False))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("self_healing", exc)
             return False
 
@@ -205,7 +205,7 @@ class SelfHealing:
                 w.restarts += 1
                 w.last_heartbeat_at = time.time()
                 record["result"] = "restarted"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_healing', exc)
             record["result"] = f"restart_failed:{exc}"
         await self._append_record_async(record)
@@ -250,7 +250,7 @@ class SelfHealing:
                 return candidate
                 
             return fallbacks.get(w.container_key)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_healing', exc)
             logger.debug("Could not resolve watched module path for %s: %s", w.name, exc)
             return fallbacks.get(w.container_key)
@@ -286,7 +286,7 @@ class SelfHealing:
 
         try:
             task = get_task_tracker().create_task(_runner(), name=f"SelfHealing.deep_repair.{key}")
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             task = asyncio.create_task(_runner())
         self._deep_repairs[key] = task
         task.add_done_callback(lambda _task: self._deep_repairs.pop(key, None))
@@ -341,7 +341,7 @@ class SelfHealing:
             record["result"] = "deep_repair_succeeded" if result_dict.get("success") else "deep_repair_rejected"
             record["lab_result"] = result_dict
             return record
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_healing', exc)
             record["result"] = f"deep_repair_failed:{exc}"
             return record

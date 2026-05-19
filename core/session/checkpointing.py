@@ -105,7 +105,7 @@ class CheckpointService:
             self._cleanup_old_checkpoints()
 
             return filepath
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('checkpointing', e)
             logger.error("Checkpoint save failed: %s", e)
             return ""
@@ -118,7 +118,7 @@ class CheckpointService:
             try:
                 os.remove(old_file)
                 logger.debug("Removed old checkpoint: %s", os.path.basename(old_file))
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('checkpointing', e)
                 logger.warning("Failed to remove old checkpoint: %s", e)
 
@@ -176,7 +176,7 @@ class CheckpointService:
             )
             return checkpoint
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('checkpointing', e)
             logger.error("Checkpoint restore failed for %s: %s", filepath, e)
             return None
@@ -216,7 +216,7 @@ class CheckpointService:
                     "age_seconds": time.time() - data.get("timestamp", stat.st_mtime),
                     "size_bytes": stat.st_size,
                 })
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 continue
 
         return checkpoints

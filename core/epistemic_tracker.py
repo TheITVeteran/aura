@@ -133,7 +133,7 @@ class EpistemicTracker:
                 "hooks_into": ["belief_revision_engine", "memory_synthesizer",
                                "inquiry_engine", "cognitive_kernel"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('epistemic_tracker', e)
             capture_and_log(e, {"context": "EpistemicTracker.start.event_bus"})
             logger.debug("EpistemicTracker event bus registration failed: %s", e)
@@ -322,7 +322,7 @@ class EpistemicTracker:
             # Contradiction detection
             await self._detect_contradictions(beliefs)
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('epistemic_tracker', e)
             capture_and_log(e, {"context": "EpistemicTracker.scan_beliefs"})
             logger.debug("Belief scan error: %s", e)
@@ -485,7 +485,7 @@ class EpistemicTracker:
                 "resolved": self._resolved_gaps[-200:],
             }
             atomic_write_text(self._db_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('epistemic_tracker', e)
             capture_and_log(e, {"context": "EpistemicTracker.save"})
             logger.debug("EpistemicTracker save failed: %s", e)
@@ -500,7 +500,7 @@ class EpistemicTracker:
             for g in data.get("gaps", []):
                 self._gaps.append(EpistemicGap(**g))
             self._resolved_gaps = data.get("resolved", [])
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('epistemic_tracker', e)
             capture_and_log(e, {"context": "EpistemicTracker.load"})
             logger.debug("EpistemicTracker load failed: %s", e)

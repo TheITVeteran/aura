@@ -27,7 +27,7 @@ class ComposerNode:
             self.capability_engine = container.get("capability_engine", default=None)
             self._is_setup = True
             logger.info("🎨 Composer Node Online (Style Transfer Enabled).")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('composer_node', e)
             logger.error(f"Composer setup failed: {e}")
 
@@ -85,7 +85,7 @@ class ComposerNode:
                 "message": f"I'm visualizing your desktop as: {style_prompt}. The transformation is complete."
             }
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('composer_node', e)
             logger.error(f"Stylization workflow failed: {e}")
             return {"ok": False, "error": str(e)}

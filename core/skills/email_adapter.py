@@ -148,7 +148,7 @@ class EmailAdapterSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = EmailInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('email_adapter', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -461,7 +461,7 @@ class EmailAdapterSkill(BaseSkill):
             
             mlx_vision.stop()
             return "\n\n".join(descriptions)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('email_adapter', e)
             return f"[System Note: Visual cortex failed to process images: {e}]"
 

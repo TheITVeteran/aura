@@ -122,7 +122,7 @@ class SubsystemAudit:
                         "reason": "Affective/Homeostatic collapse imminent"
                     }
                     logger.warning("🚨 [ESC] Homeostatic collapse detected in SubsystemAudit (Vitality: %.2f)", vitality)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('subsystem_audit', e)
             logger.debug("Affective escalation check failed: %s", e)
 

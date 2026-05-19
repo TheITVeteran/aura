@@ -90,7 +90,7 @@ class ArchitectureIndex:
             self._built_at = time.monotonic()
             logger.info("🧠 ArchitectureIndex: indexed %d modules", count)
             return count
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('architecture_index', e)
             logger.error("ArchitectureIndex build failed: %s", e)
             return 0
@@ -177,7 +177,7 @@ class ArchitectureIndex:
                     if rec:
                         self._index[rel] = rec
                         count += 1
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('architecture_index', e)
                     logger.debug("Index skip %s: %s", rel, e)
         return count

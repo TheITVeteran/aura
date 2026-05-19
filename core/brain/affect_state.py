@@ -56,7 +56,7 @@ class AffectStateManager(AuraBaseModule):
                     self._synthesize_semantic_vibe()
                 self.metrics["calls"] += 1
                 await asyncio.sleep(10) # Update the internal state every 10 seconds
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('affect_state', e)
                 self.metrics["errors"] += 1
                 self.logger.error(f"Affect autonomic cycle error: {e}")

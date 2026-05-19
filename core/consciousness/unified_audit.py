@@ -240,7 +240,7 @@ class ConsciousnessAuditSuite:
                     )
                 except asyncio.CancelledError:
                     break
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('unified_audit', e)
                     logger.error("Scheduled audit failed: %s", e)
 
@@ -281,7 +281,7 @@ class ConsciousnessAuditSuite:
                 phi = float(riiu.get_phi())
                 metrics["phi"] = phi
                 metrics["riiu_stats"] = riiu.get_stats()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
             metrics["phi"] = 0.0
@@ -325,7 +325,7 @@ class ConsciousnessAuditSuite:
                 metrics["workspace_ignited"]    = ignited
                 metrics["ignition_level"]       = ignition_level
                 metrics["broadcast_source"]     = broadcast_source
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
 
@@ -367,7 +367,7 @@ class ConsciousnessAuditSuite:
                 metrics["free_energy"]      = fe
                 metrics["fe_trend"]         = trend
                 metrics["fe_action"]        = dominant_action
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
             metrics["free_energy"] = 0.5
@@ -411,7 +411,7 @@ class ConsciousnessAuditSuite:
                 metrics["opacity_index"]          = opacity
                 metrics["causal_depth"]           = causal_depth
                 metrics["phenomenal_criterion"]   = criterion_met
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
             metrics["opacity_index"] = 0.0
@@ -454,7 +454,7 @@ class ConsciousnessAuditSuite:
                 metrics["pri"]              = pri
                 metrics["self_referential"] = self_referential
                 metrics["dominant_modality"] = dominant
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
             metrics["pri"] = 0.0
@@ -491,7 +491,7 @@ class ConsciousnessAuditSuite:
                 metrics["causal_loop_active"] = loop_active
                 metrics["phi_delta_5"]        = phi_delta
                 metrics["val_delta_5"]        = val_delta
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
 
@@ -536,7 +536,7 @@ class ConsciousnessAuditSuite:
                 ignition_count = snap.get("ignition_count", 0)
                 metrics["ignition_count"] = ignition_count
             metrics["phenomenal_state"] = phenomenal_state
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
 
@@ -571,7 +571,7 @@ class ConsciousnessAuditSuite:
                 ual_score = sum(profile.values()) / max(1, len(profile))
                 metrics["ual_profile"] = dict(profile)
                 metrics["ual_score"]   = ual_score
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('unified_audit', e)
             error = str(e)
 

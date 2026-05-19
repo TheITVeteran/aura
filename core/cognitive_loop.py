@@ -70,7 +70,7 @@ class CognitiveLoop:
                     await self._recover_from_stall()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('cognitive_loop', e)
                 logger.error(f"Error in Cognitive Loop cycle: {e}", exc_info=True)
                 await asyncio.sleep(1.0) # Error backoff
@@ -202,7 +202,7 @@ class CognitiveLoop:
                 return {"content": payload, "origin": origin or "unknown"}
             
             return {"content": str(payload), "origin": origin or "raw"}
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('cognitive_loop', e)
             logger.error("Failed to acquire message from queue: %s", e)
             return None
@@ -260,6 +260,6 @@ class CognitiveLoop:
                   if ce and hasattr(ce, "unload_models"):
                        try:
                            await ce.unload_models()
-                       except Exception as e:
+                       except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                            record_degradation('cognitive_loop', e)
                            logger.error(f"Failed to unload models during recovery: {e}")

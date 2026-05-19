@@ -44,7 +44,7 @@ class BackupManager:
             db_coord = get_db_coordinator()
             for path in getattr(db_coord, "_connections", {}).keys():
                 candidates.append(Path(path))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('backup', exc)
             logger.debug("BackupManager database discovery skipped coordinator paths: %s", exc)
         deduped = []
@@ -72,7 +72,7 @@ class BackupManager:
                 )
                 or ""
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('backup', exc)
             logger.debug("Maintenance background policy check skipped: %s", exc)
             return ""
@@ -110,14 +110,14 @@ class BackupManager:
                 logger.debug("Vacuuming %s...", db_path)
                 try:
                     await asyncio.to_thread(self._vacuum_database_sync, db_path)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('backup', e)
                     logger.warning("Failed to vacuum %s: %s", db_path, e)
 
             logger.info("VACUUM operation complete.")
             self._last_vacuum_at = time.time()
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('backup', e)
             logger.error("VACUUM operation failed: %s", e)
             return False
@@ -159,7 +159,7 @@ class BackupManager:
                 self._last_backup_path = final_path
                 return final_path
             return None
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('backup', e)
             logger.error(f"Backup failed: {e}")
             return None
@@ -176,7 +176,7 @@ class BackupManager:
                 logger.debug(f"Removing old backup: {oldest}")
                 await asyncio.to_thread(os.remove, oldest)
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('backup', e)
             logger.error(f"Failed to enforce backup rotation: {e}")
 

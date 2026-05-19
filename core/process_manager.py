@@ -157,7 +157,7 @@ class ManagedProcess:
                 logger.error("Process %s failed to start within timeout", self.config.name)
                 return False
                 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('process_manager', e)
                 self.state = ProcessState.FAILED
                 logger.error("Failed to start process %s: %s", self.config.name, e, exc_info=True)
@@ -180,7 +180,7 @@ class ManagedProcess:
             
         except KeyboardInterrupt:
             logger.info("Process %s interrupted gracefully", process_name)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('process_manager', e)
             logger.error("Process %s crashed: %s", process_name, e, exc_info=True)
             raise
@@ -234,7 +234,7 @@ class ManagedProcess:
                 
                 return True
                 
-            except Exception as e:
+            except (ImportError, OSError, AttributeError) as e:
                 record_degradation('process_manager', e)
                 logger.error("Error stopping process %s: %s", self.config.name, e)
                 self.state = ProcessState.FAILED
@@ -295,14 +295,14 @@ class ManagedProcess:
                                 "restart_timestamps": self.stats.restart_timestamps[-5:],
                             },
                         )
-                    except Exception as exc:
+                    except (ImportError, AttributeError, RuntimeError) as exc:
                         record_degradation("process_manager", exc)
                         logger.debug("Incident report failed for permanent process failure %s: %s", self.config.name, exc)
                     # Report to metrics
                     try:
                         from core.observability.metrics import get_metrics
                         get_metrics().record_process_restart(self.config.name)
-                    except Exception as exc:
+                    except (ImportError, AttributeError, RuntimeError) as exc:
                         record_degradation("process_manager", exc)
                         logger.debug("Process restart metric failed for %s: %s", self.config.name, exc)
                     return False
@@ -371,7 +371,7 @@ class ManagedProcess:
         while not self._stop_health_check.is_set():
             try:
                 await asyncio.to_thread(self._check_health)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('process_manager', e)
                 logger.error("Health check failed for %s: %s", self.config.name, e, exc_info=True)
             
@@ -422,7 +422,7 @@ class ManagedProcess:
             
         except psutil.NoSuchProcess:
             logger.warning("Process %s PID %s not found", self.config.name, self.process.pid)
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('process_manager', e)
             logger.error("Health check error for %s: %s", self.config.name, e)
     
@@ -609,7 +609,7 @@ class ProcessManager:
         while not self.shutdown_event.is_set():
             try:
                 self._check_all_processes()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('process_manager', e)
                 logger.error("Process monitor error: %s", e)
             
@@ -637,7 +637,7 @@ class ProcessManager:
                             else:
                                 logger.warning("No live event loop available to restart process %s", name)
                     
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('process_manager', e)
                     logger.error("Error checking process %s: %s", name, e)
     

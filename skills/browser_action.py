@@ -109,7 +109,7 @@ def _check_rate_limit(url: str) -> bool:
             return False
         _host_request_times[hostname].append(now)
         return True
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("browser_action", exc)
         logger.debug("Browser rate-limit check failed for %r: %s", url, exc)
         return False
@@ -128,7 +128,7 @@ def _is_private_ip(url: str) -> bool:
             return ip.is_private or ip.is_loopback
         except ValueError:
             return False
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("browser_action", exc)
         logger.debug("Browser private-network check failed for %r: %s", url, exc)
         return True
@@ -215,7 +215,7 @@ class UnifiedBrowserSkill(BaseSkill):
                 logger.warning("Browser attempt %s failed (%s). Retrying...", attempt + 1, error)
                 await asyncio.sleep(base_delay * (2 ** attempt))
                 
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 logger.error("Browser crash on attempt %s: %s", attempt + 1, e)
                 await asyncio.sleep(base_delay * (2 ** attempt))
 
@@ -240,7 +240,7 @@ class UnifiedBrowserSkill(BaseSkill):
         if (engine_pref == "auto" or engine_pref == "playwright") and HAS_PLAYWRIGHT:
             try:
                 return await self._run_playwright(goal, context, url)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.error("Playwright failed: %s", e)
                 if engine_pref == "playwright": # Strict mode
                     return {"ok": False, "error": str(e)}
@@ -251,7 +251,7 @@ class UnifiedBrowserSkill(BaseSkill):
                 # Selenium is still sync, run in thread if needed?
                 # For now, just call it, but ideally we'd thread it.
                 return self._run_selenium(goal, context)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.error("Selenium failed: %s", e)
                 if engine_pref == "selenium":
                     return {"ok": False, "error": str(e)}
@@ -333,7 +333,7 @@ class UnifiedBrowserSkill(BaseSkill):
                     extractor = _TextExtractor()
                     extractor.feed(raw_content)
                     content = extractor.get_text()
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation("browser_action", exc)
                     logger.debug("Text-only HTML extraction failed: %s", exc)
                     content = raw_content
@@ -349,7 +349,7 @@ class UnifiedBrowserSkill(BaseSkill):
                     "content": content[:12000],  # Increased from 5000
                     "note": "Content fetched via HTTP because browsers failed."
                 }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.warning("Text-only fetch failed: %s", e)
         
         # Absolute Last Resort: System Browser
@@ -361,7 +361,7 @@ class UnifiedBrowserSkill(BaseSkill):
                 "mode": "native_fallback",
                 "message": "Opened in system browser (Automation failed)."
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("browser_action", exc)
             logger.debug("Native browser fallback failed: %s", exc)
             return {"ok": False, "error": "all_strategies_failed"}
@@ -435,7 +435,7 @@ class UnifiedBrowserSkill(BaseSkill):
                         params["html"] = await page.content()
                     # v2.0: Re-inject proxy-select after DOM mutations
                     await page.evaluate(PROXY_SELECT_JS)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     logger.warning("Action %s failed: %s", stype, e)
 
             # Extract

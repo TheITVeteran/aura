@@ -30,7 +30,7 @@ class ExecutiveClosurePhase(BasePhase):
             engine = ExecutiveClosureEngine()
             try:
                 ServiceContainer.register_instance("executive_closure", engine)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosurePhase: registration skipped: %s", exc)
         self._engine = engine

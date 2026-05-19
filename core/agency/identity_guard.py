@@ -223,7 +223,7 @@ class IdentityGuard:
         try:
             from core.identity.identity_guard import PersonaEnforcementGate
             return PersonaEnforcementGate().validate_output(content)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('identity_guard', e)
             logger.debug("validate_output delegation error (non-critical): %s", e)
             return True, "OK", 1.0

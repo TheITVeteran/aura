@@ -303,7 +303,7 @@ def _local_client_failure_reason(client: Any) -> str:
             return None
         try:
             value = getattr(candidate, attr)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             return None
         if value is candidate:
             return None
@@ -363,7 +363,7 @@ def _local_client_failure_reason(client: Any) -> str:
                     next_candidate = nested
                     break
             candidate = next_candidate
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('llm_health_router', exc)
         logger.debug("Local client lane inspection failed: %s", exc)
     return ""
@@ -736,7 +736,7 @@ class HealthAwareLLMRouter:
             # [STABILITY v55] Don't mask failures with robot responses.
             # Return None so the caller can retry or fallback properly.
             return None
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('llm_health_router', exc)
             logger.warning("[LLMRouter.think] Failed: %s", exc)
             return None
@@ -790,7 +790,7 @@ class HealthAwareLLMRouter:
                 return "casual"
                 
             return text
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('llm_health_router', e)
             logger.error("❌ Intent classification failed: %s. Defaulting to 'casual'.", e)
             return "casual"
@@ -889,7 +889,7 @@ class HealthAwareLLMRouter:
                         self.last_user_endpoint = ep.name
                         self.last_user_tier = ep.tier
                     return result
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('llm_health_router', exc)
                 logger.warning("think_and_act on %s failed: %s", ep.name, exc)
                 ep.record_failure(str(exc))
@@ -929,7 +929,7 @@ class HealthAwareLLMRouter:
                 
                 return {"pathway_id": pathway.pathway_id}
             return None
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _flatten_messages_for_local_model(self, messages: List[Dict[str, str]], require_json: bool) -> str:
@@ -1057,7 +1057,7 @@ class HealthAwareLLMRouter:
                 return False
 
             return not bool(getattr(orch, "_current_task_is_autonomous", False))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     @classmethod
@@ -1071,7 +1071,7 @@ class HealthAwareLLMRouter:
 
             quiet_until = float(getattr(orch, "_foreground_user_quiet_until", 0.0) or 0.0)
             return quiet_until > time.time()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     def _safe_boot_background_guard_active(self) -> bool:
@@ -1080,7 +1080,7 @@ class HealthAwareLLMRouter:
             return False
         try:
             guard_secs = float(os.environ.get("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180"))
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             guard_secs = 180.0
         if guard_secs <= 0:
             return False
@@ -1117,7 +1117,7 @@ class HealthAwareLLMRouter:
                 if lane.get("warmup_in_flight"):
                     return True
                 return state in {"cold", "spawning", "handshaking", "warming", "recovering"}
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             logger.debug("Router quiet-window lane probe failed.", exc_info=True)
 
         # Fail safe: if the quiet window is active but lane state is unavailable,
@@ -1130,7 +1130,7 @@ class HealthAwareLLMRouter:
             from core.brain.llm.mlx_client import _foreground_owner_active
 
             return bool(_foreground_owner_active())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     @staticmethod
@@ -1233,7 +1233,7 @@ class HealthAwareLLMRouter:
             if primary_client and hasattr(primary_client, "warmup"):
                 await primary_client.warmup()
                 logger.info("♻️ Router: restored %s after deep handoff.", PRIMARY_ENDPOINT)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('llm_health_router', exc)
             logger.warning("Router: failed to restore primary model after deep handoff: %s", exc)
 
@@ -1245,7 +1245,7 @@ class HealthAwareLLMRouter:
                 continue
             try:
                 await self._reboot_endpoint_client(endpoint.client)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('llm_health_router', exc)
                 logger.debug("Router unload skipped for %s: %s", name, exc)
 
@@ -1253,7 +1253,7 @@ class HealthAwareLLMRouter:
             import mlx.core as mx
             if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('llm_health_router', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1385,7 +1385,7 @@ class HealthAwareLLMRouter:
                             "tokens": 0,
                             "error": f"background_deferred:{background_deferral}",
                         }
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('llm_health_router', exc)
                 logger.debug("Background router deferral probe failed: %s", exc)
             if self._foreground_quiet_window_active():
@@ -1411,7 +1411,7 @@ class HealthAwareLLMRouter:
                 from core.brain.llm.mlx_client import _foreground_owner_active
 
                 foreground_owned = bool(_foreground_owner_active())
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 foreground_owned = False
 
         if is_bg and (self._foreground_user_turn_active() or self._foreground_owner_active() or foreground_owned):
@@ -1674,7 +1674,7 @@ class HealthAwareLLMRouter:
                             "Endpoint %s failed validation: %s",
                             ep.name, last_error
                         )
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('llm_health_router', exc)
                 logger.error("Endpoint %s raised exception: %s", ep.name, exc)
                 ep.record_failure(str(exc))
@@ -1744,7 +1744,7 @@ class HealthAwareLLMRouter:
                         if hasattr(client, "availability_reason"):
                             try:
                                 availability_reason = str(client.availability_reason() or "")
-                            except Exception:
+                            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                                 availability_reason = ""
                         availability_reason = availability_reason or "client_unavailable"
                         ep.record_failure(availability_reason)
@@ -1870,7 +1870,7 @@ class HealthAwareLLMRouter:
                     # as a circuit-breaker failure or it will permanently mark Cortex as dead.
                     logger.warning("Client adapter method missing for %s: %s", ep.name, ae)
                     return {"ok": False, "error": f"client_adapter_missing_method:{ae}"}
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('llm_health_router', e)
                     logger.error("Client adapter call failed for %s: %s", ep.name, e)
                     raise e
@@ -1911,7 +1911,7 @@ class HealthAwareLLMRouter:
                 "latency_ms": latency_ms,
             }
 
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('llm_health_router', exc)
             ep.record_failure(str(exc))
             raise
@@ -2019,7 +2019,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
                     logger.debug("No async loop running for pre-warm. Model will load on first inference.")
 
             logger.info("✅ Local runtime client instantiated for HealthAwareLLMRouter")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('llm_health_router', e)
             logger.error("❌ Failed to instantiate local runtime client: %s", e)
     else:
@@ -2073,7 +2073,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             failure_threshold=3,
         )
         logger.info("✅ %s registered with lazy 72B client.", DEEP_ENDPOINT)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('llm_health_router', e)
         logger.error("❌ Failed to register %s: %s", DEEP_ENDPOINT, e)
 
@@ -2089,7 +2089,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             failure_threshold=3,
         )
         logger.info("✅ %s registered with lazy 7B client.", BRAINSTEM_ENDPOINT)
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
         record_degradation('llm_health_router', e)
         logger.error("❌ Failed to register %s: %s", BRAINSTEM_ENDPOINT, e)
 
@@ -2106,7 +2106,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             recovery_timeout=30.0,
         )
         logger.info("🚨 EMERGENCY Tier registered: %s lazy bypass", FALLBACK_ENDPOINT)
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('llm_health_router', e)
         logger.error("❌ Failed to register %s: %s", FALLBACK_ENDPOINT, e)
 
@@ -2120,7 +2120,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             try:
                 from core.config import config as _cfg
                 state_path = str(_cfg.paths.data_dir / "gemini_rate_state.json")
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 state_path = None
             shared_limiter = DailyRateLimiter(state_path=state_path)
             
@@ -2163,7 +2163,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
                 recovery_timeout=300.0,
             )
             logger.info("✅ Gemini cloud fallbacks registered (2.0-flash, 2.5-flash, 2.5-pro) — shared rate limiter.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('llm_health_router', e)
             logger.error("❌ Failed to register Gemini fallbacks: %s", e)
 

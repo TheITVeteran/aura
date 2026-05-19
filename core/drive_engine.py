@@ -201,7 +201,7 @@ class DriveEngine:
             ncs = ServiceContainer.get("neurochemical_system", default=None)
             if ncs and hasattr(ncs, "on_boredom"):
                 ncs.on_boredom(self.boredom_level)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('drive_engine', e)
             logger.debug("Boredom neurochemical notify failed: %s", e)
 

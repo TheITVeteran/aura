@@ -121,7 +121,7 @@ class NeologismEngine:
         try:
             from core.pneuma import get_pneuma
             belief_vec = get_pneuma().ode_flow.current_belief.vector
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             belief_vec = np.zeros(64, dtype=np.float32)
 
         try:
@@ -130,7 +130,7 @@ class NeologismEngine:
             acts = np.array([
                 nd.activation for nd in mhaf._nodes.values()
             ], dtype=np.float32)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             acts = np.zeros(8, dtype=np.float32)
 
         self.push_state(belief_vec, acts)
@@ -149,7 +149,7 @@ class NeologismEngine:
         points = np.array(self._state_buffer[-200:])  # last 200 snapshots
         try:
             labels = _dbscan_simple(points, eps=0.4, min_samples=_MIN_CLUSTER_SIZE)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('neologism_engine', e)
             logger.debug("DBSCAN failed: %s", e)
             return None
@@ -177,7 +177,7 @@ class NeologismEngine:
                         min_dist = min(min_dist, d)
                 if min_dist > _ALIEN_DISTANCE_THRESHOLD:
                     alien_centroids.append((centroid, lbl, len(mask)))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('neologism_engine', e)
             logger.debug("Alien centroid detection failed: %s", e)
             return None
@@ -246,7 +246,7 @@ Only reply with the JSON, nothing else."""
                 data["created_at"] = time.time()
                 data["occurrence_count"] = count
                 return data
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('neologism_engine', e)
             logger.debug("Neologism generation failed: %s", e)
         return None
@@ -265,7 +265,7 @@ Only reply with the JSON, nothing else."""
             _LEXICON_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(_LEXICON_PATH, "w") as f:
                 json.dump(self._lexicon, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('neologism_engine', e)
             logger.debug("Lexicon save error: %s", e)
 
@@ -274,7 +274,7 @@ Only reply with the JSON, nothing else."""
             if _LEXICON_PATH.exists():
                 with open(_LEXICON_PATH) as f:
                     self._lexicon = json.load(f)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             self._lexicon = {}
 
     def get_state_dict(self) -> dict:

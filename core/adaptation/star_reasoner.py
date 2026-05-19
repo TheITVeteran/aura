@@ -267,7 +267,7 @@ class STaRReasoner:
 
         try:
             return gate.check_training_sample(trace.to_training_sample())
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('star_reasoner', e)
             logger.debug("Constitutional gate check failed: %s", e)
             return self._heuristic_constitutional_check(trace)
@@ -323,7 +323,7 @@ class STaRReasoner:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('star_reasoner', e)
                 logger.error("STaR background loop error: %s", e)
                 await asyncio.sleep(60.0)
@@ -345,7 +345,7 @@ class STaRReasoner:
 
         try:
             llm = kernel.organs["llm"].get_instance()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return
 
         for trace in batch:
@@ -380,7 +380,7 @@ class STaRReasoner:
 
             except asyncio.TimeoutError:
                 logger.debug("STaR: rationalization timeout for trace %s", trace.trace_id)
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('star_reasoner', e)
                 logger.debug("STaR: rationalization failed for %s: %s", trace.trace_id, e)
 
@@ -395,7 +395,7 @@ class STaRReasoner:
             try:
                 from core.adaptation.finetune_pipe import get_finetune_pipe
                 pipe = get_finetune_pipe()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
 
         written = 0
@@ -412,7 +412,7 @@ class STaRReasoner:
                         final_action=trace.final_answer,
                         quality_score=trace.quality_score,
                     )
-                except Exception as e:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
                     record_degradation('star_reasoner', e)
                     logger.debug("STaR: FinetunePipe write failed: %s", e)
 
@@ -421,7 +421,7 @@ class STaRReasoner:
                 with open(self._accepted_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(sample) + "\n")
                 written += 1
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('star_reasoner', e)
 
         logger.info("STaR: flushed %d traces to training pipeline", written)
@@ -442,7 +442,7 @@ class STaRReasoner:
                     "STaR: %d training samples accumulated — LoRA update is viable",
                     line_count,
                 )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass
 
     # ── Persistence ──────────────────────────────────────────────────────
@@ -459,7 +459,7 @@ class STaRReasoner:
                 "last_updated": time.time(),
             }
             atomic_write_text(self._stats_path, json.dumps(stats, indent=2))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('star_reasoner', e)
 
     def _load_stats(self) -> None:
@@ -469,7 +469,7 @@ class STaRReasoner:
                 self._accepted_count = data.get("accepted_count", 0)
                 self._rejected_count = data.get("rejected_count", 0)
                 self._rationalized_count = data.get("rationalized_count", 0)
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('star_reasoner', e)
 
     def get_status(self) -> Dict[str, Any]:

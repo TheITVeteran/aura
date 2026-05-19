@@ -44,7 +44,7 @@ class AlignmentEngine(AuraBaseModule):
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('conscience', e)
             self.logger.error("Failed to load values graph from DB: %s", e)
         finally:
@@ -60,7 +60,7 @@ class AlignmentEngine(AuraBaseModule):
                 self.graph = legacy_graph
                 self._save_graph()
                 return legacy_graph
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('conscience', e)
                 self.logger.error("Failed to migrate legacy graph: %s", e)
 
@@ -78,7 +78,7 @@ class AlignmentEngine(AuraBaseModule):
                     "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)",
                     ('values_graph', json.dumps(self.graph), time.time())
                 )
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('conscience', e)
             self.logger.error("Failed to save values graph to DB: %s", e)
         finally:
@@ -109,7 +109,7 @@ class AlignmentEngine(AuraBaseModule):
                     normalized = normalized.replace(char, replacement)
                 
                 return " ".join(shlex.split(normalized))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('conscience', e)
                 self.logger.debug("Command normalization failed: %s", e)
                 return str(cmd)

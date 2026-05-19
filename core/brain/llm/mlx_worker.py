@@ -195,7 +195,7 @@ class IPCWriterThread(threading.Thread):
                     # Never silently drop init/generation/error messages; bypass
                     # the local buffer when it is saturated with telemetry.
                     self.mp_queue.put(item, block=True, timeout=5.0)
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('mlx_worker', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             # Drop non-essential telemetry if buffer is full.
@@ -214,7 +214,7 @@ class IPCWriterThread(threading.Thread):
                 self.mp_queue.put(item, block=True, timeout=5.0)
             except queue.Empty:
                 continue
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 # Queue full or broken — drop the item and continue rather
                 # than blocking the entire IPC pipeline.
                 if not self._stop_event.is_set():
@@ -276,7 +276,7 @@ def _setup_worker_env():
                 raise RuntimeError(f"Suspicious SDK path rejected: {sdk_path}")
             os.environ["SDKROOT"] = sdk_path
             os.environ["AURA_SDK_PATH"] = sdk_path # Cache for subsequent spawns
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('mlx_worker', e)
             print(f"⚠️ [MLX_WORKER_ENV] Failed to probe environment: {e}")
             return # Exit early if SDK probe fails critically
@@ -298,7 +298,7 @@ def _setup_worker_env():
             cpath_parts.append(cpp_inc)
         if cpath_parts:
             os.environ["CPATH"] = ":".join(cpath_parts + [os.environ.get("CPATH", "")]).strip(":")
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
         record_degradation('mlx_worker', e)
         print(f"⚠️ [MLX_WORKER_ENV] Failed to probe Mac version/CPATH: {e}")
 
@@ -313,10 +313,10 @@ def _setup_worker_env():
 def _clear_mlx_cache(mx_module: Any) -> None:
     try:
         mx_module.clear_cache()
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         try:
             mx_module.metal.clear_cache()
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('mlx_worker', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -650,7 +650,7 @@ def _mlx_worker_loop(
                 logger.info(f"Loading with LoRA adapter: {adapter_path}")
                 model, tokenizer = load(model_path, adapter_path=adapter_path)
                 logger.info("Model loaded with Aura personality LoRA fused.")
-            except Exception as adapter_exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as adapter_exc:
                 record_degradation('mlx_worker', adapter_exc)
                 logger.warning(
                     "⚠️ [WORKER] LoRA adapter failed to load for %s: %s. Using base model + prompt hardening.",
@@ -688,7 +688,7 @@ def _mlx_worker_loop(
                     severity="critical",
                     action="Crashing worker to prevent unsteered inference")
                 raise RuntimeError("Steering liveness gate failed: Engine inactive")
-        except Exception as se:
+        except (ImportError, AttributeError, RuntimeError) as se:
             record_degradation('affective_steering', se)
             logger.error(f"FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. {se}")
             raise RuntimeError(f"Steering liveness gate failed: {se}") from se
@@ -710,12 +710,12 @@ def _mlx_worker_loop(
             from core.brain.llm.recurrent_depth import apply_for_model
             if apply_for_model(model):
                 logger.info("🧠 Recurrent Depth ACTIVE — model now thinks before answering.")
-        except Exception as rd_exc:
+        except (ImportError, AttributeError, RuntimeError) as rd_exc:
             record_degradation('mlx_worker', rd_exc)
             logger.warning(f"Recurrent depth not applied: {rd_exc}")
 
         ipc_writer.put({"status": "ok", "action": "init", "device": device})
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('mlx_worker', e)
         import traceback
         err_detail = f"{e}\n{traceback.format_exc()}"
@@ -774,7 +774,7 @@ def _mlx_worker_loop(
                             "tokens_used": len(response_text.split())
                         })
                         continue
-                except Exception as _e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
                     logger.warning("Failed to check steering active state: %s", _e)
 
                 prompt = job.get("prompt")
@@ -791,7 +791,7 @@ def _mlx_worker_loop(
                             add_generation_prompt=True, 
                             tokenize=False
                         )
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('mlx_worker', e)
                         logger.warning(f"❌ [WORKER] Native template compilation failed: {e}")
 
@@ -799,7 +799,7 @@ def _mlx_worker_loop(
                 top_p = job.get("top_p", 0.9)
                 try:
                     max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     max_tokens = 512
                 schema = job.get("schema")
                 
@@ -852,7 +852,7 @@ def _mlx_worker_loop(
                             logits_processors.extend(lp)
                 except ImportError:
                     pass
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     logger.warning(f"Could not apply penalty logits processors: {e}")
 
                 if schema:
@@ -867,7 +867,7 @@ def _mlx_worker_loop(
                             return logits
                         logits_processors.append(json_start_processor)
                         logger.info("🎯 [WORKER] JSON start enforcement ACTIVE.")
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('mlx_worker', e)
                         logger.warning(f"Failed to setup JSON logits processor: {e}")
                 
@@ -939,7 +939,7 @@ def _mlx_worker_loop(
                                         affect_interval=16,
                                         substrate_mem=substrate_mem,
                                     )
-                                except Exception as _sent_exc:
+                                except (ImportError, AttributeError, RuntimeError) as _sent_exc:
                                     record_degradation('mlx_worker', _sent_exc)
                                     sentinel = None
                                     logger.debug("TokenSentinel not available: %s", _sent_exc)
@@ -1176,7 +1176,7 @@ def _mlx_worker_loop(
                     try:
                         if engine is not None and response_text.strip():
                             engine.observe_generation(response_text)
-                    except Exception as steering_obs_exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as steering_obs_exc:
                         record_degradation("mlx_worker", steering_obs_exc)
                         logger.debug("Affective steering post-generation observation failed: %s", steering_obs_exc)
                     
@@ -1189,7 +1189,7 @@ def _mlx_worker_loop(
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens
                     })
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('mlx_worker', e)
                     logger.error(f"Generation failed: {e}")
                     ipc_writer.put({"status": "error", "action": "generate", "message": str(e)})
@@ -1205,7 +1205,7 @@ def _mlx_worker_loop(
                 top_p = job.get("top_p", 0.9)
                 try:
                     max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     max_tokens = 512
                 min_p = job.get("min_p", 0.05)
                 repetition_penalty = job.get("repetition_penalty", 1.1)
@@ -1241,7 +1241,7 @@ def _mlx_worker_loop(
                             logits_processors.extend(lp)
                 except ImportError:
                     pass
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     logger.warning(f"Could not apply penalty logits processors: {e}")
                 
                 if logits_processors:
@@ -1276,7 +1276,7 @@ def _mlx_worker_loop(
                                     affect_interval=16,
                                     substrate_mem=substrate_mem,
                                 )
-                            except Exception:
+                            except (ImportError, AttributeError, RuntimeError):
                                 stream_sentinel = None
 
                             # [STABILITY v60] Definitive scrub of legacy kwargs.
@@ -1354,7 +1354,7 @@ def _mlx_worker_loop(
                             watchdog.stop_job()
                     
                     ipc_writer.put({"status": "ok", "action": "stream_done"})
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('mlx_worker', e)
                     logger.error(f"Streaming failed: {e}")
                     ipc_writer.put({"status": "error", "action": "stream", "message": str(e)})
@@ -1382,7 +1382,7 @@ def _mlx_worker_loop(
                 try:
                     if prompt_cache_lru is not None:
                         prompt_cache_lru.clear()
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
                 ipc_writer.put({"status": "ok"})
                 

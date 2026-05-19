@@ -53,7 +53,7 @@ class CodeValidator:
                         errors.append(msg)
                 elif not result:
                     errors.append(f"Validation failed: {validator.__name__}")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('code_validation', e)
                 errors.append(f"Validator {validator.__name__} crashed: {e}")
         
@@ -82,7 +82,7 @@ class CodeValidator:
             
             return True, f"Imports OK ({len(imports)} imports)"
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('code_validation', e)
             return False, f"Import validation failed: {e}"
     
@@ -123,7 +123,7 @@ class CodeValidator:
             else:
                 return True, "Structure OK"
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('code_validation', e)
             return False, f"Structure validation failed: {e}"
     
@@ -156,7 +156,7 @@ class CodeValidator:
             
         except tokenize.TokenError as e:
             return False, f"Token error: {e}"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('code_validation', e)
             return False, f"Token validation failed: {e}"
     

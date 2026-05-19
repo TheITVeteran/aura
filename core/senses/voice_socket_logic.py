@@ -26,7 +26,7 @@ def _get_whisper_model_class():
         _WhisperModel = whisper_model_cls
     except ImportError:
         logger.error("faster-whisper is unavailable; websocket STT disabled.")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('voice_socket_logic', exc)
         logger.error("faster-whisper import failed; websocket STT disabled: %s", exc)
     return _WhisperModel
@@ -41,7 +41,7 @@ def get_whisper_model(model_name="tiny"):
             _WHISPER_MODEL_CACHE[model_name] = whisper_model_cls(
                 model_name, device="cpu", compute_type="int8"
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('voice_socket_logic', e)
             logger.error("Failed to load Whisper: %s", e)
             return None
@@ -85,7 +85,7 @@ class VoiceStreamProcessor:
                 audio_np = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
                 rms = np.sqrt(np.mean(audio_np**2))
                 is_speech = rms > 300 # Threshold for local sensitivity
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 is_speech = False
 
             if is_speech:
@@ -137,7 +137,7 @@ class VoiceStreamProcessor:
             
             self.reset()
             return text
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_socket_logic', e)
             logger.error("Transcription error: %s", e)
             self.reset()

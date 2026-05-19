@@ -168,7 +168,7 @@ class SemanticDefragmenter:
                     memory._collection.delete(ids=cluster_ids)
                     logger.info("✅ Successfully merged %s memories into a single Concept.", len(cluster_ids))
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('semantic_defrag', e)
             logger.error("Semantic Defrag failed: %s", e)
 

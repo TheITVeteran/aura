@@ -19,7 +19,7 @@ def _screen_capture_preflight_allowed() -> bool:
         preflight = getattr(Quartz, "CGPreflightScreenCaptureAccess", None)
         if callable(preflight):
             return bool(preflight())
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('sensory_worker', exc)
         logger.debug("Sensory worker Quartz preflight unavailable: %s", exc)
     return os.getenv("AURA_ASSUME_SCREEN_PERMISSION", "0") == "1"
@@ -56,7 +56,7 @@ def sensory_worker_loop(request_queue, response_queue):
                     import mss as _mss
                     cv2, mss = _cv2, _mss
                     response_queue.put({"status": "ok"})
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('sensory_worker', e)
                     response_queue.put({"status": "error", "msg": str(e)})
                 
@@ -78,7 +78,7 @@ def sensory_worker_loop(request_queue, response_queue):
                     import sounddevice as _sd
                     sd = _sd
                     response_queue.put({"status": "ok"})
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('sensory_worker', e)
                     response_queue.put({"status": "error", "msg": str(e)})
 

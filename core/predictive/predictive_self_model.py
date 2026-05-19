@@ -37,7 +37,7 @@ class PredictiveSelfModel:
             entropy = get_managed_entropy()
             noise = entropy.get_prediction_noise(self.dim)
             obs = obs + noise
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('predictive_self_model', e)
             capture_and_log(e, {'module': __name__})
         

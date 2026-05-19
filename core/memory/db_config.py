@@ -40,7 +40,7 @@ def configure_connection(db_path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA wal_autocheckpoint=1000;")
         conn.commit()
         _thread_local.connections[db_path] = conn
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
         record_degradation('db_config', e)
         logger.warning("Failed to set PRAGMA options on %s: %s", db_path, e)
         
@@ -63,7 +63,7 @@ async def configure_connection_async(db_path: str):
         await conn.execute("PRAGMA cache_size=-8000;")     # 8MB cache — reduces I/O pressure
         await conn.execute("PRAGMA wal_autocheckpoint=100;")  # Limit WAL file growth under sustained writes
         await conn.commit()
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
         record_degradation('db_config', e)
         logger.warning("Failed to set async PRAGMA options on %s: %s", db_path, e)
         

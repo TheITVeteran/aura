@@ -83,7 +83,7 @@ class ConversationReflector:
                     try:
                         from core.thought_stream import get_emitter
                         get_emitter().emit("Reflection 💭", reflection, level="info", category="Cognition")
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('conversation_reflection', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     
@@ -106,7 +106,7 @@ class ConversationReflector:
                     return reflection
             except asyncio.CancelledError:
                 return None
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('conversation_reflection', e)
                 logger.debug("Reflection failed (non-critical): %s", e)
                 return None
@@ -130,7 +130,7 @@ class ConversationReflector:
                 reflection,
                 conversation_context=context,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("conversation_reflection", exc)
             logger.debug("Online LoRA reflection submission skipped: %s", exc)
 
@@ -184,7 +184,7 @@ class ConversationReflector:
                 reflection = getattr(thought, 'content', str(thought)).strip()
             else:
                 return None
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_reflection', e)
             logger.debug("Reflection LLM call failed: %s", e)
             return None
@@ -250,7 +250,7 @@ class ConversationReflector:
                             description=f"Reflected: {snippet}",
                             importance=min(0.6, exchange_len / 3000),
                         )
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('conversation_reflection', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -307,10 +307,10 @@ class ConversationReflector:
                                     level="info",
                                     category="Memory"
                                 )
-                            except Exception as _exc:
+                            except (ImportError, AttributeError, RuntimeError) as _exc:
                                 record_degradation('conversation_reflection', _exc)
                                 logger.debug("Suppressed Exception: %s", _exc)
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('conversation_reflection', e)
                     logger.debug("Preference extraction failed (non-critical): %s", e)
 
@@ -341,7 +341,7 @@ class ConversationReflector:
                     if _arr_match:
                         try:
                             sg_items = _json.loads(_arr_match.group(0))
-                        except Exception:
+                        except (json.JSONDecodeError, TypeError, ValueError):
                             sg_items = None
                     if isinstance(sg_items, list):
                         from core.memory.shared_ground import get_shared_ground
@@ -356,11 +356,11 @@ class ConversationReflector:
                                 )
                         if sg_items:
                             logger.info("🤝 SharedGround: detected %d new entries", len(sg_items))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('conversation_reflection', e)
                 logger.debug("SharedGround extraction failed (non-critical): %s", e)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_reflection', e)
             logger.debug("Lesson storage failed (non-critical): %s", e)
 

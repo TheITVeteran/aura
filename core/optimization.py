@@ -54,7 +54,7 @@ class StrategyMetaOptimizer:
                 self.strategy_store.add(strat)
                 logger.info("💡 Learned Strategy: %s", st['description'])
                 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('optimization', e)
             logger.error("Meta-optimization loop failed: %s", e, exc_info=True)
 
@@ -124,7 +124,7 @@ TURN:
                 clean_json = clean_json.split("```")[1].split("```")[0].strip()
                 
             return json.loads(clean_json)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('optimization', e)
             logger.warning("Failed to extract memories: %s", e)
             return {"user_memories": [], "strategies": []}
@@ -194,6 +194,6 @@ TURN:
             elif hasattr(self.strategy_store, "update_stats"):
                 for key, card in scorecards.items():
                     self.strategy_store.update_stats(key, dict(card))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation("optimization", exc)
             logger.warning("Failed to persist strategy evaluations: %s", exc)

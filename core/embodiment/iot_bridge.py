@@ -143,18 +143,18 @@ def _read_substrate() -> Dict[str, Any]:
         homeo = ServiceContainer.get("homeostasis_engine", default=None) or ServiceContainer.get("homeostatic_engine", default=None)
         if homeo is not None and hasattr(homeo, "snapshot"):
             out["homeo"] = homeo.snapshot() or {}
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     try:
         import psutil
         out["cpu_pct"] = psutil.cpu_percent(interval=None)
         out["ram_pct"] = psutil.virtual_memory().percent
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     try:
         from core.organism.viability import get_viability
         out["viability"] = get_viability().state.value
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     return out
 
@@ -224,7 +224,7 @@ class IoTBridge:
             try:
                 if not rule.when(snapshot):
                     continue
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('iot_bridge', exc)
                 logger.debug("iot rule predicate failed: %s", exc)
                 continue
@@ -233,7 +233,7 @@ class IoTBridge:
                 continue
             try:
                 effect = rule.effect(snapshot)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('iot_bridge', exc)
                 logger.debug("iot rule effect build failed: %s", exc)
                 continue
@@ -242,7 +242,7 @@ class IoTBridge:
                 try:
                     out = await transport.apply(effect)
                     results.append({"transport": tname, "rule": rule.name, "out": out})
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('iot_bridge', exc)
                     logger.debug("iot transport %s apply failed: %s", tname, exc)
         return results
@@ -257,7 +257,7 @@ class IoTBridge:
             for tname, transport in self._transports.items():
                 try:
                     obs = await transport.observe()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('iot_bridge', exc)
                     logger.debug("iot observe failed (%s): %s", tname, exc)
                     obs = None
@@ -273,7 +273,7 @@ class IoTBridge:
             sg = ServiceContainer.get("sensory_gate", default=None)
             if sg is not None and hasattr(sg, "ingest"):
                 sg.ingest({"source": f"iot:{transport_name}", "observation": observation, "when": time.time()})
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('iot_bridge', exc)
             logger.debug("iot substrate inject failed: %s", exc)
 
@@ -286,7 +286,7 @@ class IoTBridge:
             while self._running:
                 try:
                     await self.tick()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('iot_bridge', exc)
                     logger.debug("iot bridge tick failed: %s", exc)
                 await asyncio.sleep(interval)

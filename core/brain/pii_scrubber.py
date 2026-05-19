@@ -64,7 +64,7 @@ def _load_private_names() -> list[str]:
                 if name and len(name) > 1:
                     names.append(name)
             return names
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     return []
 

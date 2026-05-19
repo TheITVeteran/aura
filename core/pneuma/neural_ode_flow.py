@@ -73,7 +73,7 @@ class BeliefFlowNetwork:
             rows += self._lr * np.outer(delta[active_idx], h)
             np.clip(rows, -2.0, 2.0, out=rows)
             self.W2[active_idx] = rows
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('neural_ode_flow', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

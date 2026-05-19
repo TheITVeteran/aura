@@ -216,7 +216,7 @@ class SkillSynthesizer:
             logger.info("SkillSynthesizer: synthesized '%s' (safety=%s)", name, safety)
             return skill
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('skill_synthesizer', e)
             logger.debug("Skill synthesis failed for gap '%s': %s", gap[:40], e)
             return None
@@ -235,7 +235,7 @@ class SkillSynthesizer:
                 })
                 skill.registered = True
                 logger.info("SkillSynthesizer: registered '%s'", skill.name)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('skill_synthesizer', e)
             logger.debug("Skill registration failed: %s", e)
 
@@ -255,7 +255,7 @@ class SkillSynthesizer:
                 ],
             }
             atomic_write_text(PERSIST_PATH, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('skill_synthesizer', e)
             logger.debug("SkillSynthesizer save failed: %s", e)
 
@@ -276,7 +276,7 @@ class SkillSynthesizer:
                     ))
                 logger.info("SkillSynthesizer: loaded %d synthesized skills.",
                             len(self._synthesized))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('skill_synthesizer', e)
             logger.debug("SkillSynthesizer load failed: %s", e)
 

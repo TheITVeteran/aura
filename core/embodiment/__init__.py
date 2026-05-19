@@ -34,7 +34,7 @@ class ContinuousSensoryFeed:
     def __init__(self):
         try:
             psutil.cpu_percent(interval=None)
-        except Exception as exc:
+        except (ImportError, OSError, AttributeError) as exc:
             record_degradation('__init__', exc)
             logger.debug("Suppressed: %s", exc)
     def get_snapshot(self) -> Dict[str, float]:
@@ -49,7 +49,7 @@ class ContinuousSensoryFeed:
                 "load": load,
                 "memory_pressure": memory
             }
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('__init__', e)
             logger.debug("Sensory capture failure: %s", e)
             return {"battery": 100.0, "cpu_temp": 45.0, "load": 10.0, "memory_pressure": 40.0}
@@ -59,7 +59,7 @@ class ContinuousSensoryFeed:
             temps = psutil.sensors_temperatures()
             if not temps: return 45.0
             return list(temps.values())[0][0].current
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             return 45.0
 
 class EmbodimentSystem:

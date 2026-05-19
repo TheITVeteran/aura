@@ -411,7 +411,7 @@ class Planner:
                     logger.warning("🔴 Planner circuit is OPEN. Using fallback plan.")
                     return self._create_fallback_plan(goal_text)
                 await reliability.heartbeat("planner", stability=0.95)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('planner', _e)
             logger.debug('Ignored Exception in planner.py: %s', _e)
 
@@ -449,7 +449,7 @@ class Planner:
                     logger.info("⚡ Strategic Synthesis SUCCESS for '%s...'", goal_text[:50])
                     self.plan_cache.put(goal_hash, strategic_plan)
                     return strategic_plan
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('planner', e)
                 logger.warning("Strategic synthesis bypass failed, falling back to LLM: %s", e)
 
@@ -487,7 +487,7 @@ class Planner:
                         if relevant_memories:
                             memory_context = "\n".join([f"- {m.content}" for m in relevant_memories])
                             working_goal = f"{working_goal}\n\n[Relevant Long-Term Memories]:\n{memory_context}"
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('planner', e)
                     logger.debug(f"Long-term memory recall failed in planner: {e}")
                     
@@ -552,7 +552,7 @@ class Planner:
                 
                 return plan
 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('planner', e)
                 attempt += 1
                 last_error = str(e)
@@ -576,7 +576,7 @@ class Planner:
                 if svc_info and svc_info.circuit_open:
                     return self._create_fallback_plan(original_plan.goal)
                 await reliability.heartbeat("planner", stability=0.85)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('planner', _e)
             logger.debug('Ignored Exception in planner.py: %s', _e)
 
@@ -671,7 +671,7 @@ OUTPUT JSON:
             t.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.exception() else None)
             return new_plan
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('planner', e)
             logger.error("Plan revision failed: %s", e)
             return self._create_fallback_plan(original_plan.goal)
@@ -880,7 +880,7 @@ Return ONLY the JSON object, no additional text."""
             # Atomic rename guarantees file integrity
             os.replace(temp_path, plan_path)
             logger.info("Plan persisted to disk: %s", plan_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('planner', e)
             logger.error("Failed to persist plan: %s", e)
 
@@ -914,7 +914,7 @@ Return ONLY the JSON object, no additional text."""
                 created_at=data.get("created_at", time.time()),
                 plan_hash=data.get("plan_hash")
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('planner', e)
             logger.error("Failed to load plan from disk: %s", e)
             return None
@@ -926,7 +926,7 @@ Return ONLY the JSON object, no additional text."""
             plan_path = config.paths.data_dir / "active_plan.json"
             if plan_path.exists():
                 plan_path.unlink()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('planner', e)
             logger.error("Failed to clear persisted plan: %s", e)
 

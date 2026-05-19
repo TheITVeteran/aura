@@ -153,7 +153,7 @@ class InputSanitizer:
                 return "", False
                 
             return str(resolved), True
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('input_sanitizer', e)
             logger.warning("🛡️ Path Resolution Failed: %s (%s)", path, e)
             return "", False

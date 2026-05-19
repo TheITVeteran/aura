@@ -428,7 +428,7 @@ class LocalServerClient:
                     "warmup_in_flight": self._warmup_in_flight,
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('local_server_client', exc)
             logger.debug("Failed to record degraded event for %s: %s", self._lane_name, exc)
 
@@ -1014,7 +1014,7 @@ class LocalServerClient:
         if self._http is not None:
             try:
                 await self._http.aclose()
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('local_server_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             self._http = None
@@ -1025,7 +1025,7 @@ class LocalServerClient:
             proc.kill()
             try:
                 await asyncio.to_thread(proc.wait, 5.0)
-            except Exception as _exc:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as _exc:
                 record_degradation('local_server_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1041,14 +1041,14 @@ class LocalServerClient:
                     self._lane_name,
                     self._port,
                 )
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('local_server_client', _exc)
             logger.debug("reboot_worker: port reclamation failed: %s", _exc)
 
         if self._log_handle is not None and not self._log_handle.closed:
             try:
                 self._log_handle.flush()
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('local_server_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1271,7 +1271,7 @@ class LocalServerClient:
                             lambda t: logger.error("Server restart failed: %s", t.exception())
                             if not t.cancelled() and t.exception() else None
                         )
-                    except Exception as restart_err:
+                    except (ImportError, AttributeError, RuntimeError) as restart_err:
                         record_degradation('local_server_client', restart_err)
                         logger.error("[%s] Failed to schedule server restart: %s", self._lane_name, restart_err)
                     return None

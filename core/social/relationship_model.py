@@ -160,7 +160,7 @@ class RelationshipStore:
                 dossier = self._from_dict(data)
                 self._cache[relationship_id] = dossier
                 return dossier
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation('relationship_model', exc)
                 logger.warning("relationship load failed for %s: %s", relationship_id, exc)
                 return None

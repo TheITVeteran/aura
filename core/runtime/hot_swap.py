@@ -112,7 +112,7 @@ class HotSwapRegistry:
                 slot.instance = migrated
                 slot.generation = old_generation + 1
                 return HotSwapResult(True, name, "promoted", ticket_id, old_generation, slot.generation)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 return HotSwapResult(False, name, f"migration_error:{type(exc).__name__}", ticket_id, old_generation, old_generation)
 
 

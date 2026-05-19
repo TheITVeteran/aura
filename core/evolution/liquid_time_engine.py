@@ -59,7 +59,7 @@ class ContinuousState:
                     )
                 }
                 logger.info("✓ Liquid weights loaded from .npz")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('liquid_time_engine', e)
                 logger.error("Failed to load liquid weights: %s. Using defaults.", e)
                 self._set_defaults()

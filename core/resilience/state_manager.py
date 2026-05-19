@@ -110,14 +110,14 @@ class StateManager:
                     kg_path = Path(config.paths.data_dir) / "knowledge_graph.db"
                     recorder.create_snapshot(kg_path)
                     logger.info("🏺 Eternal Record snapshot triggered via StateManager (%s)", reason)
-                except Exception as er_err:
+                except (ImportError, AttributeError, RuntimeError) as er_err:
                     record_degradation('state_manager', er_err)
                     logger.error("Failed to trigger Eternal Record: %s", er_err)
 
             logger.debug("State snapshot saved (%s).", reason)
             return True
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('state_manager', e)
             logger.error("Failed to save state snapshot: %s", e)
             return False
@@ -139,7 +139,7 @@ class StateManager:
         try:
             shutil.move(str(corrupted_file_path), str(target_path))
             logger.critical("🚨 DATA CORRUPTION DETECTED: Snapshot quarantined to %s", target_path)
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('state_manager', e)
             logger.error("Failed to quarantine corrupted file %s: %s", corrupted_file_path, e)
 
@@ -175,7 +175,7 @@ class StateManager:
             logger.info("Loaded snapshot from %s (Reason: %s)", meta.get('iso_time'), meta.get('reason'))
             return data
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('state_manager', e)
             logger.error("Failed to load snapshot from %s: %s", path, e)
             return None
@@ -191,7 +191,7 @@ class StateManager:
                     "size": f.stat().st_size,
                     "time": f.stat().st_mtime
                 })
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('state_manager', exc)
                 logger.debug("Suppressed: %s", exc)
 

@@ -45,7 +45,7 @@ class CognitiveWAL:
                 if blocking:
                     f.flush()
                     os.fsync(f.fileno())  # Force OS to write to disk
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('cognitive_wal', e)
             logger.error("Failed to write to WAL: %s", e)
 
@@ -59,7 +59,7 @@ class CognitiveWAL:
             try:
                 with open(self.filepath, "a") as f:
                     f.write(json.dumps(entry) + "\n")
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('cognitive_wal', e)
                 logger.error("Failed to commit WAL entry: %s", e)
 
@@ -84,7 +84,7 @@ class CognitiveWAL:
                                 del intents[intent_id]
                     except json.JSONDecodeError:
                         continue
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('cognitive_wal', e)
             logger.error("Failed to read WAL during recovery: %s", e)
             return []
@@ -121,7 +121,7 @@ class CognitiveWAL:
                                     pending_entries.append(line.strip())
                         except json.JSONDecodeError:
                             continue
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('cognitive_wal', e)
                 capture_and_log(e, {'module': __name__})
             
@@ -135,7 +135,7 @@ class CognitiveWAL:
             shutil.move(tmp_path, str(self.filepath))
             logger.info("💾 WAL: Pruned successfully. %d pending intents preserved.", len(pending_entries))
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_wal', e)
             logger.error("WAL clear failed: %s", e)
 

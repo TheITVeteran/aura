@@ -77,7 +77,7 @@ class ZenithBootloader:
             # Final Lock
             logger.info("🔒 SYSTEM STABILIZED. RADAR ONLINE.")
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('aura_3_boot', e)
             logger.critical("ZENITH BOOT FAILURE: %s", e, exc_info=True)
             raise RuntimeError(f"ZENITH BOOT FAILURE: {e}")

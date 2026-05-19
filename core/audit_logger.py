@@ -48,7 +48,7 @@ class AuditLogger:
                     )
                 """)
                 self._conn.commit()
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('audit_logger', e)
             logger.error(f"Failed to initialize Audit DB: {e}", exc_info=True)
 
@@ -79,7 +79,7 @@ class AuditLogger:
                 """, (timestamp, actor, action, target, context_str, signature))
                 self._conn.commit()
                 logger.debug(f"Audit event recorded: [{action}] by [{actor}] on [{target}]")
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('audit_logger', e)
             logger.error(f"CRITICAL: Failed to write to audit log: {e}", exc_info=True)
 
@@ -96,7 +96,7 @@ class AuditLogger:
                         return False
             logger.info("Audit log integrity verified: SUCCESS")
             return True
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('audit_logger', e)
             logger.error(f"Failed to verify audit log integrity: {e}")
             return False

@@ -107,7 +107,7 @@ class ResistanceSandbox:
         try:
             from core.config import config
             return config.paths.data_dir / "sandbox"
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return Path.home() / ".aura" / "data" / "sandbox"
 
     def _load_state(self):
@@ -118,7 +118,7 @@ class ResistanceSandbox:
                 self._prediction_accuracy = float(data.get("prediction_accuracy", 0.5))
                 self._total_actions = int(data.get("total_actions", 0))
                 self._resource_pressure = float(data.get("resource_pressure", 0.0))
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('resistance_sandbox', exc)
                 logger.debug("Sandbox state load failed: %s", exc)
 
@@ -131,7 +131,7 @@ class ResistanceSandbox:
                 "resource_pressure": round(self._resource_pressure, 4),
                 "last_save": time.time(),
             }))
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('resistance_sandbox', exc)
             logger.debug("Sandbox state save failed: %s", exc)
 
@@ -183,7 +183,7 @@ class ResistanceSandbox:
         except OSError as exc:
             actual_outcome = f"os_error:{exc}"
             error_magnitude = 0.7
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('resistance_sandbox', exc)
             actual_outcome = f"unexpected:{type(exc).__name__}"
             error_magnitude = 0.9
@@ -301,7 +301,7 @@ class ResistanceSandbox:
                 # Cortisol spike on prediction failure
                 if hasattr(nchem, "apply_event"):
                     nchem.apply_event("prediction_failure", intensity=error_magnitude)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('resistance_sandbox', exc)
             logger.debug("Sandbox neurochemical feedback failed: %s", exc)
 
@@ -320,7 +320,7 @@ class ResistanceSandbox:
                 efference=comp._traces[-1] if comp._traces else None,
                 actual_state={"outcome": action.actual_outcome},
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('resistance_sandbox', exc)
             logger.debug("Sandbox agency feedback failed: %s", exc)
 
@@ -331,7 +331,7 @@ class ResistanceSandbox:
             get_temporal_finitude_model().record_irreversible_action(
                 f"sandbox:{action.action_type}:{action.target}"
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('resistance_sandbox', exc)
             logger.debug("Sandbox finitude feedback failed: %s", exc)
 
@@ -347,7 +347,7 @@ class ResistanceSandbox:
         """Count of files currently in the sandbox."""
         try:
             return sum(1 for _ in self._sandbox_dir.rglob("*") if _.is_file() and _.name != ".sandbox_state.json")
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return 0
 
     def get_context_block(self) -> str:

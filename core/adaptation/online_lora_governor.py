@@ -72,7 +72,7 @@ class OnlineLoRAGovernor:
                     found.append({"pid": info.get("pid"), "cmdline": cmdline})
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("online_lora_governor", exc)
         return found
 
@@ -142,7 +142,7 @@ class OnlineLoRAGovernor:
                 # We do not block to run the optimizer synchronously anymore;
                 # the scheduler handles it asynchronously in the background.
                 optimizer_result = {"ok": True, "message": "delegated to continuous learner scheduler"}
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation("online_lora_governor", _e)
                 optimizer_result = await self._run_optimizer(dataset_path)
 
@@ -177,7 +177,7 @@ class OnlineLoRAGovernor:
                 "receipt_id": decision.receipt_id,
                 "reason": decision.reason,
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("online_lora_governor", exc)
             return {"approved": False, "receipt_id": "", "reason": f"will_unavailable:{type(exc).__name__}"}
 
@@ -204,7 +204,7 @@ class OnlineLoRAGovernor:
                 optimizer.dataset_path = Path(dataset_path)
             result = await optimizer.optimize(iters=int(os.getenv("AURA_ONLINE_LORA_ITERS", "20")), batch_size=1)
             return dict(result or {})
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("online_lora_governor", exc)
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 

@@ -96,7 +96,7 @@ class CognitiveIntegrationPhase(Phase):
             self._alife_dynamics = ServiceContainer.get("alife_dynamics", default=None)
             self._alife_extensions = ServiceContainer.get("alife_extensions", default=None)
             self._endogenous_fitness = ServiceContainer.get("endogenous_fitness", default=None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_resolve_services"})
@@ -174,7 +174,7 @@ class CognitiveIntegrationPhase(Phase):
                 # Keep the queue bounded to prevent memory leaks if tick rate outpaces ALife
                 if len(self._pending_deltas) < 100:
                     self._pending_deltas.append(bg_state.response_modifiers)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('alife_bg', e)
                 from core.utils.exceptions import capture_and_log
                 capture_and_log(e, {"module": "CognitiveIntegrationPhase", "method": "_run_alife_background"})
@@ -232,7 +232,7 @@ class CognitiveIntegrationPhase(Phase):
             mood = self._sentiment_tracker.get_mood_narrative()
             if mood:
                 state.response_modifiers["mood_narrative"] = mood
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_sentiment"})
@@ -279,7 +279,7 @@ class CognitiveIntegrationPhase(Phase):
                 "is_anomaly": is_anomaly,
             }
             return score
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_anomaly_detection"})
@@ -299,7 +299,7 @@ class CognitiveIntegrationPhase(Phase):
             )
             state.response_modifiers["autonomous_resilience"] = report
             return report
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_autonomous_resilience"})
@@ -386,7 +386,7 @@ class CognitiveIntegrationPhase(Phase):
                     )
                 if secondary_responses:
                     state.response_modifiers["autonomous_resilience_immune"] = secondary_responses
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_adaptive_immunity"})
@@ -413,7 +413,7 @@ class CognitiveIntegrationPhase(Phase):
             state.response_modifiers["temporal_coherence"] = loop_state.temporal_coherence
             if loop_state.self_narrative:
                 state.response_modifiers["self_narrative"] = loop_state.self_narrative
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_strange_loop"})
@@ -432,7 +432,7 @@ class CognitiveIntegrationPhase(Phase):
             # Feed energy level into affect for downstream use
             if hasattr(state.affect, "energy"):
                 state.affect.energy = energy / 100.0  # Normalize to 0-1
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_homeostatic_rl"})
@@ -465,7 +465,7 @@ class CognitiveIntegrationPhase(Phase):
                         "births": getattr(delta, "births", 0) if delta else 0,
                         "deaths": getattr(delta, "deaths", 0) if delta else 0,
                     }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_topology_evolution"})
@@ -483,7 +483,7 @@ class CognitiveIntegrationPhase(Phase):
                     "Repair cycle may be needed.",
                     vitality,
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_autopoiesis"})
@@ -533,9 +533,9 @@ class CognitiveIntegrationPhase(Phase):
                 neurochems = ServiceContainer.get("neurochemical_system", default=None)
                 if neurochems and hasattr(neurochems, "set_ei_target"):
                     neurochems.set_ei_target(ei_ratio)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass  # no-op: intentional
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_criticality"})
@@ -576,7 +576,7 @@ class CognitiveIntegrationPhase(Phase):
                     self._alife_dynamics.get_status().get("gini_coefficient", 0.0)
                     if hasattr(self._alife_dynamics, "get_status") else 0.0
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_alife_dynamics"})
@@ -612,7 +612,7 @@ class CognitiveIntegrationPhase(Phase):
                 state.response_modifiers["species_count"] = getattr(
                     ext_state.species_info, "species_count", 0
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('cognitive_integration_phase', exc)
             from core.utils.exceptions import capture_and_log
             capture_and_log(exc, {"module": "CognitiveIntegrationPhase", "method": "_run_alife_extensions"})

@@ -28,7 +28,7 @@ def integrate_all_personality_systems(orchestrator):
 
         logger.info("Identity core integrated - v3.5.5")
         return True
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('personality_integration', e)
         logger.error("Personality integration failed: %s", e)
         return False

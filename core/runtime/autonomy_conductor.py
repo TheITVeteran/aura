@@ -97,7 +97,7 @@ class AutonomyConductor:
         while not self._stop.is_set():
             try:
                 await self.run_due_once()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("autonomy_conductor", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=30.0)
@@ -113,7 +113,7 @@ class AutonomyConductor:
             job.last_result = dict(result or {})
             job.last_status = "ok"
             job.failures = 0
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("autonomy_conductor", exc)
             job.last_result = {"error": repr(exc)}
             job.last_status = "failed"

@@ -818,7 +818,7 @@ class EndogenousFitness:
                     getattr(substrate, "idx_energy", 5)
                 ])
                 state["energy"] = raw_energy * 100.0  # scale to 0-100 range
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness energy sample failed: %s", exc)
 
@@ -827,7 +827,7 @@ class EndogenousFitness:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis is not None:
                 state["vitality"] = float(homeostasis.compute_vitality())
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness vitality sample failed: %s", exc)
 
@@ -840,7 +840,7 @@ class EndogenousFitness:
                 anomaly = ServiceContainer.get("anomaly_detector", default=None)
                 if anomaly is not None and hasattr(anomaly, "get_threat_level"):
                     state["threat_level"] = float(anomaly.get_threat_level())
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness threat sample failed: %s", exc)
 
@@ -855,7 +855,7 @@ class EndogenousFitness:
                     state["free_energy"] = float(
                         getattr(fe_engine, "_smoothed_fe", 0.3)
                     )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness free-energy sample failed: %s", exc)
 
@@ -871,7 +871,7 @@ class EndogenousFitness:
                 substrate = ServiceContainer.get("liquid_substrate", default=None)
                 if substrate is not None:
                     state["phi"] = float(getattr(substrate, "_current_phi", 1.0))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness phi/entropy sample failed: %s", exc)
 
@@ -899,7 +899,7 @@ class EndogenousFitness:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis is not None:
                 vec[2] = float(np.clip(getattr(homeostasis, "curiosity", 0.5), 0.0, 1.0))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness curiosity sample failed: %s", exc)
 
@@ -913,7 +913,7 @@ class EndogenousFitness:
                 sh = status.get("social_hunger", None)
                 if sh is not None:
                     vec[1] = float(np.clip(sh, 0.0, 1.0))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("endogenous_fitness", exc)
             logger.debug("EndogenousFitness social hunger sample failed: %s", exc)
 

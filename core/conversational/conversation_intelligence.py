@@ -871,7 +871,7 @@ def get_conversation_intelligence() -> ConversationIntelligenceEngine:
                     "conversation_intelligence", _engine_instance
                 )
                 logger.info("ConversationIntelligenceEngine registered in ServiceContainer")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_intelligence', e)
             logger.debug("Could not register in ServiceContainer: %s", e)
     return _engine_instance

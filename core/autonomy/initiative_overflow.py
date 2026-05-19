@@ -104,7 +104,7 @@ class InitiativeOverflowManager:
             get_metrics().set_gauge(
                 "initiative_queue_cap", float(self._current_cap)
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         logger.info(
@@ -151,7 +151,7 @@ class InitiativeOverflowManager:
         # Persist to memory for self-development targeting
         try:
             self._persist_skill_gap(gap)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("initiative_overflow", exc)
             logger.debug("Skill gap memory write failed: %s", exc)
 
@@ -168,7 +168,7 @@ class InitiativeOverflowManager:
                     importance=0.6 + min(0.3, gap.occurrences * 0.05),
                     tags=["skill_gap", "self_development", gap.skill_name],
                 )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # Best-effort
 
     def resolve_skill_gap(self, skill_name: str) -> bool:
@@ -207,7 +207,7 @@ class InitiativeOverflowManager:
                     )
                     self._current_cap = new_cap
                 return self._current_cap
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         # High consecutive overflows: increase cap slightly

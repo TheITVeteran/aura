@@ -47,7 +47,7 @@ class DamasioMarkers:
                     emotion_def = float(w['emotions_default'])
                 
                 logger.info("✓ Damasio weights loaded from .npz")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('damasio_v2', e)
                 logger.error("Failed to load Damasio weights (falling back to defaults): %s", e)
 
@@ -179,7 +179,7 @@ class AffectEngineV2:
             if hasattr(coro, "close"):
                 try:
                     coro.close()
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('damasio_v2', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             return None
@@ -218,7 +218,7 @@ class AffectEngineV2:
         try:
             from core.brain.llm.mlx_client import _foreground_owner_active
             foreground_active = bool(_foreground_owner_active())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             foreground_active = False
 
         if self._llm_available and len(trigger) > 10:
@@ -249,7 +249,7 @@ class AffectEngineV2:
                     intensity = (
                         abs(appraisal.get("v", 0.0)) + abs(appraisal.get("a", 0.0))
                     ) / 2.0 or intensity
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     failure_reason = self._classify_appraisal_failure(e)
                     quiet_background_failure = failure_reason in {
                         "lane_unavailable",
@@ -289,7 +289,7 @@ class AffectEngineV2:
                                 context={"trigger": trigger[:120]},
                                 exc=e,
                             )
-                        except Exception as degraded_exc:
+                        except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                             record_degradation('damasio_v2', degraded_exc)
                             logger.debug("Affect degraded-event logging failed: %s", degraded_exc)
                         self._llm_available = False
@@ -326,7 +326,7 @@ class AffectEngineV2:
                 self.iot_bridge.broadcast_affect_state(current_pad),
                 name="affect.iot_broadcast",
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('damasio_v2', e)
             logger.debug("IoT Bridge broadcast failed: %s", e)
 
@@ -341,7 +341,7 @@ class AffectEngineV2:
         if soma:
             try:
                 soma_state = await soma.pulse()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('damasio_v2', exc)
                 logger.debug("Soma pulse failed during affect update: %s", exc)
 
@@ -357,7 +357,7 @@ class AffectEngineV2:
             try:
                 from core.senses.entropy_anchor import entropy_anchor
                 drift = entropy_anchor.get_vad_drift(volatility_multiplier=0.015)
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 drift = 0.0
 
             # Phase 18.2: Momentum-Based Decay & Baseline Drift (v52: Homeostatic Rubber-Band)
@@ -746,14 +746,14 @@ class AffectEngineV2:
                 try:
                     if gate._background_local_deferral_reason(origin="affect_engine"):
                         return True
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('damasio_v2', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             if gate and hasattr(gate, "_should_quiet_background_for_cortex_startup"):
                 try:
                     if gate._should_quiet_background_for_cortex_startup():
                         return True
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('damasio_v2', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             if not gate or not hasattr(gate, "get_conversation_status"):
@@ -762,14 +762,14 @@ class AffectEngineV2:
                 try:
                     if gate._foreground_user_turn_active():
                         return True
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('damasio_v2', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             if hasattr(gate, "_foreground_owner_active"):
                 try:
                     if gate._foreground_owner_active():
                         return True
-                except Exception as _exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('damasio_v2', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
             lane = gate.get_conversation_status() or {}
@@ -785,7 +785,7 @@ class AffectEngineV2:
             if lane.get("warmup_in_flight"):
                 return True
             return lane_state in {"cold", "spawning", "handshaking", "warming", "recovering"}
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     @staticmethod
@@ -887,7 +887,7 @@ class AffectEngineV2:
                 if key in data:
                     results[key] = float(data[key])
             return results
-        except Exception as _exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('damasio_v2', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -995,7 +995,7 @@ class AffectEngineV2:
                 get_emitter().emit("Adrenaline Injection", 
                                    f"Somatic surge triggered to break {'resource panic' if is_resource_panic else 'despair spiral'}.", 
                                    level=level, category="Immune")
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 logger.debug("ThoughtStream emitter: Failed to emit Adrenaline Injection pulse.")
 
     async def _broadcast_event(self, event_type: str):
@@ -1014,6 +1014,6 @@ class AffectEngineV2:
                     )
                 elif hasattr(bus, "post"):
                     bus.post(event_type, snapshot)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('damasio_v2', e)
             logger.debug("Failed to broadcast affect event: %s", e)

@@ -50,7 +50,7 @@ class BrowserAgent:
             screenshot = await self.computer.screenshot()
             url = await self.computer.get_url()
             return EnvState(screenshot_bytes=screenshot, url=url)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('computer_use_agent', e)
             logger.error("Failed to capture environment state: %s", e)
             return EnvState()
@@ -115,7 +115,7 @@ class BrowserAgent:
             self._history.append({"role": "assistant", "content": response_json_str})
             self.state = AgentState.COMPLETE
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('computer_use_agent', e)
             logger.error("Computer Use step failed: %s", e)
             self.state = AgentState.FAILED

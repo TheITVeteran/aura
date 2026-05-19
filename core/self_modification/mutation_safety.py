@@ -121,7 +121,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
         try:
             with open(source_path, "r", encoding="utf-8") as fh:
                 source = fh.read()
-        except Exception as e:
+        except (OSError, IOError) as e:
             _emit("compile_fail", traceback_text=f"could not read source: {e}")
             sys.exit(EXIT_COMPILE_FAIL)
 
@@ -130,7 +130,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
         except SyntaxError as e:
             _emit("compile_fail", traceback_text=traceback.format_exc(), extra={"err": str(e)})
             sys.exit(EXIT_COMPILE_FAIL)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             _emit("compile_fail", traceback_text=traceback.format_exc())
             sys.exit(EXIT_COMPILE_FAIL)
 
@@ -144,7 +144,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
         except AssertionError:
             _emit("assertion_fail", traceback_text=traceback.format_exc())
             sys.exit(EXIT_ASSERTION_FAIL)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             _emit("runtime_exception", traceback_text=traceback.format_exc())
             sys.exit(EXIT_RUNTIME_EXCEPTION)
 
@@ -152,7 +152,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
             try:
                 with open(test_path, "r", encoding="utf-8") as fh:
                     test_source = fh.read()
-            except Exception as e:
+            except (OSError, IOError) as e:
                 _emit("runtime_exception", traceback_text=f"could not read test: {e}")
                 sys.exit(EXIT_RUNTIME_EXCEPTION)
             try:
@@ -170,7 +170,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
             except AssertionError:
                 _emit("assertion_fail", traceback_text=traceback.format_exc())
                 sys.exit(EXIT_ASSERTION_FAIL)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 _emit("runtime_exception", traceback_text=traceback.format_exc())
                 sys.exit(EXIT_RUNTIME_EXCEPTION)
 
@@ -290,7 +290,7 @@ class SafeMutationEvaluator:
                     env=self._safe_env(),
                     preexec_fn=self._set_rlimits if hasattr(os, "fork") else None,
                 )
-            except Exception as e:  # pragma: no cover - subprocess setup is platform-bound
+            except (subprocess.SubprocessError, OSError) as e:  # pragma: no cover - subprocess setup is platform-bound
                 diag = MutationDiagnostics(
                     outcome=MutationOutcome.RUNTIME_EXCEPTION,
                     runtime_seconds=0.0,
@@ -318,7 +318,7 @@ class SafeMutationEvaluator:
                 proc.kill()
                 try:
                     stdout, stderr = proc.communicate(timeout=2.0)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     stdout = b""
                     stderr = b""
                 diag = MutationDiagnostics(
@@ -328,7 +328,7 @@ class SafeMutationEvaluator:
                     stdout=stdout.decode("utf-8", errors="replace"),
                     stderr=stderr.decode("utf-8", errors="replace"),
                 )
-            except Exception as e:  # noqa: BLE001 - last-resort safety net
+            except (subprocess.SubprocessError, OSError) as e:  # noqa: BLE001 - last-resort safety net
                 diag = MutationDiagnostics(
                     outcome=MutationOutcome.RUNTIME_EXCEPTION,
                     runtime_seconds=time.monotonic() - start,
@@ -456,7 +456,7 @@ class SafeMutationEvaluator:
                 diagnostics=diag,
             )
             diag.quarantine_path = str(entry)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Quarantine failures must not change the outcome that the
             # parent observed.  We swallow here so a malformed mutation
             # cannot escalate via the quarantine layer.

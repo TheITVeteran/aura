@@ -47,7 +47,7 @@ class MessageCoordinator:
             return msg
         except asyncio.QueueEmpty:
             return None
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('message_coordinator', e)
             logger.error("Error acquiring message: %s", e)
             return None
@@ -90,7 +90,7 @@ class MessageCoordinator:
             else:
                 label = "User"
             get_emitter().emit(f"Input ({label})", message[:120], level="info")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('message_coordinator', exc)
             logger.error("Dispatch telemetry failure: %s", exc)
 
@@ -115,7 +115,7 @@ class MessageCoordinator:
                 else:
                     reply = await asyncio.wait_for(orch.reply_queue.get(), timeout=30)
                 return {"ok": True, "response": reply}
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('message_coordinator', e)
                 logger.error("Timed out waiting for reply to: %s", message[:50])
                 return {"ok": False, "error": f"Response timeout: {str(e)}"}
@@ -215,7 +215,7 @@ class MessageCoordinator:
                         except asyncio.QueueFull:
                             import logging
                             logger.debug("Exception caught during execution", exc_info=True)
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('message_coordinator', e)
                     logger.error("State machine execution failed: %s", e)
                 finally:
@@ -224,7 +224,7 @@ class MessageCoordinator:
                 _execute_and_reply(),
                 name="message_coordinator.execute_and_reply",
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_coordinator', e)
             logger.error("Error in handle_incoming_message: %s", e)
             orch.status.is_processing = False
@@ -281,7 +281,7 @@ class MessageCoordinator:
             try:
                 from core.ops.thinking_mode import ModeRouter
                 tier = ModeRouter(orch.reflex_engine).route(message).value
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('message_coordinator', exc)
                 logger.debug("Suppressed: %s", exc)
             context = orch._get_cleaned_history_context(8)
@@ -291,7 +291,7 @@ class MessageCoordinator:
                 ls = container.get('liquid_state')
                 context['liquid_state'] = ls.get_status()
                 logger.debug("TOOL EXECUTION: Injected liquid_state: %s", context['liquid_state'])
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('message_coordinator', e)
                 logger.warning("TOOL EXECUTION: LiquidState injection failed: %s", e)
             token_buffer = ""
@@ -306,7 +306,7 @@ class MessageCoordinator:
             orch.conversation_history.append({"role": "user", "content": message})
             orch.conversation_history.append({"role": orch.AI_ROLE, "content": token_buffer})
             if hasattr(orch, 'drives'): await orch.drives.satisfy("social", 5.0)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('message_coordinator', e)
             logger.error("Chat stream failed: %s", e)
             yield f" [Error: {e}] "

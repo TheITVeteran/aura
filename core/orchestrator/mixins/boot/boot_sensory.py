@@ -28,7 +28,7 @@ class BootSensoryMixin:
                     ears = SovereignEars()
                     ServiceContainer.register_instance("ears", ears)
                     logger.info("👂 Sovereign Ears Active")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot_sensory', e)
                     logger.error("👂 Ears init failed: %s", e)
 
@@ -40,7 +40,7 @@ class BootSensoryMixin:
                     ServiceContainer.register_instance("vision_engine", vision)
                     ServiceContainer.register_instance("vision", vision)
                     logger.info("👁️  Sovereign Vision Active")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot_sensory', e)
                     logger.error("👁️  Vision init failed: %s", e)
 
@@ -72,11 +72,11 @@ class BootSensoryMixin:
 
                 self.instincts = SensoryInstincts(self)
                 logger.info("✓ Sensory Instincts initialized")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('boot_sensory', e)
                 logger.error("Failed to init Sensory Instincts: %s", e)
                 self.instincts = None
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_sensory', e)
             logger.error("🛑 Halting: Critical validation failures.")
             self.terminal_monitor = None
@@ -105,7 +105,7 @@ class BootSensoryMixin:
                     await voice.ensure_models_async()
                 ServiceContainer.register_instance("voice_engine", voice)
                 logger.info("🎙️  Voice Engine initialized and registered in background")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('boot_sensory', e)
                 logger.error("🛑 Voice Engine background init failed: %s", e)
 

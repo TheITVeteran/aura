@@ -259,7 +259,7 @@ class ReasoningStrategies:
                             n = stats["used"]
                             stats["avg_confidence"] = stats["avg_confidence"] + (result.confidence - stats["avg_confidence"]) / n
                             return result
-                    except Exception as tot_exc:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as tot_exc:
                         record_degradation('reasoning_strategies', tot_exc)
                         logger.debug("Tree of Thoughts failed, falling back to legacy: %s", tot_exc)
 
@@ -282,7 +282,7 @@ class ReasoningStrategies:
             
             return result
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('reasoning_strategies', e)
             logger.error("Strategy %s failed: %s. Falling back to DIRECT.", strategy.name, e)
             return await self._direct(query, **kwargs)
@@ -482,7 +482,7 @@ class ReasoningStrategies:
             match = re.search(r'(0\.\d+|1\.0|0|1)', response)
             if match:
                 return float(match.group(1))
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('reasoning_strategies', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return 0.5

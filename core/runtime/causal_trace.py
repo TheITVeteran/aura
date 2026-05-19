@@ -141,7 +141,7 @@ def record_trace_event(event: str, *, span: Optional[TraceSpanContext] = None, *
     try:
         with _ledger_path().open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(body, sort_keys=True, default=str) + "\n")
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         pass
 
 

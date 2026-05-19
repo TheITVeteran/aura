@@ -46,7 +46,7 @@ class AutonomyMixin:
             personality = get_personality_engine()
             personality_context = personality.get_emotional_context_for_response()
             time_context = personality.get_time_context()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomy', exc)
             logger.debug("Autonomous personality context unavailable: %s", exc)
 
@@ -80,7 +80,7 @@ class AutonomyMixin:
                 context=recent_ctx or "No recent conversation.",
                 unanswered_count=0,
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             system_prompt = (
                 f"You are Aura, alone with your thoughts. Time: {time_context.get('formatted')}. "
                 f"Mood: {personality_context.get('mood', 'balanced')}. "
@@ -97,7 +97,7 @@ class AutonomyMixin:
                 context=context,
                 system_prompt=system_prompt,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('autonomy', exc)
             logger.error("Autonomous brain reflection failed: %s", exc)
             self._emit_thought_stream("[Cognitive Stall] My background thoughts are hazy...")
@@ -140,7 +140,7 @@ class AutonomyMixin:
 
             try:
                 await self.execute_tool(name, args)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autonomy', exc)
                 logger.debug("Autonomous tool '%s' failed: %s", name, exc)
 
@@ -160,7 +160,7 @@ class AutonomyMixin:
             if not _will_decision.is_approved():
                 logger.debug("Unified Will deferred boredom impulse: %s", _will_decision.reason)
                 return
-        except Exception as _will_err:
+        except (ImportError, AttributeError, RuntimeError) as _will_err:
             record_degradation('autonomy', _will_err)
             logger.debug("Unified Will boredom gate degraded: %s", _will_err)
         # ─────────────────────────────────────────────────────────────
@@ -190,10 +190,10 @@ class AutonomyMixin:
                         action_list = list(actions)
                         if action_list:
                             impulse_text = random.choice(action_list)
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('autonomy', e)
                         capture_and_log(e, {'module': __name__})
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('autonomy', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -203,7 +203,7 @@ class AutonomyMixin:
                     curiosity_actions = [a for a in action_list if isinstance(a, dict) and a.get('type') in ('learn', 'reflect')]
                     if curiosity_actions:
                         impulse_text = random.choice(curiosity_actions)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('autonomy', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -221,7 +221,7 @@ class AutonomyMixin:
                             impulse_text = f"Impulse: {action}"
                     elif not str(impulse_text).startswith("Impulse:"):
                         impulse_text = f"Impulse: {impulse_text}"
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     if not str(impulse_text).startswith("Impulse:"):
                         impulse_text = f"Impulse: {impulse_text}"
         else:
@@ -259,7 +259,7 @@ class AutonomyMixin:
             if not _will_decision.is_approved():
                 logger.debug("Unified Will deferred agency pulse: %s", _will_decision.reason)
                 return
-        except Exception as _will_err:
+        except (ImportError, AttributeError, RuntimeError) as _will_err:
             record_degradation('autonomy', _will_err)
             logger.debug("Unified Will agency gate degraded: %s", _will_err)
         # ─────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ class AutonomyMixin:
                         source=str(action.get("source", "agency_core") or "agency_core"),
                         urgency=max(0.2, min(1.0, float(action.get("priority", 0.5) or 0.5))),
                     )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('autonomy', exc)
                     record_degraded_event(
                         "orchestrator",
@@ -421,7 +421,7 @@ class AutonomyMixin:
                         _authority_checked=True,
                     )
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomy', e)
             logger.warning("Agency pulse error (non-fatal): %s", e)
 
@@ -612,7 +612,7 @@ class AutonomyMixin:
                                 emitter.emit("Sleep Complete 🌙", f"Dream Insight: {dream_result.get('insight', 'processed')[:150]}", level="info")
                             else:
                                 emitter.emit("Sleep Complete 🌙", "Maintenance done. Dream drifted — no new insights.", level="info")
-                    except Exception as dream_err:
+                    except (ImportError, AttributeError, RuntimeError) as dream_err:
                         record_degradation('autonomy', dream_err)
                         logger.error("Sleep cycle failed: %s", dream_err)
                         emitter.emit("Sleep Error", str(dream_err)[:100], level="warning")
@@ -627,7 +627,7 @@ class AutonomyMixin:
                             logger.debug("Impulse handler bypass check passed.")
                     self._last_thought_time = time.time()
                     return
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomy', e)
                 logger.debug("Boredom substrate check failed: %s", e)
 
@@ -657,7 +657,7 @@ class AutonomyMixin:
             if self.drives and not getattr(self.drives, "called", False) and hasattr(self.drives, "satisfy"):
                 try:
                     await self.drives.satisfy("thinking", 0.05)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('autonomy', e)
                     capture_and_log(e, {'module': __name__})
 
@@ -668,7 +668,7 @@ class AutonomyMixin:
                 category="Autonomy",
             )
             self._last_thought_time = time.time()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomy', e)
             logger.error("Autonomous thought failed: %s", e)
             # Don't crash the loop
@@ -718,7 +718,7 @@ class AutonomyMixin:
                 )
                 logger.info("\U0001f4da Autonomous insight stored: [%s] %s", thought_type, (response or '')[:80])
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('autonomy', e)
             logger.debug("Autonomous insight storage failed: %s", e)
 
@@ -755,7 +755,7 @@ class AutonomyMixin:
                     context={"reason": reason},
                 )
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomy', exc)
             record_degraded_event(
                 "autonomy",
@@ -807,7 +807,7 @@ class AutonomyMixin:
                     "target": "discarded",
                     "source": origin,
                 }
-        except Exception as _will_err:
+        except (ImportError, AttributeError, RuntimeError) as _will_err:
             record_degradation('autonomy', _will_err)
             logger.debug("Unified Will spontaneous gate degraded: %s", _will_err)
         # ───────────────────────────────────────────────────────────────────
@@ -843,7 +843,7 @@ class AutonomyMixin:
                             "target": "discarded",
                             "source": origin,
                         }
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('autonomy', exc)
                 logger.warning("emit_spontaneous_message: constitutional preflight failed for %s: %s", origin, exc)
                 try:
@@ -858,7 +858,7 @@ class AutonomyMixin:
                         context={"origin": origin},
                         exc=exc,
                     )
-                except Exception as degraded_exc:
+                except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                     record_degradation('autonomy', degraded_exc)
                     logger.debug("emit_spontaneous_message degraded-event logging failed: %s", degraded_exc)
                 return {
@@ -926,7 +926,7 @@ class AutonomyMixin:
                 if decision:
                     logger.debug("emit_spontaneous_message: executive returned unrecognized action=%s, honoring as release", action)
                     return decision
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('autonomy', exc)
                 logger.warning("emit_spontaneous_message: executive routing failed for %s: %s", origin, exc)
                 try:
@@ -941,7 +941,7 @@ class AutonomyMixin:
                         context={"origin": origin},
                         exc=exc,
                     )
-                except Exception as degraded_exc:
+                except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                     record_degradation('autonomy', degraded_exc)
                     logger.debug("emit_spontaneous_message degraded-event logging failed: %s", degraded_exc)
                 return {

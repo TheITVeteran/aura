@@ -149,7 +149,7 @@ class SubstrateTokenGenerator:
             if engine and hasattr(engine, "telemetry"):
                 import dataclasses
                 telemetry = dataclasses.asdict(engine.telemetry)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         if not force and error > active_threshold:
@@ -205,7 +205,7 @@ def get_substrate_token_generator(substrate: Any | None = None) -> SubstrateToke
     generator = SubstrateTokenGenerator(substrate)
     try:
         ServiceContainer.register_instance("substrate_token_generator", generator, required=False)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         pass
     return generator
 

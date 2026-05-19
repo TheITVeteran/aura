@@ -291,7 +291,7 @@ class GroundingService:
                 will_outcome = str(will_decision.get("outcome", "proceed")).lower()
                 will_reason = str(will_decision.get("reason", ""))
                 will_receipt_id = will_decision.get("receipt_id")
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 # Fail-closed: if the Will errors we treat the update
                 # as refused rather than silently bypassing it.
                 record_degradation("grounding_service", e)
@@ -314,7 +314,7 @@ class GroundingService:
             from core.will import is_plastic_target_allowed
 
             target_allowed = is_plastic_target_allowed(self.PLASTIC_MODULE_NAME)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("grounding_service", exc)
             logger.debug("Grounding plastic target allow-list lookup failed: %s", exc)
             target_allowed = True  # be lenient if Will isn't importable
@@ -364,7 +364,7 @@ class GroundingService:
                         governance_receipt_id=will_receipt_id,
                     )
                 )
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 # Receipt failure must not break the learning loop.
                 record_degradation("grounding_service", exc)
                 logger.debug("Grounding semantic weight receipt emission failed: %s", exc)

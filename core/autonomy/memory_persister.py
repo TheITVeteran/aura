@@ -189,7 +189,7 @@ class MemoryPersister:
             return 0
         try:
             lines = self._queue_path.read_text(encoding="utf-8").splitlines()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return 0
 
         successful = 0
@@ -214,7 +214,7 @@ class MemoryPersister:
                     ok, _, _ = self._commit_fact(title, FactRecord(**_only_keys(payload, FactRecord)))
                 elif kind == "belief":
                     ok, _, _ = self._commit_belief(title, BeliefUpdate(**_only_keys(payload, BeliefUpdate)))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_persister', e)
                 logger.debug("replay record kind=%s failed: %s", kind, e)
                 ok = False
@@ -227,7 +227,7 @@ class MemoryPersister:
         try:
             self._queue_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._queue_path, "\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
         return successful
 
@@ -238,7 +238,7 @@ class MemoryPersister:
             from core.executive.executive_core import (
                 Intent, IntentSource, ActionType,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_persister', e)
             return False, f"executive import: {e}", None
 
@@ -280,7 +280,7 @@ class MemoryPersister:
                             "method_priority_level": ep.method_priority_level,
                         },
                     })
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('memory_persister', e)
                 logger.debug("episodic.add fallback failed: %s", e)
 
@@ -289,7 +289,7 @@ class MemoryPersister:
     def _commit_fact(self, title: str, fact: FactRecord) -> tuple[bool, str, Optional[str]]:
         try:
             from core.executive.executive_core import Intent, IntentSource, ActionType
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_persister', e)
             return False, f"executive import: {e}", None
 
@@ -318,7 +318,7 @@ class MemoryPersister:
     def _commit_belief(self, title: str, belief: BeliefUpdate) -> tuple[bool, str, Optional[str]]:
         try:
             from core.executive.executive_core import Intent, IntentSource, ActionType
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_persister', e)
             return False, f"executive import: {e}", None
 
@@ -363,7 +363,7 @@ class MemoryPersister:
             if outcome_str in ("approved", "degraded"):
                 return True, ""
             return False, f"executive_outcome={outcome_str}"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('memory_persister', e)
             return False, str(e)
 
@@ -379,7 +379,7 @@ class MemoryPersister:
                     "payload": payload,
                     "queued_at": time.time(),
                 }) + "\n")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
     def _load_dedup(self) -> Dict[str, float]:
@@ -389,14 +389,14 @@ class MemoryPersister:
             data = json.loads(self._dedup_path.read_text(encoding="utf-8"))
             cutoff = time.time() - DEDUP_TTL_DAYS * 86400.0
             return {k: float(v) for k, v in data.items() if float(v) > cutoff}
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             return {}
 
     def _save_dedup(self) -> None:
         try:
             self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._dedup_path, json.dumps(self._dedup), encoding="utf-8")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
     def _is_duplicate(self, key: str) -> bool:

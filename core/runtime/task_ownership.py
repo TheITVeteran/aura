@@ -20,7 +20,7 @@ def _get_tracker() -> Any:
     try:
         from core.utils.task_tracker import get_task_tracker
         return get_task_tracker()
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return None
 
 
@@ -63,14 +63,14 @@ def create_tracked_task(
                         tracker.observe(task, name=name, source="task_ownership_fallback")
                     elif hasattr(tracker, "track_task"):
                         tracker.track_task(task, name=name)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError) as exc:
                     record_degradation('task_ownership', exc)
                     logger.debug("Failed to observe fallback task %s: %s", name or task, exc)
 
         if on_done is not None:
             task.add_done_callback(on_done)
         return task
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError):
         if cancel_on_fail:
             close_awaitable(awaitable)
         raise
@@ -90,7 +90,7 @@ def fire_and_forget(
             exc = task.exception()
         except asyncio.CancelledError:
             return
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return
         if exc is not None:
             logger.warning("Background task %s failed: %s", name or task.get_name(), exc, exc_info=exc)
@@ -100,7 +100,7 @@ def fire_and_forget(
     except RuntimeError:
         close_awaitable(awaitable)
         return None
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('task_ownership', exc)
         close_awaitable(awaitable)
         logger.debug("fire_and_forget scheduling failed for %s: %s", name, exc)

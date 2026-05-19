@@ -139,7 +139,7 @@ class HTNPlanner:
                         emergency_override=True,
                         priority=ec.priority,
                     )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
         return None
 

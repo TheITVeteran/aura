@@ -160,7 +160,7 @@ class AutonomousOutputGate:
                 },
             )
             await asyncio.to_thread(get_receipt_store().emit, receipt)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('output_gate', exc)
             logger.debug("OutputGate: output receipt emit skipped: %s", exc)
         
@@ -204,7 +204,7 @@ class AutonomousOutputGate:
                 metadata = metadata or {}
                 metadata["will_receipt_id"] = _decision.receipt_id
                 _primary_governance_decision = _decision
-            except Exception as _will_err:
+            except (ImportError, AttributeError, RuntimeError) as _will_err:
                 record_degradation('output_gate', _will_err)
                 logger.debug("OutputGate: Will gate degraded: %s", _will_err)
 
@@ -212,7 +212,7 @@ class AutonomousOutputGate:
         if current_task is not None and not getattr(current_task, "_aura_supervised", False):
             try:
                 setattr(current_task, "_aura_supervised", True)
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('output_gate', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -226,7 +226,7 @@ class AutonomousOutputGate:
             from core.consciousness.closed_loop import notify_closed_loop_output
 
             notify_closed_loop_output(content)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('output_gate', exc)
             logger.debug("OutputGate: Closed-loop notification skipped: %s", exc)
 
@@ -262,7 +262,7 @@ class AutonomousOutputGate:
                         if homeostasis:
                             homeostasis.integrity = max(0.0, homeostasis.integrity - 0.15)
                         return # Reject entirely if alignment is too low
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_gate', e)
                 logger.warning("IdentityGuard evaluation failed: %s", e)
 
@@ -315,7 +315,7 @@ class AutonomousOutputGate:
                 or ServiceContainer.has("aura_kernel")
                 or ServiceContainer.has("kernel_interface")
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             runtime_live = False
 
         if (
@@ -343,7 +343,7 @@ class AutonomousOutputGate:
                     classification="background_degraded",
                     context={"origin": origin, "target": "primary"},
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('output_gate', exc)
                 logger.debug("OutputGate: degraded-event routing note failed: %s", exc)
 
@@ -396,10 +396,10 @@ class AutonomousOutputGate:
                             )
                         except TypeError:
                             orch.reply_queue.put_nowait(content)
-                    except Exception as _exc:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
                         record_degradation('output_gate', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('output_gate', e)
                     logger.warning("OutputGate: Failed to feed reply_queue: %s", e)
 
@@ -438,7 +438,7 @@ class AutonomousOutputGate:
                 logger.info("OutputGate: Publishing to EventBus...")
                 bus.publish_threadsafe("aura_message", aura_message_payload)
                 bus.publish_threadsafe("log", f"PRIMARY_OUT: {content[:100]}")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_gate', e)
                 logger.error("EventBus failure in _send_to_primary: %s. Falling back to Mycelial fail-safe.", e)
                 try:
@@ -455,7 +455,7 @@ class AutonomousOutputGate:
                             logger.warning("No running loop for Mycelial fail-safe.")
                     else:
                         logger.warning("OutputGate: Mycelial UI callback is NOT set.")
-                except Exception as e2:
+                except (ImportError, AttributeError, RuntimeError) as e2:
                     record_degradation('output_gate', e2)
                     logger.critical("Final fail-safe failed: %s", e2)
 
@@ -467,7 +467,7 @@ class AutonomousOutputGate:
         if renderer:
             try:
                 track_output_task(get_task_tracker().create_task(renderer.render(content, metadata)))
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('output_gate', e)
                 logger.debug("Multimodal rendering failed: %s", e)
         else:
@@ -478,7 +478,7 @@ class AutonomousOutputGate:
             if voice and metadata_allows_voice and tts_enabled:
                 try:
                     track_output_task(get_task_tracker().create_task(voice.speak(content)))
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('output_gate', e)
                     logger.debug("Legacy Voice trigger failed: %s", e)
 
@@ -490,7 +490,7 @@ class AutonomousOutputGate:
                 "origin": origin,
                 "metadata": metadata or {}
             }), timeout=timeout)
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('output_gate', e)
             logger.error("Failed to put in secondary_queue: %s", e)
             
@@ -526,7 +526,7 @@ def track_output_task(task: asyncio.Task):
     try:
         setattr(task, "_aura_supervised", True)
         setattr(task, "_aura_task_tracker", "OutputGate")
-    except Exception as _exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
         record_degradation('output_gate', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
     _background_tasks.add(task)
@@ -535,7 +535,7 @@ def track_output_task(task: asyncio.Task):
     def _handle_result(t: asyncio.Task):
         try:
             t.result()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('output_gate', e)
             logging.getLogger("Aura.OutputGate").error("Output task failed: %s", e)
             

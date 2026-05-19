@@ -190,7 +190,7 @@ class ActionExecutor:
                 return await self._execute_self_reflect(action)
             else:
                 return Observation(content="Unknown action type", success=False)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('react_loop', e)
             logger.error("Action execution failed: %s", e)
             return Observation(
@@ -225,7 +225,7 @@ class ActionExecutor:
                         results.append(f"[Memory] {str(desc)[:200]}")
                     else:
                         results.append(f"[Memory] {str(ep)[:200]}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug("Episodic recall failed: %s", e)
 
@@ -247,7 +247,7 @@ class ActionExecutor:
                     else:
                         content = str(f)
                     results.append(f"[Fact] {content[:200]}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug("Semantic search failed: %s", e)
 
@@ -271,7 +271,7 @@ class ActionExecutor:
             result = await self.orchestrator.execute_tool(tool_name, params)
             content = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
             return Observation(content=content[:1000], success=True, source=tool_name)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('react_loop', e)
             return Observation(content=f"Tool error: {e}", success=False, error=str(e))
 
@@ -320,7 +320,7 @@ class ActionExecutor:
                         success=True,
                         source="web_search",
                     )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('react_loop', e)
                 logger.debug("ReAct: orchestrated web_search failed, falling back: %s", e)
 
@@ -370,7 +370,7 @@ class ActionExecutor:
                     source="web_grounded"
                 )
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('react_loop', e)
                 import traceback
                 logger.warning("Grounded Search failed (%s), falling back to Sovereign/DDG", e)
@@ -389,7 +389,7 @@ class ActionExecutor:
                     success=True,
                     source="web_browser"
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug(f"ReAct: Sovereign browser search failed: {e}")
 
@@ -427,7 +427,7 @@ class ActionExecutor:
                     except (httpx.HTTPError, ValueError, OSError) as html_err:
                         record_degradation('react_loop', html_err)
                     return Observation(content=f"Search index dependency unavailable: {sc_err}", success=False)
-                except Exception as sc_err:
+                except (ImportError, AttributeError, RuntimeError) as sc_err:
                     record_degradation('react_loop', sc_err)
                     return Observation(content=f"Search index completely blocked: {sc_err}", success=False)
                 
@@ -467,7 +467,7 @@ class ActionExecutor:
                         success=True,
                         source="web_deep_crawl"
                     )
-                except Exception as crawl_err:
+                except (ImportError, AttributeError, RuntimeError) as crawl_err:
                     record_degradation('react_loop', crawl_err)
                     # If scraping the page fails, just return the search snippets
                     snippets = "\n".join([f"- {r.get('title')}: {r.get('body')} ({r.get('href')})" for r in results])
@@ -479,7 +479,7 @@ class ActionExecutor:
 
             return await asyncio.to_thread(_deep_crawl)
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             return Observation(content=f"All web search fallback methods failed: {e}", success=False)
 
@@ -599,7 +599,7 @@ class ActionExecutor:
                 source="python_sandbox"
             )
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             return Observation(
                 content=f"Python error: {type(e).__name__}: {e}",
@@ -619,7 +619,7 @@ class ActionExecutor:
                         f"- {r.get('content', str(r))[:120]}" for r in results
                     )
                     return Observation(content=formatted, success=True, source="knowledge_graph")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug("KG query failed: %s", e)
 
@@ -634,7 +634,7 @@ class ActionExecutor:
             if affect:
                 status = affect.get_status()
                 parts.append(f"Mood: {status.get('mood')} | Energy: {status.get('energy')}%")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug(f"ReAct: Self-reflection (affect) failed: {e}")
 
@@ -644,7 +644,7 @@ class ActionExecutor:
                 ctx = agency.get_emotional_context()
                 parts.append(f"Goals pending: {len(ctx.get('spontaneous_actions', []))}")
                 parts.append(f"Social hunger: {ctx.get('social_hunger', 0):.2f}")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('react_loop', e)
             logger.debug(f"ReAct: Self-reflection (agency) failed: {e}")
 
@@ -796,7 +796,7 @@ class ReActLoop:
             from core.synthesis import deterministic_user_facing_floor
 
             floor_reply = deterministic_user_facing_floor(query)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             floor_reply = ""
         if floor_reply and len(str(query or "").split()) <= 18:
             logger.debug("ReAct: Simple foreground floor detected, bypassing reasoning loop")
@@ -818,7 +818,7 @@ class ReActLoop:
                 trace.elapsed_ms = (time.time() - start_time) * 1000
                 yield {"type": "final", "content": content, "total_steps": 0, "trace": trace}
                 return
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('react_loop', e)
                 logger.error("Simple query fast path failed: %s", e)
         elif self._is_simple_query(query):
@@ -847,7 +847,7 @@ class ReActLoop:
                             priority=context.get("priority", False),
                         )
                         raw_output = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-                    except Exception as e:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                         record_degradation('react_loop', e)
                         logger.error("ReAct: LLM call failed at step %d: %s", step_num, e)
                         trace.terminated_reason = "llm_error"
@@ -935,7 +935,7 @@ class ReActLoop:
                             from core.brain.cognitive_engine import ThinkingMode
                             res = await self.brain.think(synthesis_prompt, mode=ThinkingMode.FAST)
                             trace.final_answer = res.content if hasattr(res, 'content') else str(res)
-                        except Exception:
+                        except (ImportError, AttributeError, RuntimeError):
                             trace.final_answer = "I've been thinking hard about this. " + (
                                 trace.steps[-1].observation.content[:200] if trace.steps else ""
                             )
@@ -1022,7 +1022,7 @@ class ReActLoop:
                     "elapsed_ms": int(trace.elapsed_ms),
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('react_loop', exc)
             logger.debug("ReAct: episode recording skipped: %s", exc)
 

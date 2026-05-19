@@ -295,7 +295,7 @@ class FeedbackProcessor:
                 affect.inject_percept(percept)
             elif hasattr(affect, "process_percept"):
                 affect.process_percept(percept)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('action_feedback', exc)
             logger.debug("FeedbackProcessor: affect injection failed: %s", exc)
 
@@ -321,7 +321,7 @@ class FeedbackProcessor:
                     },
                     source="feedback_processor",
                 ))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('action_feedback', exc)
             logger.debug("FeedbackProcessor: compensation request failed: %s", exc)
 
@@ -338,7 +338,7 @@ class FeedbackProcessor:
                     latency_ms=feedback.latency_ms,
                     metadata=feedback.metadata,
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('action_feedback', exc)
             logger.debug("FeedbackProcessor: outcome recording failed: %s", exc)
 
@@ -354,7 +354,7 @@ class FeedbackProcessor:
                 "success": feedback.succeeded,
                 "timestamp": feedback.timestamp,
             })
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     @staticmethod

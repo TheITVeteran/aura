@@ -57,7 +57,7 @@ class SafetyGate:
             return True, "Valid"
         except SyntaxError as e:
             return False, f"{e.msg} line {e.lineno}"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('system_integrity', e)
             return False, f"Unexpected validation error: {str(e)}"
 
@@ -66,7 +66,7 @@ class SafetyGate:
         cls._ensure_resolved()
         try:
             resolved = Path(file_path_raw).resolve()
-        except Exception:
+        except (OSError, IOError):
             logger.critical("Access denied: cannot resolve path '%s'", file_path_raw)
             return False
 
@@ -99,7 +99,7 @@ class SafetyGate:
                 logger.info("Restored from backup. Restarting process...")
                 os.execv(sys.executable, ['python'] + sys.argv)
                 return True
-            except Exception as e:
+            except (OSError, IOError) as e:
                 record_degradation('system_integrity', e)
                 logger.critical("Fatal: Restart failed during rollback: %s", e)
                 return False

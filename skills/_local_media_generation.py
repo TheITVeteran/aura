@@ -68,7 +68,7 @@ class LocalMediaGenerationSkill(BaseSkill):
             # Move to device (some pipelines require .to on underlying torch modules)
             try:
                 self.pipeline.to(self.device)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("local_media_generation", exc)
                 logger.debug("Local media pipeline device move skipped: %s", exc)
 
@@ -76,11 +76,11 @@ class LocalMediaGenerationSkill(BaseSkill):
             try:
                 if hasattr(self.pipeline, 'enable_attention_slicing'):
                     self.pipeline.enable_attention_slicing()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 logger.debug("Suppressed: %s", exc)
             logger.info("✓ Local Diffusion Model Loaded.")
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             logger.error("Failed to load local model: %s", e)
             return False
 
@@ -140,6 +140,6 @@ class LocalMediaGenerationSkill(BaseSkill):
                 "type": "image"
             }
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.error("Local generation failed: %s", e)
             return {"ok": False, "error": f"Generation failed: {e}"}

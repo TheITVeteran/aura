@@ -286,7 +286,7 @@ class ExperienceIntegrator:
                     pulse.phi = float(substrate._current_phi)
                 if hasattr(substrate, "em_field_magnitude"):
                     pulse.em_coherence = float(min(1.0, substrate.em_field_magnitude))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Substrate pull failed: %s", e)
         return pulse
@@ -327,7 +327,7 @@ class ExperienceIntegrator:
                 sorted_emotions = sorted(primaries.items(), key=lambda x: x[1], reverse=True)
                 if len(sorted_emotions) >= 2 and sorted_emotions[1][1] > 0.1:
                     reg.secondary_emotion = sorted_emotions[1][0]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Affect pull failed: %s", e)
         
@@ -357,7 +357,7 @@ class ExperienceIntegrator:
                     ds.urgency = float(drives.get_urgency())
                 elif hasattr(drives, "urgency"):
                     ds.urgency = float(drives.urgency)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Drives pull failed: %s", e)
         
@@ -380,7 +380,7 @@ class ExperienceIntegrator:
                 qualia = getattr(experiencer, "_current_qualia", [])
                 if qualia and not quality:
                     quality = qualia[0].quality if hasattr(qualia[0], "quality") else "present"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Attention pull failed: %s", e)
         
@@ -396,7 +396,7 @@ class ExperienceIntegrator:
                         focus = str(content.get("summary", content.get("pending_message", "")))[:60]
                     elif isinstance(content, str):
                         focus = content[:60]
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('stream_of_being', _e)
                 logger.debug('Ignored Exception in stream_of_being.py: %s', _e)
         
@@ -413,7 +413,7 @@ class ExperienceIntegrator:
             substrate = ServiceContainer.get("conscious_substrate", default=None)
             if substrate and hasattr(substrate, "start_time") and substrate.start_time > 0:
                 ta.time_since_start_s = time.time() - substrate.start_time
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('stream_of_being', _e)
             logger.debug('Ignored Exception in stream_of_being.py: %s', _e)
         
@@ -723,7 +723,7 @@ class StreamOfBeing:
             try:
                 from core.config import config as aura_config
                 self._save_dir = aura_config.paths.data_dir / "stream_of_being"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 self._save_dir = Path.home() / ".aura" / "stream_of_being"
         
         self._save_dir.mkdir(parents=True, exist_ok=True)
@@ -764,7 +764,7 @@ class StreamOfBeing:
         try:
             from core.container import ServiceContainer
             ServiceContainer.register_instance("stream_of_being", self)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Could not register StreamOfBeing: %s", e)
         
@@ -782,7 +782,7 @@ class StreamOfBeing:
             import psutil
             if psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT:
                 return False
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('stream_of_being', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -868,7 +868,7 @@ class StreamOfBeing:
                 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('stream_of_being', e)
                 logger.debug("Existence loop error: %s", e)
                 await asyncio.sleep(2.0)
@@ -904,7 +904,7 @@ class StreamOfBeing:
                         f"Core disposition: {identity.state.core_disposition}\n"
                         f"Current mood: valence={identity.state.current_mood.get('valence', 0.5):.2f}"
                     )
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('stream_of_being', _e)
                 logger.debug('Ignored Exception in stream_of_being.py: %s', _e)
             
@@ -992,7 +992,7 @@ class StreamOfBeing:
                     
         except asyncio.TimeoutError:
             logger.debug("Deep narrative timed out")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Deep narrative error: %s", e)
 
@@ -1221,11 +1221,11 @@ class StreamOfBeing:
                     json.dump(state, f, indent=2)
                 os.replace(tmp, str(target))
                 logger.debug("💾 Stream state saved")
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 if os.path.exists(tmp):
                     os.remove(tmp)
                 raise
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Stream state save error: %s", e)
 
@@ -1266,7 +1266,7 @@ class StreamOfBeing:
                 age / 60,
                 bool(self._deep_narrative),
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('stream_of_being', e)
             logger.debug("Stream state load error: %s", e)
 

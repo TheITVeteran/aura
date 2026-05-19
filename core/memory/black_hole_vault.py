@@ -11,7 +11,7 @@ from core.memory.black_hole import encode_payload, decode_payload
 from core.memory.physics import bekenstein_check, hawking_decay, grav_queue_sort
 try:
     from core.memory.rag import chunk_text, tokenize, compute_term_freq, retrieve_memories
-except Exception:
+except (ImportError, AttributeError, RuntimeError):
     from core.memory.rag import chunk_text, tokenize, compute_term_freq
     def retrieve_memories(query, memories, top_k=5, threshold=0.01, **kwargs):
         return []
@@ -65,7 +65,7 @@ class BlackHoleVault:
         def _runner() -> None:
             try:
                 result["ok"] = bool(asyncio.run(self.initialize()))
-            except Exception as exc:  # pragma: no cover - defensive fallback
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:  # pragma: no cover - defensive fallback
                 result["error"] = exc
 
         thread = threading.Thread(
@@ -92,7 +92,7 @@ class BlackHoleVault:
             if not self._run_initialize_blocking():
                 self._init_error = "Horcrux initialization returned False"
                 logger.warning("BlackHoleVault running in degraded mode: %s", self._init_error)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('black_hole_vault', exc)
             self._init_error = str(exc)
             logger.warning("BlackHoleVault initialization degraded: %s", exc)
@@ -107,7 +107,7 @@ class BlackHoleVault:
             res = decode_payload(encrypted_data, self.key)
             raw_json = res.get("decoded", "")
             self.memories = json.loads(raw_json) if raw_json else []
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             self._fallback_mode = True
             self.memories = []
             
@@ -203,7 +203,7 @@ class BlackHoleVault:
                         if mycelium:
                             hypha = mycelium.get_hypha("memory", "vault")
                             if hypha: hypha.pulse(success=True)
-                    except Exception as _e:
+                    except (ImportError, AttributeError, RuntimeError) as _e:
                         record_degradation('black_hole_vault', _e)
                         logger.debug('Ignored Exception in black_hole_vault.py: %s', _e)
             
@@ -278,7 +278,7 @@ class BlackHoleVault:
                 if hypha:
                     hypha.log("EVAPORATION: Qualitative shift in history.")
                     hypha.pulse(success=True)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('black_hole_vault', _e)
             logger.debug('Ignored Exception in black_hole_vault.py: %s', _e)
 

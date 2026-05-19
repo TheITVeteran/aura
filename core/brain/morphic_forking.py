@@ -77,7 +77,7 @@ class MorphicForkingEngine:
             insight.critic_verdict = verdict_text
             if "VERDICT: ACCEPTED" in verdict_text:
                 return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('morphic_forking', e)
             logger.error("CriticGate error: %s", e)
         
@@ -121,7 +121,7 @@ def register_morphic_forking(orchestrator: Optional[Any] = None) -> MorphicForki
     if orchestrator is not None:
         try:
             setattr(orchestrator, "morphic_forking", engine)
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('morphic_forking', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return engine

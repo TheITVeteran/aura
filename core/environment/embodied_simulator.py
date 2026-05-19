@@ -128,7 +128,7 @@ class ContinuousSimulatorLoop:
                     delta[1] = min(0.5, threat_level) # Arousal
                     # Fire and forget injection
                     asyncio.create_task(substrate.inject_stimulus(delta, weight=0.2))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.debug(f"Embodied grounding injection failed: {e}")
 
     def physical_intervention(self, entity_id: str, action: str, intensity: float) -> float:

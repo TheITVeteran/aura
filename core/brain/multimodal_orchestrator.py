@@ -32,7 +32,7 @@ class MultimodalOrchestrator:
             self.capability_engine = ServiceContainer.get("capability_engine", default=None)
             self._is_setup = True
             logger.info("✨ Multimodal Rendering Engine Online.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('multimodal_orchestrator', e)
             logger.error(f"Multimodal setup failed: {e}")
 

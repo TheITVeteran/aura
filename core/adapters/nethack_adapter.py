@@ -106,7 +106,7 @@ class NetHackAdapter:
                     # Try clean quit first if possible?
                     # For now, just terminate as it's an automated process
                     self.child.terminate(force=True)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.error(f"Error terminating NetHack process: {e}")
             finally:
                 self.child = None

@@ -37,7 +37,7 @@ class EnvironmentGovernanceBridge:
                     will_receipt_id=getattr(auth_receipt, "will_receipt_id", None),
                     authority_receipt_id=getattr(auth_receipt, "receipt_id", str(auth_receipt)),
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation("environment_governance", exc, severity="warning", action="legacy gateway refused")
                 return GovernanceDecision(approved=False, reason=f"authority_gateway_error:{type(exc).__name__}")
 
@@ -85,6 +85,6 @@ class EnvironmentGovernanceBridge:
                 capability_token_id=decision.capability_token_id,
                 reason=decision.reason,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("environment_governance", exc, severity="error", action="fail closed")
             return GovernanceDecision(approved=False, reason=f"authority_gateway_missing:{type(exc).__name__}")

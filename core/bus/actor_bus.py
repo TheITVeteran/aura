@@ -59,7 +59,7 @@ class ActorBus:
                     lambda actor_name=name, sup=supervisor: sup.record_activity(actor_name)
                 )
                 supervisor.record_activity(name)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('actor_bus', e)
             logger.debug("ActorBus activity monitor hookup failed for %s: %s", name, e)
         transport.start()
@@ -108,12 +108,12 @@ class ActorBus:
                 for name, transport in self._transports.items():
                     try:
                         await transport.send(topic, payload)
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         continue
                 self._telemetry_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 try:
                     import psutil
                     if psutil.virtual_memory().percent < 90:
@@ -127,7 +127,7 @@ class ActorBus:
                         )
                     else:
                         record_degradation('actor_bus', e, action="suppressed_repair_due_to_memory_pressure", receipt_required=True)
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     record_degradation('actor_bus', e)
                     
                 logger.error(f"Telemetry broadcast error: {e}")
@@ -148,7 +148,7 @@ class ActorBus:
             try:
                 self._telemetry_queue.get_nowait()
                 self._telemetry_queue.put_nowait((topic, payload))
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('actor_bus', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -171,7 +171,7 @@ class ActorBus:
                 await telemetry_task
             except asyncio.CancelledError as _exc:
                 logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('actor_bus', e)
                 logger.debug("ActorBus telemetry shutdown failed: %s", e)
         for name, transport in self._transports.items():
@@ -189,7 +189,7 @@ class ActorBus:
             return
         try:
             await inst.stop()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('actor_bus', e)
             logger.debug("ActorBus reset encountered a shutdown error: %s", e)
         inst._initialized = False

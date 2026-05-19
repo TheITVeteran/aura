@@ -238,7 +238,7 @@ class PhiCore:
         try:
             from research.phi_approximation import SpectralPhiApproximator
             self._spectral_approx = SpectralPhiApproximator(n_refinement_candidates=24)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('phi_core', exc)
             logger.warning("PhiCore: spectral approximator unavailable: %s", exc)
             self._spectral_approx = None
@@ -411,7 +411,7 @@ class PhiCore:
         """Record transformer residual dynamics as an eight-node complex."""
         try:
             arr = np.asarray(hidden_state)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('phi_core', exc)
             logger.debug("PhiCore residual stream sample unavailable: %s", exc)
             return
@@ -426,7 +426,7 @@ class PhiCore:
                 vec = np.asarray(arr[pos, :], dtype=np.float32).reshape(-1)
             else:
                 vec = np.asarray(arr, dtype=np.float32).reshape(-1)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('phi_core', exc)
             logger.debug("PhiCore residual stream reshape failed: %s", exc)
             return
@@ -784,7 +784,7 @@ class PhiCore:
             try:
                 from core.observability.metrics import get_metrics
                 get_metrics().increment_counter("phi_disconnected_graph_total")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("phi_core", exc)
                 logger.debug("Disconnected phi metric emission failed: %s", exc)
 
@@ -823,7 +823,7 @@ class PhiCore:
         # ── Always compute exact 8-node affective baseline ───────────────
         try:
             self.compute_affective_phi()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('phi_core', exc)
             logger.debug("PhiCore affective baseline failed: %s", exc)
 
@@ -845,7 +845,7 @@ class PhiCore:
                 # ── IIT 4.0 Exclusion Postulate (spectral) ───────────────
                 try:
                     self.compute_max_phi_complex()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('phi_core', exc)
                     logger.debug("PhiCore exclusion postulate computation failed: %s", exc)
 
@@ -891,7 +891,7 @@ class PhiCore:
                 stability = self._stability_analyzer.analyze(alpha=0.15, beta=0.08)
                 if stability.is_stable and stability.slowest_mode_rate < 0.01:
                     logger.debug("Timescale stable. Slowest mode < 0.01. Boosting commitment compatibility.")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 logger.warning("Stability tick failed: %s", e)
 
         # 2. Full kernel per tick
@@ -1801,7 +1801,7 @@ class PhiCore:
         if include_surrogate and len(self._state_history) >= 20:
             try:
                 return float(self.compute_surrogate_phi())
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("phi_core", exc)
                 logger.debug("Live surrogate phi computation failed: %s", exc)
                 return 0.0

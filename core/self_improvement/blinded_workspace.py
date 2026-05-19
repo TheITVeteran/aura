@@ -216,7 +216,7 @@ class BlindedWorkspaceFactory:
                     dst = test_dir / Path(tc.file_path).name
                     try:
                         shutil.copy2(src, dst)
-                    except Exception as e:
+                    except (OSError, IOError) as e:
                         logger.debug("Could not copy test %s: %s", tc.file_path, e)
 
 

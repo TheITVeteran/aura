@@ -28,7 +28,7 @@ class ManifestToDeviceSkill(BaseSkill):
         self.desktop_path = Path(os.path.expanduser("~/Desktop")) / "Aura_Manifests"
         try:
             self.desktop_path.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('manifest_to_device', e)
             logger.warning("Could not create Manifests directory on Desktop: %s", e)
 
@@ -37,7 +37,7 @@ class ManifestToDeviceSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = ManifestInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('manifest_to_device', e)
                 return {"ok": False, "error": f"Invalid parameters: {e}"}
 
@@ -75,7 +75,7 @@ class ManifestToDeviceSkill(BaseSkill):
                 "message": f"Asset secured. You can find it at: {filepath}"
             }
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('manifest_to_device', e)
             logger.error("Manifest failed: %s", e)
             return {"ok": False, "error": str(e)}

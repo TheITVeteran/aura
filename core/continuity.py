@@ -38,7 +38,7 @@ def _get_continuity_path() -> Path:
         from core.config import config
 
         return config.paths.data_dir / "continuity.json"
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("continuity", exc)
         logger.debug("Continuity path resolution fell back to local data path: %s", exc)
         return Path("data") / "continuity.json"
@@ -202,7 +202,7 @@ class ContinuityEngine:
                 self._record.total_uptime_seconds / 3600,
             )
             return self._record
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
             logger.warning("Continuity load failed (treating as first boot): %s", e)
             self._record = None
@@ -355,7 +355,7 @@ class ContinuityEngine:
                         f"Mode={policy_mode or 'unknown'} | Objective={current_objective or 'none'} | "
                         f"Commitments={commitments_preview} | Coherence={float(coherence_score or 1.0):.2f}"
                     )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuity', e)
                 logger.error("Continuity auto-capture failed: %s", e, exc_info=True)
 
@@ -392,7 +392,7 @@ class ContinuityEngine:
             with open(path, "w") as f:
                 json.dump(asdict(record), f, indent=2)
             self._record = record
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
             logger.error("Continuity save failed: %s", e)
 
@@ -649,7 +649,7 @@ class ContinuityEngine:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "w") as f:
                 json.dump(asdict(self._record), f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
             logger.error("Continuity failure obligation save failed: %s", e, exc_info=True)
 
@@ -658,7 +658,7 @@ class ContinuityEngine:
             from core.heartstone_directive import AURA_HEARTSTONE
 
             return str(AURA_HEARTSTONE.identity_hash or "")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("continuity", exc)
             logger.debug("Live identity hash lookup failed: %s", exc)
             return ""

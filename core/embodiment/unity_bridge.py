@@ -28,7 +28,7 @@ class UnityEmbodiment:
         uri = "ws://localhost:8765/avatar"
         try:
             self.ws = await websockets.connect(uri)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('unity_bridge', e)
             logger.warning("Unity connection failed: %s", e)
         
@@ -56,7 +56,7 @@ class UnityEmbodiment:
                 "heart_rate": affect_wheel.get("physiology", {}).get("HR", 70)
             }
             await self.ws.send(json.dumps(msg))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('unity_bridge', e)
             logger.error("Failed to send affect update to Unity: %s", e)
             self.ws = None
@@ -72,7 +72,7 @@ class UnityEmbodiment:
                 "tactile": data.get("touch_sensors", []),
                 "vestibular": data.get("acceleration", [0,0,0])
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('unity_bridge', e)
             logger.error("Failed to receive sensor data from Unity: %s", e)
             return {}

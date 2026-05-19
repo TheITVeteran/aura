@@ -209,7 +209,7 @@ class CausalWorldModel:
             }
             with open(self.data_path, "w") as f:
                 json.dump(data, f, indent=4)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('causal_world_model', e)
             logger.error(f"Failed to save Causal World Model: {e}")
 
@@ -228,7 +228,7 @@ class CausalWorldModel:
                 
             self.nodes = {k: CausalNode(**v) for k, v in data.get("nodes", {}).items()}
             self.edges = [CausalEdge(**v) for v in data.get("edges", [])]
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('causal_world_model', e)
             logger.error(f"Failed to load Causal World Model: {e}")
 

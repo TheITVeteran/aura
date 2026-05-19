@@ -96,7 +96,7 @@ class IdentityService:
                 last_updated=data.get("last_updated", time.time())
             )
             logger.info("Identity state loaded successfully.")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('identity', e)
             logger.error(f"Failed to load identity state: {e}")
 
@@ -110,7 +110,7 @@ class IdentityService:
             with open(self.data_path, "w") as f:
                 json.dump(data, f, indent=4)
             logger.info("Identity state persisted.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('identity', e)
             logger.error(f"Failed to persist identity state: {e}")
 
@@ -124,7 +124,7 @@ class IdentityService:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     def _approve_identity_write(
@@ -188,12 +188,12 @@ class IdentityService:
                     classification="background_degraded",
                     context={"kind": kind, "source": source, "reason": reason},
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('identity', exc)
                 logger.debug("Identity degraded-event logging failed: %s", exc)
             logger.warning("Identity write blocked by constitutional gate (%s, source=%s): %s", kind, source, reason)
             return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('identity', exc)
             try:
                 from core.health.degraded_events import record_degraded_event
@@ -207,7 +207,7 @@ class IdentityService:
                     context={"kind": kind, "source": source},
                     exc=exc,
                 )
-            except Exception as degraded_exc:
+            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                 record_degradation('identity', degraded_exc)
                 logger.debug("Identity gate degraded-event logging failed: %s", degraded_exc)
             logger.warning("Identity write gate failed (%s, source=%s): %s", kind, source, exc)
@@ -374,7 +374,7 @@ class IdentityService:
                 from core.security.trust_engine import get_trust_engine
                 trust = get_trust_engine()
                 is_sovereign = trust.current_trust_level() == "sovereign"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 is_sovereign = False
 
             if not is_sovereign:

@@ -87,7 +87,7 @@ class ExecutiveAuthority:
                 reason = str(gate._background_local_deferral_reason(origin="executive_authority") or "").strip()
                 if reason:
                     return reason
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_authority', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return ""
@@ -182,7 +182,7 @@ class ExecutiveAuthority:
             return {}
         try:
             goal_engine = ServiceContainer.get("goal_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             goal_engine = None
         if goal_engine is None or not hasattr(goal_engine, "add_goal"):
             return {}
@@ -214,7 +214,7 @@ class ExecutiveAuthority:
                     "goal_id": str(record.get("id", "") or ""),
                     "status": str(record.get("status", "") or ""),
                 }
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority goal binding skipped: %s", exc)
         return policy
@@ -389,7 +389,7 @@ class ExecutiveAuthority:
             from core.agency.initiative_arbiter import get_initiative_arbiter
 
             selected = await get_initiative_arbiter().arbitrate(state)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority promotion fallback engaged: %s", exc)
 
@@ -470,7 +470,7 @@ class ExecutiveAuthority:
                     initiative["metadata"]["_cf_simulated_gain"] = round(
                         cf_best.simulated_hedonic_gain, 4
                     )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("Counterfactual deliberation skipped: %s", exc)
         # ── End counterfactual deliberation ───────────────────────────────
@@ -496,7 +496,7 @@ class ExecutiveAuthority:
                 action_goal=goal,
                 action_source=str(initiative.get("source") or source),
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("AgencyComparator efference emission skipped: %s", exc)
         # ── End agency comparator emission ────────────────────────────────
@@ -579,7 +579,7 @@ class ExecutiveAuthority:
             goal_engine = ServiceContainer.get("goal_engine", default=None)
             if goal_engine and binding_goal_id and hasattr(goal_engine, "get_goal"):
                 bound_goal = await asyncio.to_thread(goal_engine.get_goal, binding_goal_id)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority objective binding probe failed: %s", exc)
             bound_goal = None
@@ -663,7 +663,7 @@ class ExecutiveAuthority:
                     objective[:60],
                     actual_hedonic_change,
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("Counterfactual outcome recording skipped: %s", exc)
         # ── End counterfactual outcome recording ─────────────────────────
@@ -697,7 +697,7 @@ class ExecutiveAuthority:
                 "AgencyComparator: objective '%s' -> %s (agency=%.2f)",
                 objective[:50], trace.attribution_label, trace.self_caused_fraction,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("AgencyComparator comparison skipped: %s", exc)
         # ── End agency comparator comparison ─────────────────────────────
@@ -713,7 +713,7 @@ class ExecutiveAuthority:
                     status=goal_status,
                     summary=str(reason or ""),
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority goal settlement skipped: %s", exc)
 
@@ -963,7 +963,7 @@ class ExecutiveAuthority:
                 action,
                 outcome,
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_authority', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -983,7 +983,7 @@ class ExecutiveAuthority:
             if source:
                 title = f"Executive Hold · {source}"
             get_emitter().emit(title, content, level="info", category=f"Authority ({reason})")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority thought-card emit skipped: %s", exc)
 
@@ -998,7 +998,7 @@ class ExecutiveAuthority:
             closure = ServiceContainer.get("executive_closure", default=None)
             if closure and hasattr(closure, "get_status"):
                 return dict(closure.get_status() or {})
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority: closure lookup failed: %s", exc)
         return {}
@@ -1016,7 +1016,7 @@ class ExecutiveAuthority:
                 elif astate is not None:
                     ctx["valence"] = float(getattr(astate, "valence", 0.0))
                     ctx["curiosity"] = float(getattr(astate, "curiosity", 0.5))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority: affect lookup failed: %s", exc)
         try:
@@ -1027,7 +1027,7 @@ class ExecutiveAuthority:
                     ctx["hedonic_score"] = float(hstatus.get("hedonic_score", 0.5))
                 elif hstatus is not None:
                     ctx["hedonic_score"] = float(getattr(hstatus, "hedonic_score", 0.5))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority: hedonic lookup failed: %s", exc)
         closure = self._get_closure_status()
@@ -1078,7 +1078,7 @@ class ExecutiveAuthority:
                 payload=payload,
                 state=state,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('executive_authority', exc)
             logger.debug("ExecutiveAuthority constitutional audit skipped: %s", exc)
 
@@ -1092,7 +1092,7 @@ def get_executive_authority(orchestrator: Any = None) -> ExecutiveAuthority:
     authority = ExecutiveAuthority(orchestrator=orchestrator)
     try:
         ServiceContainer.register_instance("executive_authority", authority, required=False)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('executive_authority', exc)
         logger.debug("ExecutiveAuthority registration skipped: %s", exc)
     return authority

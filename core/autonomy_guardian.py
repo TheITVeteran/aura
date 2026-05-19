@@ -96,7 +96,7 @@ class AutonomyGuardian:
                 # to retry, or use a complex shield wrapper.
                 # For Aura, we simply log and return None.
                 return None
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('autonomy_guardian', e)
             self._log_audit(task_id, "FAILED", error=str(e))
             logger.error("🛡️ Guardian: Task %s failed: %s", task_id, e)
@@ -105,7 +105,7 @@ class AutonomyGuardian:
                 self._log_audit(task_id, "RETRY")
                 try:
                     self._emit_diagnostic(label, str(e))
-                except Exception as retry_err:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as retry_err:
                     record_degradation('autonomy_guardian', retry_err)
                     logger.error("🛡️ Guardian: Retry also failed: %s", retry_err)
                     self._log_audit(task_id, "RETRY_FAILED", error=str(retry_err))
@@ -148,7 +148,7 @@ class AutonomyGuardian:
             bus.publish_threadsafe("telemetry", payload)
             logger.info("🛡️ Guardian: Delivered response via telemetry (origin=%s, autonomic=%s)", origin, autonomic)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomy_guardian', e)
             logger.error("🛡️ Guardian: CRITICAL — failed to deliver response: %s", e)
 
@@ -164,7 +164,7 @@ class AutonomyGuardian:
                 "message": f"⚠️ My autonomous {label} action encountered an issue: {error}. I'll keep trying.",
                 "metadata": {"autonomic": True, "diagnostic": True}
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomy_guardian', e)
             capture_and_log(e, {'module': __name__})
 
@@ -206,7 +206,7 @@ class AutonomyGuardian:
                             self._system_bypassing = False
                                 
                 await asyncio.sleep(2.0)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomy_guardian', e)
                 logger.error("🛡️ Guardian: Dread Watcher error: %s", e)
                 await asyncio.sleep(5.0)

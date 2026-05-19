@@ -87,7 +87,7 @@ class SystemStateMonitor:
                         coro=coord.run_maintenance_dream,
                         tick_interval=3600.0
                     ))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('system_monitor', e)
                 logger.debug("Failed to register dream cycle: %s", e)
             

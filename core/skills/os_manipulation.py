@@ -35,7 +35,7 @@ class DesktopControlSkill(BaseSkill):
         try:
             from core.container import ServiceContainer
             from core.security.permission_guard import PermissionType
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
         guard = ServiceContainer.get("permission_guard", default=None)
@@ -59,7 +59,7 @@ class DesktopControlSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = OSManipulationInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('os_manipulation', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 

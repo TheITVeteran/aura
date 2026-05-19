@@ -55,7 +55,7 @@ class RobustOllamaClient(LLMProvider):
                 
             # Fallback if loop exists but we are not in its thread (though get_running_loop usually errors)
             return "[Ollama Error: Async boundary violation]"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama sync generation failed: %s", e)
             return f"[Ollama Error: {e}]"
@@ -89,7 +89,7 @@ class RobustOllamaClient(LLMProvider):
 
             data = await self._post("/api/generate", payload)
             return data.get("response", "")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama generation failed: %s", e)
             raise
@@ -115,7 +115,7 @@ class RobustOllamaClient(LLMProvider):
                         chunk = json.loads(line)
                         if not chunk.get("done"):
                             yield chunk.get("response", "")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama streaming failed: %s", e)
             raise
@@ -132,7 +132,7 @@ class RobustOllamaClient(LLMProvider):
                 return asyncio.run(self.generate_json_async(prompt, schema, system_prompt, model))
             
             return {"error": "Async boundary violation"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama sync JSON generation failed: %s", e)
             return {"error": str(e)}
@@ -172,7 +172,7 @@ class RobustOllamaClient(LLMProvider):
                 logger.warning("Ollama output failed schema validation, attempting repair...")
                 # Simple repair: try to cast or use defaults if critical
                 return result 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama JSON generation failed: %s", e)
             raise
@@ -188,7 +188,7 @@ class RobustOllamaClient(LLMProvider):
             except RuntimeError:
                 return asyncio.run(self.generate_embedding_async(text))
             return []
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return []
 
     async def generate_embedding_async(self, text: str) -> List[float]:
@@ -203,7 +203,7 @@ class RobustOllamaClient(LLMProvider):
             if isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list):
                 return embedding[0]
             return embedding if isinstance(embedding, list) else []
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama embedding failed: %s", e)
             return []
@@ -215,7 +215,7 @@ class RobustOllamaClient(LLMProvider):
             # Use synchronous requests to avoid asyncio.run() conflicts in running loops
             response = requests.get(f"{self.base_url}/api/tags", timeout=3)
             return response.status_code == 200
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('ollama_client', e)
             logger.debug("Ollama health check failed (sync): %s", e)
             return False
@@ -225,7 +225,7 @@ class RobustOllamaClient(LLMProvider):
         try:
             response = await self.client.get("/api/tags", timeout=5)
             return response.status_code == 200
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return False
 
     async def see(self, prompt: str, image_path: Optional[str] = None, image_base64: Optional[str] = None) -> str:
@@ -251,7 +251,7 @@ class RobustOllamaClient(LLMProvider):
                 response.raise_for_status()
                 data = response.json()
                 return data.get("response", "[Vision Failure: No output]")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama vision analysis failed: %s", e)
             return f"[Vision analysis failed: {e}]"

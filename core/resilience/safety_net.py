@@ -35,7 +35,7 @@ def panic_handler(exc_type, exc_value, exc_traceback):
             traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
         
         logger.info("Crash report saved to %s", report_path)
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('safety_net', e)
         logger.critical("Failed to write crash report: %s", e)
 

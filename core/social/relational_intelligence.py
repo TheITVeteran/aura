@@ -183,7 +183,7 @@ class RelationalIntelligence:
             try:
                 from core.config import config
                 data_path = config.paths.data_dir / "relational_intelligence.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 data_path = Path.home() / ".aura" / "data" / "relational_intelligence.json"
         self._data_path: Path = data_path
         self._data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,7 @@ class RelationalIntelligence:
                 self._perspectives[uid] = self._hydrate(PerspectiveModel, blob.get("perspective", {}))
                 self._entertainment[uid] = self._hydrate(EntertainmentProfile, blob.get("entertainment", {}))
             logger.debug("RelationalIntelligence: loaded %d profiles.", len(raw))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('relational_intelligence', e)
             logger.warning("RelationalIntelligence: load failed (%s), starting fresh.", e)
 
@@ -239,7 +239,7 @@ class RelationalIntelligence:
             with open(tmp, "w") as f:
                 json.dump(payload, f, indent=2)
             os.replace(tmp, self._data_path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('relational_intelligence', e)
             logger.error("RelationalIntelligence: save failed: %s", e)
 
@@ -863,7 +863,7 @@ def get_relational_intelligence() -> RelationalIntelligence:
             from core.container import ServiceContainer
             if not ServiceContainer.has("relational_intelligence"):
                 ServiceContainer.register_instance("relational_intelligence", _instance)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('relational_intelligence', e)
             logger.debug("Could not register in ServiceContainer: %s", e)
     return _instance

@@ -140,7 +140,7 @@ class LabPromotionGate:
                 metadata=metadata or {},
             ))
             return receipt.receipt_id
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
 

@@ -24,7 +24,7 @@ def _record_exception_degraded_event(error: Exception, context: Optional[dict] =
             context=ctx,
             exc=error,
         )
-    except Exception as degraded_exc:
+    except (ImportError, AttributeError, RuntimeError) as degraded_exc:
         record_degradation('exceptions', degraded_exc)
         logger.debug("Degraded event capture failed: %s", degraded_exc)
 
@@ -71,7 +71,7 @@ def capture_and_log(error_or_func=None, context=None):
                     async def async_run():
                         try:
                             return await func(*args, **kwargs)
-                        except Exception as e:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                             record_degradation('exceptions', e)
                             logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
                             _record_exception_degraded_event(
@@ -84,7 +84,7 @@ def capture_and_log(error_or_func=None, context=None):
                             return None
                     return async_run()
                 return func(*args, **kwargs)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('exceptions', e)
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
                 _record_exception_degraded_event(

@@ -83,7 +83,7 @@ async def _run_command(cmd: List[str], timeout: float = 5.0) -> str:
         except asyncio.TimeoutError:
             proc.kill()
             logger.debug("Command timed out: %s", " ".join(cmd))
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("Command failed: %s - %s", " ".join(cmd), e)
     return ""
@@ -129,7 +129,7 @@ async def get_device_info() -> DeviceInfo:
                     info.memory_total_gb = int(line.split()[1]) / (1024**2)
                 elif line.startswith("MemAvailable"):
                     info.memory_available_gb = int(line.split()[1]) / (1024**2)
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("Memory info failed: %s", e)
     
@@ -146,7 +146,7 @@ async def get_device_info() -> DeviceInfo:
                         if pct_match:
                             info.battery_percent = float(pct_match.group(1))
                         info.battery_charging = "charging" in line.lower() or "AC Power" in output
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("Battery info failed: %s", e)
     
@@ -155,7 +155,7 @@ async def get_device_info() -> DeviceInfo:
         import shutil
         total, used, free = await asyncio.to_thread(shutil.disk_usage, "/")
         info.disk_free_gb = free / (1024**3)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("Disk info unavailable: %s", e)
     # Uptime
@@ -174,7 +174,7 @@ async def get_device_info() -> DeviceInfo:
                     return f.read()
             content = await asyncio.to_thread(_read_uptime)
             info.uptime_hours = float(content.split()[0]) / 3600
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("Uptime info unavailable: %s", e)
     
@@ -248,7 +248,7 @@ async def get_location_from_ip() -> LocationInfo:
             logger.info("📍 Location: %s", summary_str)
         else:
             logger.warning("IP geolocation failed")
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
         record_degradation('environment_awareness', e)
         logger.warning("Location lookup failed: %s", e)
     
@@ -276,7 +276,7 @@ async def get_location_from_system() -> LocationInfo:
     except FileNotFoundError:
         import logging
         logger.debug("Exception caught during execution", exc_info=True)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("System location failed: %s", e)
     
@@ -346,7 +346,7 @@ class UserIdentityManager:
                 with open(self._data_path) as f:
                     self._known_fingerprints = json.load(f)
                 logger.info("👤 Loaded %d known device fingerprints", len(self._known_fingerprints))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('environment_awareness', e)
             logger.warning("Failed to load user fingerprints: %s", e)
     
@@ -356,7 +356,7 @@ class UserIdentityManager:
             self._data_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._data_path, "w") as f:
                 json.dump(self._known_fingerprints, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('environment_awareness', e)
             logger.warning("Failed to save fingerprints: %s", e)
     
@@ -576,7 +576,7 @@ def get_environment() -> EnvironmentAwareness:
                 lifetime=ServiceLifetime.SINGLETON
             )
         return ServiceContainer.get("environment_awareness", default=None)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('environment_awareness', e)
         logger.debug("ServiceContainer unavailable or failed: %s. Using transient EnvironmentAwareness.", e)
         return EnvironmentAwareness()

@@ -127,7 +127,7 @@ class AutonomousInitiativeLoop:
                     name="InitiativeEventListener",
                 )
                 logger.debug("✓ Subscribed to aura.proactive.initiation using EventBus")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomous_initiative_loop', e)
             logger.warning("Failed to subscribe to proactive initiations: %s", e)
 
@@ -149,7 +149,7 @@ class AutonomousInitiativeLoop:
                 level="info",
                 category=category,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_initiative_loop', exc)
             logger.debug("Feed emit failed for %s: %s", title, exc)
 
@@ -173,7 +173,7 @@ class AutonomousInitiativeLoop:
                         allow_during_away=True,
                     )
                 )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('autonomous_initiative_loop', exc)
             logger.debug("Visible initiative queue failed: %s", exc)
         return False
@@ -188,7 +188,7 @@ class AutonomousInitiativeLoop:
                     queue.task_done()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('autonomous_initiative_loop', e)
                 logger.debug("Initiative event listener transient error: %s", e)
 
@@ -227,7 +227,7 @@ class AutonomousInitiativeLoop:
                                 level="info",
                                 category="WorldFeed",
                             )
-                        except Exception as _te:
+                        except (ImportError, AttributeError, RuntimeError) as _te:
                             record_degradation('autonomous_initiative_loop', _te)
                             logger.debug("WorldWatcher thought emit failed: %s", _te)
 
@@ -242,13 +242,13 @@ class AutonomousInitiativeLoop:
                                 source_label=feed.feed.get("title", url)[:40],
                                 emit_thoughts=False,
                             )
-                        except Exception as _ef_err:
+                        except (ImportError, AttributeError, RuntimeError) as _ef_err:
                             record_degradation('autonomous_initiative_loop', _ef_err)
                             logger.debug("EpistemicFilter RSS ingest failed: %s", _ef_err)
                         
                     await asyncio.sleep(0)  # Yield between feeds
                             
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('autonomous_initiative_loop', e)
                 logger.debug(f"World watcher loop transient error: {e}")
                 
@@ -281,7 +281,7 @@ class AutonomousInitiativeLoop:
                                 classification="non_critical_fallback",
                                 context={"reason": gate["reason"]},
                             )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('autonomous_initiative_loop', e)
                 logger.debug(f"Knowledge gap monitor loop error: {e}")
                 
@@ -304,7 +304,7 @@ class AutonomousInitiativeLoop:
                 self._last_self_dev = time.time()
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autonomous_initiative_loop', exc)
                 logger.debug("Self-development loop transient error: %s", exc)
 
@@ -454,7 +454,7 @@ class AutonomousInitiativeLoop:
         try:
             from core.thought_stream import get_emitter
             _emit_thought = get_emitter().emit
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             _emit_thought = None
 
         if _emit_thought:
@@ -497,7 +497,7 @@ class AutonomousInitiativeLoop:
                 source="autonomous_initiative_loop",
                 objective=f"Research knowledge gap: {topic}",
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('autonomous_initiative_loop', exc)
             record_degraded_event(
                 "autonomous_initiative_loop",
@@ -530,7 +530,7 @@ class AutonomousInitiativeLoop:
             success = bool(content)
             if not success:
                 error_text = "empty_result"
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('autonomous_initiative_loop', exc)
             error_text = f"{type(exc).__name__}: {exc}"
             record_degraded_event(
@@ -552,7 +552,7 @@ class AutonomousInitiativeLoop:
                     duration_ms=duration_ms,
                     error=error_text,
                 )
-            except Exception as finish_exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as finish_exc:
                 record_degradation('autonomous_initiative_loop', finish_exc)
                 logger.error("AutonomousInitiativeLoop tool finish failed: %s", finish_exc, exc_info=True)
 
@@ -567,7 +567,7 @@ class AutonomousInitiativeLoop:
             try:
                 from core.affect.heartstone_values import get_heartstone_values
                 get_heartstone_values().on_research_success(len(content))
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('autonomous_initiative_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -597,7 +597,7 @@ class AutonomousInitiativeLoop:
                 if getattr(continuity, "_record", None) is None:
                     continuity.load()
                 live_continuity = dict(continuity.get_obligations() or {})
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 live_continuity = {}
         active_commitments = max(active_commitments, len(list(live_continuity.get("active_commitments", []) or [])))
         contradiction_count = max(contradiction_count, int(live_continuity.get("contradiction_count", 0) or 0))
@@ -611,16 +611,16 @@ class AutonomousInitiativeLoop:
                     energy = max(0.0, min(1.0, energy / 100.0))
                 else:
                     energy = max(0.0, min(1.0, energy))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 energy = 1.0
 
         try:
             thermal_pressure = float(getattr(body, "thermal_pressure", getattr(soma, "thermal_pressure", 0.0)) or 0.0)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             thermal_pressure = 0.0
         try:
             load_pressure = float(getattr(cognition, "load_pressure", 0.0) or 0.0)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             load_pressure = 0.0
         try:
             valence = float(getattr(affect, "valence", 0.0) or 0.0)
@@ -635,25 +635,25 @@ class AutonomousInitiativeLoop:
                     max(0.0, -valence) * 0.5 + max(0.0, arousal) * 0.25 + max(0.0, drive_pressure) * 0.25,
                 ),
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             affective_pressure = 0.0
 
         failure_state = dict(modifiers.get("system_failure_state", {}) or {})
         if not failure_state:
             try:
                 failure_state = get_unified_failure_state(limit=25)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 failure_state = {}
         failure_pressure = 0.0
         try:
             failure_pressure = float(failure_state.get("pressure", 0.0) or 0.0)
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             failure_pressure = 0.0
 
         continuity_pressure = 0.0
         try:
             continuity_pressure = float(live_continuity.get("continuity_pressure", 0.0) or 0.0)
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             continuity_pressure = 0.0
         continuity_reentry_required = bool(live_continuity.get("continuity_reentry_required", False))
 
@@ -688,7 +688,7 @@ class AutonomousInitiativeLoop:
                     level="info",
                     category="Initiative",
                 )
-            except Exception as _te:
+            except (ImportError, AttributeError, RuntimeError) as _te:
                 record_degradation('autonomous_initiative_loop', _te)
                 logger.debug("Proactive initiation thought emit failed: %s", _te)
 
@@ -720,7 +720,7 @@ class AutonomousInitiativeLoop:
             memory = optional_service("memory_manager", default=None)
             if memory and hasattr(memory, "store"):
                 await memory.store(text[:1800], importance=importance, tags=tags or ["autonomy", "social"])
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('autonomous_initiative_loop', exc)
             logger.debug("Social observation memory write failed: %s", exc)
 
@@ -828,7 +828,7 @@ class AutonomousInitiativeLoop:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('autonomous_initiative_loop', e)
                 logger.debug("Social interaction loop error: %s", e)
 
@@ -915,7 +915,7 @@ class AutonomousInitiativeLoop:
                     category="Social",
                 )
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('autonomous_initiative_loop', e)
 
     async def _check_reddit_initiative(self):
@@ -992,5 +992,5 @@ class AutonomousInitiativeLoop:
                                 importance=0.5,
                             )
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('autonomous_initiative_loop', e)

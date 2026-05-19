@@ -37,7 +37,7 @@ def _load_pid(sense_name: str) -> Optional[int]:
         try:
             with open(path, "r") as f:
                 return int(f.read().strip())
-        except Exception:
+        except (OSError, IOError):
             return None
     return None
 
@@ -45,7 +45,7 @@ def _clear_pid(sense_name: str):
     path = _get_pid_file(sense_name)
     if os.path.exists(path):
         try: os.remove(path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('toggle_senses', e)
             from core.errors import SensesError
             raise SensesError(f"Failed to clear PID for {sense_name}: {e}", context={"sensor": sense_name})
@@ -95,7 +95,7 @@ class ToggleSensesSkill(BaseSkill):
         if isinstance(params, dict):
              try:
                  params = ToggleParams(**params)
-             except Exception as e:
+             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                  record_degradation('toggle_senses', e)
                  return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -128,7 +128,7 @@ class ToggleSensesSkill(BaseSkill):
                 _save_pid(sense, pid) 
                 get_emitter().emit("Senses", f"👁️ {sense.title()} Activated (PID: {pid})", level="success")
                 return {"ok": True, "message": f"{sense} activated.", "pid": pid}
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 record_degradation('toggle_senses', e)
                 logger.error("Failed to start %s: %s", sense, e)
                 return {"ok": False, "error": f"Failed to start {sense}: {e}"}
@@ -142,7 +142,7 @@ class ToggleSensesSkill(BaseSkill):
                     _clear_pid(sense)
                     get_emitter().emit("Senses", f"👁️ {sense.title()} Deactivated.", level="warning")
                     return {"ok": True, "message": f"{sense} deactivated (PID {target_pid} stopped)."}
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('toggle_senses', e)
                     logger.error("Failed to stop %s (PID %s): %s", sense, target_pid, e)
                     return {"ok": False, "error": f"Failed to stop {sense}: {e}"}

@@ -203,7 +203,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                         "message": user_input,
                         "response": aura_response
                     })
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('continuous_learning', e)
                     self.logger.debug("Failed to update person context: %s", e)
 
@@ -251,7 +251,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                         type="fact",
                         source="conversation_learning",
                     )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('continuous_learning', e)
             self.logger.debug("Knowledge extraction failed: %s", e)
 
@@ -274,7 +274,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                 if person_info:
                     count = person_info.get("interaction_count", 0)
                     context_parts.append(f"[Identity] User is {user_name}. We have had {count} interactions.")
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('continuous_learning', e)
                 self.logger.debug("Identity retrieval failed: %s", e)
 
@@ -358,7 +358,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                     self.logger.info("💡 New Pattern Distilled: %s...", pattern.description[:50])
                 
                 return {"ok": True, "patterns_found": len(patterns)}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('continuous_learning', e)
             self.logger.error("Consolidation failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -412,7 +412,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                 self.logger.info("✅ Compressed %s experiences into persistent knowledge.", len(ids_to_delete))
                 return {"ok": True, "compressed_count": len(ids_to_delete)}
                 
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('continuous_learning', e)
             self.logger.error("Metabolic compression failed: %s", e)
             return {"ok": False, "error": str(e)}

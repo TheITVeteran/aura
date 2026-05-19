@@ -169,7 +169,7 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
                     dream_content = str(dream_content or "").strip()
                     if dream_content:
                         break
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError) as exc:
                     record_degradation('dream_journal', exc)
                     last_exc = exc
                     record_degraded_event(
@@ -207,7 +207,7 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
                 "seed_count": len(seeds)
             }
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dream_journal', e)
             record_degraded_event(
                 "dream_journal",

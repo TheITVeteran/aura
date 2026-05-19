@@ -25,7 +25,7 @@ class FallbackLLMClient(LLMProvider):
                 if not provider.check_health():
                     continue
                 return provider.generate_text(prompt, system_prompt, model)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('fallback_client', e)
                 last_error = e
                 logger.warning("Provider %s failed: %s. Trying fallback if available...", provider.__class__.__name__, e)
@@ -41,7 +41,7 @@ class FallbackLLMClient(LLMProvider):
                 if not provider.check_health():
                     continue
                 return provider.generate_json(prompt, schema, system_prompt, model)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('fallback_client', e)
                 last_error = e
                 logger.warning("Provider %s failed: %s. Trying fallback if available...", provider.__class__.__name__, e)
@@ -71,7 +71,7 @@ class FallbackLLMClient(LLMProvider):
                     return await provider.generate_text_async(prompt, system_prompt, model, **kwargs)
                 else:
                     return await asyncio.to_thread(provider.generate_text, prompt, system_prompt, model, **kwargs)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('fallback_client', e)
                 last_error = e
                 logger.warning("Provider %s failed (async): %s. Trying fallback...", provider.__class__.__name__, e)
@@ -100,7 +100,7 @@ class FallbackLLMClient(LLMProvider):
                     return await provider.generate_json_async(prompt, schema, system_prompt, model, **kwargs)
                 else:
                     return await asyncio.to_thread(provider.generate_json, prompt, schema, system_prompt, model, **kwargs)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('fallback_client', e)
                 last_error = e
                 logger.warning("Provider %s failed (async): %s. Trying fallback...", provider.__class__.__name__, e)
@@ -126,7 +126,7 @@ class FallbackLLMClient(LLMProvider):
                 async for chunk in provider.generate_stream(prompt, system_prompt, model, **kwargs):
                     yield chunk
                 return
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('fallback_client', e)
                 last_error = e
                 logger.warning("Provider %s stream failed: %s. Trying fallback...", provider.__class__.__name__, e)

@@ -37,7 +37,7 @@ class IdentityReflectionPhase(BasePhase):
                     decision.reason,
                 )
             return decision
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('identity_reflection', exc)
             logger.warning("IdentityReflection: UnifiedWill unavailable; identity mutation blocked: %s", exc)
             return None
@@ -101,7 +101,7 @@ class IdentityReflectionPhase(BasePhase):
                 return state
             try:
                 state.response_modifiers["identity_reflection_will_receipt"] = decision.receipt_id
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
             state.identity.narrative_version += 1
             state.identity.last_evolution_timestamp = time.time()

@@ -363,7 +363,7 @@ def get_live_voice_state(
                 user_message=str(user_message or "")[:500],
                 origin=origin,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('substrate_voice_engine', exc)
             logger.debug("Live voice state refresh failed: %s", exc)
     voice_state = engine.get_voice_state()
@@ -405,7 +405,7 @@ def _extract_neurochemicals() -> Dict[str, float]:
                         name: chem.effective
                         for name, chem in nc.chemicals.items()
                     }
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Neurochemical extraction failed: %s", e)
     return {}
@@ -427,7 +427,7 @@ def _extract_homeostasis() -> Dict[str, float]:
                 "sovereignty": getattr(homeo, "sovereignty", 0.9),
                 "vitality": homeo.compute_vitality() if hasattr(homeo, "compute_vitality") else 0.7,
             }
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Homeostasis extraction failed: %s", e)
     return {}
@@ -487,7 +487,7 @@ def _extract_unified_field() -> Dict[str, float]:
                 result["back_pressure_urgency"] = float(bp.get("chemical_urgency", 0.0))
                 result["binding_demand"] = float(bp.get("binding_demand", 0.0))
 
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Unified field extraction failed: %s", e)
     return result
@@ -504,7 +504,7 @@ def _extract_personality(state: Any) -> Dict[str, float]:
                 if trait in base:
                     base[trait] = max(0.0, min(1.0, base[trait] + offset))
         return base
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Personality extraction failed: %s", e)
     return {}
@@ -523,7 +523,7 @@ def _extract_social_context() -> Dict[str, Any]:
                 "emotional_state": getattr(user_model, "emotional_state", "neutral"),
                 "knowledge_level": getattr(user_model, "knowledge_level", "unknown"),
             }
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Social context extraction failed: %s", e)
     return {}
@@ -539,7 +539,7 @@ def _extract_conversation_context(state: Any) -> Dict[str, Any]:
             ctx["user_trend"] = getattr(cog, "user_emotional_trend", "neutral")
             ctx["topic_depth"] = getattr(cog, "discourse_depth", 0)
             ctx["turn_count"] = len(getattr(cog, "working_memory", []) or [])
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Conversation context extraction failed: %s", e)
 
@@ -553,7 +553,7 @@ def _extract_conversation_context(state: Any) -> Dict[str, Any]:
             ctx["current_topic"] = dyn_state.current_topic
         if dyn_state.partner_frame and dyn_state.partner_frame != "neutral":
             ctx["partner_frame"] = dyn_state.partner_frame
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 
     return ctx
@@ -575,7 +575,7 @@ def get_substrate_voice_engine() -> SubstrateVoiceEngine:
         try:
             from core.container import ServiceContainer
             ServiceContainer.register("substrate_voice_engine", _instance)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
         logger.info("🗣️ [SubstrateVoiceEngine] Initialized — substrate controls the voice.")
     return _instance

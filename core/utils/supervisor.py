@@ -41,7 +41,7 @@ class ManagedTask:
         if not self.task.done():
             try:
                 self.task.cancel()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 logger.exception("Exception while cancelling task %s", self.name)
 
 
@@ -139,7 +139,7 @@ class Supervisor:
             except asyncio.CancelledError:
                 logger.info("Memory watcher shutting down.")
                 break
-            except Exception as e:
+            except (ImportError, OSError, AttributeError) as e:
                 record_degradation('supervisor', e)
                 logger.error("Memory watcher error: %s", e)
                 await asyncio.sleep(MEMORY_CHECK_INTERVAL)

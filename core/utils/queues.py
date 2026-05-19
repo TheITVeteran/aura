@@ -68,7 +68,7 @@ def decode_stringified_priority_message(text: Any) -> Tuple[Any, Optional[str], 
 
     try:
         parsed = ast.literal_eval(stripped)
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return text, None, False
 
     if not isinstance(parsed, tuple):

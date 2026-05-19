@@ -100,11 +100,11 @@ class GoalHierarchy:
                             classification="background_degraded",
                             context={"reason": reason},
                         )
-                    except Exception as degraded_exc:
+                    except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                         record_degradation('goal_hierarchy', degraded_exc)
                         logger.debug("GoalHierarchy degraded-event logging failed: %s", degraded_exc)
                     return ""
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('goal_hierarchy', exc)
             if constitutional_runtime_live:
                 try:
@@ -119,7 +119,7 @@ class GoalHierarchy:
                         context={"error": type(exc).__name__},
                         exc=exc,
                     )
-                except Exception as degraded_exc:
+                except (ImportError, AttributeError, RuntimeError) as degraded_exc:
                     record_degradation('goal_hierarchy', degraded_exc)
                     logger.debug("GoalHierarchy degraded-event logging failed: %s", degraded_exc)
                 return ""
@@ -145,7 +145,7 @@ class GoalHierarchy:
         try:
             from core.thought_stream import get_emitter
             get_emitter().emit("Goal Set 🎯", description, level="info", category="Motivation", goal_id=goal_id)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('goal_hierarchy', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         self._save()
@@ -212,7 +212,7 @@ class GoalHierarchy:
                         if is_aligned:
                             new_ids.append(self.add_goal(task, parent_id=goal_id, priority=parent_goal.priority))
                 return new_ids
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('goal_hierarchy', e)
             logger.error("Failed to decompose goal: %s", e)
             
@@ -373,7 +373,7 @@ class GoalHierarchy:
                             level="warning",
                             category="Motivation"
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('goal_hierarchy', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     
@@ -385,7 +385,7 @@ class GoalHierarchy:
             
             return resolved
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('goal_hierarchy', e)
             logger.error("Conflict detection failed: %s", e, exc_info=True)
             return []
@@ -398,7 +398,7 @@ class GoalHierarchy:
             try:
                 from core.thought_stream import get_emitter
                 get_emitter().emit("Goal Completed ✅", self.goals[goal_id].description, level="success", category="Motivation", goal_id=goal_id)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('goal_hierarchy', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             self._save()
@@ -411,7 +411,7 @@ class GoalHierarchy:
             try:
                 from core.thought_stream import get_emitter
                 get_emitter().emit("Goal Failed ❌", f"{self.goals[goal_id].description}: {reason}", level="warning", category="Motivation", goal_id=goal_id)
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('goal_hierarchy', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             self._save()
@@ -439,7 +439,7 @@ class GoalHierarchy:
             data = {gid: asdict(g) for gid, g in self.goals.items()}
             from core.runtime.atomic_writer import atomic_write_text
             atomic_write_text(self._persist_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('goal_hierarchy', e)
             logger.error("Failed to save goals: %s", e)
 
@@ -459,6 +459,6 @@ class GoalHierarchy:
                         subgoals=gdata.get("subgoals", []),
                     )
                 logger.info("Loaded %d goals from disk", len(self.goals))
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('goal_hierarchy', e)
             logger.warning("Failed to load goals: %s", e)

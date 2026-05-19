@@ -171,7 +171,7 @@ class GoalEngine:
             from core.config import config
 
             return config.paths.data_dir / "goals" / "goal_lifecycle.db"
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("goal_engine", exc)
             logger.debug("GoalEngine default path lookup failed: %s", exc)
             return Path.home() / ".aura" / "data" / "goals" / "goal_lifecycle.db"
@@ -183,7 +183,7 @@ class GoalEngine:
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation('goal_engine', exc)
             logger.error("GoalEngine initialization failed: %s", exc)
             self._conn = None
@@ -306,7 +306,7 @@ class GoalEngine:
     def _active_task_engine_plan_ids(self) -> set[str] | None:
         try:
             task_engine = ServiceContainer.get("task_engine", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             task_engine = None
 
         if task_engine is None or not hasattr(task_engine, "get_active_plans"):
@@ -314,7 +314,7 @@ class GoalEngine:
 
         try:
             snapshot = list(task_engine.get_active_plans() or [])
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('goal_engine', exc)
             logger.debug("GoalEngine task-engine plan snapshot skipped: %s", exc)
             return None
@@ -437,7 +437,7 @@ class GoalEngine:
             self._reconcile_stale_task_engine_records()
             self._reconcile_duplicate_active_records()
             self._last_reconcile_at = now
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('goal_engine', exc)
             logger.debug("GoalEngine reconciliation skipped: %s", exc)
         finally:
@@ -749,7 +749,7 @@ class GoalEngine:
         if self.gbm and objective_text:
             try:
                 self.gbm.reinforce_goal(objective_text, "Direct goal registration.")
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('goal_engine', exc)
                 logger.debug("Goal belief reinforcement skipped: %s", exc)
         self._sync_state_view()
@@ -1225,7 +1225,7 @@ class GoalEngine:
                 cognition.current_objective = str(active[0].get("objective") or active[0].get("name") or "")
             elif not active and is_intrinsic_goal_text(current_objective):
                 cognition.current_objective = None
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('goal_engine', exc)
             logger.debug("GoalEngine state sync skipped: %s", exc)
 
@@ -1241,7 +1241,7 @@ class GoalEngine:
         try:
             planner = ServiceContainer.get("hierarchical_planner", default=None)
             goals = list(getattr(planner, "_goals", {}).values()) if planner is not None else []
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             goals = []
         items: list[dict[str, Any]] = []
         for goal in goals:
@@ -1354,7 +1354,7 @@ class GoalEngine:
                         "is_terminal": status in TERMINAL_GOAL_STATUSES,
                     }
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('goal_engine', exc)
             logger.debug("Strategic project snapshot skipped: %s", exc)
         return items
@@ -1366,7 +1366,7 @@ class GoalEngine:
 
             engine = get_commitment_engine()
             commitments = list(getattr(engine, "_commitments", {}).values())
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             commitments = []
         for commitment in commitments:
             hours_remaining = float(getattr(commitment, "hours_remaining", lambda: 24.0)() or 24.0)
@@ -1420,7 +1420,7 @@ class GoalEngine:
             loop = ServiceContainer.get("intention_loop", default=None)
             active = list(getattr(loop, "_active_intentions", {}).values()) if loop is not None else []
             completed = list(getattr(loop, "_completed_intentions", []))[:10] if loop is not None else []
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             active = []
             completed = []
         for intention in list(active) + list(completed):

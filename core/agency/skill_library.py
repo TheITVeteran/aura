@@ -135,7 +135,7 @@ class SkillLibrary:
             self._update_system_health()
             return results
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('skill_library', e)
             skill.failures += 1
             self._save()
@@ -198,7 +198,7 @@ class SkillLibrary:
                 "skills": {k: asdict(v) for k, v in self.skills.items()}
             }
             atomic_write_json(self.data_path, data)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('skill_library', e)
             logger.error("Failed to save Skill Library: %s", e)
 
@@ -214,7 +214,7 @@ class SkillLibrary:
                 steps = [SkillStep(**s) for s in dict_v.pop("steps", [])]
                 self.skills[k] = LearnedSkill(steps=steps, **dict_v)
                 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('skill_library', e)
             logger.error("Failed to load Skill Library: %s", e)
 

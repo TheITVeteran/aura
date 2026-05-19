@@ -67,14 +67,14 @@ class SelfEvolutionSkill(BaseSkill):
             brain = ServiceContainer.get("cognitive_engine", default=None)
             if brain:
                 return brain
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         try:
             from core.brain.cognitive_engine import cognitive_engine
 
             return cognitive_engine
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
     def _resolve_target_paths(self, files: Optional[List[str]]) -> List[Path]:
@@ -135,7 +135,7 @@ class SelfEvolutionSkill(BaseSkill):
         try:
             source = path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(path))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('self_evolution', exc)
             summary["parse_error"] = str(exc)
             return summary
@@ -235,7 +235,7 @@ class SelfEvolutionSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = EvolutionInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('self_evolution', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -272,7 +272,7 @@ class SelfEvolutionSkill(BaseSkill):
                 )
                 thought = await self._think_with_timeout(brain, prompt, context, default_timeout=12.0)
                 proposal = thought.content
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('self_evolution', e)
                 fallback_reason = str(e)
                 self.logger.warning(
@@ -332,7 +332,7 @@ class SelfEvolutionSkill(BaseSkill):
                 "results": proposal[:self.MAX_PREVIEW],
                 "fallback": bool(fallback_reason),
             }
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('self_evolution', e)
             return {"ok": False, "error": f"Failed to save proposal: {e}"}
 

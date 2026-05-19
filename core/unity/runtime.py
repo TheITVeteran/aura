@@ -285,7 +285,7 @@ class UnityRuntime:
             from core.consciousness.multiple_drafts import get_multiple_drafts_engine
 
             engine = get_multiple_drafts_engine()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("unity_runtime", exc)
             logger.debug("UnityRuntime draft engine lookup failed: %s", exc)
             return []

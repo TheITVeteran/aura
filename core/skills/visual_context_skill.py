@@ -35,7 +35,7 @@ class VisualContextSkill(BaseSkill):
                 "analysis": analysis,
                 "message": f"I've analyzed my visual field: {analysis}"
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('visual_context_skill', e)
             logger.error(f"VisualContextSkill failed: {e}")
             return {"ok": False, "error": str(e)}

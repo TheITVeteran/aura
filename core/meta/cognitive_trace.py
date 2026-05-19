@@ -40,7 +40,7 @@ class CognitiveTrace:
                     "steps": self.steps
                 }, f, indent=2)
             logger.info("Cognitive Trace saved: %s", path)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('cognitive_trace', e)
             logger.error("Failed to save trace: %s", e)
 

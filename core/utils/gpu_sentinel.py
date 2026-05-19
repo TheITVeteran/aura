@@ -94,7 +94,7 @@ class GPUSentinel:
         try:
             acquired = await asyncio.to_thread(self.acquire, priority, timeout)
             return acquired
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('gpu_sentinel', e)
             logger.error("GPU Sentinel: Error while acquiring lock: %s", e)
             return False

@@ -84,7 +84,7 @@ CORRECTIONS:
 
             return self._parse_llm_postmortem(content)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             logger.error(f"Postmortem analysis failed: {e}")
             return self._heuristic_postmortem(death_message, final_state_summary, recent_events, belief)
 

@@ -170,7 +170,7 @@ class TelemetryEmitter:
         for listener in self._listeners:
             try:
                 listener(event)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
 
     def add_listener(self, listener: Callable[[TelemetryEvent], Any]) -> None:

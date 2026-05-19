@@ -66,7 +66,7 @@ class InsightJournal:
                 "component": "insight_journal",
                 "hooks_into": ["cognitive_kernel", "inquiry_engine", "concept_linker"]
             })
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('insight_journal', _e)
             logger.debug('Ignored Exception in insight_journal.py: %s', _e)
         logger.info("✅ InsightJournal ONLINE — chronicling the journey.")
@@ -115,7 +115,7 @@ class InsightJournal:
                         domain=domain,
                         source=f"insight:{source}"
                     )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('insight_journal', _e)
             logger.debug('Ignored Exception in insight_journal.py: %s', _e)
 
@@ -146,7 +146,7 @@ class InsightJournal:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             data = [asdict(i) for i in self._insights]
             atomic_write_text(self._db_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('insight_journal', e)
             logger.debug("InsightJournal save failed: %s", e)
 
@@ -155,7 +155,7 @@ class InsightJournal:
         try:
             data = json.loads(self._db_path.read_text())
             self._insights = [Insight(**i) for i in data]
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('insight_journal', e)
             logger.debug("InsightJournal load failed: %s", e)
 

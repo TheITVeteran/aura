@@ -76,7 +76,7 @@ class PersonalityBridge:
                 pass  # no-op: intentional
                 
             return mods
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('personality_bridge', e)
             logger.debug("Personality-Body drift: %s", e)
             return None

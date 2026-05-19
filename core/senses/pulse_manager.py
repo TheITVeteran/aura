@@ -97,7 +97,7 @@ class PulseManager:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('pulse_manager', e)
                 logger.debug("Audio pulse error: %s", e)
 
@@ -125,7 +125,7 @@ class PulseManager:
                             if soma:
                                 try:
                                     soma.update_sensory_imprint("vision", description)
-                                except Exception as soma_err:
+                                except (RuntimeError, AttributeError, TypeError, ValueError) as soma_err:
                                     record_degradation('pulse_manager', soma_err)
                                     logger.debug("Soma update failed: %s", soma_err)
                             
@@ -135,7 +135,7 @@ class PulseManager:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('pulse_manager', e)
                 logger.debug("Vision pulse error: %s", e)
 
@@ -152,13 +152,13 @@ class PulseManager:
                     if autonomic:
                         # AutonomicCore manages its own heartbeat, but we can log health here
                         pass  # no-op: intentional
-                except Exception:
+                except (ImportError, AttributeError, RuntimeError):
                     import logging
                     logger.debug("Exception caught during execution", exc_info=True)
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('pulse_manager', e)
                 logger.debug("System pulse error: %s", e)
 
@@ -182,7 +182,7 @@ class PulseManager:
         listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             listen_sock.bind(('', port))
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('pulse_manager', e)
             logger.warning("Could not bind to pulse port %d: %s", port, e)
             return
@@ -228,7 +228,7 @@ class PulseManager:
                                 }
                         except (BlockingIOError, socket.error):
                             break
-                        except Exception as e:
+                        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                             record_degradation('pulse_manager', e)
                             logger.debug("Error receiving peer pulse: %s", e)
                             break
@@ -244,7 +244,7 @@ class PulseManager:
 
                 except asyncio.CancelledError:
                     break
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('pulse_manager', e)
             logger.debug("Distributed pulse cycle error: %s", e)
             await asyncio.sleep(5)

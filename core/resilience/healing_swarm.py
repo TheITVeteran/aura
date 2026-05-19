@@ -41,7 +41,7 @@ class HealingSwarmService:
             try:
                 await asyncio.sleep(45) # Lower frequency than MetaCognition
                 await self.reconcile_subsystems()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('healing_swarm', e)
                 logger.error(f"Healing Swarm monitor loop failed: {e}")
                 await asyncio.sleep(10)

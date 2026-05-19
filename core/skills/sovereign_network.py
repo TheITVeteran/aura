@@ -42,7 +42,7 @@ class SovereignNetworkSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = NetworkInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sovereign_network', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -68,7 +68,7 @@ class SovereignNetworkSkill(BaseSkill):
                     max_failure_pressure=0.20,
                     require_conversation_ready=False,
                 )
-            except Exception as policy_exc:
+            except (ImportError, AttributeError, RuntimeError) as policy_exc:
                 record_degradation('sovereign_network', policy_exc)
                 reason = "background_policy_unavailable"
             if reason:
@@ -92,7 +92,7 @@ class SovereignNetworkSkill(BaseSkill):
                 return await self._perform_discovery(target or "192.168.1.0/24", params.ports or "80")
             else:
                 return {"ok": False, "error": f"Unsupported network mode: {mode}"}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('sovereign_network', e)
             logger.error("Network skill failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -135,7 +135,7 @@ class SovereignNetworkSkill(BaseSkill):
                 match = re.search(r"\(([\d\.]+)\) at ([\w:]+)", line) # macOS/Linux format
                 if match:
                     devices.append({"ip": match.group(1), "mac": match.group(2), "source": "arp"})
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('sovereign_network', e)
             logger.debug("ARP discovery failed: %s", e)
         
@@ -207,7 +207,7 @@ class SovereignNetworkSkill(BaseSkill):
         except FileNotFoundError:
             logger.info("nmap unavailable; falling back to bounded TCP peer discovery.")
             return await self._perform_tcp_peer_discovery(target, ports)
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('sovereign_network', e)
             return {"ok": False, "error": str(e)}
 
@@ -236,12 +236,12 @@ class SovereignNetworkSkill(BaseSkill):
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception as close_exc:
+                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as close_exc:
                         logger.debug("TCP peer writer close failed for %s:%s: %s", host, first_port, close_exc)
                     return {"address": host, "rpc_port": first_port, "source": "tcp_connect"}
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                     logger.debug("TCP peer probe failed for %s:%s: %s", host, first_port, e)
                     return None
 
@@ -250,7 +250,7 @@ class SovereignNetworkSkill(BaseSkill):
             from core.utils.task_tracker import get_task_tracker
 
             tracker = get_task_tracker()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             tracker = None
 
         peers: List[Dict[str, Any]] = []
@@ -304,7 +304,7 @@ class SovereignNetworkSkill(BaseSkill):
             ip = s.getsockname()[0]
             s.close()
             return ip
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             logger.debug("Primary IP discovery failed, defaulting to localhost: %s", e)
             return "127.0.0.1"
 
@@ -313,7 +313,7 @@ class SovereignNetworkSkill(BaseSkill):
             # Run blocking call in thread
             await asyncio.to_thread(socket.create_connection, ("8.8.8.8", 53), 3)
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             logger.debug("Internet connectivity check failed: %s", e)
             return False
 

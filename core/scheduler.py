@@ -123,7 +123,7 @@ class Scheduler:
                     break
                 logger.warning("Scheduler loop spuriously cancelled. Ignoring.")
                 continue
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('scheduler', e)
                 logger.error(f"Scheduler Fatal Crash: {e}")
                 logger.error(traceback.format_exc())
@@ -146,7 +146,7 @@ class Scheduler:
         except asyncio.CancelledError:
             self._health[spec.name] = "cancelled"
             raise
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('scheduler', e)
             self._health[spec.name] = f"error: {type(e).__name__}"
             logger.error(f"Task {spec.name} failed: {e}")

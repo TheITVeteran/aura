@@ -89,7 +89,7 @@ class CRSMLoraBridge:
                     str(key): round(float(value), 4)
                     for key, value in dict(ncs.get_mood_vector() or {}).items()
                 }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("crsm_lora_bridge", exc)
         try:
             from core.consciousness.affective_steering import get_steering_engine
@@ -106,7 +106,7 @@ class CRSMLoraBridge:
                 "readiness_detail": readiness.get("detail", ""),
                 "adaptive_alpha": alpha_state.get("current_alpha", steering.get("alpha", 0.0)),
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("crsm_lora_bridge", exc)
         return context
 
@@ -278,7 +278,7 @@ class CRSMLoraBridge:
                 len(unflushed), self._total_flushed,
             )
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('crsm_lora_bridge', e)
             logger.debug("CRSMLoraBridge flush failed: %s", e)
 
@@ -301,7 +301,7 @@ class CRSMLoraBridge:
                         "quality": m.quality_score,
                         "processing_context": m.processing_context,
                     }) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('crsm_lora_bridge', e)
             logger.debug("CRSMLoraBridge persist failed: %s", e)
 

@@ -88,5 +88,5 @@ def clear_background_generation(state: Any, objective: Any) -> None:
                     loop.create_task(drive.satisfy("curiosity", 5.0))
                 except RuntimeError:
                     pass  # no event loop — skip
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional

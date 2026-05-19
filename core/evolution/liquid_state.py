@@ -64,7 +64,7 @@ class LiquidState:
                     self.current.energy = max(target_energy, self.current.energy - (decay_rate * 0.1))
             else:
                 self.current.energy = min(1.0, self.current.energy + (decay_rate * 0.1))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self.current.energy = min(1.0, self.current.energy + (decay_rate * 0.1))
 
     def get_mood(self) -> str:

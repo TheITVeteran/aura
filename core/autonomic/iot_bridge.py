@@ -43,7 +43,7 @@ class PhysicalActuator:
                         self._unreachable = False
                         return await resp.json()
             return []
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('iot_bridge', e)
             if not self._unreachable:
                 logger.warning(f"IoT Discovery failed (disabling further attempts): {e}")
@@ -92,7 +92,7 @@ class PhysicalActuator:
                         logger.debug(f"IoT Bridge failed: HTTP {resp.status}")
                     else:
                         self._unreachable = False
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('iot_bridge', e)
             if not self._unreachable:
                 logger.warning(f"IoT Bridge Connection Error (disabling further attempts): {e}")

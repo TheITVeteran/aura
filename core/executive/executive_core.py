@@ -841,7 +841,7 @@ class ExecutiveCore:
                         "success": bool(success),
                     }
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('executive_core', exc)
                 logger.debug("Executive ledger completion append failed: %s", exc)
 
@@ -856,7 +856,7 @@ class ExecutiveCore:
             binding = ServiceContainer.get("binding_engine", default=None)
             if binding and hasattr(binding, "get_coherence"):
                 return binding.get_coherence()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return 0.75  # conservative default — allows normal ops but not risky ones
@@ -867,7 +867,7 @@ class ExecutiveCore:
             binding = ServiceContainer.get("binding_engine", default=None)
             if binding and hasattr(binding, "get_coherence"):
                 return binding.get_coherence()
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return 0.75
@@ -878,7 +878,7 @@ class ExecutiveCore:
             self_engine = resolve_canonical_self_engine(default=None, autocreate=False)
             if self_engine and hasattr(self_engine, "assert_identity"):
                 return self_engine.assert_identity(intent.goal)
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return self._identity_integrity_available()
@@ -888,7 +888,7 @@ class ExecutiveCore:
             self_engine = resolve_canonical_self_engine(default=None, autocreate=False)
             if self_engine and hasattr(self_engine, "assert_identity"):
                 return bool(self_engine.assert_identity(intent.goal))
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return self._identity_integrity_available()
@@ -900,7 +900,7 @@ class ExecutiveCore:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             return False
 
     def _identity_integrity_available(self) -> bool:
@@ -911,7 +911,7 @@ class ExecutiveCore:
                 return True
             if ServiceContainer.get("self_model", default=None) is not None:
                 return True
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return not self._strict_runtime_active()
@@ -937,7 +937,7 @@ class ExecutiveCore:
             contradiction_count = int(getattr(cognition, "contradiction_count", 0) or 0)
             pending_anchor = first_actionable_goal_text(pending_items)
             active_goal_anchor = first_actionable_goal_text(active_goal_items)
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -963,7 +963,7 @@ class ExecutiveCore:
                 contradiction_count,
                 int(obligations.get("contradiction_count", 0) or 0),
             )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -979,7 +979,7 @@ class ExecutiveCore:
                         current_objective = first_actionable_goal_text(active_goal_items)
                     if not active_goal_anchor:
                         active_goal_anchor = first_actionable_goal_text(active_goal_items)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1023,7 +1023,7 @@ class ExecutiveCore:
                 "trusted": int(summary.get("trusted", 0) or 0),
                 "coherence_score": float(summary.get("coherence_score", 1.0) or 1.0),
             }
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return {"contested": 0, "trusted": 0, "coherence_score": 1.0}
 
     def _surface_research_trigger(self, intent: Intent, epistemic: Dict[str, Any]) -> None:
@@ -1040,7 +1040,7 @@ class ExecutiveCore:
                 contested_count=int(epistemic.get("contested", 0)),
                 payload_hint=intent.payload,
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     def _get_failure_state(self) -> Dict[str, Any]:
@@ -1048,7 +1048,7 @@ class ExecutiveCore:
             from core.health.degraded_events import get_unified_failure_state
 
             return get_unified_failure_state(limit=25)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return {"pressure": 0.0, "count": 0, "critical": 0, "errors": 0, "warnings": 0, "top_subsystems": []}
 
     def _get_internal_state_constraints(self) -> Dict[str, float | bool]:
@@ -1095,7 +1095,7 @@ class ExecutiveCore:
             modifiers = dict(getattr(cognition, "modifiers", {}) or {})
             continuity = dict(modifiers.get("continuity_obligations", {}) or {})
             identity_mismatch = bool(continuity.get("identity_mismatch", False))
-        except Exception as _exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return {
@@ -1121,7 +1121,7 @@ class ExecutiveCore:
                 failure_state["count"] = int(failure_state.get("count", 0) or 0) + 1
                 modifiers["failure_obligations"] = failure_state
                 cognition.modifiers = modifiers
-        except Exception as _exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1132,7 +1132,7 @@ class ExecutiveCore:
             if getattr(continuity, "_record", None) is None:
                 continuity.load()
             continuity.note_failure_obligation(reason, getattr(intent, "goal", ""))
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('executive_core', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -1161,7 +1161,7 @@ class ExecutiveCore:
                 from core.config import config
 
                 path = config.paths.data_dir / "executive_ledger.jsonl"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 path = "executive_ledger.jsonl"
             self._ledger = ExecutiveLedger(path)
         return self._ledger
@@ -1197,7 +1197,7 @@ class ExecutiveCore:
                     "constraints": dict(record.constraints or {}),
                 }
             )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('executive_core', exc)
             logger.debug("Executive ledger append failed: %s", exc)
 
@@ -1215,7 +1215,7 @@ def get_executive_core() -> ExecutiveCore:
         _instance = ExecutiveCore()
         try:
             ServiceContainer.register_instance("executive_core", _instance, required=False)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('executive_core', exc)
             logger.error("ExecutiveCore registration failed: %s", exc, exc_info=True)
     return _instance

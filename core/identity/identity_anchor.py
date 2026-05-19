@@ -32,7 +32,7 @@ class IdentityAnchor:
                 # If IdentityKernel has no specific ID, use state_id as the anchor
                 self._aura_id = state.identity.name + "-" + state.state_id[:8]
                 return self._aura_id
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('identity_anchor', e)
             logger.warning("Failed to resolve identity anchor from state: %s", e)
         

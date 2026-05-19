@@ -29,7 +29,7 @@ class ProofPack:
             import yaml  # type: ignore
 
             data = yaml.safe_load(text)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             data = _tiny_yaml(text)
         return ProofPack(
             proof_pack=str(data["proof_pack"]),

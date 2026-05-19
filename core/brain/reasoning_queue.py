@@ -65,7 +65,7 @@ class BackgroundReasoningQueue:
         try:
             from core.state_registry import get_registry
             get_task_tracker().create_task(get_registry().update(reasoning_queue_size=self._queue.qsize()))
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('reasoning_queue', _e)
             logger.debug('Ignored Exception in reasoning_queue.py: %s', _e)
             
@@ -108,7 +108,7 @@ class BackgroundReasoningQueue:
                         else:
                             task.callback(result)
                             
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('reasoning_queue', e)
                     logger.error("✗ [%s] failed: %s", task.description, e)
                     
@@ -118,13 +118,13 @@ class BackgroundReasoningQueue:
                     try:
                         from core.state_registry import get_registry
                         get_task_tracker().create_task(get_registry().update(reasoning_queue_size=self._queue.qsize()))
-                    except Exception as _e:
+                    except (ImportError, AttributeError, RuntimeError) as _e:
                         record_degradation('reasoning_queue', _e)
                         logger.debug('Ignored Exception in reasoning_queue.py: %s', _e)
                     
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('reasoning_queue', e)
                 logger.error("Queue worker encountered error: %s", e)
                 await asyncio.sleep(1) # Prevent tight loop on persistent errors
@@ -150,7 +150,7 @@ class BackgroundReasoningQueue:
         try:
             from core.state_registry import get_registry
             get_task_tracker().create_task(get_registry().update(reasoning_queue_size=self._queue.qsize()))
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('reasoning_queue', _e)
             logger.debug('Ignored Exception in reasoning_queue.py: %s', _e)
             

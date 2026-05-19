@@ -56,7 +56,7 @@ class EpistemicState:
                     obj,
                     note=f"confidence={confidence:.3f}",
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('world_model', exc)
             logger.debug("BeliefAuthority audit skipped for epistemic-state update: %s", exc)
 

@@ -89,7 +89,7 @@ class ScreenObserver:
             self._vision_active = True
             logger.info("👁️ Vision service started (PID: %s)", self._vision_proc.pid)
             return {"ok": True, "pid": self._vision_proc.pid, "message": "Screen capture active"}
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('screen_observer', e)
             logger.error("Failed to start vision: %s", e)
             return {"ok": False, "error": str(e)}
@@ -114,7 +114,7 @@ class ScreenObserver:
             self._audio_active = True
             logger.info("👂 Audio service started (PID: %s)", self._audio_proc.pid)
             return {"ok": True, "pid": self._audio_proc.pid, "message": "Audio capture active"}
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('screen_observer', e)
             logger.error("Failed to start audio: %s", e)
             return {"ok": False, "error": str(e)}
@@ -166,7 +166,7 @@ class ScreenObserver:
                         data["image_size"] = len(data["image"])
                         del data["image"]
                     return data
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('screen_observer', e)
             logger.debug("Vision read error: %s", e)
         return None
@@ -182,7 +182,7 @@ class ScreenObserver:
                         data = json.load(f)
                     data["age_seconds"] = round(age, 1)
                     return data
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('screen_observer', e)
             logger.debug("Audio read error: %s", e)
         return None
@@ -248,7 +248,7 @@ class ScreenObserver:
                     source=obs.get("source", "senses"),
                     confidence=obs.get("confidence", 0.5),
                 )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('screen_observer', e)
                 logger.debug("Failed to store observation: %s", e)
     
@@ -258,7 +258,7 @@ class ScreenObserver:
             try:
                 from core.memory.knowledge_graph import PersistentKnowledgeGraph
                 self._kg = PersistentKnowledgeGraph(str(_BASE / "data" / "knowledge.db"))
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('screen_observer', exc)
                 logger.debug("Suppressed: %%s", exc)
 

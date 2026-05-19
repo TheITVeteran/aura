@@ -137,7 +137,7 @@ class ExecutiveInhibitor:
                         field_coherence, self.FIELD_COHERENCE_CRISIS,
                     )
                     return False
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('executive_inhibitor', e)
             logger.debug("Field coherence check failed (allowing): %s", e)
 

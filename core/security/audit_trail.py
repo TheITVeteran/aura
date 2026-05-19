@@ -131,7 +131,7 @@ class AuditTrail:
                         ),
                     )
                     conn.commit()
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('audit_trail', e)
                 logger.error("Audit trail write failed: %s", e)
                 return ""

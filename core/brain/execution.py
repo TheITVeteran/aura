@@ -55,7 +55,7 @@ class ExecutionManager:
             except asyncio.TimeoutError:
                 last_err = "timeout"
                 self.trace.log({"type": "execution_timeout", "action": action_name, "attempt": attempt, "timeout": timeout})
-            except Exception as e:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('execution', e)
                 last_err = str(e)
                 self.trace.log({"type": "execution_exception", "action": action_name, "attempt": attempt, "error": last_err})

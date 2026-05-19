@@ -31,7 +31,7 @@ class MemoryCoordinator:
                     from core.memory.black_hole_vault import get_vault
                     try:
                         self._memory = get_vault()
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('memory', e)
                         logger.error(f"Fallback to vault failed: {e}")
                         self._memory = None
@@ -43,7 +43,7 @@ class MemoryCoordinator:
                     from core.memory.black_hole_vault import get_vault
                     try:
                         self._memory = get_vault()
-                    except Exception:
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
                         self._memory = None
                 else:
                     self._memory = facade
@@ -72,7 +72,7 @@ class MemoryCoordinator:
                     return await self.memory.get_hot_memory(limit=limit)
                 else:
                     return await asyncio.to_thread(self.memory.get_hot_memory, limit=limit)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory', e)
                 logger.error(f"MemoryCoordinator.get_hot_memory failed: {e}")
         return {}
@@ -122,7 +122,7 @@ class MemoryCoordinator:
                         importance=importance,
                         metadata=metadata,
                     )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory', e)
                 logger.error("MemoryCoordinator.commit_interaction failed: %s", e)
 
@@ -138,7 +138,7 @@ class MemoryCoordinator:
                     await self.memory.prune_low_salience(threshold_days=threshold_days)
                 else:
                     await asyncio.to_thread(self.memory.prune_low_salience, threshold_days=threshold_days)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory', e)
                 logger.error(f"MemoryCoordinator.prune_low_salience failed: {e}")
 
@@ -164,7 +164,7 @@ class MemoryCoordinator:
                 else:
                     res = await asyncio.to_thread(self.memory.get_cold_memory_context, query, limit=limit)
                 return res if isinstance(res, dict) else {"results": res}
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('memory', e)
             logger.error(f"Memory retrieval failure: {e}")
             
@@ -223,7 +223,7 @@ class MemoryCoordinator:
                     try:
                         from core.thought_stream import get_emitter
                         get_emitter().emit("Memory Consolidation 🌙", summary, level="info", category="Subconscious")
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('memory', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     # Commit to long-term memory
@@ -232,6 +232,6 @@ class MemoryCoordinator:
                     # Truncate working memory (keep only the last 2 messages for immediate context)
                     logger.info("🌙 [SUBCONSCIOUS] Truncating working memory from %d to 2 items.", len(state.cognition.working_memory))
                     state.cognition.working_memory = state.cognition.working_memory[-2:]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory', e)
             logger.error("❌ [SUBCONSCIOUS] Consolidation failed: %s", e)

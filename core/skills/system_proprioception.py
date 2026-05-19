@@ -32,7 +32,7 @@ class SystemProprioceptionSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = ProprioceptionInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('system_proprioception', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -78,7 +78,7 @@ class SystemProprioceptionSkill(BaseSkill):
                             if doc:
                                 service_info["description"] = doc.split('\n')[0] # First line only for brevity
                                 
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError) as e:
                         record_degradation('system_proprioception', e)
                         self.logger.debug("Metadata extraction failed for %s: %s", name, e)
 
@@ -91,7 +91,7 @@ class SystemProprioceptionSkill(BaseSkill):
                 "message": "I've conducted a self-diagnostic. All core systems are mapped and functional."
             }
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('system_proprioception', e)
             self.logger.error("Proprioception failed: %s", e)
             return {"ok": False, "error": str(e)}

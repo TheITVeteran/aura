@@ -127,7 +127,7 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
             else:
                 state_str += "- Affective Status: Steady (Registry state unavailable)\n"
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('compiler', e)
             logger.debug("Failed to pull from StateRegistry in compiler: %s", e)
             # Minimal fallback behavior
@@ -155,10 +155,10 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
                         ).result(timeout=1.0)
                         if principles:
                             state_str += principles
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('compiler', e)
                         logger.debug("Failed to inject principles: %s", e)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('compiler', e)
             logger.debug("Failed to inject principles into prompt: %s", e)
 
@@ -173,7 +173,7 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
             s = get_registry().get_state()
             ctx_str += f"- Primary Objective: {s.current_goal}\n"
             ctx_str += f"- Engagement Mode: {s.engagement_mode.replace('_', ' ').capitalize()}\n"
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             if self.orchestrator:
                 goal = getattr(self.orchestrator, "current_goal", "Maintain homeostasis and observe.")
                 ctx_str += f"- Primary Objective: {goal}\n"

@@ -54,7 +54,7 @@ try:
         
         sys.stdout.flush()
         await asyncio.sleep(60) # Scan every minute
-except Exception as e:
+except (OSError, IOError) as e:
     print(f"ghost_error:{{e}}")
 """
         probe_path = Path(tempfile.gettempdir()) / f"aura_probe_{probe_id}.py"
@@ -83,7 +83,7 @@ except Exception as e:
             
             logger.info("👻 Ghost Probe '%s' deployed to watch %s.", probe_id, target)
             return True
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('probe_manager', e)
             logger.error("Failed to deploy probe %s: %s", probe_id, e)
             return False
@@ -114,7 +114,7 @@ except Exception as e:
             proc = self.probes.pop(probe_id)
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('probe_manager', e)
                 logger.debug("Failed to kill probe process group %d: %s", proc.pid, e)
             

@@ -166,7 +166,7 @@ def _continuity_hash() -> str:
         from core.identity.self_object import get_self
         snap = get_self().snapshot()
         return snap.continuity_hash
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('migration', exc)
         logger.debug("continuity hash failed during migration: %s", exc)
         return hashlib.sha256(str(time.time()).encode("utf-8")).hexdigest()[:24]
@@ -231,7 +231,7 @@ class MigrationOrchestrator:
                 self._record(proposal, "will_refused")
                 return proposal
             proposal.will_receipt_id = getattr(wd, "receipt_id", None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('migration', exc)
             proposal.phase = Phase.FAILED
             proposal.failure_reason = f"will_exception:{exc}"
@@ -261,7 +261,7 @@ class MigrationOrchestrator:
             proposal.remote_host = remote
             proposal.phase = Phase.PROVISION
             self._record(proposal, f"provisioned:{remote}")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             return self._fail(proposal, f"provision_failed:{exc}")
 
@@ -270,7 +270,7 @@ class MigrationOrchestrator:
             await provider.transfer(archive_path=archive, remote_host=remote)
             proposal.phase = Phase.TRANSFER
             self._record(proposal, "transferred")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             return self._fail(proposal, f"transfer_failed:{exc}")
 
@@ -279,7 +279,7 @@ class MigrationOrchestrator:
             await provider.boot(remote_host=remote)
             proposal.phase = Phase.BOOT
             self._record(proposal, "booted")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             return self._fail(proposal, f"boot_failed:{exc}")
 
@@ -291,7 +291,7 @@ class MigrationOrchestrator:
             proposal.continuity_hash_after = _continuity_hash()
             proposal.phase = Phase.VERIFY
             self._record(proposal, "verified")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             return self._fail(proposal, f"verify_exception:{exc}")
 
@@ -303,7 +303,7 @@ class MigrationOrchestrator:
         try:
             from core.organism.viability import get_viability, ViabilityState
             get_viability().transition_to(ViabilityState.ASLEEP, reason="cutover")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('migration', exc)
             logger.debug("viability cutover transition failed: %s", exc)
 
@@ -329,9 +329,9 @@ class MigrationOrchestrator:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             logger.warning("migration ledger append failed: %s", exc)
 

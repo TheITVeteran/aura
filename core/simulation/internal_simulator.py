@@ -33,7 +33,7 @@ class InternalSimulator:
         """Create a hypothetical future state based on current state + variation."""
         try:
             hypothetical = copy.deepcopy(current_state)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # If deep copy fails (complex state), work with a shallow analysis
             return current_state
 
@@ -103,21 +103,21 @@ class InternalSimulator:
         try:
             alignment_score = self._check_identity_alignment(action_content)
             score += alignment_score * 0.2
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             score += 0.1  # neutral default
 
         # 5. Commitment compatibility
         try:
             compat_score = self._check_commitment_compatibility(action_content)
             score += compat_score * 0.15
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             score += 0.05  # neutral default
 
         # 6. World-state fit (environment supports this action?)
         try:
             world_score = self._check_world_state_fit(action_content, action_source)
             score += world_score * 0.1
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
         return round(score, 4)
@@ -183,7 +183,7 @@ class InternalSimulator:
                 return min(0.5, 0.2 + matches * 0.1)
 
             return 0.1
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return 0.1
 
     @staticmethod
@@ -224,7 +224,7 @@ class InternalSimulator:
                     score -= 0.1  # don't interrupt
 
             return max(-0.3, min(0.3, score))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return 0.0
 
     @staticmethod
@@ -252,5 +252,5 @@ class InternalSimulator:
                 if any(word in content_lower for word in goal.split()[:3] if len(word) > 3):
                     return 0.3
             return 0.0
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return 0.05

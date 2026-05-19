@@ -129,7 +129,7 @@ class UnifiedTranscript:
         for listener in self._listeners:
             try:
                 listener(entry)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('unified_transcript', e)
                 capture_and_log(e, {'module': __name__})
 

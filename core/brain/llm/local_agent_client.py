@@ -77,7 +77,7 @@ class LocalAgentClient(RobustOllamaClient):
             if affect:
                 vad = affect.get_current_vad()
                 telemetry_header += f"[INTERNAL STATE: Valence={vad.get('valence', 0):.2f}, Arousal={vad.get('arousal', 0):.2f}]\n"
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         # 2. Build the Turn Input
@@ -136,7 +136,7 @@ class LocalAgentClient(RobustOllamaClient):
                 # For this implementation, we ensure token count stays light by pruning history
                 from .context_limit import context_guard
                 history = context_guard.prune(history, system_prompt)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('local_agent_client', e)
                 logger.debug("History pruning/compaction skipped: %s", e)
             
@@ -182,7 +182,7 @@ class LocalAgentClient(RobustOllamaClient):
                             content=f"Aura is executing {tool_name} with params: {json.dumps(tool_args)}",
                             level="info"
                         )
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('local_agent_client', e)
                     logger.debug("Thought stream emit failed: %s", e)
                 
@@ -199,7 +199,7 @@ class LocalAgentClient(RobustOllamaClient):
                         content=f"Execution completed: {result_str[:200]}...",
                         level="success" if "error" not in result_str.lower() else "warning"
                     )
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('local_agent_client', e)
                     logger.debug("Tool result emit failed: %s", e)
 
@@ -276,7 +276,7 @@ class LocalAgentClient(RobustOllamaClient):
                             return data
                     except json.JSONDecodeError:
                         continue
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('local_agent_client', e)
             logger.error("Tool parsing error: %s", e)
             

@@ -371,7 +371,7 @@ def verify_mutation(
     if backend == "z3":
         try:
             res.diagnostics.append(_z3_certificate(before, after))
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('formal_verifier', exc)
             res.diagnostics.append(f"z3 certificate error: {exc}")
 
@@ -388,7 +388,7 @@ def _select_backend() -> str:
     try:
         import z3  # noqa: F401
         return "z3"
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return "ast"
 
 

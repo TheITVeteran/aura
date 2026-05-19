@@ -69,7 +69,7 @@ class AlignmentAuditor:
             logger.error("🛑 AlignmentAuditor: Systemic failure to parse alignment JSON.")
             return {"score": 0.0, "aligned": False, "reason": "Systemic parsing failure"}
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('alignment_auditor', e)
             logger.error("Alignment check failed: %s", e)
             return {"score": 0.0, "aligned": False, "error": str(e)}
@@ -110,7 +110,7 @@ class AlignmentAuditor:
                     data = json.loads(match.group(0))
                     if "score" in data:
                         return data
-                except Exception as e:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
                     record_degradation('alignment_auditor', e)
                     logger.debug("Tone auditor JSON parse fallback: %s", e)
                     
@@ -125,7 +125,7 @@ class AlignmentAuditor:
                 
             return {"score": 0.2 if is_assistant else 0.8, "assistant_speak_detected": is_assistant}
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('alignment_auditor', e)
             logger.error("Tone audit failed: %s", e)
             return {"score": 0.0, "error": str(e)}

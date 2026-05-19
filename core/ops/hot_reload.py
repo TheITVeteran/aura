@@ -264,7 +264,7 @@ class HotReloader:
             try:
                 importlib.reload(module)
                 result.reloaded.append(module_name)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('hot_reload', exc)
                 tb = traceback.format_exc()
                 logger.error(
@@ -345,7 +345,7 @@ class HotReloader:
         try:
             importlib.reload(module)
             result.reloaded.append(module_name)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('hot_reload', exc)
             tb = traceback.format_exc()
             result.failed.append({

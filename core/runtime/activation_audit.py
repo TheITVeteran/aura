@@ -87,7 +87,7 @@ async def _start_autonomy_conductor(orchestrator: Any) -> Any:
         from core.container import ServiceContainer
 
         ServiceContainer.register_instance("autonomy_conductor", conductor, required=False)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("activation_audit", exc)
     return conductor
 
@@ -388,11 +388,11 @@ class ActivationAuditor:
                         if callable(status_fn):
                             try:
                                 service_status[key] = self._safe_json(status_fn())
-                            except Exception as exc:
+                            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                                 service_status[key] = {"status_error": repr(exc)}
             if service_status:
                 evidence["service_status"] = service_status
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             evidence["service_error"] = repr(exc)
         try:
             from core.utils.task_tracker import get_task_tracker
@@ -403,7 +403,7 @@ class ActivationAuditor:
                 if any(part in name for part in spec.task_name_contains):
                     if not task.done():
                         task_hits.append(name)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             evidence["task_error"] = repr(exc)
         evidence["service_hits"] = service_hits
         evidence["task_hits"] = task_hits
@@ -418,7 +418,7 @@ class ActivationAuditor:
                 status = get_keep_awake_controller().status()
                 active = status.active or not keep_awake_enabled_from_environment()
                 evidence["keep_awake_status"] = status.to_dict()
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 evidence["keep_awake_error"] = repr(exc)
         return ActivationStatus(
             name=spec.name,
@@ -444,7 +444,7 @@ class ActivationAuditor:
                 evidence={**status.evidence, "starter_result": self._safe_json(result)},
                 reconciled=True,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("activation_audit", exc)
             return ActivationStatus(
                 name=prior.name,
@@ -467,7 +467,7 @@ class ActivationAuditor:
         try:
             json.dumps(value, default=str)
             return value
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             return repr(value)
 
     @staticmethod

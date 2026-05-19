@@ -195,7 +195,7 @@ class GlobalWorkspace:
                         if h:
                             h.strength = 10.0 # Thicken the visual noise
                         get_task_tracker().create_task(mycelium.emit_reflex("NEURAL_FLOOD", {"source": candidate.source}))
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('global_workspace', _e)
                     logger.debug('Ignored Exception in global_workspace.py: %s', _e)
                 return False
@@ -238,7 +238,7 @@ class GlobalWorkspace:
                 hypha = mycelium.get_hypha("consciousness", "workspace")
                 if hypha:
                     hypha.pulse(success=True)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('global_workspace', _e)
             logger.debug('Ignored Exception in global_workspace.py: %s', _e)
 
@@ -291,7 +291,7 @@ class GlobalWorkspace:
                 winner_source=winner.source,
                 all_candidates=all_candidates_data,
             )
-        except Exception as _pa_exc:
+        except (ImportError, AttributeError, RuntimeError) as _pa_exc:
             record_degradation('global_workspace', _pa_exc)
             logger.debug("GW peripheral awareness feed skipped: %s", _pa_exc)
 
@@ -299,7 +299,7 @@ class GlobalWorkspace:
             from core.unity import get_unity_runtime
 
             get_unity_runtime().record_workspace_competition(winner, losers)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('global_workspace', exc)
             logger.debug("GW unity workspace frame skipped: %s", exc)
 
@@ -334,7 +334,7 @@ class GlobalWorkspace:
                     prediction="phi_determines_coherence_not_broadcast",
                     confidence=0.6,
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("global_workspace", exc)
                 logger.debug("GW theory arbitration feed skipped: %s", exc)
 
@@ -353,7 +353,7 @@ class GlobalWorkspace:
                         "losers": [loser.source for loser in losers[:3]]
                     }
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('global_workspace', e)
             logger.debug("Failed to emit Neural Feed match: %s", e)
 
@@ -385,7 +385,7 @@ class GlobalWorkspace:
             res = fn(event)
             if res is not None and inspect.isawaitable(res):
                 await res
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('global_workspace', e)
             logger.error("GW processor error: %s", e)
 

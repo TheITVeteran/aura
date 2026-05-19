@@ -228,7 +228,7 @@ class QuantumEntropyBridge:
                 self._api_failures += 1
                 logger.warning("ANU QRNG API returned non-success: %s", data)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             self._api_failures += 1
             try:
                 import urllib.error
@@ -242,7 +242,7 @@ class QuantumEntropyBridge:
                         OSError,
                     ),
                 )
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 external_entropy_unavailable = isinstance(e, (TimeoutError, OSError))
 
             if external_entropy_unavailable:

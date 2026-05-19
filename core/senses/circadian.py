@@ -237,7 +237,7 @@ class CircadianEngine:
                     get_task_tracker().track(
                         affect.apply_stimulus("circadian_arousal", delta * 2.0)
                     )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('circadian', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

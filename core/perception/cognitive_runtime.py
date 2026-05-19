@@ -249,7 +249,7 @@ class EmbodiedCognitionRuntime:
                     source="embodied_cognition_runtime",
                     ttl=600.0,
                 )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
         if self.existing_causal_world_model is None:
@@ -268,7 +268,7 @@ class EmbodiedCognitionRuntime:
                         "need reversible information gathering",
                         0.75,
                     )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
         if self.existing_skill_library is None:
@@ -291,5 +291,5 @@ class EmbodiedCognitionRuntime:
                     reason=decision.reason,
                     vetoes=decision.vetoes,
                 )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass

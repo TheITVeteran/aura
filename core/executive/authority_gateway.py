@@ -105,7 +105,7 @@ class AuthorityGateway:
                     ),
                     decision,
                 )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('authority_gateway', exc)
             logger.warning("UnifiedWill gate unavailable; failing closed: %s", exc)
             return (
@@ -153,7 +153,7 @@ class AuthorityGateway:
                     domain="social_governance",
                     source=source
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             from core.runtime.errors import record_degradation
             record_degradation('authority_gateway', e)
 
@@ -175,7 +175,7 @@ class AuthorityGateway:
                         valence = float(getattr(state, "valence", 0.0))
                         arousal = float(getattr(state, "arousal", 0.0))
                         anger = float(getattr(state, "anger", 0.0))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             from core.runtime.errors import record_degradation
             import logging
             logger = logging.getLogger("Aura.AuthorityGateway")
@@ -207,7 +207,7 @@ class AuthorityGateway:
                     domain="social_governance",
                     source=source
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('authority_gateway', e)
             logger.debug("Social governance epistemic gate failed: %s", e)
 
@@ -842,13 +842,13 @@ class AuthorityGateway:
         if executive_intent_id:
             try:
                 self._get_executive_core().complete_intent(executive_intent_id, success=success)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('authority_gateway', exc)
                 logger.error("Executive intent completion failed: %s", exc, exc_info=True)
         if capability_token_id:
             try:
                 self._capabilities.revoke_token(capability_token_id)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('authority_gateway', exc)
                 logger.error("Capability token revoke failed: %s", exc, exc_info=True)
 
@@ -857,7 +857,7 @@ class AuthorityGateway:
             return
         try:
             self._get_executive_core().complete_intent(intent_id, success=success)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('authority_gateway', exc)
             logger.error("Executive intent completion failed: %s", exc, exc_info=True)
 
@@ -874,7 +874,7 @@ class AuthorityGateway:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             return False
 
     def _canonical_self_version(self) -> Optional[int]:
@@ -991,7 +991,7 @@ class AuthorityGateway:
                 priority=priority,
                 is_critical=is_critical,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('authority_gateway', exc)
             if require_substrate:
                 return (
@@ -1048,7 +1048,7 @@ def get_authority_gateway() -> AuthorityGateway:
         _instance = AuthorityGateway()
         try:
             ServiceContainer.register_instance("authority_gateway", _instance, required=False)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('authority_gateway', exc)
             logger.error("AuthorityGateway registration failed: %s", exc, exc_info=True)
     return _instance

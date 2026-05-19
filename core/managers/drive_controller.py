@@ -70,7 +70,7 @@ class DriveController:
         try:
             from core.senses.entropy_anchor import entropy_anchor
             entropy_val = entropy_anchor.get_entropy_float() # 0.0 to 1.0
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             import logging
             logger.debug("Exception caught during execution", exc_info=True)
 
@@ -114,7 +114,7 @@ class DriveController:
                 if queued:
                     logger.debug("😤 Frustration reflection already queued (%d pending). Skipping.", len(queued))
                     return
-        except Exception as _exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
             record_degradation('drive_controller', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -149,6 +149,6 @@ class DriveController:
             mood = self.orchestrator.liquid_state.get_mood() if hasattr(self.orchestrator, 'liquid_state') else "Stable"
             get_emitter().emit("Neural Pulse", f"System Active (Mood: {mood})", level="info")
             self._last_pulse = time.time()
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('drive_controller', _e)
             logger.debug("Neural pulse emit failed: %s", _e)

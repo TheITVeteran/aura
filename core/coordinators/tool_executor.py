@@ -48,7 +48,7 @@ class ToolExecutor:
                 success=success,
                 error=error,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('tool_executor', exc)
             logger.debug("ToolExecutor: coding tool recording skipped: %s", exc)
 
@@ -148,7 +148,7 @@ class ToolExecutor:
 
             return result
 
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('tool_executor', e)
             logger.error("Execution Jolt (Pain): Tool %s crashed: %s", tool_name, e)
             await self._record_crash(orch, tool_name, args, e)
@@ -186,7 +186,7 @@ class ToolExecutor:
                     str(args.get("query", args.get("path", "")))
                 )
                 orch.tool_learner.record_usage(tool_name, category, success, elapsed_ms)
-            except Exception as _e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
                 record_degradation('tool_executor', _e)
                 logger.debug("Tool learning record failed: %s", _e)
 
@@ -203,7 +203,7 @@ class ToolExecutor:
                     success=success,
                     importance=0.3 if success else 0.7,
                 )
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('tool_executor', _e)
                 logger.debug("Unified memory record failed: %s", _e)
 
@@ -218,7 +218,7 @@ class ToolExecutor:
                 outcome=result,
                 success=success,
             )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('tool_executor', _e)
             logger.debug("ACG record failed: %s", _e)
 
@@ -249,7 +249,7 @@ class ToolExecutor:
                 cost_tokens=cost_tokens,
                 source=source,
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('tool_executor', exc)
             logger.debug("ToolExecutor: action feedback emission failed: %s", exc)
 
@@ -265,6 +265,6 @@ class ToolExecutor:
                     emotional_valence=-0.5,
                     importance=0.9,
                 )
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('tool_executor', _e)
                 logger.debug("Unified memory record failed (crash path): %s", _e)

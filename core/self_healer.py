@@ -33,7 +33,7 @@ class SelfHealer:
                 logger.info("SelfHealer: Detected pattern %s. Attempting fix...", pattern)
                 try:
                     return fixer(match, exception)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('self_healer', e)
                     logger.error("SelfHealer: Fixer failed: %s", e)
                     return False

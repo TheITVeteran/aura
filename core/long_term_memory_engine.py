@@ -67,7 +67,7 @@ class LongTermMemoryEngine:
                 "component": "long_term_memory_engine",
                 "hooks_into": ["memory_facade", "drive_engine", "cel", "dream_processor"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('long_term_memory_engine', e)
             logger.debug(f"Event bus publish missed for Mycelium hook: {e}")
 
@@ -83,7 +83,7 @@ class LongTermMemoryEngine:
                 data = json.loads(self.db_path.read_text())
                 self.memories = [TaggedMemory(**m) for m in data]
                 logger.info(f"Loaded {len(self.memories)} emotionally tagged memories")
-            except Exception as _e:
+            except (json.JSONDecodeError, TypeError, ValueError) as _e:
                 record_degradation('long_term_memory_engine', _e)
                 logger.debug('Ignored Exception in long_term_memory_engine.py: %s', _e)
 
@@ -93,7 +93,7 @@ class LongTermMemoryEngine:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             data = [m.__dict__ for m in self.memories]
             atomic_write(str(self.db_path), json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('long_term_memory_engine', e)
             logger.error(f"Memory save failed: {e}")
 
@@ -125,11 +125,11 @@ class LongTermMemoryEngine:
                         classification="background_degraded",
                         context={"importance": importance, "valence": valence},
                     )
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('long_term_memory_engine', exc)
                     logger.debug("LongTermMemory degraded-event logging skipped: %s", exc)
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('long_term_memory_engine', exc)
             logger.debug("LongTermMemory constitutional gate skipped: %s", exc)
             runtime_live = bool(
@@ -166,7 +166,7 @@ class LongTermMemoryEngine:
                     "phi": 0.78,
                     "origin": "long_term_memory"
                 })
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('long_term_memory_engine', _e)
                 logger.debug('Ignored Exception in long_term_memory_engine.py: %s', _e)
 
@@ -198,7 +198,7 @@ class LongTermMemoryEngine:
                                 "phi": 0.65,
                                 "origin": "long_term_memory"
                             })
-                        except Exception as e:
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                             record_degradation('long_term_memory_engine', e)
                             logger.debug(f"CEL emission failed in nightly consolidation: {e}")
             self._save_memories()

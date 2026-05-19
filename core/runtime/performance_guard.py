@@ -95,7 +95,7 @@ class PerformanceGuard:
                 self.budgets.concurrent_heavy_lanes = 3
             if total_gb >= 96:
                 self.budgets.concurrent_heavy_lanes = 4
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
     # ── samples ───────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ class PerformanceGuard:
             for cb in list(self._on_motion_change):
                 try:
                     cb(target)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
             logger.info("⏱ motion throttle %s (streak=%d)", "ON" if target else "OFF", self._streak)
 
@@ -162,7 +162,7 @@ class PerformanceGuard:
         try:
             with open(_SAMPLES_PATH, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, default=str) + "\n")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
     # ── background watcher ───────────────────────────────────────────

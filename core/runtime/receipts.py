@@ -223,7 +223,7 @@ class ReceiptStore:
         self._chain: Optional[AuditChain] = None
         try:
             self._chain = AuditChain(self.root)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             self._chain = None
 
     def emit(self, receipt: AnyReceipt) -> AnyReceipt:
@@ -250,7 +250,7 @@ class ReceiptStore:
                     body=body,
                     timestamp=float(getattr(receipt, "created_at", 0.0) or 0.0),
                 )
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError):
                 # Chain failure must not bring down the emit path; the
                 # receipt is already durable.  A subsequent verify() will
                 # surface the gap.
@@ -305,7 +305,7 @@ class ReceiptStore:
                         receipt.kind = kind
                         self._index[receipt.receipt_id] = receipt
                         count += 1
-                    except Exception:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                         continue
         return count
 
@@ -323,7 +323,7 @@ class ReceiptStore:
             return None
         try:
             env = read_json_envelope(path)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return None
         payload = env.get("payload") if isinstance(env, dict) else None
         if not isinstance(payload, dict):

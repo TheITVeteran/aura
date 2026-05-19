@@ -61,7 +61,7 @@ class ManagedEntropy:
             from core.consciousness.quantum_entropy import get_quantum_entropy
             qe = get_quantum_entropy()
             return qe.get_quantum_float()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('managed_entropy', e)
             capture_and_log(e, {'module': __name__})
         

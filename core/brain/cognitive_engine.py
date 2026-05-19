@@ -49,7 +49,7 @@ def _record_objective_binding(state: AuraState, objective: str, *, source: str, 
             mode=str(mode_value or ""),
             reason=reason,
         )
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError) as exc:
         record_degradation('cognitive_engine', exc)
         logger.debug("Executive objective audit skipped for %s: %s", source, exc)
 
@@ -173,7 +173,7 @@ class CognitiveEngine:
                 last_user = float(getattr(orchestrator, "_last_user_interaction_time", 0.0) or 0.0)
                 if last_user and (time.time() - last_user) < 180.0:
                     return True
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_engine', exc)
             logger.debug("Background reflection suppression check failed: %s", exc)
 
@@ -182,7 +182,7 @@ class CognitiveEngine:
 
             if psutil.virtual_memory().percent >= 80.0:
                 return True
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('cognitive_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -201,7 +201,7 @@ class CognitiveEngine:
                 )
                 or ""
             )
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_engine', exc)
             logger.debug("Background thought policy check failed: %s", exc)
             return ""
@@ -262,7 +262,7 @@ class CognitiveEngine:
             )
             if state_origin:
                 return state_origin
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('cognitive_engine', exc)
             logger.debug("CognitiveEngine origin resolution degraded: %s", exc)
 
@@ -408,7 +408,7 @@ class CognitiveEngine:
                     aug_data = aug.get_augmentation(objective)
                     if aug_data:
                         augmentor_context[type(aug).__name__] = aug_data
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('cognitive_engine', e)
                 logger.warning("Augmentor %s failed: %s", type(aug).__name__, e)
 
@@ -482,7 +482,7 @@ class CognitiveEngine:
             logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (240s).")
             # Immediate Reactive Recovery
             return await self._reactive_recovery(objective, mode, origin, "timeout")
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('cognitive_engine', e)
             logger.error("🚨 [COGNITION] Fatal error in phase logic: %s", e)
             # v14.1 HARDENING: Rollback & Downshift
@@ -496,7 +496,7 @@ class CognitiveEngine:
                 # vResilience: Avoid locals().get() for type stability
                 if not success and 'backup_state' in locals():
                     state = backup_state
-            except Exception as _e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
                 record_degradation('cognitive_engine', _e)
                 logger.debug('Ignored Exception in cognitive_engine.py: %s', _e)
 
@@ -539,7 +539,7 @@ class CognitiveEngine:
                 # Audit Fix: Preserve modifiers (CIL-injected fields)
                 if hasattr(temp_state.cognition, "modifiers"):
                     state.cognition.modifiers = dict(getattr(temp_state.cognition, "modifiers", {}) or {})
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('cognitive_engine', e)
                 logger.error("Failed to commit final cognitive state: %s", e)
                 break
@@ -650,7 +650,7 @@ class CognitiveEngine:
             try:
                 async with asyncio.timeout(5.0):
                     await self.state_repository.rollback(f"recovery: {reason}")
-            except Exception as rollback_err:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
                 record_degradation('cognitive_engine', rollback_err)
                 logger.warning("Rollback failed during recovery: %s", rollback_err)
             
@@ -683,7 +683,7 @@ class CognitiveEngine:
                 confidence=0.3,
                 reasoning=[f"Hard fallback after cognitive failure: {reason}"]
             )
-        except Exception as recovery_err:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as recovery_err:
             record_degradation('cognitive_engine', recovery_err)
             logger.error("Error during recovery: %s", recovery_err)
             return Thought(
@@ -710,7 +710,7 @@ class CognitiveEngine:
             try:
                 await context_manager.record_interaction(user_input, response, domain=domain)
                 return
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('cognitive_engine', exc)
                 logger.debug("CognitiveEngine.record_interaction context-manager path failed: %s", exc)
 
@@ -722,7 +722,7 @@ class CognitiveEngine:
                     aura_response=response,
                     domain=domain,
                 )
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('cognitive_engine', exc)
                 logger.debug("CognitiveEngine.record_interaction learning path failed: %s", exc)
 
@@ -842,7 +842,7 @@ class CognitiveEngine:
                         level="info",
                         category="Cognition"
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('cognitive_engine', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 

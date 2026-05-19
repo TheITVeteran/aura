@@ -82,7 +82,7 @@ class IntegrityGuard:
             
             # Use the dedicated decay method
             await self._decay_stale(beliefs, report)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('integrity_check', exc)
             msg = f"Integrity audit error: {exc}"
             logger.error(msg, exc_info=True)
@@ -98,7 +98,7 @@ class IntegrityGuard:
                 "Integrity Audit 🛡️", str(report),
                 level="info" if not report.quarantined else "warning",
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('integrity_check', exc)
             logger.debug("Suppressed thought-stream emit: %s", exc)
 
@@ -115,7 +115,7 @@ class IntegrityGuard:
                 c = self.belief_graph._get_conn().cursor()
                 c.execute("SELECT * FROM beliefs")
                 return [dict(row) for row in c.fetchall()]
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation('integrity_check', exc)
             logger.warning("Failed to retrieve beliefs: %s", exc)
         return []
@@ -137,7 +137,7 @@ class IntegrityGuard:
                     self.belief_graph.conn.commit()
                 await asyncio.to_thread(_do_quarantine)
             report.quarantined += 1
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation('integrity_check', exc)
             report.errors.append(f"quarantine {belief_id}: {exc}")
 
@@ -211,7 +211,7 @@ class IntegrityGuard:
                             self.belief_graph.conn.commit()
                         await asyncio.to_thread(_do_decay)
                     report.decayed += 1
-                except Exception as exc:
+                except (sqlite3.Error, OSError) as exc:
                     record_degradation('integrity_check', exc)
                     report.errors.append(f"decay {belief_id}: {exc}")
 
@@ -220,6 +220,6 @@ class IntegrityGuard:
             self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.audit_log_path, "a") as f:
                 f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {report}\n")
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             record_degradation('integrity_check', exc)
             logger.warning("Failed to write audit log: %s", exc)

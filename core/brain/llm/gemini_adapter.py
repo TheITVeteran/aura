@@ -96,7 +96,7 @@ class DailyRateLimiter:
                         logger.info("📊 Loaded Gemini usage: %s", dict(self._counts))
                     else:
                         logger.info("📊 New day — resetting Gemini usage counters")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('gemini_adapter', e)
                 logger.debug("Failed to load rate limiter state: %s", e)
     
@@ -110,7 +110,7 @@ class DailyRateLimiter:
                     "date": self._reset_date,
                     "counts": dict(self._counts),
                 }))
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('gemini_adapter', e)
                 capture_and_log(e, {'module': __name__})
     
@@ -323,7 +323,7 @@ class GeminiAdapter:
             match = re.search(r'retry in (\d+\.?\d*)', text)
             if match:
                 return float(match.group(1))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('gemini_adapter', e)
             capture_and_log(e, {'module': __name__})
         return 60.0  # Default 60s backoff
@@ -447,7 +447,7 @@ class GeminiAdapter:
                         duration_s=time.monotonic() - t0_stream, # Need to define t0_stream
                         model_tier="PRIMARY" if self.model == self.DEEP_MODEL else "SECONDARY"
                     )
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('gemini_adapter', _e)
                     logger.debug('Ignored Exception in gemini_adapter.py: %s', _e)
                 
@@ -455,7 +455,7 @@ class GeminiAdapter:
             logger.warning("Gemini stream timed out after %.0fs", self.timeout)
         except GeminiProviderUnavailable as e:
             logger.warning("Gemini stream unavailable: %s", e)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('gemini_adapter', e)
             logger.error("Gemini stream error: %s", e)
 
@@ -566,7 +566,7 @@ class GeminiAdapter:
                     await self._handle_error(response)
                 except GeminiProviderUnavailable as e:
                     return False, "", {"error": str(e)}
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('gemini_adapter', e)
                     return False, "", {"error": str(e)}
             
@@ -598,7 +598,7 @@ class GeminiAdapter:
                     duration_s=(time.monotonic() - t0),
                     model_tier="PRIMARY" if self.model == self.DEEP_MODEL else "SECONDARY"
                 )
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('gemini_adapter', _e)
                 logger.debug('Ignored Exception in gemini_adapter.py: %s', _e)
             
@@ -607,7 +607,7 @@ class GeminiAdapter:
         except httpx.TimeoutException:
             metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
             return False, "", {"error": f"Timeout after {self.timeout}s"}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('gemini_adapter', e)
             metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
             return False, "", {"error": str(e)}

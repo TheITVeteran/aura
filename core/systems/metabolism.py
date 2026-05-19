@@ -71,7 +71,7 @@ class MetabolismEngine:
         try:
             self._purge_waste(report)
             self._purge_stale_logs(report)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('metabolism', exc)
             msg = f"Metabolism sweep error: {exc}"
             logger.error(msg, exc_info=True)
@@ -93,7 +93,7 @@ class MetabolismEngine:
                         report.dirs_removed += 1
                         report.bytes_reclaimed += size
                         dirnames.remove(dname)
-                    except Exception as exc:
+                    except (OSError, IOError) as exc:
                         record_degradation('metabolism', exc)
                         report.errors.append(f"rmdir {target}: {exc}")
             for fname in filenames:
@@ -104,7 +104,7 @@ class MetabolismEngine:
                         fpath.unlink()
                         report.files_removed += 1
                         report.bytes_reclaimed += size
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('metabolism', exc)
                         report.errors.append(f"unlink {fpath}: {exc}")
 
@@ -122,7 +122,7 @@ class MetabolismEngine:
                             fpath.unlink()
                             report.files_removed += 1
                             report.bytes_reclaimed += size
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('metabolism', exc)
                         report.errors.append(f"stale log {fpath}: {exc}")
 
@@ -133,7 +133,7 @@ class MetabolismEngine:
             for entry in path.rglob("*"):
                 if entry.is_file():
                     total += entry.stat().st_size
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('metabolism', exc)
             logger.debug("Suppressed: %s", exc)
         return total

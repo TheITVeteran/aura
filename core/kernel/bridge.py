@@ -105,12 +105,12 @@ class LegacyPhase(Phase):
             from core.container import ServiceContainer
             try:
                 ServiceContainer.register_instance("affect_engine", self.legacy_orchestrator._affect_engine_override)
-            except Exception as _reg_err:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _reg_err:
                 record_degradation('bridge', _reg_err)
                 logger.debug("Bridge: affect_engine already registered, skipping: %s", _reg_err)
             try:
                 ServiceContainer.register_instance("motivation_engine", self.legacy_orchestrator._motivation_engine_override)
-            except Exception as _reg_err:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _reg_err:
                 record_degradation('bridge', _reg_err)
                 logger.debug("Bridge: motivation_engine already registered, skipping: %s", _reg_err)
             logger.info("Bridge: Legacy engines registered in ServiceContainer.")
@@ -125,7 +125,7 @@ class LegacyPhase(Phase):
                     classification="background_degraded",
                     context={"phase": "legacy_bridge"},
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('bridge', exc)
                 logger.debug("Bridge: legacy activation degraded-event logging failed: %s", exc)
             

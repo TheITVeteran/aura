@@ -37,7 +37,7 @@ class MetaLearningEngine:
             else:
                 logger.warning("No embedding provider available for fingerprinting.")
                 return None
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('meta_learning_engine', e)
             logger.error("Failed to fingerprint task: %s", e)
             return None
@@ -102,6 +102,6 @@ class MetaLearningEngine:
                         final_action=outcome
                     )
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('meta_learning_engine', e)
                 logger.error("Failed to route to FinetunePipe: %s", e)

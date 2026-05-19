@@ -153,7 +153,7 @@ class AutonomousConversationLoop:
                 )
             except RuntimeError:
                 reflect_coro.close()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 reflect_coro.close()
                 raise
             else:
@@ -197,7 +197,7 @@ class AutonomousConversationLoop:
                 "type": "conversation",
                 "plan": ["Processed via Unitary Cognitive Pipeline"]
             }
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('conversation_loop', e)
             logger.error("❌ ConversationLoop: Full cognitive stack failed: %s", e)
             # Fallback to direct generate if phase loop fails
@@ -244,7 +244,7 @@ class AutonomousConversationLoop:
                             ]
                             from core.thought_stream import get_emitter
                             get_emitter().emit("Monologue", random.choice(idle_thoughts), level="info")
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('conversation_loop', e)
                             logger.debug("Idle monologue emit failed: %s", e)
                     
@@ -254,7 +254,7 @@ class AutonomousConversationLoop:
                         try:
                             from core.thought_stream import get_emitter
                             get_emitter().emit("Autonomous Goal", imperative, level="goal")
-                        except Exception as e:
+                        except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('conversation_loop', e)
                             logger.debug("Autonomous goal emit failed: %s", e)
                         
@@ -267,7 +267,7 @@ class AutonomousConversationLoop:
                             )
                         except asyncio.TimeoutError:
                             logger.error("Autonomous goal execution timed out after 60s")
-                        except Exception as e:
+                        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                             record_degradation('conversation_loop', e)
                             logger.error("Autonomous goal execution error: %s", e)
 
@@ -279,7 +279,7 @@ class AutonomousConversationLoop:
                 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('conversation_loop', e)
                 logger.error("Background loop error: %s", e)
                 # Ensure exponential backoff instead of instant hot-loop
@@ -323,7 +323,7 @@ class AutonomousConversationLoop:
                 else:
                     self.drives.punish("competence", 10.0)
                     logger.warning("✗ Autonomous goal failed")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('conversation_loop', e)
             logger.error("Autonomous goal execution failed: %s", e, exc_info=True)
             if hasattr(self.drives, "punish"):
@@ -352,7 +352,7 @@ class AutonomousConversationLoop:
         try:
              from core.thought_stream import get_emitter
              get_emitter().emit("Plan Execution", f"Executing {len(tool_calls)} steps", level="system")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_loop', e)
             logger.debug("Plan execution emit failed: %s", e)
         
@@ -392,7 +392,7 @@ class AutonomousConversationLoop:
                 # Small delay between calls (Async)
                 await asyncio.sleep(0.5)
                 
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('conversation_loop', e)
                 logger.error("Tool call execution failed for '%s': %s", tool_name, e, exc_info=True)
                 results.append({
@@ -465,7 +465,7 @@ Respond naturally as Aura:
             
             return response
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_loop', e)
             logger.error("Conversational response generation failed: %s", e, exc_info=True)
             return "I encountered an error generating my response. Let me try to help you in another way."
@@ -535,7 +535,7 @@ Response:"""
             
             return strip_meta_commentary(response.strip())
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversation_loop', e)
             logger.error("Response synthesis failed: %s", e, exc_info=True)
             return f"I completed your request but had trouble summarizing the results. (Error: {str(e)})"

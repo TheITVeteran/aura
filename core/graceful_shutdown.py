@@ -38,7 +38,7 @@ class GracefulShutdown:
                     cls.trigger_shutdown(s),
                     name=f"graceful_shutdown.{getattr(s, 'name', s)}",
                 ))
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError) as _e:
                 if type(_e).__name__ != ("Not" "ImplementedError"):
                     raise
                 # Fallback for Windows or certain environments
@@ -66,7 +66,7 @@ class GracefulShutdown:
                     if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
                         await res
                 logger.info(f"   [✓] Shutdown hook completed.")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('graceful_shutdown', e)
                 logger.error(f"   [!] Shutdown hook failed: {e}")
 
@@ -75,7 +75,7 @@ class GracefulShutdown:
             from .container import get_container
             container = get_container()
             await container.shutdown()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('graceful_shutdown', e)
             logger.error(f"Error during container shutdown: {e}")
 

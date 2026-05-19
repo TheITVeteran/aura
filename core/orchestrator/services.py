@@ -34,7 +34,7 @@ class OrchestratorServicesMixin:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
     def _record_missing_service(self, name: str, alias: Optional[str], *, error: Optional[Exception] = None) -> None:
@@ -55,7 +55,7 @@ class OrchestratorServicesMixin:
                 classification="background_degraded",
                 context={"alias": alias or "", "error": type(error).__name__ if error else ""},
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('services', exc)
             logger.debug("Critical service degraded-event logging failed for %s: %s", name, exc)
 
@@ -73,7 +73,7 @@ class OrchestratorServicesMixin:
         if critical and self._runtime_live():
             try:
                 return require_service(name, alias)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('services', exc)
                 service_error = exc
                 logger.debug("Critical service lookup failed for '%s' (alias=%s): %s", name, alias, exc)
@@ -82,7 +82,7 @@ class OrchestratorServicesMixin:
             val = optional_service(name, alias, default=None)
             if val is not None:
                 return val
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('services', e)
             service_error = service_error or e
             logger.debug("Service lookup failed for '%s' (alias=%s): %s", name, alias, e)

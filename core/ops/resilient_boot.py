@@ -91,7 +91,7 @@ class ResilientBoot:
                 hook_omni_tracer()
                 install_asyncio_exception_handler()
                 logger.info("🔬 [BOOT] Omni-Tracer hooked successfully.")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 logger.error("💥 [BOOT] Omni-Tracer hook failed: %s", e)
 
             # 1.5 Start Neural Neuro-Surgeon Tools (Phase 29)
@@ -109,7 +109,7 @@ class ResilientBoot:
             try:
                 from core.reaper import register_reaper_pid
                 register_reaper_pid(os.getpid())
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('resilient_boot', e)
                 logger.debug("ResilientBoot: failed to register reaper PID: %s", e)
             
@@ -130,7 +130,7 @@ class ResilientBoot:
                             f"Strict runtime critical boot stage failed: {name} (Timeout)"
                         ) from None
                     await self._apply_fallback(name)
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('resilient_boot', e)
                     logger.error("💥 [BOOT] Stage '%s' FAILED: %s. Applying fallback.", name, e)
                     # Immediate immunity audit
@@ -209,7 +209,7 @@ class ResilientBoot:
                     logger.info("   ✅ %s (%s): FOUND", label, mod)
                 else:
                     logger.warning("   ⚠️ %s (%s): MISSING", label, mod)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 status[mod] = False
                 logger.error("   ❌ %s (%s): PROBE_FAILED", label, mod)
 
@@ -282,7 +282,7 @@ class ResilientBoot:
                     ready = True
                     logger.info("📡 StateVaultActor responded to handshake (Attempt %d)", attempt + 1)
                     break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('resilient_boot', e)
                 logger.debug("Handshake attempt %d failed: %s", attempt + 1, e)
             await asyncio.sleep(0.5)
@@ -364,7 +364,7 @@ class ResilientBoot:
                 ears = ears_mod.SovereignEars()
                 ServiceContainer.register_instance("sovereign_ears", ears)
                 logger.info("   👂 SovereignEars: DEFERRED (Lazy-init enabled)")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('resilient_boot', e)
                 logger.warning("   ⚠️ SovereignEars: INIT_FAILED: %s", e)
         else:
@@ -377,7 +377,7 @@ class ResilientBoot:
                 voice = voice_mod.SovereignVoiceEngine()
                 ServiceContainer.register_instance("voice_engine", voice)
                 logger.info("   🗣️ VoiceEngine: READY")
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('resilient_boot', e)
                 logger.warning("   ⚠️ VoiceEngine: INIT_FAILED: %s", e)
         else:
@@ -388,7 +388,7 @@ class ResilientBoot:
             vision = ServiceContainer.get("continuous_vision", default=None)
             if vision:
                 logger.info("   👁️ Continuous Vision: ACTIVE")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resilient_boot', e)
             logger.debug("ResilientBoot: vision service check failed: %s", e)
 
@@ -414,7 +414,7 @@ class ResilientBoot:
                 if hidden:
                      logger.warning("💉 [IMMUNE] Log Sieve found %d prior issues. System is self-correcting.", len(hidden))
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resilient_boot', e)
             logger.error("💉 [IMMUNE] Pre-Ignition Check failed: %s", e)
 

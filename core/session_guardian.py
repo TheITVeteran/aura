@@ -296,7 +296,7 @@ class SessionGuardian:
                 self._log_status()
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('session_guardian', exc)
                 logger.error("Monitor loop error: %s", exc)
 
@@ -335,7 +335,7 @@ class SessionGuardian:
                     await callback()
                 else:
                     callback()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('session_guardian', exc)
                 logger.error("Recovery callback failed: %s", exc)
 
@@ -344,7 +344,7 @@ class SessionGuardian:
             try:
                 await self._orchestrator._reconnect_cognitive_engine()
                 logger.info("Guardian triggered cognitive engine reconnect")
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('session_guardian', exc)
                 logger.error("Cognitive engine reconnect failed: %s", exc)
 

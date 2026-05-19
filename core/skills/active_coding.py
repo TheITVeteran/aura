@@ -29,7 +29,7 @@ def get_sandbox():
         if _sandbox and hasattr(_sandbox, 'stop'):
             try:
                 _sandbox.stop()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         _sandbox = LocalSandbox(_sandbox_work_dir())
         _sandbox.start()
@@ -57,7 +57,7 @@ class RunCodeSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = RunCodeParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('active_coding', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
                 
@@ -91,7 +91,7 @@ class RunCodeSkill(BaseSkill):
                 "stateful": params.stateful,
                 "summary": self._build_summary(out_str, err_str, result.exit_code, params.stateful),
             }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('active_coding', e)
             return {"ok": False, "error": str(e)}
 

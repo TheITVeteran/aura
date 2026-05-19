@@ -202,7 +202,7 @@ class EpisodicMemory:
             try:
                 conn.execute("PRAGMA wal_checkpoint(FULL)")
                 conn.commit()
-            except Exception as checkpoint_exc:
+            except (sqlite3.Error, OSError) as checkpoint_exc:
                 record_degradation('episodic_memory', checkpoint_exc)
                 logger.debug("EpisodicMemory WAL checkpoint skipped after init: %s", checkpoint_exc)
 
@@ -270,7 +270,7 @@ class EpisodicMemory:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("episodic_memory", exc)
             logger.debug("Constitutional runtime liveness check failed: %s", exc)
             return False
@@ -309,7 +309,7 @@ class EpisodicMemory:
             if return_decision:
                 return approved, decision
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('episodic_memory', exc)
             if self._constitutional_runtime_live():
                 record_degraded_event(
@@ -394,7 +394,7 @@ class EpisodicMemory:
             qualia = ServiceContainer.get("qualia_synthesizer", default=None)
             if qualia:
                 qualia_snapshot = qualia.get_qualia_for_memory()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('episodic_memory', e)
             capture_and_log(e, {'module': __name__})
 
@@ -449,7 +449,7 @@ class EpisodicMemory:
                                     "qualia_norm": qualia_snapshot.get("q_norm", 0.0),
                                 },
                             )
-                        except Exception as e:
+                        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                             record_degradation('episodic_memory', e)
                             logger.warning("Failed to index episode in vector memory: %s", e)
 
@@ -496,7 +496,7 @@ class EpisodicMemory:
                                 "qualia_norm": qualia_snapshot.get("q_norm", 0.0),
                             },
                         )
-                    except Exception as e:
+                    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                         record_degradation('episodic_memory', e)
                         logger.warning("Failed to index episode in vector memory: %s", e)
                 self._maybe_prune()
@@ -592,7 +592,7 @@ class EpisodicMemory:
                 # Emit visibility event (skip if emitter not async-safe from here)
                 # In 2026 Aura, we assume event bus is non-blocking or we spawn task
                     
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('episodic_memory', e)
             logger.error("Consolidation failed: %s", e)
         
@@ -661,7 +661,7 @@ class EpisodicMemory:
                                     "timestamp": time.time(),
                                 }
                             )
-                    except Exception as store_err:
+                    except (ImportError, AttributeError, RuntimeError) as store_err:
                         record_degradation('episodic_memory', store_err)
                         logger.debug("Episodic compaction: vector store skipped: %s", store_err)
 
@@ -677,7 +677,7 @@ class EpisodicMemory:
             if compacted:
                 logger.info("Episodic compaction: %d weak episodes compressed to semantic summary.", compacted)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('episodic_memory', e)
             logger.error("Episodic compaction failed: %s", e)
 
@@ -733,7 +733,7 @@ class EpisodicMemory:
                         if ep.episode_id not in seen_ids:
                             seen_ids.add(ep.episode_id)
                             combined.append(ep)
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('episodic_memory', e)
                 logger.debug("Vector recall failed: %s", e)
 
@@ -746,7 +746,7 @@ class EpisodicMemory:
                     if ep.episode_id not in seen_ids:
                         seen_ids.add(ep.episode_id)
                         combined.append(ep)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('episodic_memory', e)
                 logger.debug("Keyword recall failed: %s", e)
 
@@ -779,7 +779,7 @@ class EpisodicMemory:
                 return ep.importance + (norm_sim * 0.3) + dim_bonus
 
             episodes.sort(key=congruence_score, reverse=True)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('episodic_memory', e)
             capture_and_log(e, {'module': __name__})
         return episodes
@@ -845,7 +845,7 @@ class EpisodicMemory:
                 return default
             try:
                 return json.loads(val)
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation("episodic_memory", exc)
                 logger.debug("Episode JSON field decode failed: %s", exc)
                 return default
@@ -1028,12 +1028,12 @@ class EpisodicMemory:
                 if self._vector_memory:
                     try:
                         self._vector_memory.delete_memories(filter_metadata={"episode_id": episode_ids})
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('episodic_memory', e)
                         logger.debug("Vector deletion failed during episode prune: %s", e)
                 
                 logger.info("🗑️ Deleted %d episodes from storage.", len(episode_ids))
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('episodic_memory', e)
                 logger.error("Failed to delete episodes: %s", e)
 

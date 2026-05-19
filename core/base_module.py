@@ -58,7 +58,7 @@ class AuraBaseModule:
                     latency = time.time() - start_time
                     self._update_latency(latency)
                     return result
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('base_module', e)
                     self.metrics["errors"] += 1
                     self.metrics["last_error"] = str(e)
@@ -76,7 +76,7 @@ class AuraBaseModule:
                     latency = time.time() - start_time
                     self._update_latency(latency)
                     return result
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('base_module', e)
                     self.metrics["errors"] += 1
                     self.metrics["last_error"] = str(e)

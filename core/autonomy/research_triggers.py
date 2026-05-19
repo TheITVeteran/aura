@@ -61,7 +61,7 @@ def emit_research_trigger(
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
         _maybe_truncate_ring(path)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         pass  # no-op: intentional
 
 
@@ -100,7 +100,7 @@ def drain_pending_triggers(
                     consumed_at=None,
                 )
             )
-    except Exception:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
         return []
     return out
 
@@ -133,7 +133,7 @@ def mark_consumed(
         tmp = path.with_suffix(path.suffix + ".tmp")
         atomic_write_text(tmp, "\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
         os.replace(tmp, path)
-    except Exception:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
         pass  # no-op: intentional
 
 
@@ -147,5 +147,5 @@ def _maybe_truncate_ring(path: Path) -> None:
             tmp = path.with_suffix(path.suffix + ".tmp")
             atomic_write_text(tmp, "".join(keep), encoding="utf-8")
             os.replace(tmp, path)
-    except Exception:
+    except (OSError, IOError):
         pass  # no-op: intentional

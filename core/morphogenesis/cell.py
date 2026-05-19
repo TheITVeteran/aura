@@ -80,7 +80,7 @@ class MorphogenCell:
     def lifecycle(self) -> CellLifecycle:
         try:
             return CellLifecycle(self.state.lifecycle)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return CellLifecycle.ACTIVE
 
     @property
@@ -242,7 +242,7 @@ class MorphogenCell:
                 error = "handler_timeout"
                 self.state.last_error = error
                 actions.append({"kind": "handler_timeout", "timeout_s": self.manifest.timeout_s})
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('cell', exc)
                 success = False
                 error = f"{type(exc).__name__}: {exc}"

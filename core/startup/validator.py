@@ -58,7 +58,7 @@ class StartupValidator:
                     results.extend(result)
                 elif result:
                     results.append(result)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('validator', e)
                 results.append(ValidationResult(
                     name=check_fn.__name__,
@@ -230,7 +230,7 @@ def check_audio_device() -> ValidationResult:
             passed=True,
             message=f"{count} audio device(s) found",
         )
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('validator', e)
         return ValidationResult(
             name="Audio input device",

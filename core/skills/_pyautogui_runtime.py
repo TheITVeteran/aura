@@ -28,7 +28,7 @@ def get_pyautogui() -> tuple[Any | None, Exception | None]:
         if pause < 0.1:
             module.PAUSE = 0.1
         _PYAUTOGUI_MODULE = module
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('_pyautogui_runtime', exc)
         _PYAUTOGUI_MODULE = None
         _PYAUTOGUI_ERROR = exc

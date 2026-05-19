@@ -44,7 +44,7 @@ class Planner:
                 s = float(m.group(1))
                 # clamp
                 s = max(0.0, min(1.0, s))
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             s = 0.0
         plan.score = s
         if self.trace:
@@ -136,5 +136,5 @@ class Planner:
                     "original_score": original,
                     "will_receipt_id": ranked.receipt.will_receipt_id,
                 }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("planner.native_system2", exc)

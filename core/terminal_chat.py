@@ -126,14 +126,14 @@ class TerminalFallbackChat:
                             classification="background_degraded",
                             context={"reason": reason},
                         )
-                    except Exception as _exc:
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
                         record_degradation('terminal_chat', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                     logger.debug("TerminalFallback: constitutional gate unavailable, suppressing autonomous message: %s", reason)
                     return False
                 logger.debug("TerminalFallback: constitutional gate suppressed queued autonomous message: %s", reason)
                 return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('terminal_chat', exc)
             if constitutional_runtime_live:
                 try:
@@ -148,7 +148,7 @@ class TerminalFallbackChat:
                         context={"error": type(exc).__name__},
                         exc=exc,
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('terminal_chat', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 logger.debug("TerminalFallback: executive gate unavailable, suppressing autonomous message: %s", exc)
@@ -287,7 +287,7 @@ class TerminalFallbackChat:
 
         except asyncio.CancelledError as _exc:
             logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('terminal_chat', e)
             logger.error("TerminalFallback chat loop error: %s", e)
             self._active = False
@@ -319,7 +319,7 @@ class TerminalFallbackChat:
             if not bc.validate_action({"type": "terminal", "command": cmd}):
                 self._write_output(f"[Aura] Blocked: that command is on the safety deny-list.")
                 return
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('terminal_chat', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -362,7 +362,7 @@ class TerminalFallbackChat:
                 except asyncio.TimeoutError as _exc:
                     logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('terminal_chat', e)
             self._write_output(f"[Aura] Shell error: {e}")
 
@@ -381,7 +381,7 @@ class TerminalFallbackChat:
                 return str(result) if result else "..."
         except asyncio.TimeoutError:
             return "Response timed out — I'm running slowly in emergency mode."
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('terminal_chat', e)
             logger.debug("TerminalFallback response error: %s", e)
             return f"[error: {e}]"
@@ -418,7 +418,7 @@ class TerminalFallbackChat:
                         return True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('terminal_chat', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         return False
@@ -468,7 +468,7 @@ class TerminalWatchdog:
                     break
                 logger.warning("TerminalWatchdog spuriously cancelled. Ignoring.")
                 continue
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('terminal_chat', e)
                 logger.debug("TerminalWatchdog tick error: %s", e)
 

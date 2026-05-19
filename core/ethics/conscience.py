@@ -150,7 +150,7 @@ def _install_rules_hash() -> None:
         atomic_write_text(_RULES_HASH_PATH, h, encoding="utf-8")
         try:
             os.chmod(_RULES_HASH_PATH, 0o400)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
 
@@ -288,9 +288,9 @@ class Conscience:
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('conscience', exc)
             logger.warning("conscience violation log write failed: %s", exc)
 

@@ -115,7 +115,7 @@ class ComputeOrchestrator:
             if hg.allocation:
                 hedonic = hg.score
                 token_mult = hg.allocation.token_multiplier
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('compute_orchestrator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -194,13 +194,13 @@ class ComputeOrchestrator:
             except AttributeError:
                 logger.debug("Suppressed bare exception")
                 pass  # no-op: intentional
-            except Exception as exc:
+            except (ImportError, OSError, AttributeError) as exc:
                 if type(exc).__name__ != ("Not" "ImplementedError"):
                     raise
                 logger.debug("Suppressed unsupported thermal sensor exception")
 
             return float(cpu), float(ram), temp
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return 40.0, 50.0, None
 
     # ── Allocation computation ────────────────────────────────────────────
@@ -233,7 +233,7 @@ class ComputeOrchestrator:
                 get_task_tracker().track(
                     affect.apply_stimulus("resource_strain", anxiety * 5)
                 )
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('compute_orchestrator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

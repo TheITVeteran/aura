@@ -215,7 +215,7 @@ class ConversationPersistence:
 
             return messages
 
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('conversation_persistence', exc)
             logger.error("Could not load previous session: %s", exc)
             return []
@@ -268,7 +268,7 @@ class ConversationPersistence:
         """Save current session asynchronously."""
         try:
             await asyncio.get_running_loop().run_in_executor(None, self.save_sync)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('conversation_persistence', exc)
             logger.error("Async save failed: %s", exc)
 
@@ -296,12 +296,12 @@ class ConversationPersistence:
             atomic_write_text(temp_path, json.dumps(record.to_dict(), indent=2))
             temp_path.replace(session_path)  # Atomic rename
             logger.debug("Session saved: %s (%d messages)", self.session_id, record.message_count)
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('conversation_persistence', exc)
             logger.error("Session save failed: %s", exc)
             try:
                 temp_path.unlink(missing_ok=True)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 import logging
                 logger.debug("Exception caught during execution", exc_info=True)
 
@@ -368,7 +368,7 @@ class ConversationPersistence:
             if summary and summary.strip():
                 logger.info("Session summary generated (%d chars)", len(summary))
                 return summary.strip()[:500]  # Cap summary length
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation('conversation_persistence', exc)
             logger.warning("Summary generation failed: %s", exc)
 
@@ -390,7 +390,7 @@ class ConversationPersistence:
                     "message_count": data.get("message_count", 0),
                     "summary": data.get("summary"),
                 })
-            except Exception:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                 import logging
                 logger.debug("Exception caught during execution", exc_info=True)
 
@@ -408,7 +408,7 @@ class ConversationPersistence:
             try:
                 path.unlink()
                 logger.debug("Rotated old session: %s", s["session_id"])
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 import logging
                 logger.debug("Exception caught during execution", exc_info=True)
 

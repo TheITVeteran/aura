@@ -27,7 +27,7 @@ class SymbolicBridge:
             expr = sp.sympify(expression)
             simplified = sp.simplify(expr)
             return SymbolicResult(True, "sympy", simplified, f"sympy.simplify({expression!r})")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             return SymbolicResult(False, "sympy", repr(exc), "solver_error")
 
     def check_python_boolean(self, expression: str) -> SymbolicResult:
@@ -35,7 +35,7 @@ class SymbolicBridge:
             tree = ast.parse(expression, mode="eval")
             value = _evaluate_boolean_ast(tree)
             return SymbolicResult(True, "python_ast", bool(value), "restricted_ast_eval")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             return SymbolicResult(False, "python_ast", repr(exc), "solver_error")
 
     def solve_constraints(self, constraints: list[str]) -> SymbolicResult:
@@ -49,7 +49,7 @@ class SymbolicBridge:
                 solver.add(_z3_from_ast(tree, names, z3))
             status = solver.check()
             return SymbolicResult(True, "z3", status, str(solver.model()) if status == z3.sat else str(status))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             return SymbolicResult(False, "z3", repr(exc), "solver_unavailable_or_error")
 
 

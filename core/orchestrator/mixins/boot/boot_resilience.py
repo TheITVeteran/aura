@@ -106,7 +106,7 @@ class BootResilienceMixin:
             # Check if already registered to avoid ContainerError if locked
             if not ServiceContainer.has("state_repository"):
                 ServiceContainer.register_instance("state_repository", self.state_repo)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('boot_resilience', e)
             logger.debug("Skipping state_repository registration in boot mixin: %s", e)
         self.mind_tick = MindTick(self)
@@ -224,7 +224,7 @@ class BootResilienceMixin:
             await self.watchdog.start()
             ServiceContainer.register_instance("sovereign_watchdog", self.watchdog)
             logger.info("🛡️  Sovereign Watchdog ACTIVE")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to initialize Sovereign Watchdog: %s", e)
 
@@ -242,7 +242,7 @@ class BootResilienceMixin:
                     logger.info(
                         "🚀 Meta-Optimization Loop registered in Self-Modification Engine"
                     )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Meta-Optimization registration failed: %s", e)
 
@@ -346,7 +346,7 @@ class BootResilienceMixin:
                                 break
                     logger.debug("Vault ping attempt %d failed. Retrying...", attempt + 1)
                     await asyncio.sleep(0.5)
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('boot_resilience', e)
                     logger.warning("Vault readiness check error: %s", e)
                     await asyncio.sleep(0.5)
@@ -366,7 +366,7 @@ class BootResilienceMixin:
                     bus.add_actor("state_vault", parent_pipe)
                     logger.info("🛡️  StateVaultActor transport registered with ActorBus (fallback)")
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to start StateVaultActor: %s", e)
             if _strict_runtime_requested():
@@ -409,7 +409,7 @@ class BootResilienceMixin:
                 self.status.healthy,
                 self.status.running,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to register resilience systems: %s", e)
 
@@ -423,7 +423,7 @@ class BootResilienceMixin:
             logger.info(
                 "✓ Lazarus Brainstem active (emergency recovery protocols armed)"
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to init Lazarus Brainstem: %s", e)
             self.lazarus = None
@@ -476,14 +476,14 @@ class BootResilienceMixin:
                         if self.cognitive_engine:
                             self.cognitive_engine.register_augmentor(aug_web)
 
-                    except Exception as e:
+                    except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('boot_resilience', e)
                         logger.debug("Cognitive augmentor registration failed: %s", e)
-            except Exception as ue:
+            except (ImportError, AttributeError, RuntimeError) as ue:
                 record_degradation('boot_resilience', ue)
                 logger.warning("Unity Embodiment connection deferred: %s", ue)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to integrate self-preservation: %s", e)
 
@@ -498,13 +498,13 @@ class BootResilienceMixin:
                 from core.container import get_container
 
                 vectors = get_container().get("memory_vector")
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('boot_resilience', _e)
                 logger.debug("memory_vector lookup failed (non-critical): %s", _e)
             self.episodic_memory = get_episodic_memory(vector_memory=vectors)
             ServiceContainer.register_instance("episodic_memory", self.episodic_memory)
             logger.info("✓ Episodic Memory initialized and registered (autobiographical recall)")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to init Episodic Memory: %s", e)
             self.episodic_memory = None
@@ -515,7 +515,7 @@ class BootResilienceMixin:
 
             self.tool_learner = tool_learner
             logger.info("✓ Tool Learning System initialized")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to init Tool Learning: %s", e)
             self.tool_learner = None
@@ -534,7 +534,7 @@ class BootResilienceMixin:
                 logger.info(
                     "✓ Self-Model wired (beliefs, memory, goals, tool learning)"
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.warning("Self-Model wiring deferred: %s", e)
 
@@ -616,7 +616,7 @@ class BootResilienceMixin:
 
         try:
             logging.config.dictConfig(logging_config)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('boot_resilience', e)
             # Fallback basic logging if file paths fail
             logging.basicConfig(level=logging.INFO)
@@ -702,10 +702,10 @@ class BootResilienceMixin:
                                     classification="background_degraded",
                                     context={"drift_hours": round(drift / 3600, 3)},
                                 )
-                        except Exception as exc:
+                        except (ImportError, AttributeError, RuntimeError) as exc:
                             record_degradation('boot_resilience', exc)
                             logger.debug("Recovery output routing failed: %s", exc)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to calculate temporal drift: %s", e)
 
@@ -743,7 +743,7 @@ class BootResilienceMixin:
             self.capability_map = get_capability_map()
             engine = ServiceContainer.get("capability_engine", default=None)
             self.capability_map.ping_all(engine)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             self.capability_map = None
 
     async def _recover_wal_state(self):
@@ -759,7 +759,7 @@ class BootResilienceMixin:
                 for intent in pending:
                     msg = f"[RECOVERY] Resuming interrupted thought: {intent.get('action')} -> {intent.get('target')}"
                     logger.info(msg)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("WAL recovery failed: %s", e)
 
@@ -776,7 +776,7 @@ class BootResilienceMixin:
                 "✓ Loaded %s skills and registered with Router",
                 self.status.skills_loaded,
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to initialize skills: %s", e)
 
@@ -792,7 +792,7 @@ class BootResilienceMixin:
                 "sovereign_scanner", self.integrity_guard
             )  # Compatibility
             logger.info("✓ Integrity Guard initialized and running")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('boot_resilience', e)
             logger.error("Failed to initialize Integrity Guard: %s", e)
             self.integrity_guard = None

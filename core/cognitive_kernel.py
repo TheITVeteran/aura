@@ -238,7 +238,7 @@ class CognitiveKernel:
                 "component": "cognitive_kernel",
                 "hooks_into": ["belief_revision_engine", "memory_facade", "inner_monologue"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_kernel', e)
             logger.debug("CognitiveKernel: Mycelium registration failed: %s", e)
 
@@ -294,7 +294,7 @@ class CognitiveKernel:
                     framing.append("User wants depth — provide thorough analysis")
                 if guidance.get("tone_hint"):
                     framing.append(f"Tone: {guidance['tone_hint']}")
-        except Exception as _tom_e:
+        except (ImportError, AttributeError, RuntimeError) as _tom_e:
             record_degradation('cognitive_kernel', _tom_e)
             logger.debug("CognitiveKernel: ToM framing failed: %s", _tom_e)
 
@@ -401,7 +401,7 @@ class CognitiveKernel:
                 state = self._liquid_state.current
                 frustration = state.frustration
                 curiosity = state.curiosity
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('cognitive_kernel', e)
                 logger.debug("CognitiveKernel: LiquidState access failed: %s", e)
 
@@ -447,7 +447,7 @@ class CognitiveKernel:
                 in_flow = attention.is_in_flow()
                 if in_flow and domain != InputDomain.GREETING:
                     return ResponseStrategy.SYNTHESIZE
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_kernel', e)
             logger.debug("CognitiveKernel: Consciousness modulation failed: %s", e)
 
@@ -530,12 +530,12 @@ class CognitiveKernel:
                         belief_str = f"{wb['subject']} {wb['predicate']} {wb['object']} (confidence: {wb['confidence']:.1f})"
                         if belief_str not in beliefs_from_engine:
                             beliefs_from_engine.append(belief_str)
-            except Exception as _wb_e:
+            except (ImportError, AttributeError, RuntimeError) as _wb_e:
                 record_degradation('cognitive_kernel', _wb_e)
                 logger.debug("WorldModel belief retrieval failed: %s", _wb_e)
 
             return beliefs_from_engine[:5]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_kernel', e)
             logger.debug("Belief retrieval error: %s", e)
             return self._get_axiom_beliefs(domain)

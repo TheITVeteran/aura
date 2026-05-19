@@ -52,7 +52,7 @@ class PrimeDirectives:
             path = os.path.join(os.path.dirname(__file__), "constitution", "canonical_self.json")
             with open(path, "r") as f:
                 return json.load(f)
-        except Exception as e:
+        except (OSError, IOError) as e:
             logger.error("Failed to load canonical_self.json: %s", e)
             return {}
 

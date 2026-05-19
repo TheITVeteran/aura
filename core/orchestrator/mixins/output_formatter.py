@@ -58,7 +58,7 @@ class OutputFormatterMixin:
                     styled = pe.apply_lexical_style(text)
                     if isinstance(styled, str):
                         text = styled
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('output_formatter', exc)
                 logger.debug("Filter failed: %s", exc)
 
@@ -69,7 +69,7 @@ class OutputFormatterMixin:
             from core.synthesis import strip_role_artifacts
 
             text = strip_role_artifacts(text)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         return text
@@ -97,7 +97,7 @@ class OutputFormatterMixin:
                 level="info",
                 category="Autonomy",
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('output_formatter', exc)
             logger.debug("Thought stream fallback emit failed: %s", exc)
 
@@ -118,7 +118,7 @@ class OutputFormatterMixin:
                 
                 if snapshot_dir:
                     self._emit_thought_stream(f"🏺 Eternal Record Snapshot secured: {snapshot_dir.name}")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_formatter', e)
                 logger.debug("Eternal record snapshot failed: %s", e)
         
@@ -136,7 +136,7 @@ class OutputFormatterMixin:
                 record_store = config.paths.home_dir / "eternal_archive"
                 archivist = EternalRecord(record_store)
                 archivist.create_snapshot(config.paths.data_dir / "knowledge.db")
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_formatter', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -150,7 +150,7 @@ class OutputFormatterMixin:
                 try:
                     drive = self.soul.get_dominant_drive()
                     drive_info = f"{drive.name} ({drive.urgency:.2f})"
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('output_formatter', _e)
                     logger.debug("Drive info retrieval failed for neural pulse: %s", _e)
 
@@ -158,6 +158,6 @@ class OutputFormatterMixin:
             mood = ls.get_mood() if ls else "Stable"
             get_emitter().emit("Neural Pulse", f"System Active (Mood: {mood} | Drive: {drive_info})", level="info", category="Physiology", cycle=self.status.cycle_count)
             self._last_pulse = time.time()
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('output_formatter', _e)
             logger.debug("Neural pulse emit failed: %s", _e)

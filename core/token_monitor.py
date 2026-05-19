@@ -56,7 +56,7 @@ def get_token_monitor():
 try:
     if not ServiceContainer.get("token_monitor", default=None):
         register_token_monitor()
-except Exception:
+except (ImportError, AttributeError, RuntimeError):
     register_token_monitor()
 
 token_monitor = get_token_monitor()

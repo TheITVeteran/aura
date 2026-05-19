@@ -27,7 +27,7 @@ class ASTAnalyzer:
             source = await asyncio.to_thread(file_path.read_text, encoding='utf-8')
             tree = ast.parse(source)
             self._build_parent_map(tree) # SM-02: Build map once per file
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('ast_analyzer', e)
             logger.error("Failed to parse %s: %s", file_path, e)
             return {"error": str(e)}

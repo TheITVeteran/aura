@@ -176,7 +176,7 @@ class AutonomousResearchOrchestrator:
                         return
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('autonomous_research_orchestrator', e)
                     logger.error("research loop iteration crashed: %s\n%s", e, traceback.format_exc())
                     self._consecutive_failures += 1
@@ -314,7 +314,7 @@ class AutonomousResearchOrchestrator:
         except asyncio.CancelledError:
             result.error = "cancelled"
             raise
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('autonomous_research_orchestrator', e)
             result.error = f"{type(e).__name__}: {e}"
             result.completed_at = time.time()
@@ -325,7 +325,7 @@ class AutonomousResearchOrchestrator:
             if self._on_complete:
                 try:
                     self._on_complete(result)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
 
         return result
@@ -341,7 +341,7 @@ class AutonomousResearchOrchestrator:
     ) -> None:
         try:
             log = load_progress()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             log = ProgressLog()
 
         existing = log.find(decision.item.title)
@@ -374,7 +374,7 @@ class AutonomousResearchOrchestrator:
             )
             try:
                 log.add_entry(entry)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('autonomous_research_orchestrator', e)
                 logger.warning("progress add_entry failed: %s", e)
         else:
@@ -396,7 +396,7 @@ class AutonomousResearchOrchestrator:
 
         try:
             log.save()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('autonomous_research_orchestrator', e)
             logger.warning("progress save failed: %s", e)
 
@@ -421,7 +421,7 @@ class AutonomousResearchOrchestrator:
             tmp = path.with_suffix(".tmp")
             atomic_write_text(tmp, json.dumps(payload, indent=2, default=str), encoding="utf-8")
             os.replace(tmp, path)
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
 

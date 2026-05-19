@@ -244,7 +244,7 @@ class ContinuousSubstrate:
                 await asyncio.sleep(STEP_DT)
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuous_substrate', e)
             logger.error("🛑 [SUBSTRATE] integration loop crashed: %s", e)
             self.running = False
@@ -294,13 +294,13 @@ class ContinuousSubstrate:
                     root_cause_hint="unbounded_input_or_weight_explosion",
                     mitigation_taken="rollback_to_last_good_state",
                 )
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
             # Report to metrics
             try:
                 from core.observability.metrics import get_metrics
                 get_metrics().record_substrate_reset()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 pass
             return  # Skip this step entirely
 
@@ -336,7 +336,7 @@ class ContinuousSubstrate:
             riiu = ServiceContainer.get("riiu", default=None)
             if riiu and hasattr(riiu, "phi"):
                 return float(riiu.phi)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass
 
         if len(self._phi_window) < 8:
@@ -350,5 +350,5 @@ class ContinuousSubstrate:
             np.fill_diagonal(C, 0.0)
             magnitude = float(np.mean(np.abs(C)))
             return max(0.0, min(1.0, magnitude * 1.5))
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return 0.0

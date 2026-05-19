@@ -145,7 +145,7 @@ class NativePlanNode:
             return self.value_sum / self.visits
         try:
             return float(self.metadata.get("estimated_value", 0.0))
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             return 0.0
 
     @property
@@ -265,7 +265,7 @@ def stable_state_hash(state: Any) -> str:
     """Stable JSON-based hash with repr fallback for non-JSON values."""
     try:
         payload = json.dumps(state, sort_keys=True, default=str, separators=(",", ":"))
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         payload = repr(state)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
@@ -288,7 +288,7 @@ def latent_from_state(state: Any, dims: int = 32) -> List[float]:
 def _clamp01(value: float) -> float:
     try:
         return max(0.0, min(1.0, float(value)))
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return 0.0
 
 
@@ -925,7 +925,7 @@ class NativeSystem2Engine:
                     System2Action(name=line[:220], prior=1.0 / max(1, len(lines)), action_type="llm_latent_step")
                     for line in lines[: config.branching_factor]
                 ]
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("native_system2", exc)
         return [
             System2Action("decompose the problem", 0.34, "decompose"),
@@ -1140,7 +1140,7 @@ class NativeSystem2Engine:
             if not decision.is_approved():
                 raise PermissionError(f"UnifiedWill denied System 2 search: {decision.reason}")
             return decision.receipt_id
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("native_system2", exc)
             if self.governed:
                 raise

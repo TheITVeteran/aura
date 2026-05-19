@@ -64,7 +64,7 @@ class CoreRuntime:
                                     mx.clear_cache()
                                 finally:
                                     sentinel.release()
-                        except Exception as exc:
+                        except (ImportError, AttributeError, RuntimeError) as exc:
                             record_degradation("core_runtime", exc)
                             logger.debug("GPU cache optimization skipped after failure: %s", exc)
                     

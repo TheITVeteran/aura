@@ -561,7 +561,7 @@ class PostTrainingValidator:
                 else:
                     logger.debug("Probe passed: %s (score: %.3f)", probe.name, result.score)
 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('post_training_validator', e)
                 logger.error("Probe execution error for '%s': %s", probe.name, e)
                 probe_results.append(ProbeResult(
@@ -744,7 +744,7 @@ class PostTrainingValidator:
                 "Install with: pip install mlx-lm"
             )
             return None
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to load model with adapter: %s", e, exc_info=True)
             return None
@@ -761,7 +761,7 @@ class PostTrainingValidator:
                 return tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True,
                 )
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError) as _exc:
             record_degradation('post_training_validator', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -779,7 +779,7 @@ class PostTrainingValidator:
         except asyncio.TimeoutError:
             logger.error("Model generation timed out for prompt: %s", user_prompt[:80])
             return ""
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Generation error: %s", e)
             return ""
@@ -821,7 +821,7 @@ class PostTrainingValidator:
             logger.info(
                 "Adapter quarantined: %s -> %s", adapter_path, quarantine_dest
             )
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to move adapter to quarantine: %s", e)
             return self.quarantine_dir
@@ -843,7 +843,7 @@ class PostTrainingValidator:
                 # If the adapter was a single file, write manifest alongside
                 with open(str(quarantine_dest) + "_manifest.json", "w") as f:
                     json.dump(manifest, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.warning("Could not write quarantine manifest: %s", e)
 
@@ -883,7 +883,7 @@ class PostTrainingValidator:
                         backup_ref.unlink()
                     backup_ref.symlink_to(previous_target)
                     logger.info("Previous active adapter backed up: %s", previous_target)
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('post_training_validator', e)
                     logger.warning("Could not back up previous adapter ref: %s", e)
 
@@ -897,7 +897,7 @@ class PostTrainingValidator:
             )
             return True
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to promote adapter: %s", e)
             return False
@@ -917,7 +917,7 @@ class PostTrainingValidator:
                 try:
                     active_link.unlink()
                     logger.info("Active adapter link removed — falling back to base model.")
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('post_training_validator', e)
                     logger.error("Failed to remove active adapter link: %s", e)
             return
@@ -937,7 +937,7 @@ class PostTrainingValidator:
             active_link.symlink_to(previous_target)
             logger.info("Previous adapter restored as active: %s", previous_target)
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to restore previous adapter: %s", e)
 
@@ -953,7 +953,7 @@ class PostTrainingValidator:
             with open(log_file, "w") as f:
                 json.dump(result.to_dict(), f, indent=2)
             logger.info("Validation log written: %s", log_file)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to write validation log: %s", e)
 

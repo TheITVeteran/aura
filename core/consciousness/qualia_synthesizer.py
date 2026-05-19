@@ -147,7 +147,7 @@ class QualiaSynthesizer:
             if myc is not None:
                 # Tension = density of active hyphae normalized
                 tension = min(1.0, len(getattr(myc, "hyphae", ())) / 100.0)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('qualia_synthesizer', _e)
             logger.debug('Ignored Exception in qualia_synthesizer.py: %s', _e)
 
@@ -195,7 +195,7 @@ class QualiaSynthesizer:
                 # Blend engine's phenomenal richness into PRI
                 if descriptor.phenomenal_richness > 0:
                     self.pri = 0.6 * self.pri + 0.4 * descriptor.phenomenal_richness
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('qualia_synthesizer', e)
             logger.debug("QualiaEngine enrichment skipped: %s", e)
 
@@ -464,7 +464,7 @@ class QualiaSynthesizer:
                         pri=self.pri,
                         trend=self._trend,
                     )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('qualia_synthesizer', e)
                 logger.debug("Qualia→Affect bridge failed: %s", e)
 
@@ -474,7 +474,7 @@ class QualiaSynthesizer:
                 from core.event_bus import get_event_bus
                 bus = get_event_bus()
                 bus.publish_threadsafe("qualia_update", self.get_snapshot())
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('qualia_synthesizer', e)
                 logger.debug("Qualia→EventBus bridge failed: %s", e)
 
@@ -692,7 +692,7 @@ class QualiaSynthesizer:
         try:
             from core.consciousness.illusionism_layer import get_illusionism_layer
             report = get_illusionism_layer().annotate_report(report)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('qualia_synthesizer', e)
             logger.debug("Illusionism annotation skipped: %s", e)
 

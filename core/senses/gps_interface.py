@@ -44,7 +44,7 @@ class GpsInterface:
                         self._last_fetch_mono = now
                         logger.info(f"📍 GPS: located system at {data.get('city', 'Unknown City')}: {self.latitude}, {self.longitude}")
                         return
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('gps_interface', e)
                 if attempt < max_retries:
                     logger.warning(f"📍 GPS attempt {attempt+1} failed: {e}. Retrying...")

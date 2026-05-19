@@ -16,7 +16,7 @@ def collect_research_core_status() -> Dict[str, Any]:
         from core.container import ServiceContainer
 
         core = ServiceContainer.get("research_core", default=None)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
     if core is None:
@@ -28,5 +28,5 @@ def collect_research_core_status() -> Dict[str, Any]:
             "status": core.status(),
             "recent_cycles": core.cycle_history()[-5:],
         }
-    except Exception as exc:  # noqa: BLE001 - last-resort safety
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:  # noqa: BLE001 - last-resort safety
         return {"available": True, "error": f"status_failed: {exc}"}

@@ -406,7 +406,7 @@ class IntentClassifierQueue:
                 continue  # Normal idle timeout, loop continues
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('intent_gate', e)
                 if future is not None and not future.done():
                     future.set_result(RouteResult(kind=RouteKind.PASSTHROUGH))
@@ -463,7 +463,7 @@ class IntentClassifierQueue:
                         confidence=confidence,
                         latency_ms=(time.monotonic() - t0) * 1000,
                     )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('intent_gate', e)
             logger.debug("LLM intent classification failed: %s", e)
 
@@ -595,7 +595,7 @@ def register_intent_gate() -> IntentGate:
                 kernel.set_volition_level(level)
                 return f"✓ Volition Level set to {level}"
             return "❌ Kernel not found in container."
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('intent_gate', e)
             return f"❌ Volition error: {e}"
 

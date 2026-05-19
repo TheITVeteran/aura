@@ -36,7 +36,7 @@ def _schedule_background_coro(coro: Any, *, label: str) -> None:
                 asyncio.run(coro)
             except asyncio.CancelledError:
                 logger.debug("%s background runner cancelled", label)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('self_modification_engine', exc)
                 logger.debug("%s background runner failed: %s", label, exc)
 
@@ -50,7 +50,7 @@ def _schedule_background_coro(coro: Any, *, label: str) -> None:
             done.result()
         except asyncio.CancelledError:
             logger.debug("%s background task cancelled", label)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('self_modification_engine', exc)
             logger.debug("%s background task failed: %s", label, exc)
 
@@ -160,7 +160,7 @@ class AutonomousSelfModificationEngine:
         Example integration:
             try:
                 result = await skill.execute(goal, context)
-            except Exception as e:
+            except (sqlite3.Error, OSError) as e:
                 record_degradation('self_modification_engine', e)
                 self_mod_engine.on_error(e, context, skill.name, goal)
                 raise
@@ -267,7 +267,7 @@ class AutonomousSelfModificationEngine:
             if not branch_result.get("ok"):
                 logger.error("❌ Branching Futures Validation FAILED: %s", branch_result.get("error"))
                 return None
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             logger.error("❌ Branching Futures Validation CRASHED: %s", e)
             return None
             
@@ -318,7 +318,7 @@ class AutonomousSelfModificationEngine:
                 if cb.state == "OPEN":
                     logger.error("🛑 [NEURO] Component %s is QUARANTINED. Modification blocked.", fix.target_file)
                     return False
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_modification_engine', e)
             logger.debug("Shielded circuit breaker check failed: %s", e)
 
@@ -363,7 +363,7 @@ class AutonomousSelfModificationEngine:
                     try:
                         from ..thought_stream import get_emitter
                         get_emitter().emit("System Evolution", f"Sovereign Repair Persistent: {fix.target_file}", level="success")
-                    except Exception as exc:
+                    except (ImportError, AttributeError, RuntimeError) as exc:
                         record_degradation('self_modification_engine', exc)
                         logger.debug("Suppressed: %s", exc)            
                 else:
@@ -372,7 +372,7 @@ class AutonomousSelfModificationEngine:
                     try:
                         if immunity:
                             immunity.audit_error(RuntimeError(f"Persistence failed: {message}"), {"file": fix.target_file})
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('self_modification_engine', e)
                         logger.debug("Failed to audit persistence error to immunity: %s", e)
                 
@@ -388,7 +388,7 @@ class AutonomousSelfModificationEngine:
                 self.session_stats["fixes_attempted"] += 1
                 return success
                 
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_modification_engine', e)
                 logger.exception("CRITICAL: Persistence error in SME: %s", e)
                 return False
@@ -423,7 +423,7 @@ class AutonomousSelfModificationEngine:
             
             logger.info("✅ Sovereign Swarm Consensus: Fix is safe to apply.")
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Swarm review failed: %s. Proceeding with caution.", e)
             return True
@@ -522,7 +522,7 @@ class AutonomousSelfModificationEngine:
                 try:
                     from ..thought_stream import get_emitter
                     get_emitter().emit("Proactive Refinement 💎", "Scanning for architectural optimizations...", level="info", category="Self-Modification")
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('self_modification_engine', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 return await self.run_refinement_cycle()
@@ -618,7 +618,7 @@ class AutonomousSelfModificationEngine:
         try:
             from ..thought_stream import get_emitter
             get_emitter().emit("Synthesis 🚀", f"Optimizing {top_refinement.get('file', 'system')}: {top_refinement.get('message', '')}", level="info", category="Self-Modification")
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('self_modification_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
         
@@ -737,7 +737,7 @@ class AutonomousSelfModificationEngine:
                 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_modification_engine', e)
                 logger.error("Monitoring cycle error: %s", e, exc_info=True)
                 _consecutive_failures += 1
@@ -805,7 +805,7 @@ class AutonomousSelfModificationEngine:
                 await asyncio.sleep(60)  # check every minute
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('self_modification_engine', e)
                 logger.error("Health Watcher error: %s", e)
                 await asyncio.sleep(30)
@@ -826,7 +826,7 @@ class AutonomousSelfModificationEngine:
                  skill_name="SelfTestSystem",
                  goal="Verify autonomous recovery health"
              )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Failed to trigger synthetic test: %s", e)
     

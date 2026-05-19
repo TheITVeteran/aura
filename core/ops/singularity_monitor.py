@@ -48,7 +48,7 @@ class SingularityMonitor:
                         self.is_accelerated = False
                         self._apply_acceleration(1.0)
                         
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('singularity_monitor', e)
             logger.debug("Singularity pulse failed: %s", e)
 

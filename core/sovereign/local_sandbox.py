@@ -117,7 +117,7 @@ class LocalSandbox(Sandbox):
         if self._temp_dir:
             try:
                 self._temp_dir.cleanup()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('local_sandbox', e)
                 logger.warning("Sandbox cleanup failed: %s", e)
             self._temp_dir = None
@@ -156,7 +156,7 @@ class LocalSandbox(Sandbox):
                 exit_code=-1,
                 duration=duration,
             )
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('local_sandbox', e)
             duration = time.monotonic() - start
             return ExecutionResult(
@@ -214,7 +214,7 @@ class LocalSandbox(Sandbox):
             return ExecutionResult(
                 stdout="", stderr=str(e), exit_code=126, duration=duration
             )
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('local_sandbox', e)
             duration = time.monotonic() - start
             return ExecutionResult(

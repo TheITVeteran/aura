@@ -209,7 +209,7 @@ class EmbodiedInteroception:
                     await asyncio.to_thread(self._sample_hardware)
                     self._push_to_mesh()
                     self._trigger_neurochemical_events()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('embodied_interoception', e)
                     logger.error("Interoception tick error: %s", e, exc_info=True)
                 elapsed = time.time() - t0
@@ -235,14 +235,14 @@ class EmbodiedInteroception:
         try:
             cpu = psutil.cpu_percent(interval=0) / 100.0
             self.channels["metabolic_load"].update(cpu)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["metabolic_load"].fail_safe()
 
         # 2. RAM → resource pressure
         try:
             mem = psutil.virtual_memory()
             self.channels["resource_pressure"].update(mem.percent / 100.0)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["resource_pressure"].fail_safe()
 
         # 3. Temperature → thermal state
@@ -259,7 +259,7 @@ class EmbodiedInteroception:
                 # macOS often lacks temp sensors via psutil — use CPU as proxy
                 cpu_proxy = self.channels["metabolic_load"].smoothed * 0.6
                 self.channels["thermal_state"].update(cpu_proxy)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["thermal_state"].fail_safe()
 
         # 4. Disk I/O → throughput
@@ -273,7 +273,7 @@ class EmbodiedInteroception:
                 normalized = min(1.0, total_bytes / (100 * 1024 * 1024))
                 self.channels["io_throughput"].update(normalized)
             self._last_io_counters = io
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["io_throughput"].fail_safe()
 
         # 5. Network → communication pain (error rate + high latency proxy)
@@ -290,7 +290,7 @@ class EmbodiedInteroception:
                 pain = min(1.0, err_delta / max(dt, 0.1) / 100.0)
                 self.channels["network_pain"].update(pain)
             self._last_net_counters = net
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["network_pain"].fail_safe()
 
         # 6. Battery → energy reserves (inverted: high battery = high reserves)
@@ -305,7 +305,7 @@ class EmbodiedInteroception:
             else:
                 # Desktop / plugged in = full energy
                 self.channels["energy_reserves"].update(0.95)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["energy_reserves"].fail_safe()
 
         # 7. Process count → sensory load
@@ -314,14 +314,14 @@ class EmbodiedInteroception:
             # Normalize: 100 procs = 0.2, 500 = 0.8, 1000+ = 1.0
             normalized = min(1.0, procs / 1000.0)
             self.channels["process_load"].update(normalized)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["process_load"].fail_safe()
 
         # 8. Disk capacity → organ capacity
         try:
             disk = psutil.disk_usage("/")
             self.channels["disk_capacity"].update(disk.percent / 100.0)
-        except Exception:
+        except (ImportError, OSError, AttributeError):
             self.channels["disk_capacity"].fail_safe()
 
         self._tick_count += 1
@@ -335,7 +335,7 @@ class EmbodiedInteroception:
         try:
             vec = self.get_sensory_vector()
             self._mesh_ref.inject_sensory(vec)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('embodied_interoception', e)
             logger.debug("Failed to push sensory to mesh: %s", e)
 
@@ -419,7 +419,7 @@ class EmbodiedInteroception:
             if max(all_velocities) < 0.03 and ml.smoothed < 0.5:
                 ncs.on_rest()
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('embodied_interoception', e)
             logger.debug("Neurochemical trigger error: %s", e)
 

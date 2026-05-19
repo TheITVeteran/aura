@@ -239,7 +239,7 @@ class OvertActionLoop:
                 priority=float(initiative.get("urgency", 0.45) or 0.45),
             )
             return decision.receipt_id if decision.is_approved() else ""
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
             return ""
 
@@ -282,7 +282,7 @@ class OvertActionLoop:
                     "initiative": initiative,
                 },
             )
-        except Exception as exc:
+        except (sqlite3.Error, OSError) as exc:
             record_degradation("overt_action_loop", exc)
             result.status = "failed"
             result.error = f"{type(exc).__name__}: {exc}"
@@ -302,7 +302,7 @@ class OvertActionLoop:
         if goal_id and goal_engine is not None and hasattr(goal_engine, "get_goal"):
             try:
                 return dict(goal_engine.get_goal(goal_id) or {})
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("overt_action_loop", exc)
         return {}
 
@@ -434,7 +434,7 @@ class OvertActionLoop:
             )
             result.tool_receipt_id = tool_receipt.receipt_id
             result.autonomy_receipt_id = autonomy_receipt.receipt_id
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
 
     def _record_life_trace(self, result: OvertActionResult, raw_result: Any) -> None:
@@ -464,7 +464,7 @@ class OvertActionLoop:
                 future_policy_change={"next_action_after_s": self.interval_s},
             )
             result.life_trace_id = event.event_id
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
 
     def _update_goal(self, result: OvertActionResult) -> None:
@@ -488,7 +488,7 @@ class OvertActionLoop:
                     evidence=evidence[-8:],
                     metadata={"last_overt_action_id": result.action_id, "last_overt_action_at": result.finished_at},
                 )
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("overt_action_loop", exc)
 
         try:
@@ -507,7 +507,7 @@ class OvertActionLoop:
                 f"(receipt {result.tool_receipt_id or 'pending'})"
             )
             get_emitter().emit(title, content, level="info" if result.verified else "warning", category="OvertAction")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
         if not result.verified:
             record_degraded_event(

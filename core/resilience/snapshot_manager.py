@@ -100,7 +100,7 @@ class SnapshotManager:
             logger.info("✅ Cognitive state frozen to disk: %s", self.snapshot_file)
             return True
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('snapshot_manager', e)
             logger.error("Failed to freeze state: %s", e, exc_info=True)
             return False
@@ -144,7 +144,7 @@ class SnapshotManager:
                     getattr(decision, "reason", "unknown"),
                 )
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('snapshot_manager', exc)
             # During early boot, governance may not be available.
             # Log and permit — the system needs state to function.
@@ -244,7 +244,7 @@ class SnapshotManager:
                         voice_ctx.emotional_state = EmotionalState(c_state["voice_emotional_state"])
                     if "voice_mode" in c_state:
                         voice_ctx.mode = ConversationMode(c_state["voice_mode"])
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('snapshot_manager', e)
                     logger.debug("Could not fully restore conversation enums: %s", e)
 
@@ -259,7 +259,7 @@ class SnapshotManager:
             logger.info("✅ Cognitive state thawed successfully.")
             return True
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('snapshot_manager', e)
             logger.error("Failed to thaw state: %s", e, exc_info=True)
             return False

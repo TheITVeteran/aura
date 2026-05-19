@@ -149,7 +149,7 @@ class ConsciousnessLoopMonitor:
 
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('loop_monitor', exc)
                 logger.debug("LoopMonitor._loop error: %s", exc)
 
@@ -249,7 +249,7 @@ class ConsciousnessLoopMonitor:
                 # Fire a negligibly small probe echo to verify the path
                 affect.receive_qualia_echo(q_norm=0.001, pri=0.001, trend=0.0)
                 logger.debug("LoopMonitor: end-to-end probe fired successfully")
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('loop_monitor', exc)
                 issues.append({
                     "check":         "end_to_end_probe",
@@ -290,7 +290,7 @@ class ConsciousnessLoopMonitor:
                 delattr(heartbeat, "_qualia_cache")
                 logger.debug("LoopMonitor: cleared stale _qualia_cache on Heartbeat")
                 return True
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("loop_monitor", exc)
                 logger.debug("LoopMonitor stale-cache heal failed: %s", exc)
                 return False
@@ -352,7 +352,7 @@ class ConsciousnessLoopMonitor:
                 return None
             result = sc.get(key, default=None)
             return result
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('loop_monitor', e)
             # Degrade gracefully if ServiceContainer API changes
             logger.debug(f"LoopMonitor: _get({key}) failed: {e}")

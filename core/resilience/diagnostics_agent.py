@@ -82,7 +82,7 @@ class DiagnosticsAgent:
                 else:
                     results["invalid"].append({"name": skill_name, "reason": "No class with execute() found"})
                     
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('diagnostics_agent', e)
                 results["invalid"].append({"name": skill_name, "reason": str(e)})
         
@@ -105,7 +105,7 @@ class DiagnosticsAgent:
                     if resp.status == 200:
                         results["server_online"] = True
                         results["latency_ms"] = (asyncio.get_running_loop().time() - start) * 1000
-        except Exception:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
             results["server_online"] = False
             
         return results

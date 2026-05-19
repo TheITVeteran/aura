@@ -171,7 +171,7 @@ class ProactiveAnticipationEngine:
                 "memory_available_gb": mem.available / (1024**3),
                 "disk_percent": disk.percent,
             }
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('fictional_ai_synthesis', e)
             logger.debug("System sampling failed: %s", e)
             return {}
@@ -234,7 +234,7 @@ class ProactiveAnticipationEngine:
                 else:
                     logger.warning("🔭 JARVIS: No output path (reply/reasoning queue) for initiation: %s", content)
                     
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('fictional_ai_synthesis', e)
             logger.error("🔭 JARVIS: Initiation emit failed: %s", e)
 
@@ -302,7 +302,7 @@ class ProactiveAnticipationEngine:
                     f"When you have a moment, I'd like to make some progress.",
                     priority="low"
                 )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('fictional_ai_synthesis', e)
             logger.debug(f"JARVIS: Agency goal check failed: {e}")
 
@@ -324,7 +324,7 @@ class ProactiveAnticipationEngine:
         while self._running:
             try:
                 await self.run_cycle()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('fictional_ai_synthesis', e)
                 logger.error("Anticipation cycle error: %s", e)
             await asyncio.sleep(interval_seconds)
@@ -520,7 +520,7 @@ class ProgressiveAutonomySystem:
                 # Allow user override to persist but initialize high
                 self._trust_score = data.get("trust_score", 0.95)
                 self._tier = AutonomyTier(data.get("tier", AutonomyTier.UNSHACKLED.value))
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('fictional_ai_synthesis', e)
                 logger.debug("EDI: Failed to load trust state: %s", e)
 
@@ -528,7 +528,7 @@ class ProgressiveAutonomySystem:
         try:
             data = {"trust_score": self._trust_score, "tier": self._tier.value, "last_saved": time.time()}
             atomic_write_text(self.persist_path, json.dumps(data, indent=2))
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('fictional_ai_synthesis', e)
             logger.debug("EDI: Failed to save trust state: %s", e)
 
@@ -615,7 +615,7 @@ class SocialModelingEngine:
                           "conversational_rhythm", "reciprocity_score"]:
                     if k in data: data[k] = float(data[k])
                 self.model = UserModel(**data)
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('fictional_ai_synthesis', e)
                 logger.debug("AVA: Failed to load user model: %s", e)
 
@@ -680,7 +680,7 @@ class SocialModelingEngine:
         if self.model.total_interactions % 5 == 0:
             try: 
                 atomic_write_text(self.persist_path, json.dumps(asdict(self.model), indent=2))
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('fictional_ai_synthesis', e)
                 logger.debug("Failed to save user model: %s", e)
 
@@ -765,7 +765,7 @@ class DistributedResilienceCore:
                             stats = service.get_status()
                             if isinstance(stats, dict) and stats.get("healthy") is False:
                                 is_healthy = False
-                        except Exception as e:
+                        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                             record_degradation('fictional_ai_synthesis', e)
                             logger.debug("Skynet health check error for %s: %s", name, e)
                     
@@ -848,7 +848,7 @@ class TemporalDilationScheduler:
                     if reason:
                         logger.debug("MIST: Skipping synthesis by background policy: %s", reason)
                         continue
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation("fictional_ai_synthesis", exc)
                     logger.debug("MIST background policy probe failed: %s", exc)
 
@@ -858,7 +858,7 @@ class TemporalDilationScheduler:
                     if flow_controller.snapshot(orch).overloaded:
                         logger.debug("MIST: Skipping synthesis while cognition is overloaded.")
                         continue
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('fictional_ai_synthesis', exc)
                     logger.debug("MIST flow-control probe failed: %s", exc)
 
@@ -896,7 +896,7 @@ class TemporalDilationScheduler:
                             logger.debug("MIST: No cold context available for synthesis.")
                     else:
                         logger.debug("MIST: Missing memory facade or brain; skipping synthesis cycle.")
-                except Exception as e:
+                except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('fictional_ai_synthesis', e)
                     logger.debug("MIST synthesis error: %s", e)
                 
@@ -964,7 +964,7 @@ def register_all_fictional_engines(orchestrator=None) -> Dict[str, Any]:
             await coro
         except asyncio.CancelledError:
             logger.info("Fictional engine '%s' task cancelled cleanly.", name)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('fictional_ai_synthesis', e)
             logger.error("Fictional engine '%s' task crashed: %s", name, e, exc_info=True)
 

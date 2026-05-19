@@ -175,7 +175,7 @@ class GovernanceVault:
                 )
                 return content_hash
 
-            except Exception as exc:
+            except (sqlite3.Error, OSError) as exc:
                 self._conn.rollback()
                 raise SecurityException(
                     f"Failed to seal artifact '{artifact_id}': {exc}"
@@ -343,7 +343,7 @@ class GovernanceVault:
             logger.critical(
                 "TAMPERING SCAR FORMED for artifact '%s'", artifact_id
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             logger.error(
                 "Failed to form tampering scar for '%s': %s",
                 artifact_id, exc,

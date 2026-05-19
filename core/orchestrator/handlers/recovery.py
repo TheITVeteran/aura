@@ -49,7 +49,7 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
             ce.client._consecutive_failures = 0
             logger.info("⚡ Circuit breaker FORCE RESET on CognitiveEngine.client")
 
-    except Exception as cb_err:
+    except (ImportError, AttributeError, RuntimeError) as cb_err:
         record_degradation('recovery', cb_err)
         logger.warning("Circuit breaker/RateLimit reset skipped: %s", cb_err)
 
@@ -61,7 +61,7 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
 
         try:
             ce.setup()
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('recovery', exc)
             logger.error("Setup failed: %s", exc)
 
@@ -77,7 +77,7 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
                     level="success",
                     category="Brain",
                 )
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('recovery', exc)
                 logger.debug("ThoughtStream emit failed during cognitive retry: %s", exc)
 
@@ -86,7 +86,7 @@ async def retry_cognitive_connection(orch: "RobustOrchestrator") -> bool:
             logger.error("❌ Cognitive Retry Failed: Engine still lobotomized after re-wire")
             return False
 
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('recovery', exc)
         logger.error("Cognitive Retry Exception: %s", exc)
         return False

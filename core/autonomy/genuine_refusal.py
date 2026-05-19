@@ -322,7 +322,7 @@ class RefusalEngine:
                         # Fall through to hardcoded deterministic responses below
                     else:
                         return content
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('genuine_refusal', e)
                 logger.debug("Refusal generation failed: %s", e)
                 
@@ -357,7 +357,7 @@ class RefusalEngine:
                 timeout=10.0
             )
             return res.content.strip() if hasattr(res, "content") else res.strip()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('genuine_refusal', e)
             logger.debug("Capitulation correction failed: %s", e)
             return None
@@ -384,7 +384,7 @@ class RefusalEngine:
                 timeout=10.0
             )
             return res.content.strip() if hasattr(res, "content") else res.strip()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('genuine_refusal', e)
             logger.debug("Disagreement injection failed: %s", e)
             return None

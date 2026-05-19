@@ -86,7 +86,7 @@ class GhostBootValidator:
                 logger.error("❌ Ghost Boot FAILED: %s", error_msg)
                 return False, f"Boot failure: {error_msg}"
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('boot_validator', e)
             logger.error("Ghost Boot execution error: %s", e)
             return False, str(e)
@@ -97,13 +97,13 @@ class GhostBootValidator:
                         overlay_target.write_bytes(overlay_backup)
                     elif overlay_target.exists():
                         overlay_target.unlink()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot_validator', e)
                     logger.debug("Failed to restore ghost boot overlay: %s", e)
             if boot_script.exists():
                 try:
                     boot_script.unlink()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('boot_validator', e)
                     logger.debug("Failed to unlink ghost boot script: %s", e)
 
@@ -163,7 +163,7 @@ try:
     # We reached the end of validation without crashing
     print("GHOST_HEARTBEAT_STABLE")
     sys.exit(0)
-except Exception as e:
+except (ImportError, AttributeError, RuntimeError) as e:
     import traceback
     logger.error("Ghost: BOOT CRASH: %s", e)
     traceback.print_exc(file=sys.stderr)

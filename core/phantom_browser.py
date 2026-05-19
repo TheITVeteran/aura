@@ -144,7 +144,7 @@ class PhantomBrowser:
                 self._resource_lock._browser_sessions += 1
                 self._resource_lock._total_browser_sessions += 1
                 self._resource_lock._browser_idle.clear()
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 self._resource_lock = None
 
             self.playwright = await async_playwright().start()
@@ -172,7 +172,7 @@ class PhantomBrowser:
                         logger.info("✓ Fell back to %s after %s was unavailable.", bt, self.browser_type)
                     launch_error = None
                     break  # Launch succeeded
-                except Exception as launch_exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as launch_exc:
                     record_degradation('phantom_browser', launch_exc)
                     launch_error = launch_exc
                     logger.warning("Browser %s failed to launch: %s. Trying next fallback...", bt, launch_exc)
@@ -192,7 +192,7 @@ class PhantomBrowser:
             if STEALTH_AVAILABLE:
                 try:
                     await stealth_async(self.page)
-                except Exception as se:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as se:
                     record_degradation('phantom_browser', se)
                     logger.warning("Stealth application failed: %s", se)
             else:
@@ -200,7 +200,7 @@ class PhantomBrowser:
 
             self.is_active = True
             logger.info("✓ Phantom Browser initialized (Visible: %s, UA: %s...)", self.visible, user_agent[:30])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Failed to start browser: %s", e)
             self.is_active = False
@@ -233,7 +233,7 @@ class PhantomBrowser:
         try:
             if STEALTH_AVAILABLE:
                 await stealth_async(self.page)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             capture_and_log(e, {'module': __name__})
         
@@ -293,7 +293,7 @@ class PhantomBrowser:
             await self.page.goto(url, timeout=30000, wait_until='domcontentloaded')
             await self._human_delay(1, 2)
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Navigation failed: %s", e)
             return False
@@ -327,7 +327,7 @@ class PhantomBrowser:
                         loc = self.page.get_by_text(re.compile(text_match, re.IGNORECASE)).first
                         if await loc.is_visible(timeout=2000):
                             element = loc
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('phantom_browser', exc, severity="debug", action="fuzzy text selector failed")
                         logger.debug("Fuzzy text selector failed: %s", exc)
             elif selector:
@@ -353,7 +353,7 @@ class PhantomBrowser:
             else:
                 logger.warning("Element not found or not visible: %s", selector or text_match)
                 return False
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Click failed: %s", e)
             return False
@@ -371,7 +371,7 @@ class PhantomBrowser:
             
             await self._human_delay(0.5, 1.0)
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Typing failed: %s", e)
             return False
@@ -388,7 +388,7 @@ class PhantomBrowser:
                     await self.page.mouse.wheel(0, -step_amount)
                 await asyncio.sleep(random.uniform(0.1, 0.3))
             await self._human_delay(0.5, 1.0)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Scroll failed: %s", e)
 
@@ -475,7 +475,7 @@ class PhantomBrowser:
                     best_text = fallback_text
 
             return f"# {title}\n\n{best_text[:60000]}"
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Read content failed: %s", e)
             return ""
@@ -492,7 +492,7 @@ class PhantomBrowser:
                 })).filter(l => l.text && l.url)
             }""")
             return links
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Get links failed: %s", e)
             return []
@@ -505,7 +505,7 @@ class PhantomBrowser:
             import base64
             bytes_data = await self.page.screenshot()
             return base64.b64encode(bytes_data).decode('utf-8')
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Screenshot failed: %s", e)
             return None
@@ -513,7 +513,7 @@ class PhantomBrowser:
     async def _close_resource(self, label: str, close_factory, *, close_timeout: float) -> None:
         try:
             await asyncio.wait_for(close_factory(), timeout=close_timeout)
-        except Exception as exc:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
             record_degradation("phantom_browser", exc)
             logger.debug("Phantom browser %s close failed: %s", label, exc)
 
@@ -549,7 +549,7 @@ class PhantomBrowser:
             try:
                 from core.container import ServiceContainer
                 self._homeostasis = ServiceContainer.get("homeostatic_coupling", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('phantom_browser', e)
                 capture_and_log(e, {'module': __name__})
         

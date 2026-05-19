@@ -25,7 +25,7 @@ class NetHackStateCompiler(StateCompiler):
             parsed.raw_observation_ref = observation.stable_hash()
             parsed.sequence_id = observation.sequence_id
             return parsed
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             parsed = self._generic_grid.compile(observation)
             parsed.environment_id = "terminal_grid:nethack"
             parsed.uncertainty["parser_error"] = 1.0

@@ -56,7 +56,7 @@ class ConversationalMemoryGuard:
             # Remove those turns from the active working memory
             self.working_memory = self.working_memory[5:]
             logger.info("🧠 ConversationalMemoryGuard: Compression complete. Context window optimized.")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('conversational_guard', e)
             logger.error(f"Memory compression failed: {e}")
 

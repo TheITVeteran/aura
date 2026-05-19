@@ -84,7 +84,7 @@ class CognitiveBackgroundMixin:
                 _dispose_awaitable(reflect_coro)
                 return
             reflect_task.add_done_callback(_bg_task_exception_handler)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('cognitive_background', e)
             if reflect_coro is not None:
                 _dispose_awaitable(reflect_coro)

@@ -139,7 +139,7 @@ class BeliefAuthority:
 
         try:
             state_authority = ServiceContainer.get("state_authority", default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             state_authority = None
 
         if state_authority is not None and normalized_key:
@@ -150,7 +150,7 @@ class BeliefAuthority:
                     reason = f"resolved_by_state_authority:{tier.name.lower()}"
                     status = "trusted"
                     confidence = 0.98
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('constitution', exc)
                 logger.debug("BeliefAuthority state-authority lookup skipped: %s", exc)
 
@@ -319,7 +319,7 @@ class ConstitutionalCore:
             if result is not None:
                 payload["result"] = result
             get_event_bus().publish_threadsafe("telemetry", payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore tool event emission skipped: %s", exc)
 
@@ -418,7 +418,7 @@ class ConstitutionalCore:
                             expected_outcome=f"Successful execution of {tool_name}",
                             plan=[f"Invoke {tool_name}", "Observe result", "Revise if needed"],
                         )
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('constitution', exc)
                         logger.debug("IntentionLoop begin skipped: %s", exc)
 
@@ -509,7 +509,7 @@ class ConstitutionalCore:
                     success=success,
                     status="deferred" if deferred_result else None,
                 )
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('constitution', exc)
                 logger.debug("IntentionLoop completion skipped: %s", exc)
 
@@ -525,7 +525,7 @@ class ConstitutionalCore:
             if exec_core is not None:
                 try:
                     exec_core.complete_intent(handle.executive_intent_id, success=success)
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('constitution', exc)
                     logger.debug("Executive intent completion skipped: %s", exc)
         tool_name = str(handle.proposal.payload.get("tool_name", "unknown") or "unknown")
@@ -789,7 +789,7 @@ class ConstitutionalCore:
                 importance=max(0.0, min(1.0, float(importance or 0.0))),
                 metadata=metadata,
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore sync memory approval failed: %s", exc)
             if self._strict_enforcement_active():
@@ -911,7 +911,7 @@ class ConstitutionalCore:
                 source=source or "unknown",
                 priority=max(0.0, min(1.0, float(importance or 0.0))),
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore sync belief approval failed: %s", exc)
             if self._strict_enforcement_active():
@@ -1017,7 +1017,7 @@ class ConstitutionalCore:
                 cause,
                 priority=max(0.0, min(1.0, float(urgency or 0.0))),
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore sync state approval failed: %s", exc)
             if self._strict_enforcement_active():
@@ -1185,7 +1185,7 @@ class ConstitutionalCore:
                 source=source or "autonomous",
                 priority=max(0.0, min(1.0, float(urgency or 0.0))),
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore sync initiative approval failed: %s", exc)
             if self._strict_enforcement_active():
@@ -1301,7 +1301,7 @@ class ConstitutionalCore:
                 source=source or "autonomous",
                 urgency=max(0.0, min(1.0, float(urgency or 0.0))),
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore sync expression approval failed: %s", exc)
             if self._strict_enforcement_active():
@@ -1391,7 +1391,7 @@ class ConstitutionalCore:
                 failure_state = exec_core._get_failure_state()
                 temporal_state = exec_core._get_temporal_identity_context()
                 identity_integrity = bool(exec_core._identity_integrity_available())
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore status enrichment skipped: %s", exc)
         return {
@@ -1441,7 +1441,7 @@ class ConstitutionalCore:
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation("constitution", exc)
             logger.debug("Strict enforcement state lookup failed: %s", exc)
             return False
@@ -1451,7 +1451,7 @@ class ConstitutionalCore:
             from core.executive.executive_core import get_executive_core
 
             return get_executive_core()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ExecutiveCore resolution failed: %s", exc)
             return None
@@ -1461,7 +1461,7 @@ class ConstitutionalCore:
             from core.executive.authority_gateway import get_authority_gateway
 
             return get_authority_gateway()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('constitution', exc)
             logger.debug("AuthorityGateway resolution failed: %s", exc)
             return None
@@ -1471,7 +1471,7 @@ class ConstitutionalCore:
             from core.agency.intention_loop import get_intention_loop
 
             return ServiceContainer.get("intention_loop", default=None) or get_intention_loop()
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('constitution', exc)
             logger.debug("IntentionLoop resolution failed: %s", exc)
             return None
@@ -1493,7 +1493,7 @@ def get_constitutional_core(orchestrator: Any = None) -> ConstitutionalCore:
         try:
             ServiceContainer.register_instance("constitutional_core", _instance, required=False)
             ServiceContainer.register_instance("belief_authority", _instance.belief_authority, required=False)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('constitution', exc)
             logger.debug("ConstitutionalCore registration skipped: %s", exc)
     else:

@@ -94,7 +94,7 @@ class EmergentGoalEngine:
             try:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "emergent_goals.sqlite3"
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("emergent_goals", exc)
                 logger.debug("EmergentGoalEngine config path lookup failed: %s", exc)
                 db_path = Path.home() / ".aura" / "emergent_goals.sqlite3"
@@ -225,7 +225,7 @@ class EmergentGoalEngine:
                 )
                 self.mark_adopted(goal.goal_id)
                 adopted.append(record if isinstance(record, dict) else {"name": goal.name})
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation("emergent_goals", exc)
                 logger.debug("Emergent goal adoption failed for %s: %s", goal.goal_id, exc)
                 continue
@@ -293,7 +293,7 @@ class EmergentGoalEngine:
             goal_id, name, objective, kind, evidence_json, priority, created_at, adopted, support = row
             try:
                 evidence = list(json.loads(evidence_json or "[]"))
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation("emergent_goals", exc)
                 logger.debug("Emergent goal evidence decode failed for %s: %s", goal_id, exc)
                 evidence = []
@@ -318,7 +318,7 @@ class EmergentGoalEngine:
             try:
                 with sqlite3.connect(self._db_path) as conn:
                     conn.execute("DELETE FROM emergent_goal_candidates WHERE goal_id = ?", (gid,))
-            except Exception as exc:
+            except (sqlite3.Error, OSError) as exc:
                 record_degradation("emergent_goals", exc)
                 logger.debug("Emergent goal expiry delete failed for %s: %s", gid, exc)
                 continue

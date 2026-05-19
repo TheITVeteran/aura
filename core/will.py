@@ -337,7 +337,7 @@ class UnifiedWill:
                 cs = voices.canonical_self
                 self._identity_name = str(getattr(cs, "name", "Aura"))
                 self._identity_stance = str(getattr(cs, "stance", "sovereign"))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             logger.debug("Will: identity refresh skipped: %s", exc)
 
     # ------------------------------------------------------------------
@@ -553,7 +553,7 @@ class UnifiedWill:
 
             return IdentityAlignment.ALIGNED
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: identity check failed (degraded): %s", e)
             return IdentityAlignment.ALIGNED
@@ -576,7 +576,7 @@ class UnifiedWill:
             if hasattr(affect, "valence"):
                 return float(affect.valence)
             return 0.0
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: affect read failed (degraded): %s", e)
             return 0.0
@@ -622,7 +622,7 @@ class UnifiedWill:
                 verdict.somatic_approach,
                 verdict.receipt_id,
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: substrate consultation failed (degraded): %s", e)
             return 0.6, 0.0, ""
@@ -659,7 +659,7 @@ class UnifiedWill:
                         )
 
             return constraints
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: scar check failed (degraded): %s", e)
             return []
@@ -702,7 +702,7 @@ class UnifiedWill:
                     relevance = max(relevance, _score_memory_results(results))
                 else:
                     relevance = max(relevance, 0.3)  # memory exists but no relevance API
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: memory check failed (degraded): %s", e)
 
@@ -710,7 +710,7 @@ class UnifiedWill:
             chronicle = ServiceContainer.get("identity_chronicle", default=None)
             if chronicle is not None and hasattr(chronicle, "relevance_score"):
                 relevance = max(relevance, min(1.0, float(chronicle.relevance_score(content[:200]))))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: identity chronicle relevance failed (degraded): %s", e)
 
@@ -751,7 +751,7 @@ class UnifiedWill:
                     # Recover toward baseline
                     self._state.identity_coherence = min(0.9,
                         self._state.identity_coherence + 0.02)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: phenomenological modulation failed: %s", e)
 
@@ -786,7 +786,7 @@ class UnifiedWill:
                 if domain in (ActionDomain.TOOL_EXECUTION, ActionDomain.EXPLORATION):
                     self._state.assertiveness = max(0.3,
                         self._state.assertiveness - 0.1)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: world state modulation failed: %s", e)
 
@@ -829,7 +829,7 @@ class UnifiedWill:
                     context["causal_closure_score"] = float(moment.get("closure_score", 1.0) or 1.0)
                     context["closure_missing"] = list(moment.get("closure_missing") or [])
                     context["active_subsystems"] = list(moment.get("active_subsystems") or [])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: unity state read failed: %s", e)
 
@@ -842,7 +842,7 @@ class UnifiedWill:
                 )
                 context["closure_missing"] = list(getattr(moment, "closure_missing", context.get("closure_missing", [])) or [])
                 context["active_subsystems"] = list(getattr(moment, "active_subsystems", context.get("active_subsystems", [])) or [])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: mind moment read failed: %s", e)
 
@@ -852,7 +852,7 @@ class UnifiedWill:
                 context["safe_to_act"] = bool(getattr(report, "safe_to_act", True))
                 context["safe_to_self_report"] = bool(getattr(report, "safe_to_self_report", True))
                 context["top_causes"] = list(getattr(report, "top_causes", []) or [])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: unity report read failed: %s", e)
         return context
@@ -1164,7 +1164,7 @@ class UnifiedWill:
                 "signature_scheme": decision.signature_scheme,
                 "timestamp": decision.timestamp,
             })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("will", exc)
             logger.debug("Will decision event publish failed: %s", exc)
 

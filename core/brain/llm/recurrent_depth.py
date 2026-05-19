@@ -162,7 +162,7 @@ def _self_test_cache_snapshot() -> None:
     try:
         import mlx.core as mx
         from mlx_lm.models.cache import KVCache
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('recurrent_depth', exc)
         raise CacheSnapshotError(f"mlx_lm.models.cache.KVCache unavailable: {exc}") from exc
 

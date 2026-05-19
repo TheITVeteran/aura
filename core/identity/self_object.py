@@ -171,7 +171,7 @@ class SelfObject:
             if predictor is not None and hasattr(predictor, "forecast"):
                 forecast = predictor.forecast(scenario)
                 return {"forecast": forecast, "method": "predictive_engine"}
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_object', exc)
             logger.debug("self-predict via engine failed: %s", exc)
         # Deterministic projection: project current drives/affect under decay
@@ -283,7 +283,7 @@ class SelfObject:
                 "reason": getattr(decision, "reason", ""),
                 "receipt": getattr(decision, "receipt_id", None),
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_object', exc)
             logger.debug("SelfObject adjust failed: %s", exc)
             return {"approved": False, "reason": f"adjust_exception:{exc}"}
@@ -294,7 +294,7 @@ class SelfObject:
             tunable = ServiceContainer.get("tunable_parameters", default=None)
             if tunable is not None and hasattr(tunable, "set_many"):
                 tunable.set_many(parameters)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_object', exc)
             logger.warning("self_object._apply_parameters failed: %s", exc)
 
@@ -330,7 +330,7 @@ class SelfObject:
                 d = engine.snapshot()
                 if isinstance(d, dict):
                     return {k: float(v) for k, v in d.items() if isinstance(v, (int, float))}
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("drives", exc)
         return {}
 
@@ -342,7 +342,7 @@ class SelfObject:
                 d = eng.snapshot()
                 if isinstance(d, dict):
                     return {k: float(v) for k, v in d.items() if isinstance(v, (int, float))}
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("affect", exc)
         return {}
 
@@ -351,7 +351,7 @@ class SelfObject:
         try:
             from core.organism.viability import get_viability
             return get_viability().state.value
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             _record_reader_degradation("viability", exc)
             return "unknown"
 
@@ -362,7 +362,7 @@ class SelfObject:
             if engine and hasattr(engine, "active"):
                 lst = engine.active() or []
                 return [g if isinstance(g, dict) else {"name": str(g)} for g in lst[:8]]
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("active_goals", exc)
         return []
 
@@ -371,7 +371,7 @@ class SelfObject:
         try:
             from core.agency.agency_orchestrator import get_receipt_log
             recent = get_receipt_log().recent(limit=64)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             _record_reader_degradation("last_actions", exc)
             return None, None, None
         last_failed = None
@@ -397,7 +397,7 @@ class SelfObject:
                 1 for t in store._tokens.values()  # type: ignore[attr-defined]
                 if not t.is_consumed() and not t.revoked and not t.is_expired()
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             _record_reader_degradation("capability_tokens", exc)
             return 0
 
@@ -407,7 +407,7 @@ class SelfObject:
             bg = sc.get("belief_graph", default=None)
             if bg and hasattr(bg, "recent_revisions"):
                 return list(bg.recent_revisions(limit=8) or [])
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("belief_revisions", exc)
         return []
 
@@ -417,7 +417,7 @@ class SelfObject:
             mem = sc.get("memory_facade", default=None)
             if mem and hasattr(mem, "recent_consolidations"):
                 return list(mem.recent_consolidations(limit=8) or [])
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("memory_consolidations", exc)
         return []
 
@@ -427,7 +427,7 @@ class SelfObject:
             sm = sc.get("self_modification_engine", default=None)
             if sm and hasattr(sm, "recent_proposals"):
                 return list(sm.recent_proposals(limit=8) or [])
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_reader_degradation("self_modifications", exc)
         return []
 
@@ -438,7 +438,7 @@ class SelfObject:
             kgm = ServiceContainer.get("knowledge_gap_monitor", default=None)
             if kgm and hasattr(kgm, "open_questions"):
                 return list(kgm.open_questions(limit=8) or [])
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             _record_reader_degradation("open_belief_questions", exc)
         return []
 
@@ -449,7 +449,7 @@ class SelfObject:
             mem = ServiceContainer.get("memory_facade", default=None)
             if mem and hasattr(mem, "stale_memories"):
                 return list(mem.stale_memories(limit=5) or [])
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             _record_reader_degradation("stale_memories", exc)
         return []
 

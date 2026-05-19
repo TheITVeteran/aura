@@ -10,7 +10,7 @@ Install as early as possible in ``aura_main.py``::
 
     try:
         import core.utils.asyncio_patch  # noqa: F401
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ def install_asyncio_task_patch() -> bool:
         try:
             from core.utils.task_tracker import get_task_tracker
             tracker = get_task_tracker()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             tracker = None
 
         if tracker is None:
@@ -68,7 +68,7 @@ def install_asyncio_task_patch() -> bool:
         token = _REENTRY.set(True)
         try:
             return tracker.create_task(coro, name=name)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('asyncio_patch', exc)
             logger.debug("TaskTracker create_task fallback: %s", exc)
             return _call_original(coro, name=name, context=context)

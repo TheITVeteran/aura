@@ -42,7 +42,7 @@ class SovereignTerminalSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = TerminalInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('sovereign_terminal', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
@@ -60,7 +60,7 @@ class SovereignTerminalSkill(BaseSkill):
                 return {"ok": True, "new_cwd": new_path, "message": f"Directory changed to {new_path}"}
             else:
                 return {"ok": False, "error": f"Unsupported terminal action: {action}"}
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('sovereign_terminal', e)
             logger.error("Terminal skill failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -143,7 +143,7 @@ class SovereignTerminalSkill(BaseSkill):
             except asyncio.TimeoutError:
                 try:
                     process.kill()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('sovereign_terminal', e)
                     logger.debug("Failed to kill process %s: %s", process.pid, e)
                 
@@ -181,7 +181,7 @@ class SovereignTerminalSkill(BaseSkill):
                     return_code=process.returncode,
                 ),
             }
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('sovereign_terminal', e)
             return {"ok": False, "error": f"Shell error: {e}"}
 
@@ -243,6 +243,6 @@ class SovereignTerminalSkill(BaseSkill):
                 process = await asyncio.create_subprocess_exec(*cmd)
                 await process.wait()
                 return {"ok": True, "summary": f"Target {target} opened successfully."}
-        except Exception as e:
+        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('sovereign_terminal', e)
             return {"ok": False, "error": f"Failed to open target: {e}"}

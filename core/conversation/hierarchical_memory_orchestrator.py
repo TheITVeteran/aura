@@ -77,7 +77,7 @@ class HierarchicalMemoryOrchestrator:
 
                     self.turn_counter = 0
                     self.last_compaction = datetime.now()
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('hierarchical_memory_orchestrator', e)
                 logger.error("Failed to perform hierarchical compaction: %s", e)
             
@@ -148,7 +148,7 @@ class HierarchicalMemoryOrchestrator:
         try:
             raw_summary = await self.llm_router.think(summary_prompt, is_background=True)
             summary_data = self._parse_json(raw_summary)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('hierarchical_memory_orchestrator', e)
             logger.error(f"Hierarchical compaction summary failed: {e}")
             summary_data = {}
@@ -166,7 +166,7 @@ class HierarchicalMemoryOrchestrator:
             await self.black_hole.store_event("conversation_chapter", chapter_note, reinforce=True)
             if hasattr(self.narrative, "inject_chapter_note"):
                 await self.narrative.inject_chapter_note(chapter_note)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('hierarchical_memory_orchestrator', e)
             logger.warning(f"Failed to store chapter note in BlackHole: {e}")
         
@@ -193,7 +193,7 @@ class HierarchicalMemoryOrchestrator:
             elif "```" in clean:
                 clean = clean.split("```")[1].split("```")[0].strip()
             return json.loads(clean)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('hierarchical_memory_orchestrator', e)
             logger.debug(f"JSON parse failed: {e}")
             return {}

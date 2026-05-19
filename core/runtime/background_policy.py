@@ -180,7 +180,7 @@ def _foreground_activity_reason() -> str:
         guard_reason = foreground_activity_reason()
         if guard_reason:
             return guard_reason
-    except Exception as _exc:
+    except (ImportError, AttributeError, RuntimeError) as _exc:
         record_degradation('background_policy', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -197,7 +197,7 @@ def _foreground_activity_reason() -> str:
             request_age = float(lane.get("request_age_s", 0.0) or 0.0)
             if request_age > 0.0 and str(lane.get("foreground_owner") or "").strip():
                 return "foreground_request_active"
-    except Exception as _exc:
+    except (ImportError, AttributeError, RuntimeError) as _exc:
         record_degradation('background_policy', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
     return ""
@@ -265,7 +265,7 @@ def background_activity_reason(
         memory_pct = float(psutil.virtual_memory().percent)
         if memory_pct >= max_memory_percent:
             return f"memory_pressure_{memory_pct:.1f}"
-    except Exception as _exc:
+    except (ImportError, OSError, AttributeError) as _exc:
         record_degradation('background_policy', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -274,7 +274,7 @@ def background_activity_reason(
         pressure = float(failure.get("pressure", 0.0) or 0.0)
         if pressure >= max_failure_pressure:
             return f"failure_lockdown_{pressure:.2f}"
-    except Exception as _exc:
+    except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _exc:
         record_degradation('background_policy', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
 
@@ -287,7 +287,7 @@ def background_activity_reason(
                 lane = gate.get_conversation_status() or {}
                 if not bool(lane.get("conversation_ready", False)):
                     return f"conversation_lane_{str(lane.get('state', 'unready') or 'unready').lower()}"
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('background_policy', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

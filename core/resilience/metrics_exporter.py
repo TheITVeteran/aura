@@ -59,7 +59,7 @@ class MetricsExporter:
             await asyncio.to_thread(start_http_server, self.actual_port)
             logger.info(f"📊 Metrics Exporter ONLINE (port {self.actual_port})")
             self._task = get_task_tracker().create_task(self._monitor_loop())
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('metrics_exporter', e)
             logger.error(f"Failed to start Metrics Exporter: {e}")
             self.running = False
@@ -86,7 +86,7 @@ class MetricsExporter:
                 await asyncio.sleep(5)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, OSError, AttributeError) as e:
                 record_degradation('metrics_exporter', e)
                 logger.debug(f"Metrics monitor tick failed: {e}")
                 await asyncio.sleep(10)

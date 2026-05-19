@@ -117,7 +117,7 @@ def _omni_writer_loop():
                     f.write(line + "\n")
                 f.flush()
             del batch
-        except Exception:
+        except (OSError, IOError):
             time.sleep(1)
 
 def write_trace(source: str, error_type: str, message: str, trace: str = "", severity: Optional[str] = None):

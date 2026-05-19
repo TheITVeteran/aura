@@ -42,7 +42,7 @@ def _bg_task_exception_handler(task: asyncio.Task):
                 immune = ServiceContainer.get("immune_system", None)
                 if immune:
                     immune.on_error(exc, {"task": task.get_name()})
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('orchestrator_types', e)
                 logger.debug("Immune system unavailable for background task error logging: %s", e)
     except asyncio.CancelledError:

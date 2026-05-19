@@ -32,7 +32,7 @@ class SandboxManager:
             shutil.copy2(src_path, dst_path)
             logger.info("✓ Created safety snapshot: %s", dst_path.name)
             return dst_path
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('sandbox_manager', e)
             logger.error("Failed to create snapshot for %s: %s", target_file, e)
             return None
@@ -44,7 +44,7 @@ class SandboxManager:
             shutil.copy2(snapshot_path, dst_path)
             logger.info("↺ Restored %s from snapshot %s", target_file, snapshot_path.name)
             return True
-        except Exception as e:
+        except (OSError, IOError) as e:
             record_degradation('sandbox_manager', e)
             logger.error("Failed to restore snapshot for %s: %s", target_file, e)
             return False

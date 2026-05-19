@@ -55,7 +55,7 @@ class ModelManager:
                 maybe = obj.unload()
                 if asyncio.iscoroutine(maybe):
                     await maybe
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             logger.exception("ModelManager: exception while unloading %s", name)
 
     async def load_model(self, name: str, opts: Optional[dict] = None) -> Any:
@@ -105,7 +105,7 @@ class ModelManager:
                     model_obj = await maybe_coro
                 else:
                     model_obj = maybe_coro
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('model_manager', e)
                 logger.error("ModelManager: failed to load %s: %s", name, e)
                 raise ModelLoadError(f"Failed to load model {name}") from e

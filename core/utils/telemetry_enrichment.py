@@ -65,7 +65,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
                 data["e_core_usage"] = sum(per_cpu[:4]) / 4
             else:
                 data["p_core_usage"] = data["cpu_usage"]
-        except Exception as _exc:
+        except (ImportError, OSError, AttributeError) as _exc:
             record_degradation('telemetry_enrichment', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -93,7 +93,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
                     confidence = _normalize_percentish(homeostasis.get_health().get("will_to_live", 0))
                     if confidence is not None:
                         data.setdefault("confidence", round(confidence, 1))
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('telemetry_enrichment', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -113,7 +113,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
                         or getattr(llm_router, "active_tier", None))
                 if tier:
                     data["llm_tier"] = str(tier)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('telemetry_enrichment', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

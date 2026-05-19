@@ -184,7 +184,7 @@ def _word_list() -> set[str]:
                 word = line.strip().lower()
                 if word.isalpha() and 2 <= len(word) <= 24:
                     words.add(word)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             continue
     _WORD_LIST_CACHE = words
     return words
@@ -336,7 +336,7 @@ def _requires_live_aura_voice(contract: object | None) -> bool:
     if callable(checker):
         try:
             return bool(checker())
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
     return bool(
         getattr(contract, "requires_memory_grounding", False)
@@ -356,7 +356,7 @@ def _requires_explicit_live_grounding(contract: object | None) -> bool:
     if callable(checker):
         try:
             return bool(checker())
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
     return bool(
         getattr(contract, "requires_memory_grounding", False)

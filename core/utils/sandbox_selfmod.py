@@ -69,7 +69,7 @@ def test_patch_in_sandbox(repo_root: str, patch_text: str, test_cmd: str = "pyte
         rc, out, err = _run_cmd(test_cmd, cwd=tmpdir, timeout=timeout)
         ok = rc == 0
         return {"ok": ok, "stage": "test", "rc": rc, "out": out, "err": err, "sandbox": tmpdir}
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('sandbox_selfmod', e)
         logger.exception("Sandbox exception")
         return {"ok": False, "stage": "exception", "err": str(e), "sandbox": tmpdir}
@@ -77,7 +77,7 @@ def test_patch_in_sandbox(repo_root: str, patch_text: str, test_cmd: str = "pyte
         # cleanup: remove worktree and branch safely
         try:
             _run_cmd(f"git worktree remove {tmpdir} --force", cwd=repo_root, timeout=10)
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('sandbox_selfmod', _e)
             logger.debug('Ignored Exception in sandbox_selfmod.py: %s', _e)
         # Remove any remaining dir

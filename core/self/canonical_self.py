@@ -228,7 +228,7 @@ class CanonicalSelfEngine:
         # Publish to ServiceContainer so all subsystems can read it
         try:
             ServiceContainer.register_instance("canonical_self", self._current)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # Already registered — instance updated in-place via get()
 
         # Persist to disk on interval
@@ -327,7 +327,7 @@ class CanonicalSelfEngine:
                 scar_block = scar_system.get_context_block()
                 if scar_block:
                     lines.append(scar_block)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         # Value evolution drift
@@ -337,7 +337,7 @@ class CanonicalSelfEngine:
                 drift = autopoiesis.get_drift_report()
                 if drift:
                     lines.append(f"Value evolution: {drift}")
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         return "\n".join(lines)
@@ -420,7 +420,7 @@ class CanonicalSelfEngine:
         try:
             from core.affect.heartstone_values import get_heartstone_values
             return get_heartstone_values().values
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return {}
 
     def _pull_soma(self, state: AuraState) -> SomaSnapshot:
@@ -453,7 +453,7 @@ class CanonicalSelfEngine:
             snapshot.stress = affects.get("stress", 0.0)
             snapshot.fatigue = affects.get("fatigue", 0.0)
             return snapshot
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('canonical_self', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -499,7 +499,7 @@ class CanonicalSelfEngine:
                 )
                 for b in sorted_beliefs
             ]
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return []
 
     def _pull_crsm(self) -> Dict[str, Any]:
@@ -515,7 +515,7 @@ class CanonicalSelfEngine:
                     "dominant_dim": snap.dominant_dim,
                     "hidden_norm": round(float(snap.vector.dot(snap.vector) ** 0.5), 4),
                 }
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('canonical_self', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -788,7 +788,7 @@ class CanonicalSelfEngine:
         """Save a snapshot of the canonical self to disk."""
         try:
             await asyncio.to_thread(self._persist_sync)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('canonical_self', e)
             logger.debug("CanonicalSelf persist failed: %s", e)
 
@@ -843,7 +843,7 @@ class CanonicalSelfEngine:
         try:
             from core.security.governance_vault import get_governance_vault
             get_governance_vault().seal("canonical_self", data)
-        except Exception as seal_exc:
+        except (ImportError, AttributeError, RuntimeError) as seal_exc:
             logger.warning("GovernanceVault seal failed (non-fatal): %s", seal_exc)
         logger.debug("CanonicalSelf persisted to disk (v%d).", s.version)
 
@@ -912,7 +912,7 @@ class CanonicalSelfEngine:
                 self._current.version,
                 len(self._deltas),
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('canonical_self', e)
             logger.debug("CanonicalSelf load failed (starting fresh): %s", e)
 
@@ -970,7 +970,7 @@ class CanonicalSelfEngine:
                         verified_threat=True,
                         confidence=0.95,
                     )
-                except Exception as scar_exc:
+                except (ImportError, AttributeError, RuntimeError) as scar_exc:
                     logger.error("Failed to form tampering scar: %s", scar_exc)
 
                 # Re-seal the new content so future loads don't re-trigger
@@ -979,7 +979,7 @@ class CanonicalSelfEngine:
         except TamperDetected:
             # The vault itself was tampered with — even worse
             logger.critical("GovernanceVault INTERNAL tamper detected during canonical_self verification!")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             # Vault unavailable — log but don't block boot
             logger.debug("GovernanceVault verification skipped: %s", exc)
 

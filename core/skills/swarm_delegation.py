@@ -30,7 +30,7 @@ class SwarmDelegationSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = SwarmDelegationParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('swarm_delegation', e)
                 return {"ok": False, "error": f"Invalid parameters: {e}"}
 
@@ -59,7 +59,7 @@ class SwarmDelegationSkill(BaseSkill):
             else:
                 return {"ok": False, "error": f"Shard failed: {agent.result}"}
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('swarm_delegation', e)
             logger.error("SwarmDelegationSkill failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -97,7 +97,7 @@ class SpawnAgentSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = SpawnAgentParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('swarm_delegation', e)
                 return {"ok": False, "error": f"Invalid parameters: {e}"}
 
@@ -138,7 +138,7 @@ class SpawnAgentSkill(BaseSkill):
                 "result": agent.result,
             }
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('swarm_delegation', e)
             logger.error("SpawnAgentSkill failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -167,7 +167,7 @@ class ParallelAgentsSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = ParallelAgentsParams(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('swarm_delegation', e)
                 return {"ok": False, "error": f"Invalid parameters: {e}"}
 
@@ -183,7 +183,7 @@ class ParallelAgentsSkill(BaseSkill):
             result = await delegator.delegate_parallel_goals(goal_dicts, timeout=params.timeout)
             return result
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('swarm_delegation', e)
             logger.error("ParallelAgentsSkill failed: %s", e)
             return {"ok": False, "error": str(e)}

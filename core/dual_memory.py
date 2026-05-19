@@ -423,7 +423,7 @@ class DualMemorySystem:
         if getattr(self.horcrux, "derived_key", None) is None:
             try:
                 await self.horcrux.initialize()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("dual_memory", exc)
                 logger.warning("DualMemory Horcrux initialization failed; using fallback vault key: %s", exc)
         resolved_key = self._resolve_vault_key()

@@ -166,7 +166,7 @@ class OutputReceptor:
                     magnitude, len(generated_text),
                 )
                 return delta, magnitude
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('closed_loop', e)
             logger.debug("OutputReceptor injection failed: %s", e)
 
@@ -399,7 +399,7 @@ class PhiWitness:
             )
             return phi_norm
 
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('closed_loop', e)
             logger.debug("Phi computation error: %s", e)
             return 0.0
@@ -534,7 +534,7 @@ class ClosedCausalLoop:
         try:
             from core.container import ServiceContainer
             ServiceContainer.register_instance("closed_causal_loop", self)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('closed_loop', _e)
             logger.debug('Ignored Exception in closed_loop.py: %s', _e)
 
@@ -730,7 +730,7 @@ class ClosedCausalLoop:
                             cog_aff[:min(len(current_x), 16)] = current_x[:16]
                             hphi.record_snapshot(cog_aff, mesh_field)
                             self._maybe_schedule_hierarchical_phi_refresh(hphi)
-                except Exception as _e:
+                except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation('closed_loop', _e)
                     logger.debug('Ignored Exception in closed_loop.py: %s', _e)
 
@@ -739,7 +739,7 @@ class ClosedCausalLoop:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('closed_loop', e)
                 logger.debug("Prediction loop error: %s", e)
                 await asyncio.sleep(2.0)
@@ -763,7 +763,7 @@ class ClosedCausalLoop:
                 phi_estimate=self._loop_state.phi_estimate,
                 loop_cycle=self._loop_state.cycle_count,
             )
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('closed_loop', _e)
             logger.debug('Ignored Exception in closed_loop.py: %s', _e)
 

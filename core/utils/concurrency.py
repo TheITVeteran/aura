@@ -75,7 +75,7 @@ class RobustLock:
                 if m > 0.8:
                     wait_time = max(wait_time, 180.0)
                     logger.debug(f"🛡️ [ADAPTIVE] GPU Saturated ({m:.2f}). Extending '{self.name}' timeout to {wait_time}s")
-            except Exception as _exc:
+            except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('concurrency', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -101,12 +101,12 @@ class RobustLock:
                 # don't strand the mutex or its watchdog entry forever.
                 try:
                     acquired = await asyncio.wait_for(acquire_task, timeout=1.0)
-                except Exception:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
                     acquired = False
                 if acquired:
                     try:
                         self._lock.release()
-                    except Exception as _exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                         record_degradation('concurrency', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                 watchdog.report_release(self.id)
@@ -119,7 +119,7 @@ class RobustLock:
                 success = await _await_threaded_acquire(wait_time)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('concurrency', e)
                 watchdog.report_release(self.id)
                 logger.error(f"Unexpected error acquiring lock '{self.name}': {e}")
@@ -143,7 +143,7 @@ class RobustLock:
             success = await _await_threaded_acquire(10.0)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             watchdog.report_release(self.id)
             raise
         if success:
@@ -164,7 +164,7 @@ class RobustLock:
                 from core.resilience.lock_watchdog import get_lock_watchdog
                 get_lock_watchdog().report_release(self.id)
                 logger.debug(f"Released lock: '{self.name}'")
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('concurrency', e)
             logger.debug(f"RobustLock.release() error for '{self.name}': {e}")
 
@@ -180,7 +180,7 @@ class RobustLock:
         except RuntimeError:
             # release() on an unlocked lock — harmless
             pass  # no-op: intentional
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('concurrency', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -361,7 +361,7 @@ class EventLoopMonitor:
                                 f"streak={self._consecutive_breaches}"
                             ),
                         )
-                    except Exception:
+                    except (ImportError, AttributeError, RuntimeError):
                         pass
                 elif self.log_transient_lag:
                     logger.debug(

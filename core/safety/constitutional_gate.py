@@ -319,7 +319,7 @@ class ConstitutionalGate:
                     "autonomy": 0.15,
                     "empathy": 0.2,
                 }
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutional_gate', e)
             self._original_value_weights = None
 
@@ -364,7 +364,7 @@ class ConstitutionalGate:
                     metadata={"entropy": entropy},
                 )
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutional_gate', e)
             logger.debug("Value drift check failed: %s", e)
 
@@ -450,7 +450,7 @@ class ConstitutionalGate:
             }
             with open(self._log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('constitutional_gate', e)
 
     def get_status(self) -> Dict[str, Any]:

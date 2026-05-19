@@ -98,7 +98,7 @@ class ShadowASTHealer:
                     getattr(decision, "reason", "no reason"),
                 )
             return approved
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('shadow_ast_healer', exc)
             # Governance check failed — fail closed
             logger.warning("ShadowHealer: Governance check failed (denying): %s", exc)
@@ -109,7 +109,7 @@ class ShadowASTHealer:
         try:
             resolved = file_path.resolve()
             return str(resolved).startswith(str(self.root))
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
     async def attempt_repair(self, file_path: Path, error_msg: str) -> bool:
@@ -181,7 +181,7 @@ class ShadowASTHealer:
                 return True
 
             return False
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('shadow_ast_healer', e)
             logger.error("ShadowHealer: AST repair failed: %s", e)
             return False

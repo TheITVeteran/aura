@@ -67,7 +67,7 @@ class OmniTool:
             if len(logs) > 50: logs.pop(0) # Keep last 50
             return result
             
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('omni_tool', e)
             logger.error("💥 [OMNI] Action '%s' FAILED: %s", action_name, e)
             # Log Failure

@@ -139,7 +139,7 @@ class MindMomentBuilder:
                     text = _norm(getattr(affect, method)())
                     if text:
                         return text
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError) as exc:
                     record_degradation("unity_mind_moment", exc)
                     logger.debug("MindMoment affect summary failed via %s: %s", method, exc)
         valence = getattr(affect, "valence", None)
@@ -218,7 +218,7 @@ class MindMomentBuilder:
                     if key in snapshot:
                         error = max(error, _clamp(snapshot.get(key)))
                         break
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("unity_mind_moment", exc)
                 logger.debug("MindMoment prediction snapshot failed for %s: %s", service_name, exc)
                 continue
@@ -272,7 +272,7 @@ class MindMomentBuilder:
                 if not ServiceContainer.has(name):
                     continue
                 service = ServiceContainer.get(name, default=None)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("unity_mind_moment", exc)
                 logger.debug("MindMoment service lookup failed for %s: %s", name, exc)
                 service = None
@@ -284,7 +284,7 @@ class MindMomentBuilder:
                 if callable(value):
                     try:
                         value = value()
-                    except Exception as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation("unity_mind_moment", exc)
                         logger.debug("MindMoment service activity read failed for %s.%s: %s", name, attr, exc)
                         value = None
@@ -347,7 +347,7 @@ class MindMomentBuilder:
         try:
             if hasattr(state, "get_continuity_hash"):
                 state_hash = str(state.get_continuity_hash())
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation("unity_mind_moment", exc)
             logger.debug("MindMoment continuity hash read failed: %s", exc)
             state_hash = ""
@@ -379,7 +379,7 @@ class MindMomentBuilder:
         try:
             recent = getattr(getattr(state, "cognition", None), "recent_action_receipts", [])
             refs.extend(str(item) for item in list(recent or [])[:6])
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation("unity_mind_moment", exc)
             logger.debug("MindMoment recent action receipt read failed: %s", exc)
         return sorted(set(refs))[:8]

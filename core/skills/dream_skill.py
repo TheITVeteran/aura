@@ -15,15 +15,15 @@ def _schedule_background_task(coro: Any, *, name: str) -> None:
 
         get_task_tracker().create_task(coro, name=name)
         return
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     try:
         get_task_tracker().create_task(coro, name=name)
-    except Exception as exc:
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation('dream_skill', exc)
         try:
             coro.close()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
         logger.debug("Dream background task %s could not be scheduled: %s", name, exc)
 
@@ -58,7 +58,7 @@ class DreamSkill(BaseSkill):
                     }
                 else:
                     results["dream_journal"] = {"status": "skipped", "reason": "insufficient salient material"}
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('dream_skill', e)
                 results["dream_journal"] = {"status": "failed", "error": str(e)}
         else:
@@ -75,7 +75,7 @@ class DreamSkill(BaseSkill):
                 results["semantic_defrag"] = "queued"
             else:
                 results["semantic_defrag"] = "unavailable"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dream_skill', e)
             results["semantic_defrag"] = f"failed: {e}"
 
@@ -89,7 +89,7 @@ class DreamSkill(BaseSkill):
                 results["dlq_cycle"] = "queued"
             else:
                 results["dlq_cycle"] = "unavailable"
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('dream_skill', e)
             results["dlq_cycle"] = f"failed: {e}"
 
@@ -99,7 +99,7 @@ class DreamSkill(BaseSkill):
             try:
                 hs_result = await hs.synthesize_from_telemetry()
                 results["heuristic_synthesis"] = hs_result
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('dream_skill', e)
                 results["heuristic_synthesis"] = {"status": "failed", "error": str(e)}
 
@@ -109,7 +109,7 @@ class DreamSkill(BaseSkill):
             if drive:
                 await drive.satisfy("energy", 20.0)
                 results["drive_restoration"] = "energy +20"
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('dream_skill', e)
             results["drive_restoration"] = f"failed: {e}"
 
@@ -122,7 +122,7 @@ class DreamSkill(BaseSkill):
                 salience=0.3,
                 ttl=14400,
             )
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
         completed = [k for k, v in results.items()

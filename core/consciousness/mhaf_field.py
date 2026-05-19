@@ -228,7 +228,7 @@ class MycelialHypergraphAttractorField:
                 self._minimize_free_energy()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('mhaf_field', e)
                 logger.debug("MHAF loop error: %s", e)
 
@@ -238,7 +238,7 @@ class MycelialHypergraphAttractorField:
             from core.affect.affective_circumplex import get_circumplex
             params = get_circumplex().get_llm_params()
             self.update_node("affect", params.get("arousal", 0.5))
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('mhaf_field', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -247,7 +247,7 @@ class MycelialHypergraphAttractorField:
             vals = get_heartstone_values().values
             self.update_node("curiosity", vals.get("Curiosity", 0.5))
             self.update_node("values", vals.get("Empathy", 0.5))
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('mhaf_field', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -258,7 +258,7 @@ class MycelialHypergraphAttractorField:
                 snap = soma.get_body_snapshot()
                 stress = snap.get("affects", {}).get("stress", 0.0)
                 self.update_node("soma", 1.0 - stress)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('mhaf_field', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -324,7 +324,7 @@ class MycelialHypergraphAttractorField:
             }
             with open(_DATA_PATH, "w") as f:
                 json.dump(state, f, indent=2)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mhaf_field', e)
             logger.debug("MHAF save error: %s", e)
 
@@ -346,7 +346,7 @@ class MycelialHypergraphAttractorField:
                     )
                 self._global_phi = state.get("global_phi", 0.0)
                 logger.info("MHAF state restored from disk.")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('mhaf_field', e)
             logger.debug("MHAF load error: %s", e)
 

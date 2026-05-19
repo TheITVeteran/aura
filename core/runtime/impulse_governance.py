@@ -67,7 +67,7 @@ async def run_governed_impulse(
         if liquid_state is not None:
             try:
                 await liquid_state.update(_caller=source, **dict(state_update))
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('impulse_governance', exc)
                 logger.debug("Governed impulse state update failed: %s", exc)
                 record_degraded_event(

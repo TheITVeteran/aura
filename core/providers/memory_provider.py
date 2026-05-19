@@ -34,7 +34,7 @@ def register_memory_services(container):
             vault_path = config.paths.data_dir / "vault"
             vault_path.mkdir(parents=True, exist_ok=True)
             return BlackHoleVault(data_dir=str(vault_path))
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('memory_provider', e)
             logger.warning("BlackHoleVault registration failed: %s", e)
             return None

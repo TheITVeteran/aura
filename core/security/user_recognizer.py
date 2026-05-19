@@ -249,7 +249,7 @@ class UserRecognizer:
                 self._derivation_cache[candidate] = candidate_hash
 
             return hmac.compare_digest(candidate_hash, self._passphrase_hash)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("user_recognizer", exc)
             logger.debug("Passphrase verification failed safely: %s", exc)
             return False
@@ -378,7 +378,7 @@ class UserRecognizer:
                     self._passphrase_hash = bytes.fromhex(h)
                     self._salt = bytes.fromhex(s)
                     logger.info("UserRecognizer: owner passphrase loaded.")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('user_recognizer', e)
             logger.debug("Credential load failed: %s", e)
 
@@ -391,7 +391,7 @@ class UserRecognizer:
             data["owner_salt"] = salt.hex()
             atomic_write_text(PROFILE_PATH, json.dumps(data, indent=2))
             logger.info("UserRecognizer: credentials saved to creator profile.")
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('user_recognizer', e)
             logger.error("Credential save failed: %s", e)
 
@@ -400,7 +400,7 @@ class UserRecognizer:
             if FINGERPRINT_PATH.exists():
                 data = json.loads(FINGERPRINT_PATH.read_text())
                 self._fingerprint.update(data)
-        except Exception as _exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('user_recognizer', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -408,7 +408,7 @@ class UserRecognizer:
         try:
             FINGERPRINT_PATH.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(FINGERPRINT_PATH, json.dumps(self._fingerprint, indent=2))
-        except Exception as _exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('user_recognizer', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

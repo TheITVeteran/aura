@@ -91,7 +91,7 @@ class ExpressionEvolver:
             for a, b, target in examples:
                 try:
                     pred = expr.eval(a, b)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     err += 10**6
                     continue
                 err += min(abs(pred - target), 10**6)
@@ -148,7 +148,7 @@ class ExpressionEvolver:
             try:
                 if expr.eval(a, b) != target:
                     return False
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 return False
         return True
 
@@ -175,5 +175,5 @@ class ExpressionEvolver:
                 )
             )
             return receipt.receipt_id
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None

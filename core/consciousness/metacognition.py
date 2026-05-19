@@ -169,7 +169,7 @@ Return JSON:
                     "strategy_used": "fallback",
                 }
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('metacognition', e)
             logger.error("Self-evaluation failed: %s", e)
             return {"quality": "acceptable", "confidence": 0.5, "knowledge_state": "learning"}
@@ -409,7 +409,7 @@ Output as a technical 'Sovereign Directive'."""
              from core.brain.cognitive_engine import ThinkingMode
              thought = await self.brain.think(prompt, mode=ThinkingMode.REFLECTIVE)
              return thought.content
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('metacognition', e)
             logger.error("Architectural audit failed: %s", e, exc_info=True)
             return "Audit failed due to process interruption."

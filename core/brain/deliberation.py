@@ -98,7 +98,7 @@ Keep answers concise.
         if m3:
             try:
                 confidence = float(m3.group(1))
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 confidence = None
         if action is None:
             # fallback: pick first action
@@ -164,6 +164,6 @@ Keep answers concise.
                     "will_receipt_id": ranked.receipt.will_receipt_id,
                 },
             )
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("deliberation.native_system2", exc)
             return None

@@ -75,14 +75,14 @@ def _get_whisper_model_class():
         _WhisperModel = whisper_model_cls
     except ImportError:
         logger.warning("faster-whisper not installed — STT unavailable")
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('voice_engine', exc)
         logger.error("❌ faster-whisper import failed — STT unavailable: %s", exc)
     return _WhisperModel
 
 try:
     from TTS.api import TTS
-except Exception as e:
+except (ImportError, AttributeError, RuntimeError) as e:
     TTS = None
     e_str = str(e)
     # [STABILITY] Silence redundant torchcodec/transformers warnings on macOS
@@ -243,7 +243,7 @@ class SovereignVoiceEngine:
             try:
                 from core.container import ServiceContainer
                 self._mycelium = ServiceContainer.get("mycelial_network", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
         return self._mycelium
@@ -254,7 +254,7 @@ class SovereignVoiceEngine:
             try:
                 from core.container import ServiceContainer
                 self._homeostasis = ServiceContainer.get("homeostatic_coupling", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
         return self._homeostasis
@@ -265,7 +265,7 @@ class SovereignVoiceEngine:
             try:
                 from core.container import ServiceContainer
                 self._substrate = ServiceContainer.get("liquid_substrate", default=None)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
         return self._substrate
@@ -281,7 +281,7 @@ class SovereignVoiceEngine:
                 else:
                     # Auto-establish if missing
                     mycelium.establish_connection(source, target, priority=1.0)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -291,7 +291,7 @@ class SovereignVoiceEngine:
         if mycelium:
             try:
                 mycelium.route_signal(source, target, payload)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
 
@@ -309,7 +309,7 @@ class SovereignVoiceEngine:
                     })
                 # Also pulse a hypha if mycelium is ready
                 self._pulse_hypha("voice_engine", "orchestrator", success=True)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('voice_engine', e)
                 logger.debug("VoiceEngine: presence pulse failed: %s", e)
             await asyncio.sleep(30) # Pulse every 30s
@@ -356,7 +356,7 @@ class SovereignVoiceEngine:
                     if coherence < 0.5:
                         prosody["instability"] = max(prosody["instability"], 0.5)
                 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
                 
@@ -473,7 +473,7 @@ class SovereignVoiceEngine:
                     device=device,
                     compute_type=compute_type
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.warning("Primary STT init failed on %s, falling back to CPU: %s", device, e)
                 actual_device = "cpu"  # UPDATE: track the fallback
@@ -485,7 +485,7 @@ class SovereignVoiceEngine:
             self._stt_initialized = True
             self._pulse_hypha("voice_engine", "cognition", success=True)
             logger.info("✅ Whisper STT online (model=%s, device=%s)", self.whisper_model_name, actual_device)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to init STT: %s", e)
             self._pulse_hypha("voice_engine", "cognition", success=False)
@@ -495,7 +495,7 @@ class SovereignVoiceEngine:
             try:
                 self._init_xtts()
                 return
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("Failed to init XTTS: %s", e)
 
@@ -514,7 +514,7 @@ class SovereignVoiceEngine:
                 logger.info("✅ Piper Voice '%s' loaded (High Fidelity)", self.piper_voice_name)
                 self._pulse_hypha("cognition", "voice_engine", success=True)
                 return
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.warning("Failed to init Piper: %s. Falling back to pyttsx3.", e)
 
@@ -526,7 +526,7 @@ class SovereignVoiceEngine:
             self._tts_initialized = True
             self._pulse_hypha("cognition", "voice_engine", success=True)
             logger.info("✅ pyttsx3 TTS online (macOS NSSpeechSynthesizer)")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to init TTS: %s", e)
             self._pulse_hypha("cognition", "voice_engine", success=False)
@@ -547,7 +547,7 @@ class SovereignVoiceEngine:
                 logger.info("Downloading %s...", fname)
                 try:
                     urllib.request.urlretrieve(url, str(dest))
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     # Fallback to direct HF link if structure differs
                     alt_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{vpath}/{fname}"
                     urllib.request.urlretrieve(alt_url, str(dest))
@@ -639,7 +639,7 @@ class SovereignVoiceEngine:
             )
             return success
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to start mic capture: %s", e, exc_info=True)
             self._pulse_hypha("voice_engine", "cognition", success=False)
@@ -654,7 +654,7 @@ class SovereignVoiceEngine:
             try:
                 self._mic_stream.stop()
                 self._mic_stream.close()
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
             self._mic_stream = None
@@ -859,7 +859,7 @@ class SovereignVoiceEngine:
             # Dispatch transcript
             self._dispatch_transcript(text)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Transcription error: %s", e)
             self._pulse_hypha("voice_engine", "cognition", success=False)
@@ -885,7 +885,7 @@ class SovereignVoiceEngine:
             bus = get_event_bus()
             bus.publish_threadsafe("user_input", {"message": text, "source": "voice"})
             logger.info("🍄 Transcript routed via EventBus: %s", text[:60])
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine', e)
             logger.error("EventBus dispatch failed: %s", e)
 
@@ -905,7 +905,7 @@ class SovereignVoiceEngine:
                 if asyncio.iscoroutine(res) or asyncio.isfuture(res) or hasattr(res, "__await__"):
                     await res
                 logger.debug("Transcript successfully routed.")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Direct transcript callback failed: %s", e, exc_info=True)
         finally:
@@ -950,7 +950,7 @@ class SovereignVoiceEngine:
                 
                 self._pulse_hypha("cognition", "voice_engine", success=True)
                 logger.debug("🗣️ Speech complete: %s", text[:60])
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("❌ TTS Synthesis failed: %s", e)
                 self._pulse_hypha("cognition", "voice_engine", success=False)
@@ -978,7 +978,7 @@ class SovereignVoiceEngine:
                         self._current_afplay.terminate()
                         break
                     time.sleep(0.05)
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("Local playback failed: %s", e)
 
@@ -1011,7 +1011,7 @@ class SovereignVoiceEngine:
                 queue_ref.put_nowait(payload)
             except asyncio.QueueFull:
                 stale_queues.append(queue_ref)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('voice_engine', exc)
                 logger.debug("Voice SSE delivery failed: %s", exc)
                 stale_queues.append(queue_ref)
@@ -1094,7 +1094,7 @@ class SovereignVoiceEngine:
                             continue
                     except StopAsyncIteration:
                         break
-                    except Exception as e:
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('voice_engine', e)
                         logger.error(f"Error in voice stream: {e}")
                         break
@@ -1111,7 +1111,7 @@ class SovereignVoiceEngine:
                     
                     spoken_text_buffer.append(text_chunk)
 
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error(f"Playback error in stream: {e}")
                 self._pulse_hypha("cognition", "voice_engine", success=False)

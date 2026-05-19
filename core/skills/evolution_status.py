@@ -28,7 +28,7 @@ class EvolutionStatusSkill(BaseSkill):
         if isinstance(params, dict):
             try:
                 params = EvolutionInput(**params)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('evolution_status', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 

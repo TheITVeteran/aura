@@ -55,7 +55,7 @@ class BeliefExtractor:
                         confidence=confidence
                     )
                     extracted_count += 1
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('belief_extractor', e)
                     logger.warning("Failed to parse belief match: %s", e)
 

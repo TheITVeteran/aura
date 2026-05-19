@@ -114,7 +114,7 @@ def deterministic_task_solver(prompt: str) -> Any:
             x_str = ret.split("g(f(")[1].split("))")[0]
             a, b, c, d, x = int(a_str), int(b_str), int(c_str), int(d_str), int(x_str)
             return c * (a * x + b) + d
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return None
     return None
 
@@ -206,7 +206,7 @@ class SelfImprovingResearchCore:
         for task in tasks:
             try:
                 pred = self.task_solver(task.prompt)
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pred = None
             if self._matches(pred, task.answer):
                 correct += 1
@@ -237,7 +237,7 @@ class SelfImprovingResearchCore:
             with torch.no_grad():
                 out = self.model(ids, labels=labels)
             loss_val = float(out["loss"])
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             loss_val = 0.0
 
         # Semantic consistency probe over a paraphrase trio.
@@ -264,7 +264,7 @@ class SelfImprovingResearchCore:
             return prediction == answer
         try:
             return str(prediction).strip().lower() == str(answer).strip().lower()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
     def _record_prediction_to_ledger(
@@ -283,7 +283,7 @@ class SelfImprovingResearchCore:
                 prior_prob=0.85 if predicted else 0.15,
             )
             self.ledger.resolve(pid, observed={"applies": observed}, observed_truth=observed)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Ledger failures must not break the cycle.
             pass
 
@@ -338,7 +338,7 @@ class SelfImprovingResearchCore:
             report.metrics["discovery_score"] = evolver_result.score
             if evolver_result.perfect:
                 report.notes.append(f"discovery PERFECT: {evolver_result.best_str}")
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             report.notes.append(f"discovery failed: {exc!r}")
 
         # 3. Unknown-unknowns — generate fresh failure-finding tasks.
@@ -347,7 +347,7 @@ class SelfImprovingResearchCore:
             unknowns = self.unknown.generate(seeds, n=10)
             report.unknowns_added = len(unknowns)
             self.vault.add(unknowns)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             report.notes.append(f"unknowns failed: {exc!r}")
 
         # 4. Semantic check across iteration narratives — a cheap

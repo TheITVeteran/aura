@@ -22,7 +22,7 @@ class PhysicalEntropyInjector:
             mem_active  = psutil.virtual_memory().active
             net_io      = psutil.net_io_counters().bytes_recv
             cpu_time    = psutil.cpu_times().user
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             mem_active, net_io, cpu_time = 0, 0, 0.0
 
         clock_ns = time.perf_counter_ns()

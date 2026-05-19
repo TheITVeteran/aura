@@ -98,7 +98,7 @@ def get_organism_status(orchestrator: Any = None) -> Dict[str, Any]:
                 "degradation_events": int(state_obj.degradation_events),
                 "action_envelope": stakes.action_envelope("normal").as_dict(),
             }
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         resource_state = {}
 
     current_intention = ""

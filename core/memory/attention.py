@@ -66,7 +66,7 @@ class AttentionSummarizer:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('attention', e)
                 logger.error("AttentionSummarizer cycle error: %s", e)
 
@@ -88,7 +88,7 @@ class AttentionSummarizer:
             from core.brain.cognitive_engine import ThinkingMode
             res = await brain.think(prompt, mode=ThinkingMode.FAST)
             return res.content.strip()
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('attention', e)
             logger.error("Failed to generate seed thought: %s", e)
             return None

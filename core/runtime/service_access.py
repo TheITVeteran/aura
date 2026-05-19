@@ -14,7 +14,7 @@ def optional_service(*names: Any, default: Any = None) -> Any:
             continue
         try:
             service = ServiceContainer.get(name, default=None)
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             continue
         if service is not None:
             return service
@@ -28,7 +28,7 @@ def require_service(*names: Any) -> Any:
             continue
         try:
             service = ServiceContainer.require(name)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('service_access', exc)
             last_error = exc
             continue
@@ -76,7 +76,7 @@ def resolve_canonical_self_engine(*, default: Any = None, autocreate: bool = Tru
         from core.self.canonical_self import get_canonical_self_engine
 
         return get_canonical_self_engine()
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return default
 
 
@@ -90,7 +90,7 @@ def resolve_canonical_self(*, default: Any = None, autocreate: bool = True) -> A
     if callable(getter):
         try:
             current = getter()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             return default
         if current is not None:
             return current
@@ -112,7 +112,7 @@ def resolve_identity_prompt_surface(orchestrator: Any = None, *, default: Any = 
         from core.identity import get_identity_system
 
         prompt_surface = get_identity_system(orchestrator)
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         prompt_surface = None
     if prompt_surface is not None and hasattr(prompt_surface, "get_full_system_prompt"):
         return prompt_surface
@@ -148,7 +148,7 @@ def resolve_llm_router(*, kernel_interface: Any = None, default: Any = None) -> 
     if callable(getter):
         try:
             instance = getter()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             instance = None
         if instance is not None:
             return instance
@@ -164,7 +164,7 @@ def resolve_dialogue_cognition(*, default: Any = None) -> Any:
         from core.social.dialogue_cognition import get_dialogue_cognition
 
         return get_dialogue_cognition()
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return default
 
 
@@ -176,7 +176,7 @@ def resolve_social_imagination(*, default: Any = None) -> Any:
         from core.social.social_imagination import get_social_imagination
 
         return get_social_imagination()
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return default
 
 

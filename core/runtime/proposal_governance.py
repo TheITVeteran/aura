@@ -107,7 +107,7 @@ async def queue_governed_initiative(
             state = getter()
             if inspect.isawaitable(state):
                 state = await state
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('proposal_governance', exc)
             logger.debug("ProposalGovernance get_current failed: %s", exc)
             state = None
@@ -131,7 +131,7 @@ async def queue_governed_initiative(
                 result = commit(new_state, f"proposal_governance:{source}")
                 if inspect.isawaitable(result):
                     await result
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('proposal_governance', exc)
                 record_degraded_event(
                     "proposal_governance",

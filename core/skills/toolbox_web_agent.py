@@ -35,10 +35,10 @@ class BrowserWebAgent:
     async def read(self, url: str, *, timeout_ms: int = 15000) -> WebAgentResult:
         try:
             return await self._read_playwright(url, timeout_ms=timeout_ms)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             try:
                 return await self._read_httpx(url, error_prefix=f"playwright_unavailable:{exc}")
-            except Exception as exc2:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc2:
                 return WebAgentResult(url=url, title="", text="", engine="none", ok=False, error=repr(exc2))
 
     async def _read_playwright(self, url: str, *, timeout_ms: int) -> WebAgentResult:

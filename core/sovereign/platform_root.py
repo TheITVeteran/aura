@@ -81,7 +81,7 @@ class PlatformRoot:
             logger.info("✅ [PLATFORM ROOT] Hardware Bound: %s", mx.default_device())
             self.device_active = True
             self.pulse() # Initial pulse
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('platform_root', e)
             logger.error("❌ [PLATFORM ROOT] Fatal Hardware Binding Error: %s", e)
             self.device_active = False
@@ -117,7 +117,7 @@ class PlatformRoot:
             if not force_wake:
                 logger.debug("⚡ [PLATFORM ROOT] Sub-conductive pulse: %.2fms", latency)
             return True
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('platform_root', e)
             msg = str(e)
             if "MTLCompilerService" in msg or "error 3" in msg:
@@ -165,7 +165,7 @@ class PlatformRoot:
                 await asyncio.sleep(self._pulse_interval)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except (ImportError, OSError, AttributeError) as e:
                 record_degradation('platform_root', e)
                 logger.error("[PLATFORM ROOT] Monitor loop error: %s", e)
                 await asyncio.sleep(5.0)
@@ -180,7 +180,7 @@ class PlatformRoot:
                 # We can't 'start' it directly easily as it's an XPC service,
                 # but a high-level MLX op usually triggers a lookup.
                 self.force_compiler_wake()
-        except Exception as _e:
+        except (subprocess.SubprocessError, OSError) as _e:
             record_degradation('platform_root', _e)
             logger.debug('Ignored Exception in platform_root.py: %s', _e)
 

@@ -132,7 +132,7 @@ class ConsciousnessContract:
                 raise RuntimeError("Liquid Substrate missing")
             if not self.core.workspace:
                 raise RuntimeError("Global Workspace missing")
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('contract', e)
             logger.error("ConsciousnessContract integration prompt: %s", e)
     
@@ -213,7 +213,7 @@ class ConsciousnessContract:
                 'broadcast': perspective.broadcast_content or "silent",
                 **self.tracker.get_status()
             }
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('contract', e)
             logger.error("Poll missed: %s", e)
             return {'someone_home_now': False, 'error': str(e)}
@@ -235,7 +235,7 @@ class AlwaysHomeContract(ConsciousnessContract):
         """ALWAYS produces valid M(t) with viability floors"""
         try:
             perspective = super().bridge_mapping()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Emergency Fallback Perspective
             perspective = SubjectPerspective(
                 timestamp=time.time(),
@@ -292,7 +292,7 @@ def attach_contract(orchestrator) -> ConsciousnessContract:
                     # We need to schedule the broadcast since it's async
                     get_task_tracker().create_task(orchestrator.telem_manager.broadcast(msg))
                     
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('contract', e)
                 logger.error("Contract loop error: %s", e)
             await asyncio.sleep(0.1) # 10Hz

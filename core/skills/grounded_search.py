@@ -77,7 +77,7 @@ class GroundedSearchSkill(BaseSkill):
             
         except ImportError:
             return {"ok": False, "error": "google-genai package not installed (pip install google-genai)"}
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('grounded_search', e)
             logger.error("Grounded Search failed: %s", e)
             return {"ok": False, "error": str(e)}

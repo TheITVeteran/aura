@@ -75,7 +75,7 @@ class KnowledgeLedger:
                 confidence=0.8 if success else 0.4,
                 metadata={"success": success, "timestamp": time.time()}
             )
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('knowledge_ledger', e)
             logger.debug("log_interaction failed: %s", e)
     
@@ -87,7 +87,7 @@ class KnowledgeLedger:
                 from core.memory.knowledge_graph import PersistentKnowledgeGraph
                 db_path = str(getattr(config.paths, 'data_dir', 'data') / 'knowledge.db')
                 self._kg = PersistentKnowledgeGraph(db_path)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('knowledge_ledger', e)
                 logger.warning("Knowledge graph not available: %s", e)
                 # Try default path
@@ -96,7 +96,7 @@ class KnowledgeLedger:
                     from core.memory.knowledge_graph import PersistentKnowledgeGraph
                     _fallback = str(getattr(_cfg.paths, "data_dir", str(config.paths.home_dir / "data")) / "knowledge.db") if hasattr(getattr(_cfg.paths, "data_dir", None), "__truediv__") else str(config.paths.home_dir / "data/knowledge.db")
                     self._kg = PersistentKnowledgeGraph(_fallback)
-                except Exception as exc:
+                except (ImportError, AttributeError, RuntimeError) as exc:
                     record_degradation('knowledge_ledger', exc)
                     logger.debug("Suppressed: %s", exc)
 
@@ -151,7 +151,7 @@ class KnowledgeLedger:
                 # ISSUE 44 fix: Correct key for questions asked
                 stats["questions_asked"] = kg_stats.get("unanswered_questions", 0) + kg_stats.get("answered_questions", 0)
                 stats["active_goals"] = kg_stats.get("active_learning_goals", 0)
-            except Exception as exc:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
                 record_degradation('knowledge_ledger', exc)
                 logger.debug("Suppressed: %s", exc)        
         # 6. Reflections (in-memory)
@@ -219,7 +219,7 @@ class KnowledgeLedger:
                     "access_count": access_count or 0,
                     "icon": "📚",
                 })
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('knowledge_ledger', e)
             logger.warning("Failed to read knowledge entries: %s", e)
         
@@ -265,7 +265,7 @@ class KnowledgeLedger:
                     "time_ago": _format_time_ago(acquired),
                     "icon": "🎓",
                 })
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('knowledge_ledger', e)
             logger.warning("Failed to read skills: %s", e)
         
@@ -292,7 +292,7 @@ class KnowledgeLedger:
                         "time_ago": _format_time_ago(first_met),
                         "icon": "👤",
                     })
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('knowledge_ledger', e)
             logger.warning("Failed to read people: %s", e)
         
@@ -342,7 +342,7 @@ class KnowledgeLedger:
                         "time_ago": _format_time_ago(answered_at),
                         "icon": "💡",
                     })
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             record_degradation('knowledge_ledger', e)
             logger.warning("Failed to read questions: %s", e)
         
@@ -367,7 +367,7 @@ class KnowledgeLedger:
                     "time_ago": _format_time_ago(g.get("created_at", 0)),
                     "icon": "🎯",
                 })
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('knowledge_ledger', e)
             logger.warning("Failed to read goals: %s", e)
         
@@ -393,7 +393,7 @@ class KnowledgeLedger:
                     "time_ago": _format_time_ago(ts),
                     "icon": "🪞",
                 })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('knowledge_ledger', exc)
             logger.debug("Suppressed: %s", exc)
 
@@ -421,7 +421,7 @@ class KnowledgeLedger:
                         "time_ago": _format_time_ago(item.timestamp),
                         "icon": "🔍",
                     })
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('knowledge_ledger', exc)
             logger.debug("Suppressed: %s", exc)
 

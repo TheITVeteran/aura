@@ -23,7 +23,7 @@ def initialize_persona_integration(persona_name: str = "aura"):
         # Attempt to patch cognitive_engine if present
         try:
             from .cognitive_engine import cognitive_engine
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('persona_integration', e)
             logger.info("cognitive_engine not available at import time; persona adapter ready for later use")
             return True
@@ -52,7 +52,7 @@ def initialize_persona_integration(persona_name: str = "aura"):
                             kwargs["context"] = ctxt
 
                     return original_think(*args, **kwargs)
-                except Exception:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
                     logger.error("persona_think wrapper failed:\n" + traceback.format_exc())
                     return original_think(*args, **kwargs)
 
@@ -62,7 +62,7 @@ def initialize_persona_integration(persona_name: str = "aura"):
             logger.info("cognitive_engine available but has no 'think' method to wrap")
 
         return True
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('persona_integration', e)
         logger.error("Failed to initialize persona_integration: %s", e)
         return False

@@ -569,7 +569,7 @@ class RSIGauntlet:
         for test in tests:
             try:
                 passed += 1 if test() else 0
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("rsi_gauntlet", exc)
                 logger.debug("RSI canary test failed during scoring: %s", exc)
         return passed / len(tests)

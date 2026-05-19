@@ -90,7 +90,7 @@ class CodeRefinerService:
                                     impact_score=0.7,
                                 ))
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('code_refiner', e)
             logger.error(f"Failed to analyze {file_path}: {e}")
             

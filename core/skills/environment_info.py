@@ -30,7 +30,7 @@ class EnvironmentSkill(BaseSkill):
         try:
             import getpass
             current_user = getpass.getuser()
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             current_user = os.getenv("USER") or os.getenv("USERNAME") or "aura_node"
 
         info = {
@@ -54,7 +54,7 @@ class EnvironmentSkill(BaseSkill):
                 # Add Public IP (External Request)
                 # Keep it safe/fast, optional
                 pass  # no-op: intentional
-            except Exception as _e:  # Non-critical, fallback handled
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:  # Non-critical, fallback handled
                 logging.debug('Ignored Exception in environment_info.py: %s', _e)
 
         return {"ok": True, "result": info, "summary": f"Running on {info['hostname']} ({info['environment_type']})"}

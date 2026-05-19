@@ -45,7 +45,7 @@ class SystemGovernor:
             
             self._cached_result = True
             return True
-        except Exception as e:
+        except (ImportError, OSError, AttributeError) as e:
             record_degradation('governor', e)
             # Fail-safe: If sensors break, allow operation but log error
             logger.error("Governor sensor failure: %s", e)

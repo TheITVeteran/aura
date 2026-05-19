@@ -41,12 +41,12 @@ def _have_whisper() -> bool:
         import importlib
         importlib.util.find_spec("mlx_whisper")
         return True
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         try:
             import importlib
             importlib.util.find_spec("whisper")
             return True
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
 
@@ -55,7 +55,7 @@ def _have_browser_executor() -> bool:
         import importlib
         importlib.util.find_spec("core.executors.browser_executor")
         return True
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return False
 
 
@@ -81,7 +81,7 @@ def _host_of(url: str) -> str:
         return ""
     try:
         return urlparse(url).hostname or ""
-    except Exception:
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return ""
 
 

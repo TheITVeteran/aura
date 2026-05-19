@@ -203,7 +203,7 @@ Detail your logical chain of thought before providing the final answer.
                     )
                     task.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.exception() else None)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_play', e)
             logger.error("Self-Play Cycle Error: %s", e)
         finally:

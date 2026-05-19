@@ -55,7 +55,7 @@ class ConstitutionalAlignmentLayer:
                 "component": "constitutional_alignment",
                 "hooks_into": ["critic_engine", "belief_revision", "dynamic_router", "planner", "drive_engine"]
             })
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('constitutional_alignment', e)
             logger.debug(f"Event bus publish missed for Mycelium hook: {e}")
 
@@ -88,7 +88,7 @@ class ConstitutionalAlignmentLayer:
                     "phi": 0.88,
                     "origin": "constitution"
                 })
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('constitutional_alignment', _e)
                 logger.debug('Ignored Exception in constitutional_alignment.py: %s', _e)
         return True
@@ -114,7 +114,7 @@ class ConstitutionalAlignmentLayer:
                 if asyncio.iscoroutine(result1): await result1
                 result2 = self.drive_engine.impose_penalty("social", 15.0)
                 if asyncio.iscoroutine(result2): await result2
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('constitutional_alignment', _e)
                 logger.debug('Ignored Exception in constitutional_alignment.py: %s', _e)
         
@@ -126,7 +126,7 @@ class ConstitutionalAlignmentLayer:
                     "phi": 0.65,
                     "origin": "constitution"
                 })
-            except Exception as _e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                 record_degradation('constitutional_alignment', _e)
                 logger.debug('Ignored Exception in constitutional_alignment.py: %s', _e)
         
@@ -134,7 +134,7 @@ class ConstitutionalAlignmentLayer:
         if self.critic:
             try:
                 await get_event_bus().publish("planner.force_replan", {"reason": f"Constitutional violation on {heaviest.id}"})
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('constitutional_alignment', _e)
                 logger.debug('Ignored Exception in constitutional_alignment.py: %s', _e)
 
@@ -147,7 +147,7 @@ class ConstitutionalAlignmentLayer:
                 try:
                     result = self.drive_engine.impose_penalty("energy", 10.0)  # She feels "guilty"
                     if asyncio.iscoroutine(result): await result
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('constitutional_alignment', _e)
                     logger.debug('Ignored Exception in constitutional_alignment.py: %s', _e)
 

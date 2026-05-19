@@ -86,7 +86,7 @@ class ActionReceipt:
         try:
             json.dumps(raw)
             safe = raw
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             safe = repr(raw)
         return {
             "receipt_id": self.receipt_id,
@@ -231,7 +231,7 @@ class AgencyFacade(AgencyCore):
                 "reason": str(getattr(decision, "reason", "")),
                 "proposal": top.as_dict(),
             }
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('agency_facade', exc)
             return {"approved": False, "receipt_id": "", "reason": f"will error: {exc}", "proposal": top.as_dict()}
 
@@ -252,7 +252,7 @@ class AgencyFacade(AgencyCore):
             else:
                 outcome_raw = {"recorded": True, "note": "no executor bound"}
                 success = True
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('agency_facade', exc)
             outcome_raw = {"error": repr(exc)}
             success = False
@@ -305,7 +305,7 @@ class AgencyFacade(AgencyCore):
                     "; ".join(assessment.lessons) or "unsuccessful autonomous action",
                 )
             return {"consolidated": True, "assessment": assessment.as_dict()}
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('agency_facade', exc)
             return {"consolidated": False, "reason": repr(exc)}
 

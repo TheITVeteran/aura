@@ -99,7 +99,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                             _LOCK_FD = os.open(str(lock_file), flags, 0o600)
                             fcntl.flock(_LOCK_FD, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             logger.info("🔓 Stale lock reclaimed via unlink+recreate.")
-                        except Exception as reclaim_exc:
+                        except (OSError, IOError) as reclaim_exc:
                             message = f"⚠️  Failed to reclaim stale lock for {lock_name}: {reclaim_exc}"
                             logger.error(message)
                             print(message)
@@ -115,7 +115,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                         flags |= os.O_CLOEXEC
                     _LOCK_FD = os.open(str(lock_file), flags, 0o600)
                     fcntl.flock(_LOCK_FD, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except Exception:
+                except (OSError, IOError):
                     message = f"⚠️  Aura ({lock_name}) is already running in another window."
                     logger.error(message)
                     print(message)
@@ -128,7 +128,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
         
         logger.info("🔒 Instance lock acquired: %s (PID: %d)", lock_name, os.getpid())
         
-    except Exception as e:
+    except (OSError, IOError) as e:
         record_degradation('singleton', e)
         logger.warning("Failed to acquire single-instance lock for '%s': %s", lock_name, e)
 
@@ -141,6 +141,6 @@ def release_instance_lock() -> None:
             fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
             os.close(_LOCK_FD)
             _LOCK_FD = None
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('singleton', _e)
             logger.debug('Ignored Exception in singleton.py: %s', _e)

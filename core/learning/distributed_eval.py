@@ -49,7 +49,7 @@ def _available_memory_mb() -> float | None:
         import psutil  # type: ignore
 
         return float(psutil.virtual_memory().available / (1024 * 1024))
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("distributed_eval", exc)
         logger.debug("Available-memory probe failed: %s", exc)
         return None
@@ -85,7 +85,7 @@ class LocalDistributedEvaluator:
             with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
                 for value in pool.map(fn, items):
                     outputs.append(value)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             errors.append(f"{type(exc).__name__}:{exc}")
         return DistributedEvalResult(
             worker_count=workers,

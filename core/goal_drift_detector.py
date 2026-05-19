@@ -54,7 +54,7 @@ REASON: [Brief explanation]
                 
             return False
             
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('goal_drift_detector', e)
             logger.error("Drift check failed: %s", e)
             return False

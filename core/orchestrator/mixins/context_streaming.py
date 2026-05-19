@@ -78,7 +78,7 @@ class ContextStreamingMixin:
                     _dispose_awaitable(inner_monologue)
                 else:
                     ctx["inner_monologue"] = inner_monologue or ""
-            except Exception as _exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('context_streaming', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
 
@@ -94,7 +94,7 @@ class ContextStreamingMixin:
                         _dispose_awaitable(mood)
                     else:
                         ctx["emotional_state"] = mood
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('context_streaming', e)
                 logger.error("Affect extraction failed: %s", e, exc_info=True)
 
@@ -106,7 +106,7 @@ class ContextStreamingMixin:
                     _dispose_awaitable(theory_of_mind)
                     theory_of_mind = {}
                 ctx["theory_of_mind"] = theory_of_mind
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 ctx["theory_of_mind"] = {}
         else:
             ctx["theory_of_mind"] = {}
@@ -119,7 +119,7 @@ class ContextStreamingMixin:
                     _dispose_awaitable(social_context)
                     social_context = ""
                 ctx["social_narrative"] = social_context
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 ctx["social_narrative"] = ""
 
             # Passive depth increase with robust guard for None
@@ -156,7 +156,7 @@ class ContextStreamingMixin:
                         "backlog": [f"{t.status.upper()}: {t.description}" for t in all_tasks]
                     }
                     logger.debug("Strategic context injected for project: %s", proj.name)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('context_streaming', e)
                 logger.error("Failed to inject strategic context: %s", e)
 
@@ -199,7 +199,7 @@ class ContextStreamingMixin:
                     _dispose_awaitable(drives)
                     drives = {"curiosity": 0.5, "energy": 0.8}
                 ctx["metabolic_drives"] = drives
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('context_streaming', e)
                 logger.error("Drive extraction failed: %s", e)
 
@@ -214,7 +214,7 @@ class ContextStreamingMixin:
                 enhanced_ctx_str = await cog_integration.build_enhanced_context(message, emotional_context=emotional_val)
                 if enhanced_ctx_str:
                     ctx["advanced_cognition"] = enhanced_ctx_str
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('context_streaming', e)
                 logger.debug("Enhanced context unavailable: %s", e)
 
@@ -235,7 +235,7 @@ class ContextStreamingMixin:
                     "recommended_tools": recommendations
                 }
                 logger.info("🛠️ Tool Recommendations: %s -> %s", category, recommendations)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_streaming', e)
             logger.debug("Tool recommendations failed: %s", e)
 
@@ -262,7 +262,7 @@ class ContextStreamingMixin:
             try:
                 from core.ops.thinking_mode import ModeRouter
                 tier = ModeRouter(self.reflex_engine).route(message).value
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('context_streaming', exc)
                 logger.debug("Suppressed: %s", exc)
             # Build objective
@@ -277,7 +277,7 @@ class ContextStreamingMixin:
                 ls = container.get('liquid_state')
                 context['liquid_state'] = ls.get_status()
                 logger.debug("TOOL EXECUTION: Injected liquid_state: %s", context['liquid_state'])
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('context_streaming', e)
                 context_injection_error = e
                 logger.warning("TOOL EXECUTION: LiquidState injection failed: %s", e)
@@ -316,11 +316,11 @@ class ContextStreamingMixin:
             if hasattr(self, 'drives') and self.drives and hasattr(self.drives, 'satisfy'):
                 try:
                     await self.drives.satisfy("social", 5.0)
-                except Exception as _de:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _de:
                     record_degradation('context_streaming', _de)
                     logger.debug("Drive satisfaction failed in stream: %s", _de)
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_streaming', e)
             logger.error("Chat stream failed: %s", e)
             # v10.0 Zenith: Silent failure in stream if header already sent
@@ -390,7 +390,7 @@ class ContextStreamingMixin:
                 return
 
             self.conversation_history = pruned_history[-max_history:]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_streaming', e)
             logger.debug("History pruning failed: %s", e)
             if isinstance(self.conversation_history, list) and len(self.conversation_history) > 50:
@@ -464,6 +464,6 @@ class ContextStreamingMixin:
                     logger.info("📦 Deep Sleep Cycle: Triggering Metabolic Archival Compression...")
                     await archive_eng.archive_vital_logs()
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_streaming', e)
             logger.error("Memory consolidation failed: %s", e)

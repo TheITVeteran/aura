@@ -130,7 +130,7 @@ class ProactivePresence:
             get_substrate_voice_engine().on_user_spoke()
         except ImportError as exc:
             logger.debug("Substrate voice engine unavailable for user-spoke notification: %s", exc)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Substrate voice user-spoke notification failed: %s", exc)
         # Record user response for adaptive backoff
@@ -139,7 +139,7 @@ class ProactivePresence:
             get_user_response_tracker().record_user_response()
         except ImportError as exc:
             logger.debug("User response tracker unavailable for user response record: %s", exc)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("User response tracker failed to record response: %s", exc)
 
@@ -228,7 +228,7 @@ class ProactivePresence:
                         visible_presence=visible_presence,
                     )
 
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('proactive_presence', e)
                 logger.debug("[ProactivePresence] Loop error: %s", e)
 
@@ -250,7 +250,7 @@ class ProactivePresence:
             if reason:
                 logger.debug("[ProactivePresence] Held by background policy: %s", reason)
                 return False
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("[ProactivePresence] Background policy check failed: %s", exc)
 
@@ -301,7 +301,7 @@ class ProactivePresence:
             effective_gap *= get_user_response_tracker().get_backoff_multiplier()
         except ImportError as exc:
             logger.debug("User response tracker unavailable for proactive backoff: %s", exc)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("User response tracker backoff lookup failed: %s", exc)
         if now - self._last_output_time < effective_gap:
@@ -421,7 +421,7 @@ class ProactivePresence:
             from core.brain.entropy import PhysicalEntropyInjector
             # Map entropy [0, 0.4] → [0, total] using total as scale
             r = (PhysicalEntropyInjector.calculate_hardware_chaos() / 0.40) * total
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Hardware entropy unavailable for proactive choice; using PRNG fallback: %s", exc)
             r = random.uniform(0, total)
@@ -446,7 +446,7 @@ class ProactivePresence:
             if not content:
                 return None
             return (content, selected_source, True, selected_initiative_activity)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("[ProactivePresence] Generation failed (%s): %s",
                         getattr(selected_fn, "__name__", "unknown"), e)
@@ -505,7 +505,7 @@ class ProactivePresence:
                 if role and content:
                     lines.append(f"{role}: {content}")
             return "\n".join(lines)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Recent conversation context lookup failed: %s", exc)
             return ""
@@ -547,7 +547,7 @@ class ProactivePresence:
                 result = await tool_orch.execute_tool("web_search", {"query": "latest world news summary"})
                 if result and hasattr(result, "content"):
                     news = str(result.content)[:200]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("[ProactivePresence] Stimulus fetch failed: %s", e)
         if not news:
@@ -567,7 +567,7 @@ class ProactivePresence:
         )
         try:
             return await brain.generate(prompt, temperature=0.8, max_tokens=100)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("Prompt generation (reaction) failed: %s", e)
             return None
@@ -604,7 +604,7 @@ class ProactivePresence:
         )
         try:
             return await brain.generate(prompt, temperature=0.8, max_tokens=100)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("Prompt generation (goal) failed: %s", e)
             return None
@@ -631,7 +631,7 @@ class ProactivePresence:
         except ImportError as exc:
             logger.debug("Conversational dynamics unavailable for proactive hint: %s", exc)
             return ""
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Conversational dynamics context lookup failed: %s", exc)
             return ""
@@ -656,7 +656,7 @@ class ProactivePresence:
         )
         try:
             return await brain.generate(prompt, temperature=0.9, max_tokens=100)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("Prompt generation (reflection) failed: %s", e)
             return None
@@ -673,7 +673,7 @@ class ProactivePresence:
             jarvis = ServiceContainer.get("jarvis", default=None)
             if jarvis and hasattr(jarvis, "_unresolved_topics"):
                 unresolved_topics = [t["topic"] for t in jarvis._unresolved_topics if not t.get("reminder_fired")]
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("[ProactivePresence] JARVIS topic fetch failed: %s", e)
 
@@ -686,7 +686,7 @@ class ProactivePresence:
             from core.conversational.dynamics import get_dynamics_engine
             dyn_state = get_dynamics_engine().get_current_state()
             dynamics_threads = [t.content[:80] for t in dyn_state.open_threads if t.age_turns < 4]
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('proactive_presence', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -710,7 +710,7 @@ class ProactivePresence:
         )
         try:
             return await brain.generate(prompt, temperature=0.9, max_tokens=100)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("Prompt generation (topic) failed: %s", e)
             return None
@@ -749,7 +749,7 @@ class ProactivePresence:
             result = await brain.generate(prompt, temperature=0.85, max_tokens=50)
             if result and len(result.strip()) > 5:
                 return result.strip()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("[ProactivePresence] Check-in generation failed: %s", e)
 
@@ -829,7 +829,7 @@ class ProactivePresence:
                 get_user_response_tracker().record_proactive_sent(source="proactive_presence")
             except ImportError as exc:
                 logger.debug("User response tracker unavailable for proactive send record: %s", exc)
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("proactive_presence", exc)
                 logger.debug("User response tracker failed to record proactive send: %s", exc)
 
@@ -890,7 +890,7 @@ class ProactivePresence:
                 if reason:
                     logger.debug("[ProactivePresence] Visible emission held by background policy: %s", reason)
                     return
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("proactive_presence", exc)
                 logger.debug("[ProactivePresence] Visible emission policy check failed: %s", exc)
 
@@ -949,7 +949,7 @@ class ProactivePresence:
                         decision.get("reason", "suppressed"),
                     )
                     return
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('proactive_presence', e)
                 logger.debug("[ProactivePresence] Visible emission failed: %s", e)
 
@@ -966,7 +966,7 @@ class ProactivePresence:
                 "🧠 [ProactivePresence] Fallback thought → neural feed (#%d): %s",
                 self._consecutive_unprompted, content[:80],
             )
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('proactive_presence', e)
             logger.debug("[ProactivePresence] Neural feed emit failed: %s", e)
 
@@ -976,7 +976,7 @@ class ProactivePresence:
         try:
             from core.terminal_chat import get_terminal_fallback
             get_terminal_fallback().queue_autonomous_message(content)
-        except Exception as _exc:
+        except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('proactive_presence', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -986,7 +986,7 @@ class ProactivePresence:
         try:
             from core.container import ServiceContainer
             return ServiceContainer.get("cognitive_engine", default=None)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Cognitive engine lookup failed for proactive presence: %s", exc)
             return None

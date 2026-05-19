@@ -95,7 +95,7 @@ class OrganSupervisor:
         if sock.exists():
             try:
                 sock.unlink()
-            except Exception:
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass  # no-op: intentional
         record = OrganRecord(
             name=name,
@@ -131,7 +131,7 @@ class OrganSupervisor:
                         await asyncio.wait_for(record.proc.wait(), timeout=5.0)  # type: ignore[union-attr]
                     except TimeoutError:
                         record.proc.kill()  # type: ignore[union-attr]
-                except Exception as exc:
+                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                     record_degradation('organ_supervisor', exc)
                     logger.debug("organ stop %s failed: %s", record.name, exc)
 
@@ -151,7 +151,7 @@ class OrganSupervisor:
             )
             record.started_at = time.time()
             logger.info("🩻 organ '%s' launched (pid=%s)", record.name, record.proc.pid)
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             record_degradation('organ_supervisor', exc)
             logger.warning("organ '%s' failed to launch: %s", record.name, exc)
 
@@ -208,7 +208,7 @@ class OrganSupervisor:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
                 pass  # no-op: intentional
             return json.loads(data.decode("utf-8"))
         return await asyncio.wait_for(_do(), timeout=timeout_s)

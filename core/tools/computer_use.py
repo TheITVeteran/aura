@@ -103,7 +103,7 @@ class ComputerUseSkill:
             )
         try:
             output = await driver(action)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("computer_use", exc)
             logger.debug("Computer-use driver failed for %s: %s", action.kind, exc)
             return ComputerUseResult(
@@ -115,7 +115,7 @@ class ComputerUseSkill:
         if verifier is not None:
             try:
                 verified, evidence = await verifier(action, output)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("computer_use", exc)
                 logger.debug("Computer-use verifier failed for %s: %s", action.kind, exc)
                 return ComputerUseResult(

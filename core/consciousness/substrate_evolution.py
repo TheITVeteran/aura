@@ -183,7 +183,7 @@ class SubstrateEvolution:
 
                 try:
                     await self._run_generation()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('substrate_evolution', e)
                     logger.error("Evolution generation error: %s", e, exc_info=True)
         except asyncio.CancelledError:

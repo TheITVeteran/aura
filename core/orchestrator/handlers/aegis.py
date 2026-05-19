@@ -39,7 +39,7 @@ async def aegis_sentinel_loop(orch: "RobustOrchestrator") -> None:
                 restored = MycelialNetwork()
                 try:
                     ServiceContainer.register_instance("mycelial_network", restored)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     logger.debug("AEGIS: Mycelial registration failed after lock")
                 continue
 
@@ -59,6 +59,6 @@ async def aegis_sentinel_loop(orch: "RobustOrchestrator") -> None:
                     await mycelium.vault_sync()
                     orch._last_vault_sync = time.monotonic()
 
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('aegis', exc)
             logger.debug("🛡️ AEGIS Sentinel Pulse Error: %s", exc)

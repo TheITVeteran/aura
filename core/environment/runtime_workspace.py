@@ -45,7 +45,7 @@ def environment_runtime_dir(environment_id: str, *, purpose: str = "runtime") ->
         target = root / env_name / purpose_name
         target.mkdir(parents=True, exist_ok=True)
         return target
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("environment_runtime_workspace", exc)
         fallback = Path(tempfile.gettempdir()) / "aura_environment_runtime" / env_name / purpose_name
         fallback.mkdir(parents=True, exist_ok=True)

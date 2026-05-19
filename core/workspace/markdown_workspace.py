@@ -101,7 +101,7 @@ class MarkdownWorkspace:
                 from core.config import config
 
                 storage_path = config.paths.data_dir / "markdown_workspace" / "workspace.json"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "markdown_workspace" / "workspace.json"
         self.storage_path = Path(storage_path)
         self.default_user = default_user
@@ -527,7 +527,7 @@ class MarkdownWorkspace:
                 str(group): {str(user) for user in users}
                 for group, users in data.get("groups", {}).items()
             } or {self.default_user: {self.default_user}}
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("markdown_workspace", exc)
             raise
 

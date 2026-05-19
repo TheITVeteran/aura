@@ -160,7 +160,7 @@ class TaggedReplyQueue:
                     dropped.session_id or "-",
                 )
                 self._queue.put_nowait(reply)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('tagged_reply_queue', exc)
                 logger.warning("Could not enqueue tagged reply: %s", exc)
 
@@ -182,7 +182,7 @@ class TaggedReplyQueue:
                     dropped.session_id or "-",
                 )
                 self._queue.put_nowait(reply)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('tagged_reply_queue', exc)
                 logger.warning("Could not enqueue tagged reply without waiting: %s", exc)
 
@@ -306,7 +306,7 @@ class TaggedReplyQueue:
     def task_done(self):
         try:
             self._queue.task_done()
-        except Exception as _exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             record_degradation('tagged_reply_queue', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

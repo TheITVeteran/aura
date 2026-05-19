@@ -281,7 +281,7 @@ class MetaLearner:
         try:
             with open(_LOG_PATH, "a") as f:
                 f.write(json.dumps(step.to_dict(), default=str) + "\n")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
     # ── Persistence ─────────────────────────────────────────────────────
@@ -294,7 +294,7 @@ class MetaLearner:
             for name, params in self._meta_params.items():
                 save_dict[f"meta_{name}"] = params
             np.savez_compressed(str(_STATE_PATH), **save_dict)
-        except Exception as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Meta-learner save failed: %s", exc)
 
     def _load(self) -> None:
@@ -308,7 +308,7 @@ class MetaLearner:
                     name = key[5:]
                     self._meta_params[name] = data[key]
             logger.info("Meta-learner restored (cycle %d)", self._cycle_count)
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             logger.debug("Meta-learner load failed: %s", exc)
 
     def get_status(self) -> Dict[str, Any]:

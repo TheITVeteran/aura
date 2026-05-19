@@ -207,7 +207,7 @@ class ViabilityEngine:
         for cb in list(self._on_transition):
             try:
                 cb(old, new)
-            except Exception as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('viability', exc)
                 logger.debug("viability transition cb error: %s", exc)
 
@@ -255,7 +255,7 @@ class ViabilityEngine:
             while self._running:
                 try:
                     self.tick()
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('viability', exc)
                     logger.debug("viability tick error: %s", exc)
                 await asyncio.sleep(interval)
@@ -311,11 +311,11 @@ def _sample_from_container() -> ViabilitySample:
         ram = psutil.virtual_memory().percent
         try:
             disk = psutil.disk_usage("/").percent
-        except Exception as exc:
+        except (ImportError, OSError, AttributeError) as exc:
             record_degradation("viability", exc)
             logger.debug("Viability disk usage probe failed: %s", exc)
             disk = 0.0
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("viability", exc)
         logger.debug("Viability psutil probe failed: %s", exc)
     try:
@@ -348,7 +348,7 @@ def _sample_from_container() -> ViabilitySample:
         belief_graph = ServiceContainer.get("belief_graph", default=None)
         if belief_graph is not None and hasattr(belief_graph, "incoherent_count"):
             incoherent = int(belief_graph.incoherent_count() or 0)
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("viability", exc)
         logger.debug("Viability service metrics probe failed: %s", exc)
     return ViabilitySample(

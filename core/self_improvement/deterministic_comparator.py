@@ -192,7 +192,7 @@ class DeterministicComparator:
                     test_name=f"__timeout__{Path(test_file).name}",
                     passed=False, error_message=f"Test timed out after {self.timeout}s",
                 ))
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 verdicts.append(TestVerdict(
                     test_name=f"__error__{Path(test_file).name}",
                     passed=False, error_message=str(e),

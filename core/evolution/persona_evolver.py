@@ -35,7 +35,7 @@ class PersonaEvolver:
             # For now, we reuse the existing internal logic but conditioned on the new reflection
             # In a full v34 implementation, this would call a LLM to generate the delta
             await self.run_evolution_cycle(force=True, custom_reflection=reflection)
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('persona_evolver', e)
             logger.error(f"Persona evolution failed: {e}")
 
@@ -47,7 +47,7 @@ class PersonaEvolver:
             if not runtime_feature_enabled(self.orchestrator, "persona_evolution", default=True):
                 logger.debug("Persona evolution skipped by runtime mode configuration.")
                 return
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('persona_evolver', exc)
             logger.debug("Persona evolution runtime-mode check skipped: %s", exc)
 
@@ -117,7 +117,7 @@ Recent Interactions:
                 personality.interaction_memories = []
                 self.last_evolution_time = time.time()
                 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('persona_evolver', e)
             logger.error("PersonaEvolver cycle failed: %s", e)
             

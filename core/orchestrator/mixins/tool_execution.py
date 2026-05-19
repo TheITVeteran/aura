@@ -96,7 +96,7 @@ class ToolExecutionMixin:
                     success=success,
                     error=error,
                 )
-            except Exception as _coding_exc:
+            except (ImportError, AttributeError, RuntimeError) as _coding_exc:
                 record_degradation('tool_execution', _coding_exc)
                 logger.error("Coding session tool recording failed: %s", _coding_exc, exc_info=True)
 
@@ -114,7 +114,7 @@ class ToolExecutionMixin:
                 result = {"ok": False, "error": f"Will refused: {_will_decision.reason}"}
                 _record_coding_tool_event(result, success=False, error=str(_will_decision.reason))
                 return result
-        except Exception as _will_err:
+        except (ImportError, AttributeError, RuntimeError) as _will_err:
             record_degradation('tool_execution', _will_err)
             logger.debug("Unified Will tool gate degraded: %s", _will_err)
         # ─────────────────────────────────────────────────────────────────
@@ -143,17 +143,17 @@ class ToolExecutionMixin:
                 try:
                     from core.unified_action_log import get_action_log
                     get_action_log().record(tool_name, _origin, "tool", "blocked", str(reason))
-                except Exception: pass
+                except (ImportError, AttributeError, RuntimeError): pass
                 result = {"ok": False, "error": f"Executive blocked: {reason}"}
                 _record_coding_tool_event(result, success=False, error=str(reason))
                 return result
             try:
                 from core.unified_action_log import get_action_log
                 get_action_log().record(tool_name, _origin, "tool", "approved")
-            except Exception: pass
+            except (ImportError, AttributeError, RuntimeError): pass
             if _tool_handle.constraints:
                 kwargs.update(_tool_handle.constraints)  # Apply any degraded-mode constraints
-        except Exception as _exec_err:
+        except (ImportError, AttributeError, RuntimeError) as _exec_err:
             record_degradation('tool_execution', _exec_err)
             if _constitutional_runtime_live:
                 try:
@@ -168,7 +168,7 @@ class ToolExecutionMixin:
                         context={"error": type(_exec_err).__name__},
                         exc=_exec_err,
                     )
-                except Exception as _exc:
+                except (ImportError, AttributeError, RuntimeError) as _exc:
                     record_degradation('tool_execution', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
                 logger.warning("🚫 ConstitutionalCore unavailable for tool '%s': %s", tool_name, _exec_err)
@@ -210,7 +210,7 @@ class ToolExecutionMixin:
                     _record_coding_tool_event(result, success=False, error="Capability token denied tool execution.")
                     return result
                 kwargs["capability_token_id"] = capability_token_id
-            except Exception as capability_err:
+            except (ImportError, AttributeError, RuntimeError) as capability_err:
                 record_degradation('tool_execution', capability_err)
                 logger.warning("Capability verification failed for tool '%s': %s", tool_name, capability_err)
                 if _constitution and _tool_handle:
@@ -317,7 +317,7 @@ class ToolExecutionMixin:
                 from core.embodiment.resistance_sandbox import get_resistance_sandbox
                 _sandbox = get_resistance_sandbox()
                 _sandbox_predicted = "success" if tool_name not in ("browser", "shell", "file_write") else "success_with_side_effects"
-            except Exception:
+            except (ImportError, AttributeError, RuntimeError):
                 _sandbox = None
 
             # 3. Literal Execution (Async)
@@ -343,7 +343,7 @@ class ToolExecutionMixin:
                         predicted_outcome=_sandbox_predicted,
                         action_fn=lambda: _actual_outcome,
                     )
-                except Exception as _sbx_err:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _sbx_err:
                     record_degradation('tool_execution', _sbx_err)
                     logger.debug("Resistance sandbox feedback failed: %s", _sbx_err)
 
@@ -352,7 +352,7 @@ class ToolExecutionMixin:
                 try:
                     category = self.tool_learner.classify_task(str(args.get('query', args.get('path', ''))))
                     self.tool_learner.record_usage(tool_name, category, success, elapsed_ms)
-                except Exception as _e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as _e:
                     record_degradation('tool_execution', _e)
                     logger.debug("Tool learning record failed: %s", _e)
 
@@ -366,7 +366,7 @@ class ToolExecutionMixin:
                         success=success,
                         importance=0.3 if success else 0.7,
                     )
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('tool_execution', _e)
                     logger.debug("Unified memory record failed: %s", _e)
 
@@ -379,7 +379,7 @@ class ToolExecutionMixin:
                     outcome=result,
                     success=success
                 )
-            except Exception as _e:
+            except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('tool_execution', _e)
                 logger.debug("ACG record failed: %s", _e)
 
@@ -404,7 +404,7 @@ class ToolExecutionMixin:
             _record_coding_tool_event(result, success=success, error=str(result.get("error", "")))
             return result
 
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('tool_execution', e)
             logger.error("Execution Jolt (Pain): Tool %s crashed: %s", tool_name, e)
             # Record failure
@@ -418,7 +418,7 @@ class ToolExecutionMixin:
                         emotional_valence=-0.5,
                         importance=0.9,
                     )
-                except Exception as _e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
                     record_degradation('tool_execution', _e)
                     logger.debug("Unified memory record failed (crash path): %s", _e)
             if _constitution and _tool_handle:
@@ -430,7 +430,7 @@ class ToolExecutionMixin:
                         duration_ms=(time.time() - _start) * 1000,
                         error=str(e),
                     )
-                except Exception as _finish_exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _finish_exc:
                     record_degradation('tool_execution', _finish_exc)
                     logger.debug("Constitutional tool completion failed: %s", _finish_exc)
             result = {"ok": False, "error": "execution_jolt", "message": str(e)}

@@ -82,7 +82,7 @@ class CognitiveDaemon:
         try:
             DAEMON_PID_FILE.unlink(missing_ok=True)
             DAEMON_SOCKET.unlink(missing_ok=True)
-        except Exception as _e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('daemon', _e)
             logger.debug('Ignored Exception in daemon.py: %s', _e)
 
@@ -112,7 +112,7 @@ class CognitiveDaemon:
                         resp = await self.orchestrator.process_user_input(data["content"])
                         writer.write(json.dumps({"type": "response", "content": resp}).encode() + b"\n")
                         await writer.drain()
-                except Exception as e:
+                except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('daemon', e)
                     logger.error("IPC error: %s", e)
         finally:
@@ -160,7 +160,7 @@ class WorldFeed:
                             while len(self._seen_ids) > self._max_seen:
                                 self._seen_ids.popitem(last=False)
                             await self._inject(entry)
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('daemon', e)
                 logger.debug("Feed error: %s", e)
             await asyncio.sleep(self.poll_interval)

@@ -396,7 +396,7 @@ class NeurochemicalSystem:
                 try:
                     self._metabolic_tick()
                     self._push_modulation()
-                except Exception as e:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('neurochemical_system', e)
                     logger.error("Neurochemical tick error: %s", e, exc_info=True)
                 elapsed = time.time() - t0
@@ -449,7 +449,7 @@ class NeurochemicalSystem:
             gain, plasticity, noise = self.get_mesh_modulation()
             try:
                 self._mesh_ref.set_modulatory_state(gain, plasticity, noise)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('neurochemical_system', e)
                 logger.debug("Failed to push mesh modulation: %s", e)
 
@@ -462,7 +462,7 @@ class NeurochemicalSystem:
                 self._workspace_ref._IGNITION_THRESHOLD = max(
                     0.3, min(0.9, base_threshold + threshold_adj)
                 )
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('neurochemical_system', e)
                 logger.debug("Failed to push GWT modulation: %s", e)
 
@@ -518,7 +518,7 @@ class NeurochemicalSystem:
             drive = ServiceContainer.get("drive_engine", default=None)
             if drive and hasattr(drive, "relieve_boredom"):
                 drive.relieve_boredom("tool_success")
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("neurochemical_system", exc)
             logger.debug("Drive boredom relief after success failed: %s", exc)
 
@@ -547,7 +547,7 @@ class NeurochemicalSystem:
                 drive = ServiceContainer.get("drive_engine", default=None)
                 if drive and hasattr(drive, "relieve_boredom"):
                     drive.relieve_boredom("novelty")
-            except Exception as exc:
+            except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("neurochemical_system", exc)
                 logger.debug("Drive boredom relief after novelty failed: %s", exc)
 
@@ -690,7 +690,7 @@ class NeurochemicalSystem:
             from core.consciousness.adaptive_mood import get_adaptive_mood
 
             return get_adaptive_mood().predict(chem)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("neurochemical_system", exc)
             logger.debug("Adaptive mood prediction failed, using legacy fallback: %s", exc)
             # Defensive fallback: degrade to legacy formula if adaptive layer
@@ -726,7 +726,7 @@ class NeurochemicalSystem:
             from core.consciousness.adaptive_mood import get_adaptive_mood
 
             return get_adaptive_mood().update_from_outcome(chem, observed_mood)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("neurochemical_system", exc)
             logger.debug("Adaptive mood outcome update failed: %s", exc)
             return {}

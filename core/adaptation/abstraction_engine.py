@@ -128,7 +128,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                             metadata={"path": str(self.storage_path)},
                         )
                     )
-                except Exception as _rcpt_exc:
+                except (ImportError, AttributeError, RuntimeError) as _rcpt_exc:
                     record_degradation('abstraction_engine', _rcpt_exc)
                     logger.debug("AbstractionEngine receipt emit skipped: %s", _rcpt_exc)
                 
@@ -158,7 +158,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                         urgency=0.9
                     )
                     
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('abstraction_engine', e)
                 logger.error(f"Failed to commit first principle: {e}")
 
@@ -189,7 +189,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                 formatted += f"- {p['principle']}\n"
             return formatted
             
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
             record_degradation('abstraction_engine', e)
             logger.error(f"Failed to load principles: {e}")
             return ""
@@ -226,7 +226,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                         schema_version=1,
                         schema_name="abstraction.principles",
                     )
-            except Exception as e:
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('abstraction_engine', e)
                 logger.error(f"Failed to increment principle counts: {e}")
 

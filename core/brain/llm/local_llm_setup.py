@@ -32,7 +32,7 @@ class LocalLLMServer(ABC):
                 url = f"http://localhost:{self.port}/api/tags" if self.port == 11434 else f"http://localhost:{self.port}/v1/models"
                 response = await client.get(url, timeout=2)
                 return response.status_code == 200
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return False
 
 class OllamaManager(LocalLLMServer):
@@ -57,7 +57,7 @@ class OllamaManager(LocalLLMServer):
                 logger.info("📥 Pulling %s... this may take a while.", self.model_name)
                 subprocess.run(["ollama", "pull", self.model_name], check=True)
             return True
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('local_llm_setup', e)
             logger.error("Failed to ensure model %s: %s", self.model_name, e)
             return False
@@ -83,7 +83,7 @@ class OllamaManager(LocalLLMServer):
                 if await self.is_running():
                     return self.ensure_model()
             logger.error("Ollama did not become ready within 10s")
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('local_llm_setup', e)
             logger.error("Failed to start Ollama: %s", e)
         return False

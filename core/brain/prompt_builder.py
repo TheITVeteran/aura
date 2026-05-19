@@ -82,7 +82,7 @@ def build_system_prompt(orchestrator=None) -> str:
                      sections.append(f"[INTERNAL SUBJECTIVE STATE]\n{agency_core._current_monologue}")
             except RuntimeError as _e:
                 logger.debug('Ignored RuntimeError in prompt_builder.py: %s', _e)
-        except Exception as _e:
+        except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('prompt_builder', _e)
             logger.debug('Ignored Exception in prompt_builder.py: %s', _e)
 

@@ -29,7 +29,7 @@ class HardwareManager(AuraBaseModule):
                     self.logger.info("✓ Connected to hardware: %s (%s)", device.device_name, device_id)
                 else:
                     self.logger.warning("Failed to connect to hardware: %s", device.device_name)
-            except Exception as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('hardware_manager', e)
                 self.logger.error("Exception connecting %s: %s", device.device_name, e)
 

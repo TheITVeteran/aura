@@ -43,7 +43,7 @@ class ComputerUseSkill(BaseSkill):
         try:
             from core.container import ServiceContainer
             from core.security.permission_guard import PermissionType
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
         guard = ServiceContainer.get("permission_guard", default=None)
@@ -102,7 +102,7 @@ class ComputerUseSkill(BaseSkill):
     def _runtime_permission_payload(message: str) -> Optional[Dict[str, Any]]:
         try:
             from core.security.permission_guard import PermissionType, get_permission_guard
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError):
             return None
 
         guard = get_permission_guard()
@@ -154,7 +154,7 @@ class ComputerUseSkill(BaseSkill):
             if mycelium:
                 hypha = mycelium.get_hypha("skill", "os")
                 if hypha: hypha.pulse(success=True)
-        except Exception as e:
+        except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('computer_use', e)
             capture_and_log(e, {'module': __name__})
 
@@ -196,7 +196,7 @@ class ComputerUseSkill(BaseSkill):
                 try:
                     result = await asyncio.to_thread(self._read_menu_clock_macos)
                     return {"ok": True, "clock_text": result, "text": result, "source": "macos_menu_bar"}
-                except Exception as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('computer_use', exc)
                     fallback = time.strftime("%a %b %d %H:%M")
                     return {
@@ -214,7 +214,7 @@ class ComputerUseSkill(BaseSkill):
                 # Optional pre-verification
                 try:
                     pre_state_text = await asyncio.to_thread(self._read_screen_text_macos)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
 
                 await asyncio.to_thread(pyautogui.click, x=params.x, y=params.y)
@@ -223,7 +223,7 @@ class ComputerUseSkill(BaseSkill):
                 try:
                     await asyncio.sleep(0.5)
                     post_state_text = await asyncio.to_thread(self._read_screen_text_macos)
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
                 
                 verification = "State shifted." if pre_state_text != post_state_text else "No obvious state shift detected."
@@ -237,7 +237,7 @@ class ComputerUseSkill(BaseSkill):
                     post_state = await asyncio.to_thread(self._read_screen_text_macos)
                     if params.target[:10] in post_state:
                         pass # Typed text is visible
-                except Exception:
+                except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
                     
                 return {"ok": True, "typed": params.target[:50]}
@@ -319,7 +319,7 @@ class ComputerUseSkill(BaseSkill):
             else:
                 return {"ok": False, "error": f"Unknown action: {action}"}
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             record_degradation('computer_use', e)
             runtime_permission_error = self._runtime_permission_payload(str(e))
             if runtime_permission_error:
@@ -331,7 +331,7 @@ class ComputerUseSkill(BaseSkill):
         """Helper for AgencyCore to read screen text directly."""
         try:
             return self._read_screen_text_macos()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('computer_use', e)
             return f"[read_screen_text failed: {e}]"
 
@@ -339,7 +339,7 @@ class ComputerUseSkill(BaseSkill):
         """Helper for reading the macOS menu bar clock."""
         try:
             return self._read_menu_clock_macos()
-        except Exception as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('computer_use', e)
             return f"[read_menu_clock failed: {e}]"
 
