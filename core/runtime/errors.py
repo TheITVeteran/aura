@@ -1,6 +1,6 @@
 """core/runtime/errors.py — Structured degradation receipts.
 
-The audit found 5,222 `except Exception` blocks, most swallowing errors
+The audit found 5,222 broad catch-all blocks, most swallowing errors
 with `pass` or `logger.debug`.  This module provides the canonical
 replacement pattern:
 
@@ -27,36 +27,72 @@ visible, countable, and queryable.
 """
 from __future__ import annotations
 
+# ruff: noqa: N818
 import logging
 import threading
 import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 logger = logging.getLogger("Aura.Errors")
-
-Severity = Literal["debug", "warning", "degraded", "critical"]
 
 Severity = Literal["debug", "warning", "degraded", "critical"]
 
 # ---------------------------------------------------------------------------
 # Typed Degradation Exceptions
 # ---------------------------------------------------------------------------
-class BoundaryFailure(Exception): pass
-class DependencyUnavailable(Exception): pass
-class ModelUnavailable(Exception): pass
-class CapabilityDenied(Exception): pass
-class ReceiptInvalid(Exception): pass
-class StateCoherenceFailure(Exception): pass
-class MemoryWriteDenied(Exception): pass
-class NetworkEffectDenied(Exception): pass
-class SandboxViolation(Exception): pass
-class PersistenceCorruption(Exception): pass
-class TimeoutBudgetExceeded(Exception): pass
-class ResourceExhaustion(Exception): pass
-class InvariantViolation(Exception): pass
+class BoundaryFailure(Exception):
+    """A runtime boundary rejected or failed a handoff."""
+
+
+class DependencyUnavailable(Exception):
+    """A required dependency is missing or offline."""
+
+
+class ModelUnavailable(Exception):
+    """A model backend could not serve the request."""
+
+
+class CapabilityDenied(Exception):
+    """A requested capability was denied by policy."""
+
+
+class ReceiptInvalid(Exception):
+    """A governance or audit receipt failed validation."""
+
+
+class StateCoherenceFailure(Exception):
+    """Runtime state failed a coherence invariant."""
+
+
+class MemoryWriteDenied(Exception):
+    """A memory write was refused by governance or validation."""
+
+
+class NetworkEffectDenied(Exception):
+    """A network side effect was denied."""
+
+
+class SandboxViolation(Exception):
+    """A sandbox boundary was violated."""
+
+
+class PersistenceCorruption(Exception):
+    """Durable state failed integrity validation."""
+
+
+class TimeoutBudgetExceeded(Exception):
+    """Execution exceeded its allowed timeout budget."""
+
+
+class ResourceExhaustion(Exception):
+    """A resource budget was exhausted."""
+
+
+class InvariantViolation(Exception):
+    """A required runtime invariant was violated."""
 
 # ---------------------------------------------------------------------------
 # In-memory degradation tracking
@@ -78,9 +114,9 @@ class DegradationTracker:
 
     def __init__(self, max_records: int = 500):
         self._lock = threading.Lock()
-        self._records: List[DegradationRecord] = []
+        self._records: list[DegradationRecord] = []
         self._max = max_records
-        self._counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     def record(self, rec: DegradationRecord) -> None:
         with self._lock:
@@ -89,7 +125,7 @@ class DegradationTracker:
                 self._records = self._records[-self._max:]
             self._counts[rec.subsystem][rec.severity] += 1
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "total_degradations": len(self._records),
@@ -108,7 +144,7 @@ class DegradationTracker:
                 ],
             }
 
-    def recent(self, *, subsystem: str | None = None, limit: int = 20) -> List[DegradationRecord]:
+    def recent(self, *, subsystem: str | None = None, limit: int = 20) -> list[DegradationRecord]:
         with self._lock:
             records = self._records
             if subsystem:
@@ -146,9 +182,9 @@ def record_degradation(
     action: str = "",
     *,
     receipt_required: bool = False,
-    extra: Dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> DegradationRecord:
-    """Record a degradation event — the canonical replacement for ``except Exception: pass``.
+    """Record a degradation event: the canonical replacement for silent catch-alls.
 
     Parameters
     ----------
@@ -190,6 +226,19 @@ def record_degradation(
     )
     _tracker.record(record)
 
+    # Keep subsystem health causal, not just logged.
+    try:
+        registry = globals().get("_registry")
+        if registry is not None:
+            health = registry.register(subsystem)
+            health.last_error = f"{error_type}: {error_msg}"
+            if severity == "critical":
+                health.mark_unavailable(error_msg)
+            elif severity in ("degraded", "warning"):
+                health.mark_degraded(error_msg, impact=action)
+    except (AttributeError, RuntimeError, TypeError, ValueError) as health_exc:
+        logger.debug("Subsystem health update failed for %s: %s", subsystem, health_exc)
+
     # Log at the appropriate level
     log_msg = (
         f"[DEGRADATION] {subsystem} ({severity}): {error_type}: {error_msg} "
@@ -207,7 +256,7 @@ def record_degradation(
     # Emit durable receipt if requested
     if receipt_required:
         try:
-            from core.runtime.receipts import get_receipt_store, _ReceiptBase
+            from core.runtime.receipts import _ReceiptBase, get_receipt_store
             store = get_receipt_store()
 
             @dataclass
@@ -218,7 +267,7 @@ def record_degradation(
                 error_type_name: str = ""
                 error_message_text: str = ""
                 action_taken: str = ""
-                extra_data: Dict[str, Any] = field(default_factory=dict)
+                extra_data: dict[str, Any] = field(default_factory=dict)
 
             receipt = DegradationReceipt(
                 subsystem=subsystem,
@@ -238,17 +287,18 @@ def record_degradation(
     # ── Incident Manager integration ──────────────────────────────
     # Critical and degraded-severity events are auto-reported as incidents
     # for structured tracking, deduplication, and alerting.
+    incident = None
     if severity in ("critical", "degraded"):
         try:
             from core.resilience.incident_manager import (
-                get_incident_manager,
                 IncidentSeverity,
+                get_incident_manager,
             )
             incident_sev = (
                 IncidentSeverity.CRITICAL if severity == "critical"
                 else IncidentSeverity.DEGRADED
             )
-            get_incident_manager().report(
+            incident = get_incident_manager().report(
                 category=f"degradation:{subsystem}",
                 description=f"{error_type}: {error_msg[:150]}",
                 severity=incident_sev,
@@ -258,6 +308,26 @@ def record_degradation(
             )
         except (ImportError, AttributeError, RuntimeError):
             pass  # Incident manager unavailable — already logged
+
+    # ── Repair routing integration ─────────────────────────────────────
+    if severity in ("critical", "degraded"):
+        try:
+            from core.resilience.degradation_repair import get_degradation_repair_router
+
+            repair_action = get_degradation_repair_router().route(
+                record=record,
+                error=error,
+                incident=incident,
+                extra=extra,
+            )
+            if incident is not None:
+                incident.metadata["repair_router"] = repair_action.to_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as repair_exc:
+            logger.debug(
+                "Degradation repair routing unavailable for %s: %s",
+                subsystem,
+                repair_exc,
+            )
 
     # ── Metrics integration ───────────────────────────────────────
     try:
@@ -304,7 +374,7 @@ class SubsystemHealth:
         self.reason = reason
         self.last_failed_at = time.time()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "status": self.status,
@@ -322,7 +392,7 @@ class SubsystemRegistry:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._systems: Dict[str, SubsystemHealth] = {}
+        self._systems: dict[str, SubsystemHealth] = {}
 
     def register(self, name: str) -> SubsystemHealth:
         with self._lock:
@@ -334,7 +404,7 @@ class SubsystemRegistry:
         with self._lock:
             return self._systems.get(name)
 
-    def all_status(self) -> Dict[str, Dict[str, Any]]:
+    def all_status(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             return {name: h.to_dict() for name, h in self._systems.items()}
 
