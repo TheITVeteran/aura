@@ -505,13 +505,14 @@ class RobustOrchestrator(OrchestratorBootMixin, StatusManagerMixin, Orchestrator
                 # Continue — do not return False
             self._boot_warnings = v_result.warnings
             
-            # Print factual banner (Patch 23)
-            print("------------------------------------------")
-            print("       AURORA NEURAL CORE v1.0.0          ")
-            print("------------------------------------------")
-            print(" Integrity: Validated" if not self._boot_warnings else f" Integrity: Validated with {len(self._boot_warnings)} warnings")
-            print(f" Environment: {os.uname().sysname} {os.uname().machine}")
-            print("------------------------------------------")
+            # Boot banner — routed through logger for observability
+            _integrity_msg = "Validated" if not self._boot_warnings else f"Validated with {len(self._boot_warnings)} warnings"
+            logger.info("══════════════════════════════════════════")
+            logger.info("       AURORA NEURAL CORE v1.0.0          ")
+            logger.info("══════════════════════════════════════════")
+            logger.info(" Integrity: %s", _integrity_msg)
+            logger.info(" Environment: %s %s", os.uname().sysname, os.uname().machine)
+            logger.info("══════════════════════════════════════════")
             
         except _ORCHESTRATOR_RECOVERABLE_ERRORS as e:
             record_degradation('main', e)
