@@ -635,25 +635,25 @@ class OrchestratorBootMixin(
 
                 _spawn_boot_task(_final_steps(), "orchestrator.final_steps")
                 
-                # ── Startup Health Check ──────────────────────────────
-                # Report status of each critical service so boot issues are visible
-                critical_services = [
-                    "cognitive_engine", "capability_engine", "mycelial_network",
-                    "voice_engine", "database_coordinator", "liquid_substrate",
-                ]
-                boot_warnings = []
-                for svc_name in critical_services:
-                    svc = ServiceContainer.get(svc_name, default=None)
-                    status_str = "[ OK ]" if svc else "[WARN]"
-                    if not svc:
-                        boot_warnings.append(svc_name)
-                    logger.info("  %s %s", status_str, svc_name)
-                
-                if boot_warnings:
-                    logger.warning("⚠️  BOOT: %d services unavailable: %s", 
-                                  len(boot_warnings), ", ".join(boot_warnings))
-                else:
-                    logger.info("✅ All critical services online")
+                # ── Runtime Health Contract ───────────────────────────
+                # Evaluate the formal health contract that defines what
+                # MUST be alive vs what's optional enrichment.
+                try:
+                    from core.runtime.health_contract import log_health_report, HealthLevel
+                    verdict = log_health_report()
+                    if verdict.level == HealthLevel.DEAD:
+                        logger.critical("🚨 HEALTH CONTRACT: DEAD — no critical services alive")
+                        self.status.healthy = False
+                    elif verdict.level == HealthLevel.CRITICAL:
+                        logger.critical("🚨 HEALTH CONTRACT: CRITICAL — some critical services missing")
+                        self.status.healthy = False
+                    elif verdict.level == HealthLevel.DEGRADED:
+                        logger.warning("⚠️ HEALTH CONTRACT: DEGRADED — important services missing")
+                    else:
+                        logger.info("✅ HEALTH CONTRACT: All critical + important services online")
+                except (ImportError, AttributeError, RuntimeError) as hc_err:
+                    record_degradation('boot', hc_err)
+                    logger.error("Health contract evaluation failed: %s", hc_err)
                 
                 # ── Startup Validation ────────────────────────────────
                 # Always mark initialized BEFORE validation to prevent
