@@ -55,6 +55,24 @@ def execute():
     assert analyze_file(path) == []
 
 
+def test_degradation_audit_accepts_variable_recovery_action(tmp_path):
+    path = _write(
+        tmp_path / "tool_orchestrator.py",
+        """
+from core.runtime.errors import record_degradation
+
+def execute(action):
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        record_degradation("tool_orchestrator", exc, action=action)
+        cleanup_side_effect()
+""",
+    )
+
+    assert analyze_file(path) == []
+
+
 def test_degradation_audit_flags_bare_limp_on_record(tmp_path):
     path = _write(
         tmp_path / "tool_orchestrator.py",

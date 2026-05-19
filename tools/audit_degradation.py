@@ -89,7 +89,11 @@ def _keyword_value(call: ast.Call, name: str) -> ast.AST | None:
 
 
 def _call_has_recovery_action(call: ast.Call) -> bool:
-    action = _literal_string(_keyword_value(call, "action"))
+    action_node = _keyword_value(call, "action")
+    if action_node is not None and not isinstance(action_node, ast.Constant):
+        return True
+
+    action = _literal_string(action_node)
     if not action and len(call.args) >= 4:
         action = _literal_string(call.args[3])
     if action.lower() not in NO_RECOVERY_ACTIONS:
