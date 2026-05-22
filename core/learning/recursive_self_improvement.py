@@ -20,9 +20,37 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, record_degradation
 
 logger = logging.getLogger("Aura.RecursiveSelfImprovement")
+_RSI_RECOVERABLE_ERRORS = (
+    AttributeError,
+    FileNotFoundError,
+    ImportError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_rsi_degradation(
+    subsystem: str,
+    error: BaseException,
+    *,
+    action: str,
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        subsystem,
+        error,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 
 @dataclass(frozen=True)
@@ -452,7 +480,12 @@ class RecursiveSelfImprovementLoop:
                 system2_receipt=ranked.receipt.to_dict(),
             )
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("recursive_self_improvement.native_system2", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement.native_system2",
+                exc,
+                action="kept original RSI plan after native System 2 ranking was unavailable",
+                extra={"objective": plan.objective, "actions": plan.actions},
+            )
             return plan
 
     def _authorize(self, plan: ImprovementPlan) -> tuple[bool, str]:
@@ -475,7 +508,12 @@ class RecursiveSelfImprovementLoop:
             )
             return bool(decision.is_approved()), str(decision.reason)
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="failed RSI authorization closed unless explicit degraded-open override is set",
+                extra={"objective": plan.objective, "actions": plan.actions},
+            )
             if os.getenv("AURA_RSI_ALLOW_DEGRADED_OPEN", "0") == "1":
                 return True, f"authorization_degraded_open:{type(exc).__name__}"
             return False, f"authorization_unavailable:{type(exc).__name__}"
@@ -489,7 +527,11 @@ class RecursiveSelfImprovementLoop:
                 result = await result
             return bool(result)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="marked weight update failed and blocked RSI promotion",
+            )
             logger.error("Recursive weight update failed: %s", exc)
             return False
 
@@ -504,7 +546,12 @@ class RecursiveSelfImprovementLoop:
                 if deterministic.get("repairs_successful", 0) > 0:
                     return {"ok": bool(deterministic.get("ok", False)), "result": deterministic}
             except (OSError, ConnectionError, TimeoutError) as exc:
-                record_degradation("recursive_self_improvement", exc)
+                _record_rsi_degradation(
+                    "recursive_self_improvement",
+                    exc,
+                    action="continued to governed self-modifier after deterministic structural repair failed",
+                    extra={"max_repairs": 3},
+                )
                 deterministic = {"ok": False, "reason": f"structural_improver:{type(exc).__name__}:{exc}"}
 
         if not self.self_modifier:
@@ -522,7 +569,12 @@ class RecursiveSelfImprovementLoop:
                 return {"ok": bool(result.get("success", False)), "result": result, "deterministic": deterministic}
             return {"ok": bool(result), "result": result, "deterministic": deterministic}
         except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="failed code refinement closed and returned non-promotable action result",
+                extra={"deterministic": deterministic},
+            )
             return {"ok": False, "reason": f"{type(exc).__name__}:{exc}", "deterministic": deterministic}
 
     def _rollback_weights(self) -> bool:
@@ -530,7 +582,11 @@ class RecursiveSelfImprovementLoop:
             try:
                 return bool(self.live_learner.rollback_adapter())
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("recursive_self_improvement", exc)
+                _record_rsi_degradation(
+                    "recursive_self_improvement",
+                    exc,
+                    action="reported weight rollback failure and left cycle unpromoted",
+                )
         return False
 
     async def _evaluate(self) -> ImprovementScorecard:
@@ -541,7 +597,11 @@ class RecursiveSelfImprovementLoop:
                     raw = await raw
                 return self._coerce_scorecard(raw)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="used zero scorecard and regression marker after evaluator failed",
+            )
             return ImprovementScorecard(score=0.0, regressions=[f"evaluator_error:{type(exc).__name__}"])
 
         stats = self._learning_stats()
@@ -586,7 +646,11 @@ class RecursiveSelfImprovementLoop:
             try:
                 return dict(self.live_learner.get_learning_stats() or {})
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("recursive_self_improvement", exc)
+                _record_rsi_degradation(
+                    "recursive_self_improvement",
+                    exc,
+                    action="used empty learning stats after learner stats read failed",
+                )
         return {}
 
     def _buffer_size(self) -> int:
@@ -594,7 +658,11 @@ class RecursiveSelfImprovementLoop:
         try:
             return int(stats.get("buffer_size", 0) or 0)
         except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="treated buffer size as zero after learning stats parse failed",
+            )
             logger.debug("Learning stats buffer-size read failed: %s", exc)
             return 0
 
@@ -615,8 +683,13 @@ class RecursiveSelfImprovementLoop:
                 f.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            record_degradation("recursive_self_improvement", exc)
+        except _RSI_RECOVERABLE_ERRORS as exc:
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="kept RSI cycle result in memory after durable ledger append failed",
+                extra={"ledger_path": str(self.ledger_path), "cycle_id": result.cycle_id},
+            )
             logger.debug("Failed to write RSI ledger: %s", exc)
 
     def _serialize_result(self, result: ImprovementCycleResult) -> dict[str, Any]:

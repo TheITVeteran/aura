@@ -138,6 +138,37 @@ async def test_recursive_loop_uses_native_system2_to_rank_rsi_actions(monkeypatc
     assert refined.system2_receipt["will_receipt_id"] == "will-system2-rsi"
 
 
+@pytest.mark.asyncio
+async def test_code_refinement_falls_through_to_self_modifier_after_structural_error(tmp_path: Path):
+    class BrokenStructuralImprover:
+        def __init__(self):
+            self.calls = 0
+
+        def find_and_fix(self, max_repairs: int):
+            self.calls += 1
+            raise OSError("scan unavailable")
+
+    class SelfModifier:
+        def run_refinement_cycle(self):
+            return {"success": True, "source": "safe_self_modifier"}
+
+    structural_improver = BrokenStructuralImprover()
+    loop = RecursiveSelfImprovementLoop(
+        structural_improver=structural_improver,
+        self_modifier=SelfModifier(),
+        ledger_path=tmp_path / "rsi.jsonl",
+        require_will_authorization=False,
+    )
+
+    result = await loop._run_code_refinement()
+
+    assert result["ok"] is True
+    assert structural_improver.calls == 1
+    assert result["result"]["source"] == "safe_self_modifier"
+    assert result["deterministic"]["ok"] is False
+    assert result["deterministic"]["reason"].startswith("structural_improver:OSError")
+
+
 def test_structural_improver_finds_and_repairs_missing_os_import(tmp_path: Path):
     source = tmp_path / "mod.py"
     source.write_text(
