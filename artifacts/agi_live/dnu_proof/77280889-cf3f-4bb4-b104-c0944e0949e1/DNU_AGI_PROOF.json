@@ -1,0 +1,100 @@
+{
+  "system_info": {
+    "run_id": "77280889-cf3f-4bb4-b104-c0944e0949e1",
+    "timestamp": 1779435430.067859,
+    "timestamp_iso": "2026-05-22T07:37:10Z",
+    "commit_sha": "7634c793b4457f21a43c8f2184e31ddb3cf969fe",
+    "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
+    "platform": "macOS-26.4.1-arm64-arm-64bit"
+  },
+  "scorecard": {
+    "total_tasks": 12,
+    "total_pass": 12,
+    "total_fail": 0,
+    "total_timeout": 0,
+    "total_error": 0,
+    "total_no_answer": 0,
+    "total_ungraded": 0,
+    "categories": {
+      "novel_reasoning": {
+        "attempted": 12,
+        "passed": 12,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      }
+    },
+    "overall_pass_rate": 1.0
+  },
+  "tier": {
+    "tier": 6,
+    "label": "Sovereign",
+    "pass_rate": 1.0
+  },
+  "anti_theater": {
+    "pre_check_violations": [],
+    "post_check_violations": [],
+    "all_passed": true
+  },
+  "baselines": {
+    "raw_llm": {
+      "status": "NOT_RUN",
+      "reason": "Requires separate model configuration"
+    },
+    "llm_with_tools": {
+      "status": "NOT_RUN",
+      "reason": "Requires separate tool integration"
+    },
+    "react_agent": {
+      "status": "NOT_RUN",
+      "reason": "Requires separate reasoning loop"
+    }
+  },
+  "ablations": {
+    "full_aura": {
+      "status": "RUN",
+      "pass_rate": 1.0
+    },
+    "aura_minus_memory": {
+      "status": "NOT_RUN",
+      "reason": "Requires safe memory removal"
+    },
+    "aura_minus_volition": {
+      "status": "NOT_RUN",
+      "reason": "Requires safe VolitionEngine removal"
+    },
+    "aura_minus_will": {
+      "status": "NOT_RUN",
+      "reason": "Requires safe UnifiedWill removal"
+    }
+  },
+  "task_count": 12,
+  "grader_entry_count": 90,
+  "category_summary": {
+    "novel_reasoning": {
+      "attempted": 12,
+      "passed": 12,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "coding": {},
+    "planning": {},
+    "self_debug": {},
+    "transfer": {},
+    "research": {}
+  },
+  "unsupported_claims": [
+    "Category 'novel_reasoning' has 12 tasks, below minimum of 50",
+    "Category 'coding' has 0 tasks, below minimum of 10",
+    "Category 'planning' has 0 tasks, below minimum of 5",
+    "Category 'self_debug' has 0 tasks, below minimum of 5",
+    "Category 'transfer' has 0 tasks, below minimum of 10",
+    "Category 'research' has 0 tasks, below minimum of 10"
+  ],
+  "passed": true
+}

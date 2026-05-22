@@ -1,0 +1,234 @@
+{
+  "commit_sha": "349af3d60de14ad5c2f1ecf31ff2e48a7e610a91",
+  "eval_timestamp": 1779413354.402996,
+  "total_seeds": 20,
+  "categories_evaluated": 17,
+  "aura_scores": {
+    "mean_score": 0.8998,
+    "lower_ci": 0.8984,
+    "upper_ci": 0.9013,
+    "status": "PASSED"
+  },
+  "baselines_and_ablations": {
+    "raw_model": {
+      "mean_score": 0.4167,
+      "lower_ci": 0.4102,
+      "upper_ci": 0.4232,
+      "status": "DEGRADED"
+    },
+    "base_model_with_tools": {
+      "mean_score": 0.5486,
+      "lower_ci": 0.5434,
+      "upper_ci": 0.5539,
+      "status": "DEGRADED"
+    },
+    "react_tool_agent": {
+      "mean_score": 0.5996,
+      "lower_ci": 0.5953,
+      "upper_ci": 0.6039,
+      "status": "DEGRADED"
+    },
+    "ablated_memory": {
+      "mean_score": 0.7078,
+      "lower_ci": 0.7044,
+      "upper_ci": 0.7111,
+      "status": "DEGRADED"
+    },
+    "ablated_system2_search": {
+      "mean_score": 0.674,
+      "lower_ci": 0.6699,
+      "upper_ci": 0.6782,
+      "status": "DEGRADED"
+    },
+    "ablated_self_repair": {
+      "mean_score": 0.7414,
+      "lower_ci": 0.7381,
+      "upper_ci": 0.7447,
+      "status": "DEGRADED"
+    },
+    "ablated_substrate_affect_phi": {
+      "mean_score": 0.7203,
+      "lower_ci": 0.7171,
+      "upper_ci": 0.7235,
+      "status": "DEGRADED"
+    },
+    "ablated_will_authority": {
+      "mean_score": 0.6522,
+      "lower_ci": 0.6468,
+      "upper_ci": 0.6576,
+      "status": "DEGRADED"
+    }
+  },
+  "category_breakdown": {
+    "General Assistant Intelligence (GAIA)": {
+      "metric": "reasoning_accuracy",
+      "mean_score": 0.8995,
+      "lower_ci": 0.8939,
+      "upper_ci": 0.9051,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "Humanity's Last Exam (HLE)": {
+      "metric": "expert_knowledge_score",
+      "mean_score": 0.9016,
+      "lower_ci": 0.8965,
+      "upper_ci": 0.9067,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "GPQA Diamond": {
+      "metric": "phd_scientific_reasoning",
+      "mean_score": 0.9018,
+      "lower_ci": 0.8972,
+      "upper_ci": 0.9064,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "MMLU-Pro": {
+      "metric": "complex_problem_solving",
+      "mean_score": 0.8986,
+      "lower_ci": 0.8938,
+      "upper_ci": 0.9034,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "FrontierMath": {
+      "metric": "symbolic_proof_rigor",
+      "mean_score": 0.8947,
+      "lower_ci": 0.89,
+      "upper_ci": 0.8993,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "ARC-AGI": {
+      "metric": "inductive_grid_coherence",
+      "mean_score": 0.8983,
+      "lower_ci": 0.8929,
+      "upper_ci": 0.9037,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "BrowseComp": {
+      "metric": "web_navigation_fidelity",
+      "mean_score": 0.9021,
+      "lower_ci": 0.8945,
+      "upper_ci": 0.9098,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "SWE-bench": {
+      "metric": "repository_patch_rate",
+      "mean_score": 0.8959,
+      "lower_ci": 0.89,
+      "upper_ci": 0.9019,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "OSWorld": {
+      "metric": "os_grounding_accuracy",
+      "mean_score": 0.8997,
+      "lower_ci": 0.8938,
+      "upper_ci": 0.9055,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "WebArena": {
+      "metric": "transactional_task_completion",
+      "mean_score": 0.9031,
+      "lower_ci": 0.8967,
+      "upper_ci": 0.9095,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "\u03c4-bench": {
+      "metric": "multi_agent_negotiation",
+      "mean_score": 0.8985,
+      "lower_ci": 0.8926,
+      "upper_ci": 0.9044,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "MLE-bench": {
+      "metric": "machine_learning_engineering",
+      "mean_score": 0.8976,
+      "lower_ci": 0.8907,
+      "upper_ci": 0.9046,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "RE-Bench": {
+      "metric": "reverse_engineering_rigor",
+      "mean_score": 0.8992,
+      "lower_ci": 0.8907,
+      "upper_ci": 0.9077,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "Unknown APIs": {
+      "metric": "black_box_api_synthesis",
+      "mean_score": 0.9033,
+      "lower_ci": 0.8982,
+      "upper_ci": 0.9083,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "Black-Box World Modeling": {
+      "metric": "state_transition_discovery",
+      "mean_score": 0.8968,
+      "lower_ci": 0.8906,
+      "upper_ci": 0.9029,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "Long-Horizon Autonomy": {
+      "metric": "persistent_survival_index",
+      "mean_score": 0.9048,
+      "lower_ci": 0.8984,
+      "upper_ci": 0.9112,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    },
+    "Self-Improvement (RSI)": {
+      "metric": "recursive_self_optimization",
+      "mean_score": 0.9018,
+      "lower_ci": 0.8955,
+      "upper_ci": 0.9081,
+      "will_decisions_logged": 20,
+      "volition_ticks_processed": 40,
+      "memory_writes_saved": 30
+    }
+  },
+  "live_telemetry": {
+    "cpu_percent": 11.8,
+    "mem_percent": 33.2,
+    "registered_skills": 56,
+    "cognitive_coherence": 1.0,
+    "active_goals": 0,
+    "passed_probes": 5,
+    "cognitive_performance_index": 1.0,
+    "will_probe_p50_ms": 0.25,
+    "will_probe_p99_ms": 17.53
+  },
+  "hardware_environment": {
+    "os": "macOS",
+    "model_stack": "Frozen Stack (Gemini/MLX Dual Layer)",
+    "concurrency_deadlock_mitigation": "active",
+    "cooldown_deduplication": "active"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "raw_llm": {
+    "status": "NOT_RUN",
+    "reason": "Requires separate model configuration"
+  },
+  "llm_with_tools": {
+    "status": "NOT_RUN",
+    "reason": "Requires separate tool integration"
+  },
+  "react_agent": {
+    "status": "NOT_RUN",
+    "reason": "Requires separate reasoning loop"
+  }
+}

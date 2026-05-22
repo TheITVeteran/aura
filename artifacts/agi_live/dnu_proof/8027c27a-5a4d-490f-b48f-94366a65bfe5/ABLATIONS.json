@@ -1,0 +1,18 @@
+{
+  "full_aura": {
+    "status": "RUN",
+    "pass_rate": 1.0
+  },
+  "aura_minus_memory": {
+    "status": "RUN",
+    "pass_rate": 1.0
+  },
+  "aura_minus_volition": {
+    "status": "RUN",
+    "pass_rate": 1.0
+  },
+  "aura_minus_will": {
+    "status": "RUN",
+    "pass_rate": 1.0
+  }
+}

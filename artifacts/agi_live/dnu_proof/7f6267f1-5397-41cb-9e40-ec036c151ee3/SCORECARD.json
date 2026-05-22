@@ -1,0 +1,21 @@
+{
+  "total_tasks": 1,
+  "total_pass": 0,
+  "total_fail": 1,
+  "total_timeout": 0,
+  "total_error": 0,
+  "total_no_answer": 0,
+  "total_ungraded": 0,
+  "categories": {
+    "novel_reasoning": {
+      "attempted": 1,
+      "passed": 0,
+      "failed": 1,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 0.0
+    }
+  },
+  "overall_pass_rate": 0.0
+}

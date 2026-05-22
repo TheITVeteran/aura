@@ -1,0 +1,22 @@
+{
+  "run_id": "8027c27a-5a4d-490f-b48f-94366a65bfe5",
+  "commit_sha": "75b5ac895983df67f13078892261aec083226606",
+  "files": {
+    "DNU_AGI_PROOF.json": {
+      "path": "artifacts/agi_live/DNU_AGI_PROOF.json",
+      "sha256": "6353b70f0906f51bdece10c8c13b57f8967716048e52c1a1e7cced4a65002fe7"
+    },
+    "DNU_AGI_PROOF.md": {
+      "path": "artifacts/agi_live/DNU_AGI_PROOF.md",
+      "sha256": "aa10b5102648c797d1a9a65fa92f6db55b3a786b7db2d6e61dfb85131050eee2"
+    },
+    "SCORECARD.json": {
+      "path": "artifacts/agi_live/SCORECARD.json",
+      "sha256": "1fa40b765803d64ed98868bb5ca0475c9ea4aa31636454f96f57b63278a60570"
+    },
+    "RECEIPTS.jsonl": {
+      "path": "artifacts/agi_live/RECEIPTS.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"task_id": "R011", "category": "novel_reasoning", "difficulty": "medium", "status": "timeout", "response_text": "", "extracted_answer": null, "normalized_answer": null, "answer_hash": null, "elapsed_s": 119.98441314697266, "error": "Task exceeded time budget of 120s"}

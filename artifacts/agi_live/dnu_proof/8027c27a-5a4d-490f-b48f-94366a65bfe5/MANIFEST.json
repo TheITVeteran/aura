@@ -1,0 +1,52 @@
+{
+  "run_id": "8027c27a-5a4d-490f-b48f-94366a65bfe5",
+  "commit_sha": "75b5ac895983df67f13078892261aec083226606",
+  "timestamp": 1779466765.695334,
+  "files": {
+    "FAILURES.jsonl": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/FAILURES.jsonl",
+      "sha256": "36c8a6cbbd3bf0587feb616493a23439157220a3fc0602d0522ff32d91b7bd23",
+      "size_bytes": 270
+    },
+    "RECEIPTS.jsonl": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/RECEIPTS.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "DNU_AGI_PROOF.json": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/DNU_AGI_PROOF.json",
+      "sha256": "6353b70f0906f51bdece10c8c13b57f8967716048e52c1a1e7cced4a65002fe7",
+      "size_bytes": 2488
+    },
+    "BASELINES.json": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/BASELINES.json",
+      "sha256": "5dbe2a574d91d35e9731030720f7f4d84ed0c6970126ecb316caf26057634b41",
+      "size_bytes": 317
+    },
+    "TASK_TRACE.jsonl": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/TASK_TRACE.jsonl",
+      "sha256": "23e524c66e5d12e3a9a1bea94c45f77d3d2d27e65346adf56b03e96570505c22",
+      "size_bytes": 6971
+    },
+    "SCORECARD.json": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/SCORECARD.json",
+      "sha256": "1fa40b765803d64ed98868bb5ca0475c9ea4aa31636454f96f57b63278a60570",
+      "size_bytes": 387
+    },
+    "ABLATIONS.json": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/ABLATIONS.json",
+      "sha256": "bc79cbe6db7685106578a756d05bc16d9effb7552b7508f311f74a5a053225f8",
+      "size_bytes": 282
+    },
+    "REPRODUCTION.md": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/REPRODUCTION.md",
+      "sha256": "96219a1fafd0d31b1a5837d05f3b1012411707248a431da07d2d3e6dded83601",
+      "size_bytes": 969
+    },
+    "DNU_AGI_PROOF.md": {
+      "path": "artifacts/agi_live/dnu_proof/8027c27a-5a4d-490f-b48f-94366a65bfe5/DNU_AGI_PROOF.md",
+      "sha256": "aa10b5102648c797d1a9a65fa92f6db55b3a786b7db2d6e61dfb85131050eee2",
+      "size_bytes": 1874
+    }
+  }
+}

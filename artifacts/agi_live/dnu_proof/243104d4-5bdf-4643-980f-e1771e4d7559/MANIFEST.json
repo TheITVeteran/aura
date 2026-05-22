@@ -1,0 +1,47 @@
+{
+  "run_id": "243104d4-5bdf-4643-980f-e1771e4d7559",
+  "commit_sha": "7634c793b4457f21a43c8f2184e31ddb3cf969fe",
+  "timestamp": 1779433796.095121,
+  "files": {
+    "FAILURES.jsonl": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/FAILURES.jsonl",
+      "sha256": "ea3e161a45533f3121462ad394432d5eb2c940b96e4ee464fe3734f4c2bc6251",
+      "size_bytes": 912
+    },
+    "DNU_AGI_PROOF.json": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/DNU_AGI_PROOF.json",
+      "sha256": "cfb96d1f8f5a0d1be481d73eecf0accff72fb9f610c667cce75f5cea7e8690a6",
+      "size_bytes": 2538
+    },
+    "BASELINES.json": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/BASELINES.json",
+      "sha256": "4ed220fa3ec6c1c45934cb90e6d803040b8755954939ab1cc0ab7cebe96a1700",
+      "size_bytes": 302
+    },
+    "TASK_TRACE.jsonl": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/TASK_TRACE.jsonl",
+      "sha256": "ea3e161a45533f3121462ad394432d5eb2c940b96e4ee464fe3734f4c2bc6251",
+      "size_bytes": 912
+    },
+    "SCORECARD.json": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/SCORECARD.json",
+      "sha256": "c3902c395522bc2316ee98b8947793dddf89974188d6891083824019d3e6876e",
+      "size_bytes": 377
+    },
+    "ABLATIONS.json": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/ABLATIONS.json",
+      "sha256": "4727b6c60ad5b19ea5d3a1c2361636c6b7ee01ce44c9de06e15b637345845acb",
+      "size_bytes": 379
+    },
+    "REPRODUCTION.md": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/REPRODUCTION.md",
+      "sha256": "073621dfe7ca87b83d665d40e3bc5b39d804460fb68d5ea281879603fbddbb2d",
+      "size_bytes": 969
+    },
+    "DNU_AGI_PROOF.md": {
+      "path": "artifacts/agi_live/dnu_proof/243104d4-5bdf-4643-980f-e1771e4d7559/DNU_AGI_PROOF.md",
+      "sha256": "91f223fa2e0b6f8526330b90a1d8187864173f083b846aae395be7acba24444d",
+      "size_bytes": 2150
+    }
+  }
+}
