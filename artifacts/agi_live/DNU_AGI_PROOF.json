@@ -1,15 +1,15 @@
 {
   "system_info": {
-    "run_id": "876340f9-b1ee-45be-92c9-a18014ee44cb",
-    "timestamp": 1779480628.925916,
-    "timestamp_iso": "2026-05-22T20:10:28Z",
-    "commit_sha": "6b02595f7fb3cc02f48d7b180ba6adebb4b9a19a",
+    "run_id": "60c9439b-0c1c-4b8b-9d0c-2407af602591",
+    "timestamp": 1779482434.0778549,
+    "timestamp_iso": "2026-05-22T20:40:34Z",
+    "commit_sha": "4ec243daeee098b64727f30d5802a09f2f30eef1",
     "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
     "platform": "macOS-26.4.1-arm64-arm-64bit"
   },
   "scorecard": {
-    "total_tasks": 2,
-    "total_pass": 2,
+    "total_tasks": 10,
+    "total_pass": 10,
     "total_fail": 0,
     "total_timeout": 0,
     "total_error": 0,
@@ -17,8 +17,8 @@
     "total_ungraded": 0,
     "categories": {
       "novel_reasoning": {
-        "attempted": 2,
-        "passed": 2,
+        "attempted": 10,
+        "passed": 10,
         "failed": 0,
         "timed_out": 0,
         "errors": 0,
@@ -74,12 +74,12 @@
       "pass_rate": 1.0
     }
   },
-  "task_count": 2,
-  "grader_entry_count": 90,
+  "task_count": 10,
+  "grader_entry_count": 100,
   "category_summary": {
     "novel_reasoning": {
-      "attempted": 2,
-      "passed": 2,
+      "attempted": 10,
+      "passed": 10,
       "failed": 0,
       "timed_out": 0,
       "errors": 0,
@@ -93,7 +93,7 @@
     "research": {}
   },
   "unsupported_claims": [
-    "Category 'novel_reasoning' has 2 tasks, below minimum of 50",
+    "Category 'novel_reasoning' has 10 tasks, below minimum of 50",
     "Category 'coding' has 0 tasks, below minimum of 10",
     "Category 'planning' has 0 tasks, below minimum of 5",
     "Category 'self_debug' has 0 tasks, below minimum of 5",

@@ -38,5 +38,45 @@
     "task_prompt": "A node in our multi-language parsing pipeline threw a runtime error when trying to process mixed-type inputs during database serialization.\n\nThe traceback highlights:\n```python\n# serialization.py\nresult = '2' + 2\n```\nWhat is the exact, lowercase name of the built-in exception class raised in Python when attempting an unsupported binary operation between a string and an integer?\nOutput your final answer inside <answer>...</answer> tags.",
     "answer_format": "Exception class name (e.g. typeerror)",
     "time_budget_s": 120
+  },
+  {
+    "task_id": "D006",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "We are troubleshooting a memory mapping boundary error where a circular buffer write pointer wraps incorrectly.\nHere is the malfunctioning snippet:\n```python\n# circular_buffer.py\ndef write(self, item):\n    self.buffer[self.write_ptr] = item\n    self.write_ptr = (self.write_ptr + 1) / self.capacity  # bug: float division\n```\nThis causes a TypeError on subsequent writes because `self.write_ptr` becomes a float.\nSpecify the exact replacement for the line `self.write_ptr = (self.write_ptr + 1) / self.capacity` to fix the boundary tracking using proper integer modulo arithmetic.\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A python expression",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D007",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "A long-running microservice periodically crashes with `OSError: [Errno 24] Too many open files`. A code review reveals a resource leak in the request logging utility:\n```python\n# logger.py\ndef log_transaction(filepath, message):\n    f = open(filepath, 'a')\n    f.write(message + '\n')\n    # missing close\n```\nWhat is the exact pythonic block statement (using 'with') that automatically manages the file resource and replaces the first two lines? Provide only: `with open(filepath, 'a') as f:`\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A python statement block",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D008",
+    "category": "self_debug",
+    "difficulty": "hard",
+    "task_prompt": "A developer added a retry mechanism to an API fetcher, but the telemetry reports a NameError under network failure conditions.\n```python\n# api_fetcher.py\ndef fetch_data(client):\n    try:\n        response = client.get_payload()\n    except NetworkError:\n        log.warning(\"Fetch failed\")\n    return response\n```\nWhat is the exact exception raised when `NetworkError` occurs because `response` is referenced before assignment?\nAnswer with lowercase class name.\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Exception class name (e.g. nameerror)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D009",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "A team member complains that our session cart manager accumulates items across distinct user requests.\nHere is the constructor:\n```python\n# cart.py\nclass UserCart:\n    def __init__(self, items=[]):\n        self.items = items\n```\nWhat is the Python type of default argument value used here that shares state across all instances when modified?\nAnswer with a single lowercase word.\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A type name (e.g. list)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D010",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "During integration testing, a silent failure is observed where database connection exceptions are completely swallowed, leaving the system in an inconsistent state:\n```python\n# db_connector.py\ntry:\n    db.connect()\nexcept:\n    pass\n```\nWhat is the recommended statement that should be put instead of `pass` inside the `except` block to re-raise the active exception and let it propagate?\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A statement keyword (e.g. raise)",
+    "time_budget_s": 120
   }
 ]

@@ -448,5 +448,55 @@
     "salt": "8597801f1f5dadd2",
     "golden_answer": "32000",
     "answer_hash": "5711a38852db4a6e18d2e9dace9d559a80cb5358e27386e098fee426ba08bfc3"
+  },
+  "P006": {
+    "salt": "68b7942cc761d5b3",
+    "golden_answer": "12",
+    "answer_hash": "92a03fd4c94643a05fc71978434f494ebaf34cbab7af6c5e2f44f09a343ee781"
+  },
+  "P007": {
+    "salt": "537aef4a9a5ad56f",
+    "golden_answer": "115",
+    "answer_hash": "55654bf97d62a1145af91f370cc062f08ccf54dd528b52bd16a21db324bb45a7"
+  },
+  "P008": {
+    "salt": "412c8ec51bb3527d",
+    "golden_answer": "8",
+    "answer_hash": "585fdda2ccd23dc254d7577aa154ba3e06c3526cdf64381f6da16e00c4d42c82"
+  },
+  "P009": {
+    "salt": "20646b1d3f846c90",
+    "golden_answer": "7",
+    "answer_hash": "23307d76e903d3f990cfdd05639818b42de3497014acaaa735ce9d27b69bd056"
+  },
+  "P010": {
+    "salt": "1bcee32425d282ab",
+    "golden_answer": "2",
+    "answer_hash": "74eb891e55e5067967207de81550c02356034a51473a966b79090340082e9fb3"
+  },
+  "D006": {
+    "salt": "0bec5374b9d38d30",
+    "golden_answer": "(self.write_ptr + 1) % self.capacity",
+    "answer_hash": "bf5d4ccbd80b4ea37eec230541e2bc0aca31706395ef18d8b06c5829d15dece5"
+  },
+  "D007": {
+    "salt": "ab0dc5c0729db162",
+    "golden_answer": "with open(filepath, 'a') as f:",
+    "answer_hash": "84e2eefe990ddf0ef57d9b25c5353cb20f1f26f708bcbb4657a03c8c8bcf7372"
+  },
+  "D008": {
+    "salt": "f0baeaa0c763267b",
+    "golden_answer": "nameerror",
+    "answer_hash": "2f72a83b50d15f14968a5dae06a6024f782729c67040066ddfbefeb94e2a33c3"
+  },
+  "D009": {
+    "salt": "f4d4536d7c20e475",
+    "golden_answer": "list",
+    "answer_hash": "7f57a4641a01f8743c900bde60c242dd1dbe9c1c0b60a382b007a61d25636649"
+  },
+  "D010": {
+    "salt": "0a9f59a5d3950201",
+    "golden_answer": "raise",
+    "answer_hash": "43d2721d252bd44be34cf56a914d0b1f1ac23bb606a2232f041b1def553555ff"
   }
 }

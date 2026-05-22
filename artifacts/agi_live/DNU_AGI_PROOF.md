@@ -1,8 +1,8 @@
 # DNU AGI Proof Battery Report
 
-**Run ID:** `876340f9-b1ee-45be-92c9-a18014ee44cb`
-**Timestamp:** `1779480628.925916`
-**Commit SHA:** `6b02595f7fb3cc02f48d7b180ba6adebb4b9a19a`
+**Run ID:** `60c9439b-0c1c-4b8b-9d0c-2407af602591`
+**Timestamp:** `1779482434.0778549`
+**Commit SHA:** `4ec243daeee098b64727f30d5802a09f2f30eef1`
 **Platform:** `macOS-26.4.1-arm64-arm-64bit`
 **Python:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 
@@ -18,8 +18,8 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Tasks | 2 |
-| Passed | 2 |
+| Total Tasks | 10 |
+| Passed | 10 |
 | Failed | 0 |
 | Timed Out | 0 |
 | Errors | 0 |
@@ -30,7 +30,7 @@
 
 | Category | Attempted | Passed | Failed | Timeout | Pass Rate |
 |----------|-----------|--------|--------|---------|-----------|
-| novel_reasoning | 2 | 2 | 0 | 0 | 100.0% |
+| novel_reasoning | 10 | 10 | 0 | 0 | 100.0% |
 
 ## Baselines
 
@@ -52,7 +52,7 @@
 ## Reproduction
 
 ```bash
-# Commit: 6b02595f7fb3cc02f48d7b180ba6adebb4b9a19a
+# Commit: 4ec243daeee098b64727f30d5802a09f2f30eef1
 # Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
 python tools/agi/run_dnu_agi_proof_battery.py
 ```

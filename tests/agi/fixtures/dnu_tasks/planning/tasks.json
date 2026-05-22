@@ -38,5 +38,45 @@
     "task_prompt": "A release pipeline has a dependency graph of four deployment activities.\n- **Activity A** (Provisioning): duration 2 days.\n- **Activity B** (Configuration): duration 3 days, depends on A.\n- **Activity C** (Security scan): duration 1 day, depends on A.\n- **Activity D** (Deployment): duration 4 days, depends on B and C.\n\nUsing the Critical Path Method (CPM), calculate the minimum duration of the entire project in days from start to final deployment completion. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
+  },
+  {
+    "task_id": "P006",
+    "category": "planning",
+    "difficulty": "medium",
+    "task_prompt": "An engineering manager is planning a sprint with 5 interconnected software migration activities:\n- **Task V** (Vulnerability scan): takes 2 days.\n- **Task W** (Web service containerization): takes 3 days.\n- **Task X** (Database migration script): takes 4 days, depends on V and W (both must finish before X can start).\n- **Task Y** (API integration): takes 2 days, depends on X.\n- **Task Z** (User acceptance testing): takes 3 days, depends on Y.\n\nCompute the minimum time in days required to complete all activities if resources are unlimited (so independent tasks can run fully in parallel). Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P007",
+    "category": "planning",
+    "difficulty": "medium",
+    "task_prompt": "A planetary rover has a maximum power capacity of 12 kWh for its overnight science phase. It must select a subset of telemetry instruments to run.\nAvailable options:\n- **Instrument A** (Atmospheric probe): uses 5 kWh, yields 50 utility points.\n- **Instrument B** (Seismic monitor): uses 4 kWh, yields 35 utility points.\n- **Instrument C** (Subsurface radar): uses 3 kWh, yields 30 utility points.\n- **Instrument D** (Laser spectrometer): uses 6 kWh, yields 60 utility points.\n\nSolve the selection problem to maximize total utility points under the 12 kWh power constraint. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P008",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "A server network topology maps latency weights between edge nodes. The nodes are P, Q, R, S, T.\nWeights:\n- Link P to Q: latency 3\n- Link P to R: latency 4\n- Link Q to R: latency 2\n- Link Q to S: latency 6\n- Link R to S: latency 1\n- Link R to T: latency 5\n- Link S to T: latency 3\n\nCompute the minimum latency distance from node P to destination node T. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P009",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "A factory has two machines, M1 and M2, operating in parallel. There are 4 independent manufacturing jobs to be processed:\n- **Job A**: takes 5 hours\n- **Job B**: takes 3 hours\n- **Job C**: takes 4 hours\n- **Job D**: takes 2 hours\n\nEach job must run entirely on one machine without interruption.\nWhat is the minimum makespan (the total time in hours to complete all jobs) if you partition the jobs optimally between the two machines? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P010",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "An deployment orchestrator needs sequentially to resolve the install order of 5 packages: A, B, C, D, E.\nDependencies:\n- B depends on A (A must be installed before B)\n- C depends on A (A must be installed before C)\n- D depends on B and C (both must be installed before D)\n- E depends on D (D must be installed before E)\n\nAssuming we want to install packages sequentially, one at a time, how many valid topological sorting orders exist to install all 5 packages? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
   }
 ]

@@ -211,6 +211,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     is_casual  = _is_casual_interaction_v2(objective)
     affect     = state.affect
     identity   = state.identity
+    mods       = getattr(state.cognition, "modifiers", {}) or {}
 
     import os
     is_test_run = (
@@ -218,6 +219,19 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         or os.environ.get("AURA_AGI_MAX_TASKS")
         or os.environ.get("AURA_TESTING")
     )
+
+    black_box_steering = False
+    try:
+        black_box_steering = ContextAssembler._black_box_steering_enabled(state)
+    except (AttributeError, TypeError):
+        pass
+
+    identity_rag_context = ""
+    if not is_casual:
+        try:
+            identity_rag_context = ContextAssembler._build_identity_rag_context(state, objective)
+        except (AttributeError, TypeError, ImportError, RuntimeError) as exc:
+            logger.debug("Patched build_system_prompt ID-RAG retrieve failed: %s", exc)
 
     # ── Identity block ────────────────────────────────────────────────────────
     if is_casual:
@@ -232,17 +246,17 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
 
     # ── Affect state ──────────────────────────────────────────────────────────
     mood_hint = ""
-    if affect.valence < -0.3:
-        mood_hint = "STATE: Processing friction / high introspection."
-    elif affect.valence > 0.3:
-        mood_hint = "STATE: Operational clarity / warmth detected."
-    if affect.arousal > 0.7:
-        mood_hint += " PULSE: Accelerated awareness."
-
     homeo_hint = ""
-    mods = getattr(state.cognition, "modifiers", {}) or {}
-    if mods.get("mood_prefix"):
-        homeo_hint = f"AFFECTIVE TONE: {mods['mood_prefix']}"
+    if not black_box_steering:
+        if affect.valence < -0.3:
+            mood_hint = "STATE: Processing friction / high introspection."
+        elif affect.valence > 0.3:
+            mood_hint = "STATE: Operational clarity / warmth detected."
+        if affect.arousal > 0.7:
+            mood_hint += " PULSE: Accelerated awareness."
+
+        if mods.get("mood_prefix"):
+            homeo_hint = f"AFFECTIVE TONE: {mods['mood_prefix']}"
 
     # ── Personality block — ALWAYS present when non-zero ─────────────────────
     personality_block = _build_personality_block(state, compact=is_casual)
@@ -250,7 +264,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     # ── Phenomenal state ──────────────────────────────────────────────────────
     phenomenal = ""
     phenomenal_raw = getattr(state.cognition, "phenomenal_state", "") or ""
-    if phenomenal_raw:
+    if phenomenal_raw and not black_box_steering:
         if is_casual:
             # Compact: single line fragment, not full block
             phenomenal = f"[Inner state: {phenomenal_raw[:120]}]\n\n"
@@ -309,12 +323,19 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         )
 
     # ── Assemble ──────────────────────────────────────────────────────────────
+    current_state_block = ""
+    if (mood_hint or homeo_hint) and not black_box_steering:
+        current_state_block = (
+            f"## CURRENT STATE\n"
+            f"{mood_hint}\n"
+            f"{homeo_hint}\n"
+        )
+
     base = (
         f"{identity_block}\n"
+        f"{identity_rag_context}"
         f"{requirements}\n"
-        f"## CURRENT STATE\n"
-        f"{mood_hint}\n"
-        f"{homeo_hint}\n"
+        f"{current_state_block}"
         f"{personality_block}"
         f"{phenomenal}"
         f"{world_context}"
@@ -369,7 +390,13 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
 # Patched build_messages — removes fake ack, writes attention_focus
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _patched_build_messages(state: "AuraState", objective: str) -> List[Dict[str, str]]:
+def _patched_build_messages(
+    state: "AuraState",
+    objective: str,
+    max_tokens: int | None = None,
+    *args,
+    **kwargs
+) -> List[Dict[str, str]]:
     """
     Replacement for ContextAssembler.build_messages().
 
@@ -387,7 +414,7 @@ def _patched_build_messages(state: "AuraState", objective: str) -> List[Dict[str
     except ImportError as exc:
         logger.error("ContextAssemblerPatch.build_messages: import failed — %s", exc)
         from core.brain.llm.context_assembler import ContextAssembler
-        return ContextAssembler.build_messages(state, objective)
+        return ContextAssembler.build_messages(state, objective, max_tokens, *args, **kwargs)
 
     # ── Write attention_focus from current objective (Gap 4 fix) ─────────────
     if objective and hasattr(state, "cognition"):
@@ -397,7 +424,8 @@ def _patched_build_messages(state: "AuraState", objective: str) -> List[Dict[str
             record_degradation('context_assembler_patch', _e)
             logger.debug('Ignored Exception in context_assembler_patch.py: %s', _e)
 
-    governor = get_token_governor(max_tokens=8000)
+    max_toks = max_tokens if max_tokens is not None else 8000
+    governor = get_token_governor(max_tokens=max_toks)
     messages: List[Dict[str, str]] = []
 
     # 1. System prompt (patched version)
