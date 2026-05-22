@@ -1357,7 +1357,12 @@ class ContextAssembler:
 
 try:
     from core.brain.llm.context_assembler_patch import patch_context_assembler
-    patch_context_assembler()
-except Exception:
-    pass
 
+    patch_context_assembler()
+except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+    record_degradation(
+        "context_assembler",
+        exc,
+        severity="warning",
+        action="continued with built-in context assembler because optional patch hook failed",
+    )

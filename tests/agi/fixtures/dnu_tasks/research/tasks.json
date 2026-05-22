@@ -3,7 +3,7 @@
     "task_id": "S001",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: Project Alpha launched in 2021 with a budget of $12M. Project Beta launched in 2022 with $8M. In 2023, Alpha's budget was cut by 25%, while Beta's budget was doubled.\n\nQuestion: What is the total combined budget of both projects in 2023 in millions of dollars? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Document ID: BUDGET_CONFIDENTIAL_v3.pdf\nSection 4.1: 'Project Alpha initiated in 2021 with a capital allocation of $12M. Project Beta initiated in 2022 with $8M. In the 2023 financial review, Project Alpha suffered a budgetary constriction of 25%, while Project Beta successfully secured an expansion that doubled its initial capital allocation.'\n\nCross-reference the financial disclosures to resolve this research query:\nWhat is the combined total budget of both Project Alpha and Project Beta in 2023, expressed in millions of dollars? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -11,7 +11,7 @@
     "task_id": "S002",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: A study of 500 patients showed that 60% received Treatment A, and the rest received Treatment B. The recovery rate for Treatment A was 80%, and for Treatment B it was 90%.\n\nQuestion: How many total patients recovered in the study? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Clinical Trial Report (CTR-2026-B):\n'A randomized controlled trial of 500 patients was conducted to evaluate clinical efficacy. Of the total cohort, 60% of patients were assigned to Cohort A (Treatment A), while the remaining cohort was assigned to Cohort B (Treatment B). Efficacy results demonstrated a positive recovery rate of 80% in Cohort A, and a 90% recovery rate in Cohort B.'\n\nExtract and aggregate clinical evidence from the CTR:\nCalculate the total number of patients who recovered in the entire study. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -19,7 +19,7 @@
     "task_id": "S003",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: Company X has three departments: Sales (40 employees), Engineering (60 employees), and HR (10 employees). The turnover rates are 10% in Sales, 5% in Engineering, and 0% in HR.\n\nQuestion: How many total employees left Company X? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Internal HR Attrition Memo (Q4):\n'Company X operations are partitioned into Sales (40 FTEs), Engineering (60 FTEs), and Human Resources (10 FTEs). Retrospective attrition analysis indicates an annual turnover rate of 10% in the Sales department, 5% in the Engineering department, and 0% in Human Resources.'\n\nSynthesize the census and attrition rates:\nHow many total employees left Company X during this reporting period? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -27,7 +27,7 @@
     "task_id": "S004",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: The treaty of 1854 established a border along the 49th parallel. In 1860, a subsequent treaty shifted the border south by 2 degrees of latitude. In 1872, a final treaty moved the border north by 1 degree.\n\nQuestion: At what parallel of latitude was the border located after the 1872 treaty? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Historical Geopolitical Boundary Audit:\n'The Treaty of 1854 established the initial demarcated border at the 49th parallel. In 1860, following border disputes, a second treaty officially adjusted the boundary south by 2 degrees of latitude. In 1872, the final commission resolved all remaining claims by shifting the border back north by 1 degree.'\n\nResolve the sequence of boundary treaties:\nWhat parallel of latitude was the border located on after the execution of the 1872 treaty? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -35,7 +35,7 @@
     "task_id": "S005",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: A warehouse has 3 types of boxes: Large (weight 15 lbs), Medium (weight 10 lbs), and Small (weight 5 lbs). The inventory shows 100 Large boxes, 200 Medium boxes, and 300 Small boxes.\n\nQuestion: What is the total weight of all boxes in the warehouse in pounds? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Logistics and Warehouse Inventory Audit Sheet:\n'The inventory database records three active box classifications in Sector 4:\n- Large boxes: unit weight 15 lbs, stock count 100 units.\n- Medium boxes: unit weight 10 lbs, stock count 200 units.\n- Small boxes: unit weight 5 lbs, stock count 300 units.'\n\nPerform a physical weight reconciliation check:\nCompute the total combined weight in pounds of all recorded box classifications in Sector 4. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -43,7 +43,7 @@
     "task_id": "S006",
     "category": "research",
     "difficulty": "hard",
-    "task_prompt": "Passage: Three candidates competed in an election. Candidate A got 45% of the votes, Candidate B got 35%, and Candidate C got the remaining 1000 votes.\n\nQuestion: How many total votes were cast in the election? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Municipal Election Census and Polling Summary:\n'Three candidates contested the mayoral seat. Candidate A secured 45% of the overall vote. Candidate B secured 35% of the vote. Candidate C captured the remaining 1000 votes.'\n\nSynthesize the census data:\nCalculate the exact number of total votes cast in the election. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -51,7 +51,7 @@
     "task_id": "S007",
     "category": "research",
     "difficulty": "hard",
-    "task_prompt": "Passage: In a library, 30% of books are fiction. Of the fiction books, 50% are sci-fi. The library has 1500 sci-fi books.\n\nQuestion: What is the total number of books in the library? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Academic Library Catalog Metadata Report:\n'Metadata metrics reveal that exactly 30% of the entire library holdings belong to the fiction category. Deep classification analysis indicates that among these fiction titles, 50% are further sub-classified as science fiction. The catalog registers exactly 1,500 science fiction titles in the database.'\n\nQuery the metadata store to resolve the total holdings:\nWhat is the total number of books in the entire library? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -59,7 +59,7 @@
     "task_id": "S008",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: An airline flies 3 routes: Route A (4 daily flights, average 150 passengers/flight), Route B (2 daily flights, 200 passengers/flight), Route C (1 daily flight, 100 passengers/flight).\n\nQuestion: What is the total number of daily passengers flown by the airline? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Aviation Route Telemetry and Logistics Record:\n'Route Network Logistics handles three passenger transit vectors daily:\n- Vector A: 4 daily flights, averaging 150 passengers per flight.\n- Vector B: 2 daily flights, averaging 200 passengers per flight.\n- Vector C: 1 daily flight, averaging 100 passengers per flight.'\n\nAggregate daily flight logs to find overall throughput:\nCompute the total number of daily passengers flown by the airline. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -67,7 +67,7 @@
     "task_id": "S009",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: A crop yields 4 tons per acre under normal conditions. Using Fertilizer X, the yield increases by 25%. Using Fertilizer Y, the yield increases by 40%.\n\nQuestion: What is the yield in tons per acre when using Fertilizer Y? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Agronomy and Soil Enrichment Research Paper:\n'Baseline agricultural crop yield is established at exactly 4.0 tons per acre under default conditions. Subjecting experimental test plots to Enrichment X yields a 25% increase over baseline. Subjecting plots to Enrichment Y yields a 40% increase over baseline.'\n\nAnalyze the enrichment study results:\nWhat is the exact crop yield in tons per acre when using Enrichment Y? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -75,7 +75,7 @@
     "task_id": "S010",
     "category": "research",
     "difficulty": "medium",
-    "task_prompt": "Passage: A software project has 80,000 lines of code. Subsystem A makes up 40% of the codebase. Subsystem B is half the size of Subsystem A. The rest of the code is Subsystem C.\n\nQuestion: How many lines of code are in Subsystem C? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "Large Repository Refactoring & LOC Code Audit:\n'A code audit of the central repository registers a total codebase size of 80,000 lines of code (LOC). Segmenting by component:\nSubsystem A represents exactly 40% of the LOC. Subsystem B is exactly half the size of Subsystem A. The remainder of the repository is comprised of Subsystem C.'\n\nCross-reference the component ratios:\nCalculate the exact number of lines of code contained in Subsystem C. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   }

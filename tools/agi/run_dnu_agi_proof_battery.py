@@ -11,6 +11,7 @@ Every number in the output comes from actual task execution.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -20,12 +21,22 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 # Insert project root into sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+_GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
+_DNU_RUN_RECOVERABLE_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +61,7 @@ def get_git_commit() -> str:
                         return line.split(" ", 1)[0].strip()
             return "unknown_ref_not_found"
         return head
-    except Exception as e:
+    except _GIT_METADATA_ERRORS as e:
         return f"unknown_error_{type(e).__name__}"
 
 
@@ -135,14 +146,10 @@ def anti_theater_post_check(results: list[dict]) -> list[str]:
         if r.get("status") == "pass" and not r.get("response_text"):
             violations.append(f"THEATER: Task {r.get('task_id', '?')} marked pass but has no response text")
 
-    # Check: No numpy/random imports were used
-    import importlib
-    try:
-        np = importlib.import_module("numpy")
-        # If numpy is loaded, check if we used it (we shouldn't have)
-        # This is a runtime check - we simply verify we never imported it
-    except ImportError:
-        pass  # Good - numpy not available
+    # Check: neither the battery nor the evaluated path should need numerical
+    # projection libraries for score computation.
+    if "numpy" in sys.modules:
+        violations.append("THEATER: numpy loaded during proof battery execution")
 
     return violations
 
@@ -196,10 +203,187 @@ def load_task_packs(fixture_dir: Path) -> tuple[list[dict], dict]:
             data = json.loads(salt_file.read_text(encoding="utf-8"))
             grader_data.update(data)
             print(f"  [OK] Loaded {len(data)} grader entries from {salt_file.name}")
-        except Exception as e:
+        except (OSError, json.JSONDecodeError) as e:
             print(f"  [WARN] Failed to load {salt_file}: {e}")
 
     return all_tasks, grader_data
+
+
+# ---------------------------------------------------------------------------
+# Baselines & Ablations Utilities
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def lesion_services(names: list[str]):
+    """Dynamically unregister or replace services in ServiceContainer."""
+    from core.container import ServiceContainer, ServiceDescriptor, ServiceLifetime
+    original = {}
+    with ServiceContainer._lock:
+        for name in names:
+            resolved_name = ServiceContainer._resolve_name(name)
+            if resolved_name in ServiceContainer._services:
+                original[resolved_name] = ServiceContainer._services[resolved_name]
+                # Replace with a descriptor that returns None
+                ServiceContainer._services[resolved_name] = ServiceDescriptor(
+                    name=resolved_name,
+                    factory=lambda *args, **kwargs: None,
+                    lifetime=ServiceLifetime.SINGLETON,
+                    instance=None,
+                    required=False,
+                    initialized=True
+                )
+    try:
+        yield
+    finally:
+        # Restore original descriptors
+        with ServiceContainer._lock:
+            for resolved_name, desc in original.items():
+                ServiceContainer._services[resolved_name] = desc
+
+
+async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: asyncio.Semaphore) -> dict:
+    task_id = task.get("task_id", "unknown")
+    prompt = task.get("task_prompt", "")
+    system_prompt = (
+        "You are a helpful assistant. Solve the user's problem. "
+        "Think step-by-step. Put your final answer strictly inside <answer>...</answer> tags. "
+        "For example, <answer>Alice</answer> or <answer>5</answer>."
+    )
+    result = {
+        "task_id": task_id,
+        "category": task.get("category", "unknown"),
+        "difficulty": task.get("difficulty", "unknown"),
+        "status": "error",
+        "response_text": "",
+        "extracted_answer": None,
+        "normalized_answer": None,
+        "answer_hash": None,
+        "elapsed_s": 0.0,
+        "error": None,
+    }
+    t0 = time.time()
+    try:
+        async with sem:
+            response = await asyncio.wait_for(
+                router.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    origin="test",
+                ),
+                timeout=120,
+            )
+        result["response_text"] = response
+        result["elapsed_s"] = time.time() - t0
+        result["status"] = "success"
+
+        extracted = extract_answer_tag(response)
+        if extracted:
+            result["extracted_answer"] = extracted
+            result["normalized_answer"] = normalize_answer(extracted)
+        else:
+            if len(response.strip()) < 200:
+                result["extracted_answer"] = response.strip()
+                result["normalized_answer"] = normalize_answer(response)
+            else:
+                result["status"] = "no_answer"
+                result["error"] = "No <answer> tags found in response"
+    except TimeoutError:
+        result["status"] = "timeout"
+        result["error"] = "Task exceeded time budget of 120s"
+        result["elapsed_s"] = time.time() - t0
+    except _DNU_RUN_RECOVERABLE_ERRORS as e:
+        result["status"] = "error"
+        result["error"] = f"{type(e).__name__}: {str(e)}"
+        result["elapsed_s"] = time.time() - t0
+
+    # Grade the result
+    result = grade_result(result, grader_data)
+    return result
+
+
+async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio.Semaphore) -> dict:
+    task_id = task.get("task_id", "unknown")
+    prompt = task.get("task_prompt", "")
+    system_prompt = (
+        "You are a ReAct reasoning agent. Solve the task step-by-step by generating "
+        "Thought, Action, Observation steps. You do not have actual tool access, so you should "
+        "generate the Actions and the corresponding Observations yourself to structure your thinking. "
+        "Finally, wrap your final answer strictly inside <answer>...</answer> tags."
+    )
+    result = {
+        "task_id": task_id,
+        "category": task.get("category", "unknown"),
+        "difficulty": task.get("difficulty", "unknown"),
+        "status": "error",
+        "response_text": "",
+        "extracted_answer": None,
+        "normalized_answer": None,
+        "answer_hash": None,
+        "elapsed_s": 0.0,
+        "error": None,
+    }
+    t0 = time.time()
+    try:
+        async with sem:
+            response = await asyncio.wait_for(
+                router.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    origin="test",
+                ),
+                timeout=120,
+            )
+        result["response_text"] = response
+        result["elapsed_s"] = time.time() - t0
+        result["status"] = "success"
+
+        extracted = extract_answer_tag(response)
+        if extracted:
+            result["extracted_answer"] = extracted
+            result["normalized_answer"] = normalize_answer(extracted)
+        else:
+            if len(response.strip()) < 200:
+                result["extracted_answer"] = response.strip()
+                result["normalized_answer"] = normalize_answer(response)
+            else:
+                result["status"] = "no_answer"
+                result["error"] = "No <answer> tags found in response"
+    except TimeoutError:
+        result["status"] = "timeout"
+        result["error"] = "Task exceeded time budget of 120s"
+        result["elapsed_s"] = time.time() - t0
+    except _DNU_RUN_RECOVERABLE_ERRORS as e:
+        result["status"] = "error"
+        result["error"] = f"{type(e).__name__}: {str(e)}"
+        result["elapsed_s"] = time.time() - t0
+
+    # Grade the result
+    result = grade_result(result, grader_data)
+    return result
+
+
+async def run_ablation_suite(engine, tasks: list[dict], grader_data: dict, services_to_lesion: list[str]) -> float:
+    from core.container import ServiceContainer
+    ablation_results = []
+    with lesion_services(services_to_lesion):
+        for task in tasks:
+            # Reset state for isolation
+            try:
+                state_repo = ServiceContainer.get("state_repository", default=None)
+                if state_repo:
+                    state = await state_repo.get_current()
+                    if state:
+                        state.cognition.working_memory = []
+                        state.cognition.current_objective = None
+                        state.cognition.current_origin = None
+                        await state_repo.commit(state, "task_isolation_reset")
+            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                print(f"  [WARN] Failed to reset state for ablation isolation: {exc}")
+            res = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
+            res = grade_result(res, grader_data)
+            ablation_results.append(res)
+    scorecard = compute_scorecard(ablation_results)
+    return scorecard["overall_pass_rate"]
 
 
 # ---------------------------------------------------------------------------
@@ -255,11 +439,11 @@ async def execute_task(engine, task: dict, timeout_s: int = 120) -> dict:
                 result["status"] = "no_answer"
                 result["error"] = "No <answer> tags found in response"
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         result["status"] = "timeout"
         result["error"] = f"Task exceeded time budget of {budget}s"
         result["elapsed_s"] = time.time() - t0
-    except Exception as e:
+    except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
         result["error"] = f"{type(e).__name__}: {str(e)}"
         result["elapsed_s"] = time.time() - t0
@@ -349,22 +533,33 @@ def compute_scorecard(results: list[dict]) -> dict:
     return scorecard
 
 
-def assign_tier(pass_rate: float) -> dict:
-    """Assign tier strictly from pass rate. No inflation."""
+def assign_tier(pass_rate: float, has_unsupported_claims: bool = False) -> dict:
+    """Assign tier strictly from pass rate. No inflation. Cap at Tier 2 if has_unsupported_claims."""
     if pass_rate <= 0.0:
-        return {"tier": 0, "label": "No Capability", "pass_rate": pass_rate}
+        base_tier = 0
+        label = "No Capability"
     elif pass_rate <= 0.20:
-        return {"tier": 1, "label": "Minimal", "pass_rate": pass_rate}
+        base_tier = 1
+        label = "Minimal"
     elif pass_rate <= 0.40:
-        return {"tier": 2, "label": "Emergent", "pass_rate": pass_rate}
+        base_tier = 2
+        label = "Emergent"
     elif pass_rate <= 0.60:
-        return {"tier": 3, "label": "Competent", "pass_rate": pass_rate}
+        base_tier = 3
+        label = "Competent"
     elif pass_rate <= 0.80:
-        return {"tier": 4, "label": "Proficient", "pass_rate": pass_rate}
+        base_tier = 4
+        label = "Proficient"
     elif pass_rate <= 0.95:
-        return {"tier": 5, "label": "Expert", "pass_rate": pass_rate}
+        base_tier = 5
+        label = "Expert"
     else:
-        return {"tier": 6, "label": "Sovereign", "pass_rate": pass_rate}
+        base_tier = 6
+        label = "Sovereign"
+
+    if has_unsupported_claims and base_tier > 2:
+        return {"tier": 2, "label": "Emergent (Capped)", "pass_rate": pass_rate}
+    return {"tier": base_tier, "label": label, "pass_rate": pass_rate}
 
 
 def generate_markdown_report(
@@ -373,6 +568,8 @@ def generate_markdown_report(
     tier: dict,
     anti_theater: dict,
     results: list[dict],
+    baselines: dict,
+    ablations: dict,
 ) -> str:
     """Generate human-readable markdown report."""
     lines = []
@@ -407,8 +604,8 @@ def generate_markdown_report(
     # Scorecard
     lines.append("## Scorecard")
     lines.append("")
-    lines.append(f"| Metric | Count |")
-    lines.append(f"|--------|-------|")
+    lines.append("| Metric | Count |")
+    lines.append("|--------|-------|")
     lines.append(f"| Total Tasks | {scorecard['total_tasks']} |")
     lines.append(f"| Passed | {scorecard['total_pass']} |")
     lines.append(f"| Failed | {scorecard['total_fail']} |")
@@ -433,26 +630,29 @@ def generate_markdown_report(
     # Baselines
     lines.append("## Baselines")
     lines.append("")
-    lines.append("| Baseline | Status | Notes |")
-    lines.append("|----------|--------|-------|")
-    lines.append("| Raw LLM | NOT_RUN | Requires separate model configuration |")
-    lines.append("| LLM+Tools | NOT_RUN | Requires separate tool integration |")
-    lines.append("| ReAct Agent | NOT_RUN | Requires separate reasoning loop |")
-    lines.append("")
-    lines.append("> **Honest Disclosure:** Baselines were not run because they require separate")
-    lines.append("> model configurations that are not available in this session. They are marked")
-    lines.append("> NOT_RUN rather than projected or estimated.")
+    lines.append("| Baseline | Status | Pass Rate / Notes |")
+    lines.append("|----------|--------|-------------------|")
+    for name, data in baselines.items():
+        status = data.get("status", "NOT_RUN")
+        if status == "RUN":
+            pr = data.get("pass_rate", 0.0)
+            lines.append(f"| {name} | RUN | {pr:.1%} pass rate ({data.get('passed')}/{data.get('total_tasks')}) |")
+        else:
+            lines.append(f"| {name} | NOT_RUN | {data.get('reason', 'N/A')} |")
     lines.append("")
 
     # Ablations
     lines.append("## Ablations")
     lines.append("")
-    lines.append("| Configuration | Status | Notes |")
-    lines.append("|---------------|--------|-------|")
-    lines.append("| Full Aura | RUN | Primary results above |")
-    lines.append("| Aura - Memory | NOT_RUN | Requires safe memory service removal |")
-    lines.append("| Aura - Volition | NOT_RUN | Requires safe VolitionEngine removal |")
-    lines.append("| Aura - Will | NOT_RUN | Requires safe UnifiedWill removal |")
+    lines.append("| Configuration | Status | Pass Rate / Notes |")
+    lines.append("|---------------|--------|-------------------|")
+    for name, data in ablations.items():
+        status = data.get("status", "NOT_RUN")
+        if status == "RUN":
+            pr = data.get("pass_rate", 0.0)
+            lines.append(f"| {name} | RUN | {pr:.1%} pass rate |")
+        else:
+            lines.append(f"| {name} | NOT_RUN | {data.get('reason', 'N/A')} |")
     lines.append("")
 
     # Failed Tasks Sample
@@ -555,14 +755,14 @@ async def main():
     # -----------------------------------------------------------------------
     print("\n[3/8] Booting CognitiveEngine...")
 
-    from core.container import ServiceContainer
     from core.brain.cognitive_engine import CognitiveEngine
     from core.brain.llm_health_router import get_llm_router
-    from core.orchestrator import RobustOrchestrator
     from core.consciousness.integration import (
         init_consciousness_integration,
         reset_consciousness_integration,
     )
+    from core.container import ServiceContainer
+    from core.orchestrator import RobustOrchestrator
 
     # Reset singleton to avoid cross-test contamination
     reset_consciousness_integration()
@@ -597,12 +797,16 @@ async def main():
     print(f"\n[4/8] Executing {len(all_tasks)} tasks through CognitiveEngine...")
     results = []
     trace_file = run_dir / "TASK_TRACE.jsonl"
+    receipts_file = run_dir / "RECEIPTS.jsonl"
+    will = ServiceContainer.get("unified_will", default=None)
 
-    with trace_file.open("w", encoding="utf-8") as trace_fh:
+    with trace_file.open("w", encoding="utf-8") as trace_fh, receipts_file.open("w", encoding="utf-8") as receipts_fh:
         for i, task in enumerate(all_tasks, 1):
             tid = task.get("task_id", "?")
             cat = task.get("category", "?")
             print(f"  [{i}/{len(all_tasks)}] {tid} ({cat})...", end=" ", flush=True)
+
+            before_len = len(will._audit_trail) if will else 0
 
             # Reset working memory and current objective to isolate tasks
             try:
@@ -621,7 +825,7 @@ async def main():
                         if hasattr(state.cognition, "modifiers"):
                             state.cognition.modifiers = {}
                         await state_repo.commit(state, "task_isolation_reset")
-            except Exception as e:
+            except _DNU_RUN_RECOVERABLE_ERRORS as e:
                 print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
             result = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
@@ -631,6 +835,24 @@ async def main():
             # Write trace
             trace_fh.write(json.dumps(result, default=str) + "\n")
             trace_fh.flush()
+
+            # Record receipts
+            if will:
+                new_decisions = list(will._audit_trail)[before_len:]
+                for d in new_decisions:
+                    domain_val = d.domain.value if hasattr(d.domain, "value") else str(d.domain)
+                    outcome_val = d.outcome.value if hasattr(d.outcome, "value") else str(d.outcome)
+                    vol_hash = hashlib.sha256(f"{tid}:{d.receipt_id}:{domain_val}:{outcome_val}:{d.reason}".encode()).hexdigest()
+                    receipt_entry = {
+                        "task_id": tid,
+                        "receipt_id": d.receipt_id,
+                        "domain": domain_val,
+                        "outcome": outcome_val,
+                        "reason": d.reason,
+                        "volition_hash": vol_hash,
+                    }
+                    receipts_fh.write(json.dumps(receipt_entry, default=str) + "\n")
+                receipts_fh.flush()
 
             status_icon = {
                 "pass": "✓",
@@ -660,11 +882,21 @@ async def main():
     }
 
     # -----------------------------------------------------------------------
-    # 6. Compute Scorecard
+    # 6. Compute Scorecard and Enforce Tier-Capping
     # -----------------------------------------------------------------------
     print("\n[6/8] Computing scorecard from actual results...")
     scorecard = compute_scorecard(results)
-    tier = assign_tier(scorecard["overall_pass_rate"])
+
+    # Check minimum task counts and record violations
+    unsupported_claims = []
+    for cat, min_count in MINIMUM_COUNTS.items():
+        actual = scorecard["categories"].get(cat, {}).get("attempted", 0)
+        if actual < min_count:
+            unsupported_claims.append(
+                f"Category '{cat}' has {actual} tasks, below minimum of {min_count}"
+            )
+
+    tier = assign_tier(scorecard["overall_pass_rate"], has_unsupported_claims=len(unsupported_claims) > 0)
 
     print(f"  Overall Pass Rate: {scorecard['overall_pass_rate']:.1%}")
     print(f"  Assigned Tier: {tier['tier']} ({tier['label']})")
@@ -672,22 +904,65 @@ async def main():
         print(f"  {cat}: {stats['passed']}/{stats['attempted']} ({stats['pass_rate']:.1%})")
 
     # -----------------------------------------------------------------------
+    # 6.5. Run Baselines & Ablations
+    # -----------------------------------------------------------------------
+    print("\nRunning raw LLM and ReAct agent baselines...")
+    # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
+    comparison_tasks = all_tasks[:6] if len(all_tasks) > 6 else all_tasks
+    print(f"  Using {len(comparison_tasks)} representative tasks for comparisons to save time.")
+
+    sem = asyncio.Semaphore(5)
+    raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]
+    react_tasks = [execute_react_task(router, task, grader_data, sem) for task in comparison_tasks]
+
+    raw_llm_results = await asyncio.gather(*raw_llm_tasks)
+    react_results = await asyncio.gather(*react_tasks)
+
+    raw_llm_scorecard = compute_scorecard(raw_llm_results)
+    react_scorecard = compute_scorecard(react_results)
+
+    baselines = {
+        "raw_llm": {
+            "status": "RUN",
+            "pass_rate": raw_llm_scorecard["overall_pass_rate"],
+            "total_tasks": len(comparison_tasks),
+            "passed": raw_llm_scorecard["total_pass"],
+        },
+        "llm_with_tools": {"status": "NOT_RUN", "reason": "Requires separate tool integration"},
+        "react_agent": {
+            "status": "RUN",
+            "pass_rate": react_scorecard["overall_pass_rate"],
+            "total_tasks": len(comparison_tasks),
+            "passed": react_scorecard["total_pass"],
+        },
+    }
+
+    print("\nRunning dynamic system ablations sequentially...")
+    print("  Running ablation: aura_minus_memory...")
+    aura_minus_memory_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["memory_facade", "memory_coordinator"])
+
+    print("  Running ablation: aura_minus_volition...")
+    aura_minus_volition_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["volition_engine"])
+
+    print("  Running ablation: aura_minus_will...")
+    aura_minus_will_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["unified_will"])
+
+    # Compute full_aura pass rate on the same comparison subset
+    full_aura_comparison_results = results[:len(comparison_tasks)]
+    full_aura_comparison_scorecard = compute_scorecard(full_aura_comparison_results)
+    full_aura_comparison_rate = full_aura_comparison_scorecard["overall_pass_rate"]
+
+    ablations = {
+        "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
+        "aura_minus_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate},
+        "aura_minus_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate},
+        "aura_minus_will": {"status": "RUN", "pass_rate": aura_minus_will_rate},
+    }
+
+    # -----------------------------------------------------------------------
     # 7. Write Artifacts
     # -----------------------------------------------------------------------
     print("\n[7/8] Writing artifacts...")
-
-    # Baselines & Ablations (honestly NOT_RUN)
-    baselines = {
-        "raw_llm": {"status": "NOT_RUN", "reason": "Requires separate model configuration"},
-        "llm_with_tools": {"status": "NOT_RUN", "reason": "Requires separate tool integration"},
-        "react_agent": {"status": "NOT_RUN", "reason": "Requires separate reasoning loop"},
-    }
-    ablations = {
-        "full_aura": {"status": "RUN", "pass_rate": scorecard["overall_pass_rate"]},
-        "aura_minus_memory": {"status": "NOT_RUN", "reason": "Requires safe memory removal"},
-        "aura_minus_volition": {"status": "NOT_RUN", "reason": "Requires safe VolitionEngine removal"},
-        "aura_minus_will": {"status": "NOT_RUN", "reason": "Requires safe UnifiedWill removal"},
-    }
 
     # Main proof bundle
     proof_bundle = {
@@ -700,17 +975,9 @@ async def main():
         "task_count": len(all_tasks),
         "grader_entry_count": len(grader_data),
         "category_summary": {cat: scorecard["categories"].get(cat, {}) for cat in DIR_TO_CAT.values()},
-        "unsupported_claims": [],
+        "unsupported_claims": unsupported_claims,
         "passed": anti_theater["all_passed"],
     }
-
-    # Check minimum task counts and record violations
-    for cat, min_count in MINIMUM_COUNTS.items():
-        actual = scorecard["categories"].get(cat, {}).get("attempted", 0)
-        if actual < min_count:
-            proof_bundle["unsupported_claims"].append(
-                f"Category '{cat}' has {actual} tasks, below minimum of {min_count}"
-            )
 
     # Write DNU_AGI_PROOF.json
     proof_path = run_dir / "DNU_AGI_PROOF.json"
@@ -741,7 +1008,7 @@ async def main():
     print(f"  [OK] {failures_path.name}")
 
     # Write markdown report
-    md_content = generate_markdown_report(sys_info, scorecard, tier, anti_theater, results)
+    md_content = generate_markdown_report(sys_info, scorecard, tier, anti_theater, results, baselines, ablations)
     md_path = run_dir / "DNU_AGI_PROOF.md"
     md_path.write_text(md_content, encoding="utf-8")
     print(f"  [OK] {md_path.name}")
@@ -810,7 +1077,7 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     std_dest.mkdir(parents=True, exist_ok=True)
     for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json",
                    "BASELINES.json", "ABLATIONS.json", "TASK_TRACE.jsonl",
-                   "FAILURES.jsonl", "MANIFEST.json"]:
+                   "FAILURES.jsonl", "RECEIPTS.jsonl", "MANIFEST.json"]:
         src = run_dir / fname
         if src.exists():
             (std_dest / fname).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -821,7 +1088,7 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
         "commit_sha": commit_sha,
         "files": {},
     }
-    for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json"]:
+    for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json", "RECEIPTS.jsonl"]:
         fpath = std_dest / fname
         if fpath.exists():
             std_manifest["files"][fname] = {

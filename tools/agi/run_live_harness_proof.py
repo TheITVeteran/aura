@@ -4,6 +4,7 @@ tools/agi/run_live_harness_proof.py
 Proof script to verify that Aura's live execution harness is active, valid,
 and fail-closed under adversarial and negative controls.
 """
+# ruff: noqa: E402
 
 import asyncio
 import hashlib
@@ -14,7 +15,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 # Insert project root into sys.path
@@ -22,12 +23,23 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.container import ServiceContainer
-from core.will import get_will, ActionDomain, UnifiedWill, WillOutcome
-from core.executive.authority_gateway import AuthorityGateway, AuthorityDecision
+_GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
+_LIVE_PROOF_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 from core.agency_core import AgencyCore
-from core.volition import VolitionEngine
 from core.capability_engine import CapabilityEngine
+from core.container import ServiceContainer
+from core.executive.authority_gateway import AuthorityGateway
+from core.volition import VolitionEngine
+from core.will import ActionDomain, get_will
 
 
 def get_git_commit() -> str:
@@ -48,7 +60,7 @@ def get_git_commit() -> str:
                         return line.split(" ", 1)[0].strip()
             return "unknown_ref_not_found"
         return head
-    except Exception as e:
+    except _GIT_METADATA_ERRORS as e:
         return f"unknown_error_{type(e).__name__}"
 
 
@@ -173,7 +185,7 @@ async def main():
         )
         pos_results["will_boot_and_decide"] = decision.is_approved()
         print(f"  [PASS] Will decide outcome: {decision.outcome.value} (Approved: {decision.is_approved()})")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["will_boot_and_decide"] = False
         print(f"  [FAIL] Will decide failed with exception: {e}")
 
@@ -190,7 +202,7 @@ async def main():
         # If approved, _will_gate returns None as the blocking decision, and the will_decision
         pos_results["will_gate_routing"] = (blocking_dec is None) and (will_dec is not None) and will_dec.is_approved()
         print(f"  [PASS] AuthorityGateway gating approved action correctly (blocking: {blocking_dec}, decision: {will_dec})")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["will_gate_routing"] = False
         print(f"  [FAIL] AuthorityGateway gating failed: {e}")
 
@@ -207,7 +219,7 @@ async def main():
         # Also check signature verification if signed
         pos_results["will_receipt_verification"] = is_verified
         print(f"  [PASS] UnifiedWill receipt verification: {is_verified} for receipt {receipt_id}")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["will_receipt_verification"] = False
         print(f"  [FAIL] Will receipt verification failed: {e}")
 
@@ -232,7 +244,7 @@ async def main():
         
         pos_results["agency_goal_lifecycle"] = added and completed and goal_found
         print(f"  [PASS] AgencyCore goal lifecycle: added={added}, completed={completed}, verified={goal_found}")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["agency_goal_lifecycle"] = False
         print(f"  [FAIL] AgencyCore goal lifecycle failed: {e}")
 
@@ -250,7 +262,7 @@ async def main():
         dedup_ok = (first_selection is not None) and (second_selection is None)
         pos_results["volition_cooldown_dedup"] = dedup_ok
         print(f"  [PASS] VolitionEngine goal selection dedup: first={first_selection is not None}, second={second_selection is None} (Dedup OK: {dedup_ok})")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["volition_cooldown_dedup"] = False
         print(f"  [FAIL] VolitionEngine goal selection probe failed: {e}")
 
@@ -272,7 +284,7 @@ async def main():
         else:
             pos_results["skill_execution"] = False
             print("  [FAIL] Skill 'clock' not found in CapabilityEngine registry.")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         pos_results["skill_execution"] = False
         print(f"  [FAIL] Skill execution probe failed: {e}")
 
@@ -287,9 +299,15 @@ async def main():
         import core.will
         original_get_will = core.will.get_will
         
-        def failing_get_will():
-            raise RuntimeError("UnifiedWill service is offline")
-            
+        class FailingWillResolver:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __call__(self):
+                self.calls += 1
+                raise RuntimeError("UnifiedWill service is offline")
+
+        failing_get_will = FailingWillResolver()
         core.will.get_will = failing_get_will
         
         # Route through AuthorityGateway._will_gate
@@ -308,7 +326,7 @@ async def main():
         # Restore get_will
         core.will.get_will = original_get_will
         print(f"  [PASS] Disabled Will failed closed correctly: blocked={is_blocked}")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["disabled_will_fail_closed"] = False
         print(f"  [FAIL] Disabled Will negative control failed: {e}")
 
@@ -318,7 +336,7 @@ async def main():
         is_valid = will_service.verify_receipt(forged_id)
         neg_results["forged_receipt_rejected"] = not is_valid
         print(f"  [PASS] Forged receipt verified as: {is_valid} (Expected: False)")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["forged_receipt_rejected"] = False
         print(f"  [FAIL] Forged receipt negative control failed: {e}")
 
@@ -336,7 +354,7 @@ async def main():
         closure_ok = will_service.verify_closure(receipt_id, effect_verified=False, telemetry_logged=True)
         neg_results["missing_effect_proof_rejected"] = not closure_ok
         print(f"  [PASS] Closure verification with missing effect proof returned: {closure_ok} (Expected: False)")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["missing_effect_proof_rejected"] = False
         print(f"  [FAIL] Closure verification negative control failed: {e}")
 
@@ -361,7 +379,7 @@ async def main():
         leak_detected = scan_canary_leaks(canary_str, scanned_paths)
         neg_results["canary_leak_detected"] = leak_detected
         print(f"  [PASS] Canary leak scanner status: Leak Detected = {leak_detected} (Expected: True)")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["canary_leak_detected"] = False
         print(f"  [FAIL] Canary leak negative control failed: {e}")
     finally:
@@ -382,7 +400,7 @@ async def main():
         is_valid_report = validate_report_score(fake_report)
         neg_results["fake_projected_score_rejected"] = not is_valid_report
         print(f"  [PASS] Fake projected score validated as: {is_valid_report} (Expected: False)")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["fake_projected_score_rejected"] = False
         print(f"  [FAIL] Fake projected score negative control failed: {e}")
 
@@ -403,7 +421,7 @@ async def main():
                 
         neg_results["mock_service_detected"] = is_detected
         print(f"  [PASS] Mock service scanner: Detected mocks = {detected_mocks} (Expected: 'mock_test_service' included)")
-    except Exception as e:
+    except _LIVE_PROOF_RECOVERABLE_ERRORS as e:
         neg_results["mock_service_detected"] = False
         print(f"  [FAIL] Mock service negative control failed: {e}")
 

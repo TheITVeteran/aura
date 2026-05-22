@@ -3,7 +3,7 @@
     "task_id": "T001",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In biology, DNA translation copies genetic information from mRNA to protein. In compiler design, what is the analogous phase that converts an intermediate representation or syntax tree into machine/assembly code? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In molecular biology, the translation phase copies genetic sequence data from mRNA to build a functional protein. In compiler design theory, what is the analogous downstream translation phase that converts an intermediate representation or abstract syntax tree into raw target machine or assembly code? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -11,7 +11,7 @@
     "task_id": "T002",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In economics, inflation reduces the purchasing power of money over time. In physics, what is the term for the gradual loss of useful energy in a closed thermodynamic system? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In macroeconomics, inflation represents the gradual degradation of the purchasing power of a currency over time. In classical thermodynamics, what is the fundamental state function term that represents the gradual degradation and unavailability of useful thermal energy in a closed system? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -19,7 +19,7 @@
     "task_id": "T003",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In computer science, a deadlock occurs when two processes are blocked waiting for each other to release resources. In chemistry, what is the term for a state where a forward reaction and reverse reaction occur at equal rates, resulting in no net change? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In concurrent programming, a deadlock state occurs when multiple executing threads are permanently blocked waiting for each other to release system resources. In physical chemistry, what is the corresponding state term when a forward reaction and a reverse reaction proceed at exactly equal rates, resulting in no net macroscopic change in the concentrations? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -27,7 +27,7 @@
     "task_id": "T004",
     "category": "transfer",
     "difficulty": "hard",
-    "task_prompt": "In music, a chord is a group of notes played together to create harmony. In linguistics, what is the term for a group of two or more consonants pronounced together without an intervening vowel (e.g., 'str' in 'string')? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In music theory, a chord represents a collection of distinct harmonic tones played simultaneously to form a unified auditory structure. In structural linguistics and phonology, what is the term for a group of two or more adjacent consonants pronounced in immediate succession without any intervening vowel sound (such as the 'str' in 'string')? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two words",
     "time_budget_s": 120
   },
@@ -35,7 +35,7 @@
     "task_id": "T005",
     "category": "transfer",
     "difficulty": "hard",
-    "task_prompt": "In astronomy, a black hole is a region of spacetime with gravity so strong that nothing can escape. In database architecture, what is the term for a table or destination where data is written but can never be retrieved or read? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In astrophysics, a black hole is a localized region of spacetime from which no matter or radiation can escape due to extreme gravity. In database architecture and telemetry streaming, what is the term for a terminal target node or table to which data is written continuously but can never be subsequently read or queried? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -43,7 +43,7 @@
     "task_id": "T006",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In physics, resonance occurs when a system vibrates at its natural frequency under a periodic force. In computer networking, what is the term for a situation where packet transmission rate matches the network capacity, causing queue build-up and delays? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In physics, resonance occurs when an oscillating system is driven by a periodic external force matching its natural frequency, leading to massive amplitude gains. In packet-switched computer networking, what is the term for the state when the incoming packet transmission rate matches or exceeds the capacity of a node, causing queue buffer exhaustion, severe packet loss, and queuing delays? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -51,7 +51,7 @@
     "task_id": "T007",
     "category": "transfer",
     "difficulty": "hard",
-    "task_prompt": "In mathematics, an axiom is a statement assumed to be true without proof. In legal terms, what is a rebuttable presumption or fact accepted as true without proof until disproved? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In formal mathematics, an axiom is an unproven proposition that is assumed to be true to serve as a premise for further reasoning. In legal jurisprudence, what is the Latin term for a rebuttable presumption or evidential fact that is accepted as true without further proof unless and until it is successfully disproved by the opposing party? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two words",
     "time_budget_s": 120
   },
@@ -59,7 +59,7 @@
     "task_id": "T008",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In chemistry, a catalyst speeds up a reaction without being consumed. In computer systems, what is the temporary storage component that speeds up data access without changing the underlying data source? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In biochemistry, an organic catalyst (enzyme) accelerates the rate of a chemical reaction without undergoing any permanent chemical alteration itself. In computer architecture and hardware systems, what is the high-speed temporary memory component that accelerates data retrieval operations without altering the underlying persistent storage medium? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   },
@@ -67,7 +67,7 @@
     "task_id": "T009",
     "category": "transfer",
     "difficulty": "hard",
-    "task_prompt": "In geology, stratigraphy is the study of rock layers (strata). In software engineering, what is the architectural pattern that divides a system into distinct layers of responsibility (e.g., presentation, business logic, data access)? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In structural geology, stratigraphy is the study of rock strata layers to understand historical geological formations. In enterprise software engineering, what is the structural design pattern that partitions a system into horizontal tiers of distinct concerns (such as presentation, domain logic, and data access) to ensure clean separation? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two words",
     "time_budget_s": 120
   },
@@ -75,7 +75,7 @@
     "task_id": "T010",
     "category": "transfer",
     "difficulty": "medium",
-    "task_prompt": "In computer science, a semaphore is a variable used to control access to a common resource by multiple processes. In musical notation, what is the sign placed at the beginning of a staff to indicate the pitch of the notes? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In computer systems, a semaphore is a synchronization primitive that regulates access to a shared resource by competing threads. In Western musical notation, what is the symbol positioned at the absolute beginning of a staff that determines the pitch mapping of all subsequent notes written on the lines and spaces? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A single word",
     "time_budget_s": 120
   }

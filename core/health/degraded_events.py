@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import inspect
@@ -9,7 +7,9 @@ import threading
 import time
 from collections import deque
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.DegradedEvents")
 
@@ -20,10 +20,29 @@ _MAX_CONTEXT_KEYS = 20
 _FAILURE_EVENT_HALF_LIFE_S = 150.0   # pressure halves every 2.5 minutes of no new failures
 _FAILURE_EVENT_MAX_AGE_S = 300.0     # events expire after 5 minutes — prevents lockdown spiral
 
-_EVENTS: deque[Dict[str, Any]] = deque(maxlen=200)
-_SUMMARIES: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
-_LAST_FORWARDED: Dict[Tuple[str, str, str, str], float] = {}
+_EVENTS: deque[dict[str, Any]] = deque(maxlen=200)
+_SUMMARIES: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+_LAST_FORWARDED: dict[tuple[str, str, str, str], float] = {}
 _LOCK = Lock()
+_DEGRADED_EVENTS_RECOVERABLE_ERRORS = (RuntimeError, AttributeError, TypeError, ValueError)
+
+
+def _record_degraded_events_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "degraded_events",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.AUDIT_GAP,
+        receipt_required=severity in {"degraded", "critical"},
+        extra=extra,
+    )
 
 
 def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
@@ -33,8 +52,12 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
         def _runner() -> None:
             try:
                 asyncio.run(awaitable)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('degraded_events', exc)
+            except _DEGRADED_EVENTS_RECOVERABLE_ERRORS as exc:
+                _record_degraded_events_degradation(
+                    exc,
+                    action="retained degraded event locally after threaded async forward failed",
+                    extra={"label": label},
+                )
                 logger.debug("%s async forward failed: %s", label, exc)
 
         threading.Thread(target=_runner, name=f"aura_{label}", daemon=True).start()
@@ -45,8 +68,12 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
     def _consume_result(done: asyncio.Task) -> None:
         try:
             done.result()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('degraded_events', exc)
+        except _DEGRADED_EVENTS_RECOVERABLE_ERRORS as exc:
+            _record_degraded_events_degradation(
+                exc,
+                action="retained degraded event locally after scheduled async forward failed",
+                extra={"label": label},
+            )
             logger.debug("%s async forward failed: %s", label, exc)
 
     task.add_done_callback(_consume_result)
@@ -59,9 +86,9 @@ def record_degraded_event(
     detail: str = "",
     severity: str = "warning",
     classification: str = "background_degraded",
-    context: Optional[Dict[str, Any]] = None,
-    exc: Optional[BaseException] = None,
-) -> Dict[str, Any]:
+    context: dict[str, Any] | None = None,
+    exc: BaseException | None = None,
+) -> dict[str, Any]:
     now = time.time()
     subsystem = str(subsystem or "unknown")
     reason = str(reason or "unknown")
@@ -117,7 +144,7 @@ def record_degraded_event(
     return dict(event)
 
 
-def get_recent_degraded_events(limit: int = 20) -> List[Dict[str, Any]]:
+def get_recent_degraded_events(limit: int = 20) -> list[dict[str, Any]]:
     with _LOCK:
         summaries = sorted(
             _SUMMARIES.values(),
@@ -127,7 +154,7 @@ def get_recent_degraded_events(limit: int = 20) -> List[Dict[str, Any]]:
         return [dict(item) for item in summaries[: max(0, int(limit))]]
 
 
-def get_unified_failure_state(limit: int = 25) -> Dict[str, Any]:
+def get_unified_failure_state(limit: int = 25) -> dict[str, Any]:
     events = get_recent_degraded_events(limit=limit)
     if not events:
         return {
@@ -152,7 +179,7 @@ def get_unified_failure_state(limit: int = 25) -> Dict[str, Any]:
         "non_critical_fallback": 0.0,
     }
     now = time.time()
-    subsystems: Dict[str, float] = {}
+    subsystems: dict[str, float] = {}
     weighted = 0.0
     critical = 0.0
     errors = 0.0
@@ -212,7 +239,7 @@ def clear_degraded_events() -> None:
         _LAST_FORWARDED.clear()
 
 
-def _forward_to_terminal_monitor(event: Dict[str, Any]) -> None:
+def _forward_to_terminal_monitor(event: dict[str, Any]) -> None:
     try:
         from core.terminal_monitor import get_terminal_monitor
 
@@ -220,15 +247,19 @@ def _forward_to_terminal_monitor(event: Dict[str, Any]) -> None:
         if monitor and hasattr(monitor, "ingest_degraded_event"):
             monitor.ingest_degraded_event(event)
     except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('degraded_events', exc)
+        _record_degraded_events_degradation(
+            exc,
+            action="retained degraded event locally after terminal monitor forward failed",
+            extra={"subsystem": event.get("subsystem"), "reason": event.get("reason")},
+        )
         logger.debug("Terminal monitor degraded event forward failed: %s", exc)
 
 
 def _forward_to_error_intelligence(
-    key: Tuple[str, str, str, str],
-    event: Dict[str, Any],
+    key: tuple[str, str, str, str],
+    event: dict[str, Any],
     *,
-    exc: Optional[BaseException] = None,
+    exc: BaseException | None = None,
 ) -> None:
     last_forwarded = _LAST_FORWARDED.get(key, 0.0)
     if (time.time() - last_forwarded) < 30.0:
@@ -266,5 +297,9 @@ def _forward_to_error_intelligence(
         if inspect.isawaitable(result):
             _schedule_awaitable(result, label="degraded_event_forward")
     except (ImportError, AttributeError, RuntimeError) as forward_exc:
-        record_degradation('degraded_events', forward_exc)
+        _record_degraded_events_degradation(
+            forward_exc,
+            action="retained degraded event locally after error-intelligence forward failed",
+            extra={"subsystem": event.get("subsystem"), "reason": event.get("reason")},
+        )
         logger.debug("Error intelligence degraded event forward failed: %s", forward_exc)

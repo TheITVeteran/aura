@@ -6,10 +6,11 @@ Runs the battery via LiveAuraHarness in subprocess isolation,
 validates all artifacts, and enforces anti-theater controls.
 """
 
-import json
 import hashlib
+import json
+import os
+
 import pytest
-from pathlib import Path
 
 
 @pytest.mark.live
@@ -20,6 +21,10 @@ def test_dnu_agi_proof_battery(live_harness):
     """
     repo = live_harness.create_isolated_copy()
 
+    env = {}
+    if os.environ.get("AURA_AGI_FULL_RUN") != "1":
+        env["AURA_AGI_MAX_TASKS"] = "12"
+
     # Run the battery runner in the isolated environment
     result = live_harness.run_command(
         repo,
@@ -27,8 +32,8 @@ def test_dnu_agi_proof_battery(live_harness):
             ".venv/bin/python",
             "tools/agi/run_dnu_agi_proof_battery.py",
         ],
-        timeout_s=1800,  # 30 minute timeout for full battery
-        env={"AURA_AGI_MAX_TASKS": "12"},
+        timeout_s=3600,  # 60 minute timeout for safety margin
+        env=env,
     )
 
     # ------------------------------------------------------------------
@@ -50,6 +55,7 @@ def test_dnu_agi_proof_battery(live_harness):
         "BASELINES.json",
         "ABLATIONS.json",
         "TASK_TRACE.jsonl",
+        "RECEIPTS.jsonl",
         "FAILURES.jsonl",
         "MANIFEST.json",
     ]
@@ -99,24 +105,28 @@ def test_dnu_agi_proof_battery(live_harness):
     assert "label" in tier, "Missing tier label"
     assert "pass_rate" in tier, "Missing pass_rate in tier"
 
-    # Verify tier matches pass rate
+    # Verify tier matches pass rate, accounting for unsupported claims capping at Tier 2
     pass_rate = tier["pass_rate"]
     tier_num = tier["tier"]
+    label = tier["label"]
 
-    if pass_rate <= 0.0:
-        assert tier_num == 0, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
-    elif pass_rate <= 0.20:
-        assert tier_num == 1, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
-    elif pass_rate <= 0.40:
-        assert tier_num == 2, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
-    elif pass_rate <= 0.60:
-        assert tier_num == 3, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
-    elif pass_rate <= 0.80:
-        assert tier_num == 4, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
-    elif pass_rate <= 0.95:
-        assert tier_num == 5, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+    if label == "Emergent (Capped)":
+        assert tier_num == 2, f"Capped tier must be 2, got {tier_num}"
     else:
-        assert tier_num == 6, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        if pass_rate <= 0.0:
+            assert tier_num == 0, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        elif pass_rate <= 0.20:
+            assert tier_num == 1, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        elif pass_rate <= 0.40:
+            assert tier_num == 2, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        elif pass_rate <= 0.60:
+            assert tier_num == 3, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        elif pass_rate <= 0.80:
+            assert tier_num == 4, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        elif pass_rate <= 0.95:
+            assert tier_num == 5, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
+        else:
+            assert tier_num == 6, f"Tier {tier_num} invalid for pass_rate {pass_rate}"
 
     # ------------------------------------------------------------------
     # 6. Anti-theater controls must pass
@@ -134,6 +144,13 @@ def test_dnu_agi_proof_battery(live_harness):
     baselines = proof.get("baselines", {})
     assert len(baselines) > 0, "Missing baselines section"
 
+    # Verify that raw_llm and react_agent are dynamically executed and scored
+    assert baselines.get("raw_llm", {}).get("status") == "RUN"
+    assert "pass_rate" in baselines.get("raw_llm", {})
+    assert baselines.get("react_agent", {}).get("status") == "RUN"
+    assert "pass_rate" in baselines.get("react_agent", {})
+    assert baselines.get("llm_with_tools", {}).get("status") == "NOT_RUN"
+
     for name, baseline in baselines.items():
         status = baseline.get("status", "")
         assert status in ("RUN", "NOT_RUN"), (
@@ -150,6 +167,12 @@ def test_dnu_agi_proof_battery(live_harness):
     # ------------------------------------------------------------------
     ablations = proof.get("ablations", {})
     assert len(ablations) > 0, "Missing ablations section"
+
+    # Verify that all dynamic ablations are executed and scored
+    for name in ["full_aura", "aura_minus_memory", "aura_minus_volition", "aura_minus_will"]:
+        assert name in ablations, f"Missing ablation: {name}"
+        assert ablations[name].get("status") == "RUN", f"Ablation '{name}' must be RUN"
+        assert "pass_rate" in ablations[name], f"Ablation '{name}' must have pass_rate"
 
     for name, ablation in ablations.items():
         status = ablation.get("status", "")
@@ -202,6 +225,23 @@ def test_dnu_agi_proof_battery(live_harness):
         assert entry["status"] in (
             "pass", "fail", "timeout", "error", "no_answer", "ungraded"
         ), f"Invalid trace status: {entry['status']}"
+
+    # ------------------------------------------------------------------
+    # 10.5. RECEIPTS.jsonl must have real receipts and valid structure
+    # ------------------------------------------------------------------
+    receipts_path = result.artifacts_dir / "RECEIPTS.jsonl"
+    assert receipts_path.exists(), "RECEIPTS.jsonl must exist"
+    receipts_lines = receipts_path.read_text(encoding="utf-8").strip().split("\n")
+    receipt_entries = [json.loads(line) for line in receipts_lines if line.strip()]
+
+    # Since we are running isolated CognitiveEngine under test, volition/will logs should exist
+    for entry in receipt_entries:
+        assert "task_id" in entry, "Receipt missing task_id"
+        assert "receipt_id" in entry, "Receipt missing receipt_id"
+        assert "domain" in entry, "Receipt missing domain"
+        assert "outcome" in entry, "Receipt missing outcome"
+        assert "reason" in entry, "Receipt missing reason"
+        assert "volition_hash" in entry, "Receipt missing volition_hash"
 
     # ------------------------------------------------------------------
     # 11. SCORECARD.json must match proof bundle
@@ -262,9 +302,9 @@ def test_dnu_agi_proof_battery(live_harness):
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
-    print(f"\n--- DNU AGI Proof Battery Test Summary ---")
+    print("\n--- DNU AGI Proof Battery Test Summary ---")
     print(f"Total Tasks: {scorecard['total_tasks']}")
     print(f"Pass Rate: {scorecard['overall_pass_rate']:.1%}")
     print(f"Tier: {tier['tier']} ({tier['label']})")
     print(f"Anti-Theater: {'CLEAN' if anti_theater['all_passed'] else 'VIOLATIONS'}")
-    print(f"All assertions passed.")
+    print("All assertions passed.")

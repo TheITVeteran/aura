@@ -160,6 +160,8 @@ SELF_DESCRIPTIVE_PATTERN_FILES = {
     "core/utils/output_gate.py",
     "core/utils/safe_import.py",
     "core/verification/decision_verifier.py",
+    "tests/agi/live/test_live_harness_proof.py",
+    "tools/agi/run_live_harness_proof.py",
 }
 
 _TMP_PATH_PREFIX = "/" + "tmp" + "/"

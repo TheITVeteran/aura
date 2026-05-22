@@ -3,7 +3,7 @@
     "task_id": "P001",
     "category": "planning",
     "difficulty": "medium",
-    "task_prompt": "You have 3 tasks: A (takes 3 hours), B (takes 2 hours), and C (takes 4 hours). Task C depends on B (B must finish before C can start). If you have two workers who can work in parallel, what is the minimum number of hours to complete all tasks? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "You are the lead architect planning a multi-tenant cloud migration. You need to schedule 3 distinct infrastructure migration stages:\n- **Stage A** (Database schema normalization): takes 3 hours.\n- **Stage B** (Docker volume pre-syncing): takes 2 hours.\n- **Stage C** (DNS propagation & traffic cutover): takes 4 hours.\n\nConstraint: Stage C depends strictly on Stage B (Stage B must finish before Stage C can start).\nIf you have two independent engineering teams who can work concurrently in parallel, what is the minimum duration in hours to complete all stages? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -11,7 +11,7 @@
     "task_id": "P002",
     "category": "planning",
     "difficulty": "medium",
-    "task_prompt": "You have a knapsack of capacity 10 kg. You have three items: Item 1 (weight 5kg, value $60), Item 2 (weight 4kg, value $40), and Item 3 (weight 3kg, value $30). What is the maximum value you can carry? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "An autonomous edge vehicle has a strict payload capacity of 10 kg. It must select the optimal subset of sensor kits from a local field cache to maximize utility before starting a long-horizon search mission.\nThe available options are:\n- **Sensor Kit 1**: weight 5 kg, utility value 60 points.\n- **Sensor Kit 2**: weight 4 kg, utility value 40 points.\n- **Sensor Kit 3**: weight 3 kg, utility value 30 points.\n\nSolve the knapsack selection problem to determine the maximum utility value the vehicle can carry under its payload constraint. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -19,7 +19,7 @@
     "task_id": "P003",
     "category": "planning",
     "difficulty": "hard",
-    "task_prompt": "A farmer needs to cross a river with a wolf, a goat, and a cabbage. The boat can only hold the farmer and one item. If left alone, the wolf eats the goat, or the goat eats the cabbage. What is the minimum number of one-way trips across the river needed to get everything to the other side? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "An agent must formulate a multi-step sequence of states to transport sensitive data components across an air-gapped network gateway.\nWe model this classic problem as a farmer needing to cross a river with a wolf, a goat, and a cabbage. The boat can only hold the farmer and one item at a time. If left alone, the wolf eats the goat, and the goat eats the cabbage.\nFormulate the optimal state-transition path. What is the minimum number of one-way trips across the river needed to safely transport all three items to the other side? Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -27,7 +27,7 @@
     "task_id": "P004",
     "category": "planning",
     "difficulty": "hard",
-    "task_prompt": "A network has nodes A, B, C, D. Edges: A-B (weight 2), A-C (weight 5), B-C (weight 1), B-D (weight 6), C-D (weight 2). What is the shortest path distance from A to D? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "A routing protocol needs to find the shortest path through a computer network topology. The network nodes are A, B, C, D. The link latency weights are:\n- Link A to B: weight 2\n- Link A to C: weight 5\n- Link B to C: weight 1\n- Link B to D: weight 6\n- Link C to D: weight 2\n\nApply Dijkstra's algorithm to compute the absolute shortest path distance from source node A to destination node D. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   },
@@ -35,7 +35,7 @@
     "task_id": "P005",
     "category": "planning",
     "difficulty": "hard",
-    "task_prompt": "A project has four activities: A (duration 2 days), B (duration 3 days, depends on A), C (duration 1 day, depends on A), and D (duration 4 days, depends on B and C). What is the minimum duration of the project in days? Output your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "A release pipeline has a dependency graph of four deployment activities.\n- **Activity A** (Provisioning): duration 2 days.\n- **Activity B** (Configuration): duration 3 days, depends on A.\n- **Activity C** (Security scan): duration 1 day, depends on A.\n- **Activity D** (Deployment): duration 4 days, depends on B and C.\n\nUsing the Critical Path Method (CPM), calculate the minimum duration of the entire project in days from start to final deployment completion. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "A number",
     "time_budget_s": 120
   }

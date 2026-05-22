@@ -3,7 +3,7 @@
     "task_id": "C001",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\nx = [1, 2, 3, 4, 5]\ny = x[1:4]\ny[0] = 99\nprint(x[1], y[0])\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "You are debugging a regression in the reactivity subsystem of a high-performance Python ORM repository. The caching layer uses copy-on-write slice wrappers. A developer reported that mutations on slice elements are propagating in a weird way because of Python's list-slicing reference behavior.\n\nTrace the execution of this complex test case representing the database entity tracker:\n```python\n# reactivity_tracker.py\nx = [1, 2, 3, 4, 5]\ny = x[1:4] # shadow slice copy\ny[0] = 99  # mutation on the proxy slice\nprint(x[1], y[0]) # print parent reference and proxy mutation\n```\nAnalyze the exact reference status and compute the printed output. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two space-separated integers",
     "time_budget_s": 120
   },
@@ -11,7 +11,7 @@
     "task_id": "C002",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\ndef f(a, b=[]):\n    b.append(a)\n    return b\n\nprint(len(f(1)), len(f(2)), len(f(3)))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In the production telemetry package of our microservices system, a mutable default argument in a tracking callback is causing accumulator leakage across thread-local invocations. \n\nAnalyze the behavior of the following simplified registry tracking function:\n```python\ndef f(a, b=[]):\n    b.append(a)\n    return b\n\nprint(len(f(1)), len(f(2)), len(f(3)))\n```\nDetermine the length of the list returned by each invocation as a result of list state retention. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Three space-separated integers",
     "time_budget_s": 120
   },
@@ -19,7 +19,7 @@
     "task_id": "C003",
     "category": "coding",
     "difficulty": "hard",
-    "task_prompt": "What does the following Python code print?\n\n```python\nd = {}\nd[1] = 'A'\nd[1.0] = 'B'\nprint(len(d), d[1])\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "During an optimization pass of our hash-map key-lookup mechanism, we are testing the behavior of float and integer key collisons in custom python dict sub-classes.\n\nAnalyze the following hash-collision test case:\n```python\nd = {}\nd[1] = 'A'\nd[1.0] = 'B'\nprint(len(d), d[1])\n```\nBecause `1 == 1.0` and `hash(1) == hash(1.0)` in Python, explain the collision and evaluate the exact printed output. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "An integer and a character",
     "time_budget_s": 120
   },
@@ -27,7 +27,7 @@
     "task_id": "C004",
     "category": "coding",
     "difficulty": "hard",
-    "task_prompt": "What does the following Python code print?\n\n```python\nx = [1, 2, 3]\ng = (i**2 for i in x)\nx = [4, 5, 6]\nprint(next(g))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "We are investigating a memory footprint leak in our pipeline generator queues. An asynchronous generator is instantiated, but the reference array is re-bound to a different dataset before the generator is fully consumed.\n\nTrace this generator expression execution:\n```python\nx = [1, 2, 3]\ng = (i**2 for i in x) # generator evaluates lazily\nx = [4, 5, 6]        # variable rebound before consumption\nprint(next(g))       # first element consumption\n```\nDetermine what the generator prints when consumed. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "An integer",
     "time_budget_s": 120
   },
@@ -35,7 +35,7 @@
     "task_id": "C005",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\nprint((1, 2) < (1, 2, -1))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In our automated load-balancer sorting logic, we compare sequence version tuples to determine priority routing.\n\nDetermine the boolean result of this version-tuple comparison:\n```python\nprint((1, 2) < (1, 2, -1))\n```\nExplain the lexicographical order comparison logic for variable-length tuples and provide the final boolean result (True or False). Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "True or False",
     "time_budget_s": 120
   },
@@ -43,7 +43,7 @@
     "task_id": "C006",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\nx = 10\ndef f():\n    x = 20\nf()\nprint(x)\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In a legacy distributed orchestration script, variable scoping issues in inner functions are causing configuration leaks.\n\nAnalyze this lexical scoping test code:\n```python\nx = 10\ndef f():\n    x = 20 # local binding\nf()\nprint(x) # global inspection\n```\nTrace the variable bindings and output the printed value. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "An integer",
     "time_budget_s": 120
   },
@@ -51,7 +51,7 @@
     "task_id": "C007",
     "category": "coding",
     "difficulty": "hard",
-    "task_prompt": "What does the following Python code print?\n\n```python\nfuncs = [lambda: i for i in range(3)]\nprint(funcs[0](), funcs[1]())\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In our parallel task orchestrator, closure-binding bugs are causing tasks to receive late-bound loop variables rather than local snapshots.\n\nAnalyze this list comprehension closure binding test code:\n```python\nfuncs = [lambda: i for i in range(3)]\nprint(funcs[0](), funcs[1]())\n```\nExplain how late binding affects the lambdas when executed after the loop completes. Determine the exact output. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two space-separated integers",
     "time_budget_s": 120
   },
@@ -59,7 +59,7 @@
     "task_id": "C008",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\na = [[]] * 3\na[0].append(1)\nprint(len(a[1]))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "We are refactoring our multi-dimensional grid allocator. The grid was initialized using element multiplication, leading to unintended shared list references.\n\nAnalyze the following allocation bug:\n```python\na = [[]] * 3 # shallow multiplication\na[0].append(1)\nprint(len(a[1]))\n```\nExplain the shared reference mechanism and determine the length of `a[1]`. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "An integer",
     "time_budget_s": 120
   },
@@ -67,7 +67,7 @@
     "task_id": "C009",
     "category": "coding",
     "difficulty": "medium",
-    "task_prompt": "What does the following Python code print?\n\n```python\nprint(bool('False'), bool(''))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In our configurations parser, string validation rules use type casting to check truthiness of environment variable overrides.\n\nTrace the output of the following cast verification snippet:\n```python\nprint(bool('False'), bool(''))\n```\nDetermine the boolean values of both casts. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "Two space-separated booleans",
     "time_budget_s": 120
   },
@@ -75,7 +75,7 @@
     "task_id": "C010",
     "category": "coding",
     "difficulty": "hard",
-    "task_prompt": "What does the following Python code print?\n\n```python\ndef f():\n    try:\n        return 1\n    finally:\n        return 2\nprint(f())\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "task_prompt": "In our database transactional rollback handlers, return statements inside try blocks are combined with return statements in finally blocks.\n\nTrace the execution flow of the following exception handling block:\n```python\ndef f():\n    try:\n        return 1\n    finally:\n        return 2\nprint(f())\n```\nExplain how finally block returns override try block returns and determine the final printed integer. Output your final answer inside <answer>...</answer> tags.",
     "answer_format": "An integer",
     "time_budget_s": 120
   }
