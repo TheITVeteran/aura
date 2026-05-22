@@ -57,6 +57,9 @@ def test_dnu_agi_proof_battery(live_harness):
         "TASK_TRACE.jsonl",
         "RECEIPTS.jsonl",
         "FAILURES.jsonl",
+        "GOVERNANCE_REPORT.json",
+        "LEAKAGE_REPORT.json",
+        "FINAL_VERDICT.txt",
         "MANIFEST.json",
     ]
 

@@ -1,0 +1,67 @@
+{
+  "run_id": "876340f9-b1ee-45be-92c9-a18014ee44cb",
+  "commit_sha": "6b02595f7fb3cc02f48d7b180ba6adebb4b9a19a",
+  "timestamp": 1779480628.925916,
+  "files": {
+    "FAILURES.jsonl": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/FAILURES.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "RECEIPTS.jsonl": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/RECEIPTS.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "DNU_AGI_PROOF.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/DNU_AGI_PROOF.json",
+      "sha256": "b3bf01dc9e5b8ef043625d5e19660030edd5cff2204c51aaec47582c1ebf0360",
+      "size_bytes": 2462
+    },
+    "FINAL_VERDICT.txt": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/FINAL_VERDICT.txt",
+      "sha256": "b506eefb147d0166fe69a40ae8c3f58473d4af08b0701855c18a63498adfa3b7",
+      "size_bytes": 18
+    },
+    "BASELINES.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/BASELINES.json",
+      "sha256": "6561f7382433ed6acc5187714939cc799cc9a692ab85c475607308b173dc14ee",
+      "size_bytes": 311
+    },
+    "TASK_TRACE.jsonl": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/TASK_TRACE.jsonl",
+      "sha256": "01e0b3261690b1006633f26ea07c759bf081fdd6932251d9f5fab6aaafc50dd0",
+      "size_bytes": 1267
+    },
+    "SCORECARD.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/SCORECARD.json",
+      "sha256": "7b10dc4b413b3d53c4053402664fccd8282bb5d6637fc0fe3de9b3828e002087",
+      "size_bytes": 377
+    },
+    "ABLATIONS.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/ABLATIONS.json",
+      "sha256": "bc79cbe6db7685106578a756d05bc16d9effb7552b7508f311f74a5a053225f8",
+      "size_bytes": 282
+    },
+    "LEAKAGE_REPORT.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/LEAKAGE_REPORT.json",
+      "sha256": "ce47996eae057c8d7ed840b43960dfc755df2cb442ebe0547cf4ccae04a45903",
+      "size_bytes": 180
+    },
+    "REPRODUCTION.md": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/REPRODUCTION.md",
+      "sha256": "98ba91221efea1cb4fc13c9d3165f6d887103e06271491ec6ece2454439987ad",
+      "size_bytes": 969
+    },
+    "GOVERNANCE_REPORT.json": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/GOVERNANCE_REPORT.json",
+      "sha256": "269378ad7f442785e34a0bf6050ba7310ea8f84156a5e87b765611ee5083a5b0",
+      "size_bytes": 175
+    },
+    "DNU_AGI_PROOF.md": {
+      "path": "artifacts/agi/dnu_proof/876340f9-b1ee-45be-92c9-a18014ee44cb/DNU_AGI_PROOF.md",
+      "sha256": "e2b05f8d23206b542122410cd699c9ff7ed95b9b7868050f5e9b70226c0c4ad8",
+      "size_bytes": 1772
+    }
+  }
+}

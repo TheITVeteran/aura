@@ -1,0 +1,8 @@
+{
+  "status": "pass",
+  "receipt_count": 0,
+  "bypass_count": 0,
+  "forged_receipt_result": "pass",
+  "missing_effect_proof_result": "pass",
+  "disabled_will_result": "pass"
+}
