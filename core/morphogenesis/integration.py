@@ -1,9 +1,9 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 from .runtime import MorphogeneticRuntime, get_morphogenetic_runtime
 from .types import CellManifest, CellRole, MorphogenSignal, SignalKind
@@ -11,11 +11,49 @@ from .types import CellManifest, CellRole, MorphogenSignal, SignalKind
 logger = logging.getLogger("Aura.Morphogenesis.Integration")
 
 
+def _record_morphogenesis_integration_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, object] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "morphogenesis.integration",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation(
+                "morphogenesis.integration",
+                error,
+                severity=severity,
+                action=action,
+            )
+        except TypeError:
+            logger.debug(
+                "Morphogenesis integration degradation could not be recorded: %s",
+                signature_exc,
+            )
+
+
 def _safe_get_service(name: str) -> Any:
     try:
         from core.container import ServiceContainer
         return ServiceContainer.get(name, default=None)
-    except (ImportError, AttributeError, RuntimeError):
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _record_morphogenesis_integration_degradation(
+            exc,
+            action="returned missing service so morphogenesis cell can emit repair signal",
+            severity="warning",
+            extra={"service": name},
+        )
         return None
 
 
@@ -51,7 +89,12 @@ async def _service_health_handler(cell, signals, field_state):
                 status = value
                 break
             except (RuntimeError, AttributeError, TypeError) as exc:
-                record_degradation('integration', exc)
+                _record_morphogenesis_integration_degradation(
+                    exc,
+                    action="emitted morphogenesis error signal after service health probe failed",
+                    severity="degraded",
+                    extra={"service": service_name, "method": method},
+                )
                 actions.append({"kind": "health_probe_error", "service": service_name, "method": method, "error": f"{type(exc).__name__}: {exc}"})
                 out_signals.append(
                     MorphogenSignal(
@@ -69,7 +112,7 @@ async def _service_health_handler(cell, signals, field_state):
     return {"actions": actions, "signals": out_signals}
 
 
-def build_default_cells() -> List[CellManifest]:
+def build_default_cells() -> list[CellManifest]:
     """Default cell ecology mapped to Aura's existing architecture.
 
     These are conservative: they observe and request repair, but do not mutate
@@ -102,7 +145,7 @@ def build_default_cells() -> List[CellManifest]:
         ("proactive_communication", "social", CellRole.EFFECTOR, False, 0.55),
     ]
 
-    cells: List[CellManifest] = []
+    cells: list[CellManifest] = []
     for service_name, subsystem, role, protected, criticality in specs:
         cells.append(
             CellManifest(
@@ -124,7 +167,7 @@ def build_default_cells() -> List[CellManifest]:
     return cells
 
 
-def register_morphogenesis_services(runtime: Optional[MorphogeneticRuntime] = None) -> MorphogeneticRuntime:
+def register_morphogenesis_services(runtime: MorphogeneticRuntime | None = None) -> MorphogeneticRuntime:
     """Register runtime + default cells with ServiceContainer.
 
     Call during boot after the ServiceContainer exists, before the main
@@ -154,13 +197,17 @@ def register_morphogenesis_services(runtime: Optional[MorphogeneticRuntime] = No
             ServiceContainer.register_instance("morphogenetic_runtime", rt)
         logger.info("MorphogeneticRuntime registered in ServiceContainer.")
     except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('integration', exc)
+        _record_morphogenesis_integration_degradation(
+            exc,
+            action="continued with local morphogenesis runtime after ServiceContainer registration failed",
+            severity="degraded",
+        )
         logger.debug("ServiceContainer registration skipped: %s", exc)
 
     return rt
 
 
-async def start_morphogenesis_runtime(runtime: Optional[MorphogeneticRuntime] = None) -> MorphogeneticRuntime:
+async def start_morphogenesis_runtime(runtime: MorphogeneticRuntime | None = None) -> MorphogeneticRuntime:
     rt = register_morphogenesis_services(runtime)
     await rt.start()
 
@@ -170,10 +217,34 @@ async def start_morphogenesis_runtime(runtime: Optional[MorphogeneticRuntime] = 
     try:
         from core.morphogenesis.hooks import wire_all_hooks
         hook_results = await wire_all_hooks()
+        if hasattr(rt, "mark_hooks_wired"):
+            rt.mark_hooks_wired(hook_results, ok=True)
         logger.info("Morphogenesis hooks: %s", hook_results)
     except (ImportError, AttributeError, RuntimeError) as hook_exc:
-        record_degradation('integration', hook_exc)
+        if hasattr(rt, "mark_hooks_wired"):
+            rt.mark_hooks_wired({"error": f"{type(hook_exc).__name__}: {hook_exc}"}, ok=False)
+        _record_morphogenesis_integration_degradation(
+            hook_exc,
+            action="kept morphogenesis runtime alive and emitted hook-wiring error signal",
+            severity="degraded",
+        )
+        try:
+            rt.emit_signal(
+                MorphogenSignal(
+                    kind=SignalKind.ERROR,
+                    source="morphogenesis.integration",
+                    subsystem="morphogenesis",
+                    intensity=0.72,
+                    payload={"hook_error": f"{type(hook_exc).__name__}: {hook_exc}"},
+                    ttl_ticks=6,
+                )
+            )
+        except (AttributeError, RuntimeError, TypeError) as signal_exc:
+            _record_morphogenesis_integration_degradation(
+                signal_exc,
+                action="kept morphogenesis runtime alive after hook error signal emission failed",
+                severity="warning",
+            )
         logger.warning("Morphogenesis hook wiring degraded: %s", hook_exc)
 
     return rt
-

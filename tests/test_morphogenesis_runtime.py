@@ -16,19 +16,24 @@ Tests cover:
 """
 from __future__ import annotations
 
-
 import asyncio
 import json
-import time
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.morphogenesis.cell import MorphogenCell
+from core.morphogenesis.field import MorphogenField
+from core.morphogenesis.metabolism import MetabolismManager, ResourceSnapshot
+from core.morphogenesis.organs import OrganStabilizer
+from core.morphogenesis.registry import MorphogenesisRegistry
+from core.morphogenesis.runtime import MorphogeneticRuntime
 from core.morphogenesis.types import (
     CellLifecycle,
     CellManifest,
     CellRole,
-    CellState,
     MorphogenesisConfig,
     MorphogenSignal,
     SignalKind,
@@ -36,13 +41,6 @@ from core.morphogenesis.types import (
     json_safe,
     stable_digest,
 )
-from core.morphogenesis.field import MorphogenField
-from core.morphogenesis.cell import MorphogenCell, CellTickResult
-from core.morphogenesis.metabolism import MetabolismManager, ResourceSnapshot, CellBudget
-from core.morphogenesis.organs import Organ, OrganStabilizer
-from core.morphogenesis.registry import MorphogenesisRegistry
-from core.morphogenesis.runtime import MorphogeneticRuntime
-
 
 # ---------------------------------------------------------------------------
 # 1. Cell activation and repair signal emission
@@ -240,7 +238,7 @@ async def test_cell_quarantine_after_failures():
         kind=SignalKind.TASK, source="test", subsystem="test", intensity=0.9,
     )
     for _ in range(3):
-        result = await cell.tick(signals=[task_signal], field=field, global_energy=1.0)
+        await cell.tick(signals=[task_signal], field=field, global_energy=1.0)
 
     assert cell.lifecycle == CellLifecycle.QUARANTINED, (
         f"Expected QUARANTINED after 3 failures, got {cell.lifecycle}"
@@ -521,6 +519,95 @@ async def test_runtime_disabled_does_not_start():
     rt = MorphogeneticRuntime(config=MorphogenesisConfig(enabled=False))
     await rt.start()
     assert not rt.status()["running"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_start_falls_back_when_task_tracker_unavailable(monkeypatch, tmp_path):
+    """Task tracker failure should not prevent morphogenesis from coming alive."""
+    import core.morphogenesis.runtime as runtime_module
+
+    recorded: list[tuple[str, str, dict[str, object]]] = []
+
+    def record_degradation(module, exc, **kwargs):
+        recorded.append((module, type(exc).__name__, kwargs))
+
+    def get_task_tracker():
+        attempted = True
+        assert attempted
+        raise RuntimeError("task tracker offline")
+
+    tracker_module = types.ModuleType("core.utils.task_tracker")
+    tracker_module.get_task_tracker = get_task_tracker
+    monkeypatch.setitem(sys.modules, "core.utils.task_tracker", tracker_module)
+    monkeypatch.setattr(runtime_module, "record_degradation", record_degradation)
+
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(enabled=True, tick_interval_s=0.05),
+        registry=MorphogenesisRegistry(config=MorphogenesisConfig(), root=tmp_path / "morphogenesis"),
+    )
+
+    await rt.start()
+    assert rt.status()["running"]
+    assert recorded[0][0] == "morphogenesis.runtime"
+    assert "raw asyncio task" in str(recorded[0][2]["action"])
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_loop_failure_records_signal_and_backoff(monkeypatch):
+    """A failed tick should become a causal error signal, not a silent loop."""
+    import core.morphogenesis.runtime as runtime_module
+
+    recorded: list[tuple[str, str, dict[str, object]]] = []
+
+    def record_degradation(module, exc, **kwargs):
+        recorded.append((module, type(exc).__name__, kwargs))
+
+    monkeypatch.setattr(runtime_module, "record_degradation", record_degradation)
+    rt = MorphogeneticRuntime(config=MorphogenesisConfig(enabled=True, tick_interval_s=0.01))
+
+    async def failing_tick():
+        rt._stopping.set()
+        raise RuntimeError("tick failed")
+
+    rt.tick = failing_tick
+    await rt._run_loop()
+
+    status = rt.status()
+    assert status["consecutive_tick_failures"] == 1
+    assert "tick failed" in status["last_tick_error"]
+    assert any(signal.kind == SignalKind.ERROR for signal in rt._signals)
+    assert "backed off" in str(recorded[0][2]["action"])
+
+
+@pytest.mark.asyncio
+async def test_start_morphogenesis_runtime_marks_hook_failure_and_emits_signal(monkeypatch):
+    """Hook wiring failure should be visible in runtime state and signal flow."""
+    import core.morphogenesis.integration as integration_module
+
+    recorded: list[tuple[str, str, dict[str, object]]] = []
+
+    async def wire_all_hooks():
+        attempted = True
+        assert attempted
+        raise RuntimeError("hooks offline")
+
+    def record_degradation(module, exc, **kwargs):
+        recorded.append((module, type(exc).__name__, kwargs))
+
+    hooks_module = types.ModuleType("core.morphogenesis.hooks")
+    hooks_module.wire_all_hooks = wire_all_hooks
+    monkeypatch.setitem(sys.modules, "core.morphogenesis.hooks", hooks_module)
+    monkeypatch.setattr(integration_module, "record_degradation", record_degradation)
+
+    rt = MorphogeneticRuntime(config=MorphogenesisConfig(enabled=False))
+    returned = await integration_module.start_morphogenesis_runtime(rt)
+
+    assert returned is rt
+    assert rt.status()["hooks_wired"] is False
+    assert any(signal.kind == SignalKind.ERROR for signal in rt._signals)
+    assert recorded[0][0] == "morphogenesis.integration"
+    assert "hook-wiring error signal" in str(recorded[0][2]["action"])
 
 
 # ---------------------------------------------------------------------------

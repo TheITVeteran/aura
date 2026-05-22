@@ -1,23 +1,55 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
-import logging
-import traceback
-import time
 import contextlib
+import logging
+import time
+import traceback
 from collections import deque
-from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 from .field import MorphogenField
 from .metabolism import MetabolismManager
 from .organs import OrganStabilizer
 from .registry import MorphogenesisRegistry
-from .types import MorphogenesisConfig, MorphogenSignal, SignalKind, clamp01, json_safe, stable_digest
+from .types import MorphogenesisConfig, MorphogenSignal, SignalKind, stable_digest
 
 logger = logging.getLogger("Aura.Morphogenesis.Runtime")
+
+
+def _record_morphogenesis_runtime_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, object] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "morphogenesis.runtime",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation(
+                "morphogenesis.runtime",
+                error,
+                severity=severity,
+                action=action,
+            )
+        except TypeError:
+            logger.debug(
+                "Morphogenesis runtime degradation could not be recorded: %s",
+                signature_exc,
+            )
 
 
 class MorphogeneticRuntime:
@@ -35,11 +67,11 @@ class MorphogeneticRuntime:
     def __init__(
         self,
         *,
-        config: Optional[MorphogenesisConfig] = None,
-        registry: Optional[MorphogenesisRegistry] = None,
-        field: Optional[MorphogenField] = None,
-        metabolism: Optional[MetabolismManager] = None,
-        organ_stabilizer: Optional[OrganStabilizer] = None,
+        config: MorphogenesisConfig | None = None,
+        registry: MorphogenesisRegistry | None = None,
+        field: MorphogenField | None = None,
+        metabolism: MetabolismManager | None = None,
+        organ_stabilizer: OrganStabilizer | None = None,
     ):
         self.config = config or MorphogenesisConfig()
         self.registry = registry or MorphogenesisRegistry(config=self.config)
@@ -50,15 +82,19 @@ class MorphogeneticRuntime:
             min_members=self.config.organ_min_members,
             edge_threshold=self.config.organ_edge_threshold,
         )
-        self._signals: Deque[MorphogenSignal] = deque(maxlen=max(16, self.config.max_signals_per_tick * 4))
-        self._task: Optional[asyncio.Task] = None
+        self._signals: deque[MorphogenSignal] = deque(maxlen=max(16, self.config.max_signals_per_tick * 4))
+        self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._tick = 0
         self._events_since_episode = 0
         self._last_tick_error = ""
         self._last_tick_at = 0.0
         self._started_at = 0.0
-        self._episode_buffer: Deque[Dict[str, Any]] = deque(maxlen=32)
+        self._episode_buffer: deque[dict[str, Any]] = deque(maxlen=32)
+        self._consecutive_tick_failures = 0
+        self._last_degradation_at = 0.0
+        self._hooks_wired = False
+        self._last_hook_results: dict[str, Any] = {}
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -66,7 +102,15 @@ class MorphogeneticRuntime:
         if not self.config.enabled:
             logger.info("MorphogeneticRuntime disabled by config.")
             return
-        self.registry.load()
+        try:
+            self.registry.load()
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            self._last_degradation_at = time.time()
+            _record_morphogenesis_runtime_degradation(
+                exc,
+                action="started morphogenesis runtime with fresh in-memory registry after registry load failed",
+                severity="degraded",
+            )
         self._stopping.clear()
         self._started_at = time.time()
         try:
@@ -75,8 +119,14 @@ class MorphogeneticRuntime:
                 self._run_loop(),
                 name="morphogenesis.runtime",
             )
-        except (ImportError, AttributeError, RuntimeError):
-            self._task = get_task_tracker().create_task(self._run_loop(), name="morphogenesis.runtime")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            self._last_degradation_at = time.time()
+            _record_morphogenesis_runtime_degradation(
+                exc,
+                action="started morphogenesis runtime with raw asyncio task after task tracker failed",
+                severity="warning",
+            )
+            self._task = asyncio.create_task(self._run_loop(), name="morphogenesis.runtime")
         logger.info("MorphogeneticRuntime started.")
 
     async def stop(self) -> None:
@@ -88,7 +138,15 @@ class MorphogeneticRuntime:
                 await task
             except asyncio.CancelledError:
                 pass  # no-op: intentional
-        await asyncio.to_thread(self.registry.save)
+        try:
+            await asyncio.to_thread(self.registry.save)
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            self._last_degradation_at = time.time()
+            _record_morphogenesis_runtime_degradation(
+                exc,
+                action="completed morphogenesis shutdown while registry save failed; in-memory state was preserved until process exit",
+                severity="critical",
+            )
         logger.info("MorphogeneticRuntime stopped.")
 
     async def on_stop_async(self) -> None:
@@ -99,7 +157,20 @@ class MorphogeneticRuntime:
         if signal.ttl_ticks <= 0:
             return
         self._signals.append(signal)
-        self.field.ingest_signal(signal)
+        try:
+            self.field.ingest_signal(signal)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            self._last_degradation_at = time.time()
+            _record_morphogenesis_runtime_degradation(
+                exc,
+                action="queued morphogen signal but skipped field ingestion after field update failed",
+                severity="degraded",
+                extra={"signal_kind": str(signal.kind), "subsystem": signal.subsystem},
+            )
+
+    def mark_hooks_wired(self, results: dict[str, Any] | None = None, *, ok: bool) -> None:
+        self._hooks_wired = ok
+        self._last_hook_results = dict(results or {})
 
     def observe_exception(
         self,
@@ -108,7 +179,7 @@ class MorphogeneticRuntime:
         exc: BaseException,
         source: str = "runtime_exception",
         danger: float = 0.75,
-        stack_trace: Optional[str] = None,
+        stack_trace: str | None = None,
     ) -> MorphogenSignal:
         stack = stack_trace or "".join(traceback.format_exception(type(exc), exc, getattr(exc, "__traceback__", None)))
         sig = MorphogenSignal(
@@ -126,7 +197,7 @@ class MorphogeneticRuntime:
         self.emit_signal(sig)
         return sig
 
-    async def tick(self) -> Dict[str, Any]:
+    async def tick(self) -> dict[str, Any]:
         started = time.monotonic()
         self._tick += 1
         self._last_tick_at = time.time()
@@ -161,7 +232,7 @@ class MorphogeneticRuntime:
             await self._bridge_signals_to_immunity(active_signals)
 
         active_results = []
-        activated_ids: List[str] = []
+        activated_ids: list[str] = []
         success = True
 
         cells = self.registry.active_cells()[: self.config.max_cells]
@@ -240,6 +311,7 @@ class MorphogeneticRuntime:
 
     async def _run_loop(self) -> None:
         while not self._stopping.is_set():
+            sleep_s = max(0.05, self.config.tick_interval_s)
             try:
                 if self._foreground_quiet_window_active():
                     self._last_tick_at = time.time()
@@ -250,10 +322,19 @@ class MorphogeneticRuntime:
                     continue
                 await self.tick()
                 self._last_tick_error = ""
+                self._consecutive_tick_failures = 0
             except asyncio.CancelledError:
                 raise
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('runtime', exc)
+                self._consecutive_tick_failures += 1
+                self._last_degradation_at = time.time()
+                sleep_s = min(5.0, sleep_s * (1 + self._consecutive_tick_failures))
+                _record_morphogenesis_runtime_degradation(
+                    exc,
+                    action="emitted morphogenesis error signal and backed off after tick failure",
+                    severity="degraded",
+                    extra={"consecutive_tick_failures": self._consecutive_tick_failures},
+                )
                 self._last_tick_error = f"{type(exc).__name__}: {exc}"
                 logger.error("Morphogenesis tick failed: %s", self._last_tick_error, exc_info=True)
                 self.emit_signal(
@@ -265,7 +346,7 @@ class MorphogeneticRuntime:
                         payload={"error": self._last_tick_error},
                     )
                 )
-            await asyncio.sleep(max(0.05, self.config.tick_interval_s))
+            await asyncio.sleep(sleep_s)
 
     @staticmethod
     def _foreground_quiet_window_active() -> bool:
@@ -280,8 +361,8 @@ class MorphogeneticRuntime:
         except (ImportError, AttributeError, RuntimeError):
             return False
 
-    def _consume_signals(self) -> List[MorphogenSignal]:
-        out: List[MorphogenSignal] = []
+    def _consume_signals(self) -> list[MorphogenSignal]:
+        out: list[MorphogenSignal] = []
         while self._signals and len(out) < self.config.max_signals_per_tick:
             sig = self._signals.popleft()
             if sig.ttl_ticks <= 0:
@@ -368,10 +449,16 @@ class MorphogeneticRuntime:
                 if asyncio.iscoroutine(result):
                     await asyncio.wait_for(result, timeout=3.0)
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('runtime', exc)
+                self._last_degradation_at = time.time()
+                _record_morphogenesis_runtime_degradation(
+                    exc,
+                    action="kept morphogenesis tick active while adaptive immunity bridge skipped one signal",
+                    severity="warning",
+                    extra={"signal_kind": kind, "subsystem": sig.subsystem},
+                )
                 logger.debug("Adaptive immunity bridge skipped: %s", exc)
 
-    async def _maybe_record_episode(self, results: List[Dict[str, Any]]) -> None:
+    async def _maybe_record_episode(self, results: list[dict[str, Any]]) -> None:
         if not results:
             return
         self._events_since_episode += len(results)
@@ -409,7 +496,13 @@ class MorphogeneticRuntime:
             )
             self._episode_buffer.clear()
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('runtime', exc)
+            self._last_degradation_at = time.time()
+            _record_morphogenesis_runtime_degradation(
+                exc,
+                action="kept morphogenesis tick active while episodic episode write was skipped",
+                severity="warning",
+                extra={"buffered_events": len(self._episode_buffer)},
+            )
             logger.debug("morphogenesis episode record skipped: %s", exc)
 
     @staticmethod
@@ -425,12 +518,12 @@ class MorphogeneticRuntime:
     def _dominant_subsystem(signals: Sequence[MorphogenSignal]) -> str:
         if not signals:
             return ""
-        counts: Dict[str, float] = {}
+        counts: dict[str, float] = {}
         for s in signals:
             counts[s.subsystem] = counts.get(s.subsystem, 0.0) + s.intensity
         return max(counts.items(), key=lambda kv: kv[1])[0]
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         return {
             "enabled": self.config.enabled,
             "running": bool(self._task and not self._task.done()),
@@ -438,6 +531,10 @@ class MorphogeneticRuntime:
             "started_at": self._started_at,
             "last_tick_at": self._last_tick_at,
             "last_tick_error": self._last_tick_error,
+            "consecutive_tick_failures": self._consecutive_tick_failures,
+            "last_degradation_at": self._last_degradation_at,
+            "hooks_wired": self._hooks_wired,
+            "last_hook_results": self._last_hook_results,
             "queued_signals": len(self._signals),
             "field": self.field.to_dict(),
             "metabolism": self.metabolism.status(),
@@ -446,7 +543,7 @@ class MorphogeneticRuntime:
         }
 
 
-_runtime_singleton: Optional[MorphogeneticRuntime] = None
+_runtime_singleton: MorphogeneticRuntime | None = None
 
 
 def get_morphogenetic_runtime() -> MorphogeneticRuntime:
