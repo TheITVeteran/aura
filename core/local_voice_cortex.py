@@ -1,34 +1,136 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from __future__ import annotations
+
 import asyncio
+import importlib
 import logging
-import numpy as np
-try:
-    import pyaudio
-except ImportError:
-    pyaudio = None
-
-try:
-    import webrtcvad
-except ImportError:
-    webrtcvad = None
-
-import subprocess
+import os
+import shutil
 import time
-from typing import Optional
-from core.container import ServiceContainer
-from core.utils.task_tracker import fire_and_track
-try:
-    from core.managers.vram_manager import get_vram_manager
-except ImportError:
-    def get_vram_manager(): return None
+from typing import Any
 
+from core.container import ServiceContainer
+from core.runtime.errors import (
+    DependencyUnavailable,
+    FallbackClassification,
+    TimeoutBudgetExceeded,
+    record_degradation,
+)
+from core.utils.task_tracker import fire_and_track, get_task_tracker
+
+_NUMPY_IMPORT_ERROR: BaseException | None = None
 try:
-    import mlx_whisper
-except ImportError:
-    mlx_whisper = None
+    import numpy as np
+except (ImportError, OSError, RuntimeError) as exc:
+    np = None
+    _NUMPY_IMPORT_ERROR = exc
+
+_PYAUDIO_IMPORT_ERROR: BaseException | None = None
+_PYAUDIO_IMPORT_ATTEMPTED = False
+pyaudio = None
+_WEBRTCVAD_IMPORT_ERROR: BaseException | None = None
+_WEBRTCVAD_IMPORT_ATTEMPTED = False
+webrtcvad = None
+_VRAM_MANAGER_IMPORT_ERROR: BaseException | None = None
+_MLX_WHISPER_IMPORT_ERROR: BaseException | None = None
+_MLX_WHISPER_IMPORT_ATTEMPTED = False
+mlx_whisper = None
 
 logger = logging.getLogger("Aura.LocalVoice")
+_LOCAL_VOICE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    DependencyUnavailable,
+    FileNotFoundError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutBudgetExceeded,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _load_pyaudio():
+    global _PYAUDIO_IMPORT_ATTEMPTED, _PYAUDIO_IMPORT_ERROR, pyaudio
+    if pyaudio is not None:
+        return pyaudio
+    if _PYAUDIO_IMPORT_ATTEMPTED:
+        return None
+    _PYAUDIO_IMPORT_ATTEMPTED = True
+    try:
+        pyaudio = importlib.import_module("pyaudio")
+        _PYAUDIO_IMPORT_ERROR = None
+    except (ImportError, OSError, RuntimeError) as exc:
+        _PYAUDIO_IMPORT_ERROR = exc
+        pyaudio = None
+    return pyaudio
+
+
+def _load_webrtcvad():
+    global _WEBRTCVAD_IMPORT_ATTEMPTED, _WEBRTCVAD_IMPORT_ERROR, webrtcvad
+    if webrtcvad is not None:
+        return webrtcvad
+    if _WEBRTCVAD_IMPORT_ATTEMPTED:
+        return None
+    _WEBRTCVAD_IMPORT_ATTEMPTED = True
+    try:
+        webrtcvad = importlib.import_module("webrtcvad")
+        _WEBRTCVAD_IMPORT_ERROR = None
+    except (ImportError, OSError, RuntimeError) as exc:
+        _WEBRTCVAD_IMPORT_ERROR = exc
+        webrtcvad = None
+    return webrtcvad
+
+
+def _load_mlx_whisper():
+    global _MLX_WHISPER_IMPORT_ATTEMPTED, _MLX_WHISPER_IMPORT_ERROR, mlx_whisper
+    if mlx_whisper is not None:
+        return mlx_whisper
+    if _MLX_WHISPER_IMPORT_ATTEMPTED:
+        return None
+    _MLX_WHISPER_IMPORT_ATTEMPTED = True
+    try:
+        mlx_whisper = importlib.import_module("mlx_whisper")
+        _MLX_WHISPER_IMPORT_ERROR = None
+    except (ImportError, OSError, RuntimeError) as exc:
+        _MLX_WHISPER_IMPORT_ERROR = exc
+        mlx_whisper = None
+    return mlx_whisper
+
+
+def get_vram_manager():
+    global _VRAM_MANAGER_IMPORT_ERROR
+    try:
+        from core.managers.vram_manager import get_vram_manager as manager_factory
+    except _LOCAL_VOICE_RECOVERABLE_ERRORS as exc:
+        _VRAM_MANAGER_IMPORT_ERROR = exc
+        return None
+    try:
+        manager = manager_factory()
+        _VRAM_MANAGER_IMPORT_ERROR = None
+        return manager
+    except _LOCAL_VOICE_RECOVERABLE_ERRORS as exc:
+        _VRAM_MANAGER_IMPORT_ERROR = exc
+        return None
+
+
+def _record_voice_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        "local_voice_cortex",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
+
 
 class LocalVoiceCortex:
     """
@@ -41,17 +143,16 @@ class LocalVoiceCortex:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator or ServiceContainer.get("orchestrator", default=None)
         self.is_listening = False
-        
+
         # Audio Settings
-        if pyaudio:
-            self.FORMAT = pyaudio.paInt16
-            self.CHANNELS = 1
-            self.RATE = 16000
-            self.CHUNK = 320        # 20ms VAD frame @ 16kHz (valid WebRTCVAD size)
-            self.DMA_BUFFER = 2048  # PyAudio DMA buffer for Apple Silicon stability
-        else:
-            self.FORMAT = self.CHANNELS = self.RATE = self.CHUNK = self.DMA_BUFFER = None
-        
+        self.CHANNELS = 1
+        self.RATE = 16000
+        self.VAD_FRAME_MS = 20
+        self.CHUNK = int(self.RATE * self.VAD_FRAME_MS / 1000)
+        self.VAD_FRAME_BYTES = self.CHUNK * 2
+        self.DMA_BUFFER = 2048  # PyAudio DMA buffer for Apple Silicon stability
+        self.FORMAT = getattr(pyaudio, "paInt16", None) if pyaudio else None
+
         # Model State
         self.stt_model = None
         self.whisper_params = {
@@ -61,11 +162,17 @@ class LocalVoiceCortex:
         }
         self.vad = None
         self.audio_interface = None
-        self._loop_task: Optional[asyncio.Task] = None
-        self.audio_queue: Optional[asyncio.Queue] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self._shutdown_event: Optional[asyncio.Event] = None
+        self._loop_task: asyncio.Task[None] | None = None
+        self.audio_queue: asyncio.Queue[bytes] | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._shutdown_event: asyncio.Event | None = None
         self._vad_timeout = 2.0  # seconds
+        self._say_timeout = float(os.environ.get("AURA_VOICE_SAY_TIMEOUT_SECONDS", "45"))
+        self._max_segment_seconds = float(os.environ.get("AURA_VOICE_MAX_SEGMENT_SECONDS", "20"))
+        self._max_segment_frames = max(1, int(self._max_segment_seconds * 1000 / 20))
+        self._pending_audio = bytearray()
+        self._dropped_audio_frames = 0
+        self._last_drop_receipt_s = 0.0
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """Fires in a separate C-thread by PyAudio."""
@@ -74,37 +181,53 @@ class LocalVoiceCortex:
                 try:
                     self.audio_queue.put_nowait(in_data)
                 except asyncio.QueueFull:
-                    pass  # Drop frame silently on overflow
+                    self._dropped_audio_frames += 1
             self.loop.call_soon_threadsafe(safe_put)
-        return (None, pyaudio.paContinue)
+        return (None, getattr(pyaudio, "paContinue", 0))
 
-    async def start(self):
+    async def start(self) -> bool:
         """Initializes hardware and starts the listen loop."""
+        if self.is_listening and self._loop_task and not self._loop_task.done():
+            return True
+
         try:
             self.loop = asyncio.get_running_loop()
             self.audio_queue = asyncio.Queue(maxsize=500)
             self._shutdown_event = asyncio.Event()
             logger.info("🧠 Loading Local Auditory Cortex (mlx-whisper)...")
             self._shutdown_event.clear()
-            if not mlx_whisper:
-                logger.warning("mlx-whisper not installed. Voice Cortex will fail transcribing.")
 
-            if not webrtcvad or not pyaudio:
-                logger.warning("⚠️ CRITICAL Hardware components (PyAudio/WebRTCVAD) missing. Headless Mode active.")
+            audio_backend = _load_pyaudio()
+            vad_backend = _load_webrtcvad()
+            missing = self._missing_runtime_dependencies()
+            if missing:
+                _record_voice_degradation(
+                    DependencyUnavailable(f"missing local voice dependencies: {', '.join(missing)}"),
+                    action="kept microphone listener offline until local VAD/STT dependencies are installed",
+                    extra={"missing": missing, "import_errors": self._dependency_error_summary()},
+                )
                 self.is_listening = False
-                return
+                return False
 
-            self.vad = webrtcvad.Vad()
-            self.vad.set_mode(2) # Intermediate aggressiveness
-            
-            self.audio_interface = pyaudio.PyAudio()
+            self.FORMAT = audio_backend.paInt16
+            self.vad = vad_backend.Vad()
+            self.vad.set_mode(2)  # Intermediate aggressiveness
+
+            self.audio_interface = audio_backend.PyAudio()
             self.is_listening = True
-            
+
             self._loop_task = fire_and_track(self.listen_loop(), name="VoiceListenLoop")
             logger.info("✅ Voice Cortex online. Aura is listening locally.")
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('local_voice_cortex', e)
+            return True
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS as e:
+            _record_voice_degradation(
+                e,
+                action="left voice cortex offline after hardware or runtime initialization failed",
+                severity="degraded",
+            )
+            self.is_listening = False
             logger.error("Failed to start Voice Cortex: %s", e)
+            return False
 
     async def stop(self):
         """Clean shutdown of audio hardware with queue drain."""
@@ -116,11 +239,22 @@ class LocalVoiceCortex:
             self._loop_task.cancel()
             try:
                 await asyncio.wait_for(self._loop_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError) as e:
+            except (asyncio.CancelledError, TimeoutError) as e:
                 logger.debug('Ignored Exception in local_voice_cortex.py: %s', type(e).__name__)
+            finally:
+                self._loop_task = None
 
         if self.audio_interface:
-            self.audio_interface.terminate()
+            try:
+                self.audio_interface.terminate()
+            except _LOCAL_VOICE_RECOVERABLE_ERRORS as exc:
+                _record_voice_degradation(
+                    exc,
+                    action="continued shutdown after audio interface termination failed",
+                    severity="warning",
+                )
+            finally:
+                self.audio_interface = None
 
         if self.audio_queue:
             while not self.audio_queue.empty():
@@ -128,34 +262,53 @@ class LocalVoiceCortex:
                     self.audio_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+            self.audio_queue = None
 
         logger.info("Voice Cortex disengaged.")
 
-    async def speak(self, text: str):
+    async def speak(self, text: str) -> bool:
         """Reflexive speech output via Sovereign Voice Engine (High Fidelity)."""
-        import os
         if os.environ.get("AURA_VOICE_SILENT", "0") == "1":
-            return
+            return True
+        text = str(text or "").strip()
+        if not text:
+            return False
         logger.info("🗣️ Aura: %s", text)
         try:
-            from core.container import ServiceContainer
             voice = ServiceContainer.get("voice_engine", default=None)
             if voice:
                 await voice.synthesize_speech(text)
+                return True
             else:
-                # Last resort fallback to system say
-                await asyncio.to_thread(subprocess.run, ["say", "-v", "Samantha", text])
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('local_voice_cortex', e)
+                return await self._speak_with_system_say(text, voice="Samantha")
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS as e:
+            _record_voice_degradation(
+                e,
+                action="fell back from sovereign voice engine to bounded system speech",
+            )
             logger.error("TTS failed: %s", e)
             try:
-                await asyncio.to_thread(subprocess.run, ["say", text])
-            except (subprocess.SubprocessError, OSError) as e2:
-                record_degradation('local_voice_cortex', e2)
+                return await self._speak_with_system_say(text, voice=None)
+            except _LOCAL_VOICE_RECOVERABLE_ERRORS as e2:
+                _record_voice_degradation(
+                    e2,
+                    action="reported speech failure after all local voice cortex speech fallbacks failed",
+                    severity="degraded",
+                )
                 logger.error("Fallback TTS also failed: %s", e2)
+                return False
 
     async def listen_loop(self):
         """Main VAD -> STT -> Orchestrator loop with timeout watchdog and auto-restart."""
+        if not self.audio_interface or not self.audio_queue or not self.vad or not self._shutdown_event:
+            _record_voice_degradation(
+                RuntimeError("voice cortex listen loop started before initialization completed"),
+                action="aborted listen loop before opening microphone stream",
+                severity="degraded",
+            )
+            self.is_listening = False
+            return
+
         # Cache service references once, outside the hot loop
         reliability = ServiceContainer.get("reliability_engine", default=None)
         vram_manager = get_vram_manager()
@@ -173,61 +326,75 @@ class LocalVoiceCortex:
                 )
                 stream.start_stream()
                 retry_delay = 1.0  # Reset on successful open
-            except (OSError, IOError) as e:
-                record_degradation('local_voice_cortex', e)
+            except OSError as e:
+                _record_voice_degradation(
+                    e,
+                    action="backed off and retried microphone stream open",
+                    extra={"retry_delay_seconds": retry_delay},
+                )
                 logger.error("Could not open audio stream: %s. Retrying in %ss...", e, retry_delay)
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(60.0, retry_delay * 2)
                 continue
 
             logger.debug("Listening for voice activity...")
-            
+
             try:
                 while self.is_listening and not self._shutdown_event.is_set():
                     frames = []
-                silence_count = 0
-                is_speaking = False
-                
-                while self.is_listening and not self._shutdown_event.is_set():
-                    try:
-                        # Watchdog timeout for queue access
-                        data = await asyncio.wait_for(self.audio_queue.get(), timeout=self._vad_timeout)
-                        
-                        # Reliability heartbeat
-                        if reliability:
-                            vram_usage = vram_manager.usage() if vram_manager else 0.0
-                            await reliability.heartbeat(
-                                "local_voice_cortex", stability=1.0, pressure=vram_usage
-                            )
-                            
-                        # VAD check
-                        # Process audio in proper 320-byte VAD frames (handled by CHUNK=320)
-                        if self.vad.is_speech(data, self.RATE):
-                            if not is_speaking:
-                                logger.debug("Voice detected.")
-                            is_speaking = True
-                            frames.append(data)
-                            silence_count = 0
-                        elif is_speaking:
-                            frames.append(data)
-                            silence_count += 1
-                            if silence_count > 50: # ~1 second of silence (50 × 20ms frames)
-                                break
-                    except asyncio.TimeoutError:
-                        continue
-                    except (OSError, ConnectionError, TimeoutError) as e:
-                        record_degradation('local_voice_cortex', e)
-                        logger.debug("Audio read error: %s", e)
-                        break
+                    silence_count = 0
+                    is_speaking = False
 
-                if frames and self.is_listening:
-                    # Transcribe
-                    await self._process_audio_segment(frames)
+                    while self.is_listening and not self._shutdown_event.is_set():
+                        try:
+                            data = await asyncio.wait_for(self.audio_queue.get(), timeout=self._vad_timeout)
+                            self._report_queue_drops()
+                            reliability, vram_manager = await self._heartbeat(reliability, vram_manager)
+
+                            for vad_frame in self._iter_vad_frames(data):
+                                if self.vad.is_speech(vad_frame, self.RATE):
+                                    if not is_speaking:
+                                        logger.debug("Voice detected.")
+                                    is_speaking = True
+                                    frames.append(vad_frame)
+                                    silence_count = 0
+                                elif is_speaking:
+                                    frames.append(vad_frame)
+                                    silence_count += 1
+                                    if silence_count > 50:  # about 1 second of silence at 20 ms frames
+                                        break
+
+                                if len(frames) >= self._max_segment_frames:
+                                    _record_voice_degradation(
+                                        TimeoutBudgetExceeded("voice segment exceeded configured maximum duration"),
+                                        action="closed current speech segment to bound memory and transcription latency",
+                                        extra={"max_segment_seconds": self._max_segment_seconds},
+                                    )
+                                    break
+
+                            if frames and (
+                                silence_count > 50
+                                or len(frames) >= self._max_segment_frames
+                            ):
+                                break
+                        except TimeoutError:
+                            self._report_queue_drops()
+                            continue
+                        except _LOCAL_VOICE_RECOVERABLE_ERRORS as e:
+                            _record_voice_degradation(
+                                e,
+                                action="restarted microphone stream after VAD/audio read failure",
+                            )
+                            logger.debug("Audio read error: %s", e)
+                            break
+
+                    if frames and self.is_listening:
+                        await self._process_audio_segment(frames)
             finally:
                 if stream.is_active():
                     stream.stop_stream()
                 stream.close()
-                
+
             if not self.is_listening or self._shutdown_event.is_set():
                 break  # Normal exit
             logger.warning("🎙️ Audio loop exited abnormally, restarting stream...")
@@ -235,9 +402,15 @@ class LocalVoiceCortex:
 
     async def _process_audio_segment(self, frames):
         """Transcribes frames and routes to the orchestrator's Broca area."""
-        if not mlx_whisper:
+        whisper = _load_mlx_whisper()
+        if not whisper or np is None:
+            _record_voice_degradation(
+                DependencyUnavailable("local STT dependencies are unavailable"),
+                action="skipped speech transcription until mlx_whisper and numpy are available",
+                extra={"mlx_whisper": bool(whisper), "numpy": np is not None},
+            )
             return
-            
+
         try:
             # Convert buffer to numpy array for Whisper
             audio_data = (
@@ -246,13 +419,13 @@ class LocalVoiceCortex:
                 .astype(np.float32)
                 / 32768.0
             )
-            
+
             vram = get_vram_manager()
-            
+
             transcribe_task = get_task_tracker().create_task(
-                asyncio.to_thread(mlx_whisper.transcribe, audio_data, **self.whisper_params)
+                asyncio.to_thread(whisper.transcribe, audio_data, **self.whisper_params)
             )
-            
+
             try:
                 if vram:
                     async with vram.acquire_session("mlx-whisper"):
@@ -260,29 +433,126 @@ class LocalVoiceCortex:
                 else:
                     result = await asyncio.shield(transcribe_task)
             except asyncio.CancelledError:
-                # IMPORTANT: If cancelled, do NOT release the vram lock until the thread 
-                # actually finishes, otherwise the worker thread will crash the neural engine 
+                # IMPORTANT: If cancelled, do NOT release the vram lock until the thread
+                # actually finishes, otherwise the worker thread will crash the neural engine
                 # when another model is swapped into VRAM concurrently.
                 logger.warning("⚠️ Transcribe cancelled! Waiting for thread to release VRAM cleanly...")
                 try:
                     await transcribe_task
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                    record_degradation('local_voice_cortex', _exc)
+                except _LOCAL_VOICE_RECOVERABLE_ERRORS as _exc:
+                    _record_voice_degradation(
+                        _exc,
+                        action="waited for cancelled transcription worker before releasing voice runtime resources",
+                    )
                     logger.debug("Suppressed Exception: %s", _exc)
                 raise
-            transcript = result.get("text", "").strip()
-            
+            if not isinstance(result, dict):
+                raise TypeError(f"mlx_whisper returned {type(result).__name__}, expected dict")
+            transcript = str(result.get("text", "")).strip()
+
             if transcript and len(transcript) > 2:
                 logger.info("👂 Heard: \"%s\"", transcript)
-                
+
                 if self.orchestrator:
                     # Send to Broca's Area (fast local LLM)
                     response = await self.orchestrator.generate_voice_response(transcript)
-                    
+
                     # Reflexive Speech
                     if response:
                         await self.speak(response)
-                        
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('local_voice_cortex', e)
+
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS as e:
+            _record_voice_degradation(
+                e,
+                action="dropped current audio segment and kept microphone loop alive",
+                severity="degraded",
+            )
             logger.error("Error processing audio segment: %s", e)
+
+    def _missing_runtime_dependencies(self) -> list[str]:
+        missing = []
+        if _load_pyaudio() is None:
+            missing.append("pyaudio")
+        if _load_webrtcvad() is None:
+            missing.append("webrtcvad")
+        if _load_mlx_whisper() is None:
+            missing.append("mlx_whisper")
+        if np is None:
+            missing.append("numpy")
+        return missing
+
+    def _dependency_error_summary(self) -> dict[str, str]:
+        errors = {
+            "pyaudio": _PYAUDIO_IMPORT_ERROR,
+            "webrtcvad": _WEBRTCVAD_IMPORT_ERROR,
+            "vram_manager": _VRAM_MANAGER_IMPORT_ERROR,
+            "mlx_whisper": _MLX_WHISPER_IMPORT_ERROR,
+            "numpy": _NUMPY_IMPORT_ERROR,
+        }
+        return {
+            name: f"{type(error).__name__}: {str(error)[:200]}"
+            for name, error in errors.items()
+            if error is not None
+        }
+
+    def _iter_vad_frames(self, data: bytes):
+        if not data or not self.VAD_FRAME_BYTES:
+            return
+        self._pending_audio.extend(data)
+        while len(self._pending_audio) >= self.VAD_FRAME_BYTES:
+            frame = bytes(self._pending_audio[: self.VAD_FRAME_BYTES])
+            del self._pending_audio[: self.VAD_FRAME_BYTES]
+            yield frame
+
+    def _report_queue_drops(self) -> None:
+        if not self._dropped_audio_frames:
+            return
+        now = time.monotonic()
+        if now - self._last_drop_receipt_s < 10.0:
+            return
+        dropped = self._dropped_audio_frames
+        self._dropped_audio_frames = 0
+        self._last_drop_receipt_s = now
+        _record_voice_degradation(
+            RuntimeError("voice audio queue overflowed"),
+            action="dropped overflowed microphone frames to preserve bounded memory",
+            extra={"dropped_frames": dropped},
+        )
+
+    async def _heartbeat(self, reliability, vram_manager):
+        if not reliability:
+            return reliability, vram_manager
+        try:
+            vram_usage = vram_manager.usage() if vram_manager else 0.0
+            await reliability.heartbeat("local_voice_cortex", stability=1.0, pressure=vram_usage)
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS as exc:
+            _record_voice_degradation(
+                exc,
+                action="disabled voice reliability heartbeat for this listener after telemetry failure",
+            )
+            return None, vram_manager
+        return reliability, vram_manager
+
+    async def _speak_with_system_say(self, text: str, *, voice: str | None) -> bool:
+        say_path = shutil.which("say")
+        if not say_path:
+            raise DependencyUnavailable("macOS say command unavailable")
+        command = [say_path]
+        if voice:
+            command.extend(["-v", voice])
+        command.append(text)
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._say_timeout)
+        except TimeoutError as exc:
+            process.kill()
+            await process.communicate()
+            raise TimeoutBudgetExceeded(f"system say timed out after {self._say_timeout}s") from exc
+        if process.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"system say exited {process.returncode}: {detail}")
+        return True
