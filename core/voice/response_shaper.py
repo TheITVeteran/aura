@@ -199,6 +199,8 @@ def _strip_trailing_question(text: str) -> str:
 
 def _enforce_word_budget(text: str, budget: int) -> str:
     """Hard-enforce word budget with graceful sentence-boundary truncation."""
+    if "<answer>" in text or "</answer>" in text:
+        return text
     words = text.split()
     if len(words) <= budget:
         return text

@@ -61,6 +61,92 @@ class ComputerUseSkill:
     def __init__(self):
         self._drivers: dict[str, DriverFn] = {}
         self._verifiers: dict[str, VerifierFn] = {}
+        
+        # Register default realism drivers
+        self.register_driver("screenshot", self._default_screenshot)
+        self.register_driver("click", self._default_click)
+        self.register_driver("type", self._default_type)
+        self.register_driver("ocr", self._default_ocr)
+        self.register_driver("detect_windows", self._default_detect_windows)
+
+    async def _default_screenshot(self, action: ComputerUseAction) -> str:
+        import base64
+        import tempfile
+        import os
+        import asyncio
+        import subprocess
+
+        # 1. Try macOS screencapture
+        try:
+            fd, temp_path = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            proc = await asyncio.create_subprocess_exec(
+                "screencapture", "-x", temp_path,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            await proc.wait()
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                with open(temp_path, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                os.unlink(temp_path)
+                return encoded
+        except Exception:
+            pass
+
+        # 2. Try pyautogui
+        try:
+            from core.skills._pyautogui_runtime import get_pyautogui
+            pyautogui, _ = get_pyautogui()
+            if pyautogui:
+                import io
+                img = pyautogui.screenshot()
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                return base64.b64encode(buf.getvalue()).decode("utf-8")
+        except Exception:
+            pass
+
+        # 3. Transparent 1x1 pixel PNG fallback
+        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+
+    async def _default_click(self, action: ComputerUseAction) -> dict[str, Any]:
+        try:
+            from core.skills.computer_use import ComputerUseSkill as CoreSkill
+            skill = CoreSkill()
+            x = action.payload.get("x", 0)
+            y = action.payload.get("y", 0)
+            return await skill.execute({"action": "click", "x": x, "y": y}, {})
+        except Exception as exc:
+            return {"ok": False, "error": f"click fallback error: {exc!r}"}
+
+    async def _default_type(self, action: ComputerUseAction) -> dict[str, Any]:
+        try:
+            from core.skills.computer_use import ComputerUseSkill as CoreSkill
+            skill = CoreSkill()
+            x = action.payload.get("x", 0)
+            y = action.payload.get("y", 0)
+            return await skill.execute({"action": "type", "target": action.target, "x": x, "y": y}, {})
+        except Exception as exc:
+            return {"ok": False, "error": f"type fallback error: {exc!r}"}
+
+    async def _default_ocr(self, action: ComputerUseAction) -> dict[str, Any]:
+        try:
+            from core.skills.computer_use import ComputerUseSkill as CoreSkill
+            skill = CoreSkill()
+            return await skill.execute({"action": "read_screen_text", "target": action.target}, {})
+        except Exception as exc:
+            return {"ok": False, "error": f"ocr fallback error: {exc!r}"}
+
+    async def _default_detect_windows(self, action: ComputerUseAction) -> dict[str, Any]:
+        import asyncio
+        try:
+            from core.skills.computer_use import ComputerUseSkill as CoreSkill
+            skill = CoreSkill()
+            tree = await asyncio.to_thread(skill._query_system_events_window_tree)
+            return {"ok": True, "window_tree": tree}
+        except Exception as exc:
+            return {"ok": False, "error": f"detect_windows fallback error: {exc!r}"}
 
     def register_driver(self, kind: str, driver: DriverFn) -> None:
         self._drivers[kind] = driver
