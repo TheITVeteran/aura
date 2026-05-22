@@ -1,0 +1,42 @@
+[
+  {
+    "task_id": "P001",
+    "category": "planning",
+    "difficulty": "medium",
+    "task_prompt": "You have 3 tasks: A (takes 3 hours), B (takes 2 hours), and C (takes 4 hours). Task C depends on B (B must finish before C can start). If you have two workers who can work in parallel, what is the minimum number of hours to complete all tasks? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P002",
+    "category": "planning",
+    "difficulty": "medium",
+    "task_prompt": "You have a knapsack of capacity 10 kg. You have three items: Item 1 (weight 5kg, value $60), Item 2 (weight 4kg, value $40), and Item 3 (weight 3kg, value $30). What is the maximum value you can carry? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P003",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "A farmer needs to cross a river with a wolf, a goat, and a cabbage. The boat can only hold the farmer and one item. If left alone, the wolf eats the goat, or the goat eats the cabbage. What is the minimum number of one-way trips across the river needed to get everything to the other side? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P004",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "A network has nodes A, B, C, D. Edges: A-B (weight 2), A-C (weight 5), B-C (weight 1), B-D (weight 6), C-D (weight 2). What is the shortest path distance from A to D? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "P005",
+    "category": "planning",
+    "difficulty": "hard",
+    "task_prompt": "A project has four activities: A (duration 2 days), B (duration 3 days, depends on A), C (duration 1 day, depends on A), and D (duration 4 days, depends on B and C). What is the minimum duration of the project in days? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  }
+]

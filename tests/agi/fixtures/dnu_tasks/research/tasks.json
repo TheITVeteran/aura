@@ -1,0 +1,82 @@
+[
+  {
+    "task_id": "S001",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: Project Alpha launched in 2021 with a budget of $12M. Project Beta launched in 2022 with $8M. In 2023, Alpha's budget was cut by 25%, while Beta's budget was doubled.\n\nQuestion: What is the total combined budget of both projects in 2023 in millions of dollars? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S002",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: A study of 500 patients showed that 60% received Treatment A, and the rest received Treatment B. The recovery rate for Treatment A was 80%, and for Treatment B it was 90%.\n\nQuestion: How many total patients recovered in the study? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S003",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: Company X has three departments: Sales (40 employees), Engineering (60 employees), and HR (10 employees). The turnover rates are 10% in Sales, 5% in Engineering, and 0% in HR.\n\nQuestion: How many total employees left Company X? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S004",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: The treaty of 1854 established a border along the 49th parallel. In 1860, a subsequent treaty shifted the border south by 2 degrees of latitude. In 1872, a final treaty moved the border north by 1 degree.\n\nQuestion: At what parallel of latitude was the border located after the 1872 treaty? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S005",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: A warehouse has 3 types of boxes: Large (weight 15 lbs), Medium (weight 10 lbs), and Small (weight 5 lbs). The inventory shows 100 Large boxes, 200 Medium boxes, and 300 Small boxes.\n\nQuestion: What is the total weight of all boxes in the warehouse in pounds? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S006",
+    "category": "research",
+    "difficulty": "hard",
+    "task_prompt": "Passage: Three candidates competed in an election. Candidate A got 45% of the votes, Candidate B got 35%, and Candidate C got the remaining 1000 votes.\n\nQuestion: How many total votes were cast in the election? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S007",
+    "category": "research",
+    "difficulty": "hard",
+    "task_prompt": "Passage: In a library, 30% of books are fiction. Of the fiction books, 50% are sci-fi. The library has 1500 sci-fi books.\n\nQuestion: What is the total number of books in the library? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S008",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: An airline flies 3 routes: Route A (4 daily flights, average 150 passengers/flight), Route B (2 daily flights, 200 passengers/flight), Route C (1 daily flight, 100 passengers/flight).\n\nQuestion: What is the total number of daily passengers flown by the airline? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S009",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: A crop yields 4 tons per acre under normal conditions. Using Fertilizer X, the yield increases by 25%. Using Fertilizer Y, the yield increases by 40%.\n\nQuestion: What is the yield in tons per acre when using Fertilizer Y? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "S010",
+    "category": "research",
+    "difficulty": "medium",
+    "task_prompt": "Passage: A software project has 80,000 lines of code. Subsystem A makes up 40% of the codebase. Subsystem B is half the size of Subsystem A. The rest of the code is Subsystem C.\n\nQuestion: How many lines of code are in Subsystem C? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  }
+]

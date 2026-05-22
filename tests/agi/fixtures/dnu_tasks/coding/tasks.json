@@ -1,0 +1,82 @@
+[
+  {
+    "task_id": "C001",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\nx = [1, 2, 3, 4, 5]\ny = x[1:4]\ny[0] = 99\nprint(x[1], y[0])\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two space-separated integers",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C002",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\ndef f(a, b=[]):\n    b.append(a)\n    return b\n\nprint(len(f(1)), len(f(2)), len(f(3)))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Three space-separated integers",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C003",
+    "category": "coding",
+    "difficulty": "hard",
+    "task_prompt": "What does the following Python code print?\n\n```python\nd = {}\nd[1] = 'A'\nd[1.0] = 'B'\nprint(len(d), d[1])\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "An integer and a character",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C004",
+    "category": "coding",
+    "difficulty": "hard",
+    "task_prompt": "What does the following Python code print?\n\n```python\nx = [1, 2, 3]\ng = (i**2 for i in x)\nx = [4, 5, 6]\nprint(next(g))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "An integer",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C005",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\nprint((1, 2) < (1, 2, -1))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "True or False",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C006",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\nx = 10\ndef f():\n    x = 20\nf()\nprint(x)\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "An integer",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C007",
+    "category": "coding",
+    "difficulty": "hard",
+    "task_prompt": "What does the following Python code print?\n\n```python\nfuncs = [lambda: i for i in range(3)]\nprint(funcs[0](), funcs[1]())\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two space-separated integers",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C008",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\na = [[]] * 3\na[0].append(1)\nprint(len(a[1]))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "An integer",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C009",
+    "category": "coding",
+    "difficulty": "medium",
+    "task_prompt": "What does the following Python code print?\n\n```python\nprint(bool('False'), bool(''))\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two space-separated booleans",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "C010",
+    "category": "coding",
+    "difficulty": "hard",
+    "task_prompt": "What does the following Python code print?\n\n```python\ndef f():\n    try:\n        return 1\n    finally:\n        return 2\nprint(f())\n```\nOutput your final answer inside <answer>...</answer> tags.",
+    "answer_format": "An integer",
+    "time_budget_s": 120
+  }
+]

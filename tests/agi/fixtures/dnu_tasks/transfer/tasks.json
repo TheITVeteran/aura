@@ -1,0 +1,82 @@
+[
+  {
+    "task_id": "T001",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In biology, DNA translation copies genetic information from mRNA to protein. In compiler design, what is the analogous phase that converts an intermediate representation or syntax tree into machine/assembly code? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T002",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In economics, inflation reduces the purchasing power of money over time. In physics, what is the term for the gradual loss of useful energy in a closed thermodynamic system? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T003",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In computer science, a deadlock occurs when two processes are blocked waiting for each other to release resources. In chemistry, what is the term for a state where a forward reaction and reverse reaction occur at equal rates, resulting in no net change? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T004",
+    "category": "transfer",
+    "difficulty": "hard",
+    "task_prompt": "In music, a chord is a group of notes played together to create harmony. In linguistics, what is the term for a group of two or more consonants pronounced together without an intervening vowel (e.g., 'str' in 'string')? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two words",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T005",
+    "category": "transfer",
+    "difficulty": "hard",
+    "task_prompt": "In astronomy, a black hole is a region of spacetime with gravity so strong that nothing can escape. In database architecture, what is the term for a table or destination where data is written but can never be retrieved or read? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T006",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In physics, resonance occurs when a system vibrates at its natural frequency under a periodic force. In computer networking, what is the term for a situation where packet transmission rate matches the network capacity, causing queue build-up and delays? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T007",
+    "category": "transfer",
+    "difficulty": "hard",
+    "task_prompt": "In mathematics, an axiom is a statement assumed to be true without proof. In legal terms, what is a rebuttable presumption or fact accepted as true without proof until disproved? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two words",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T008",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In chemistry, a catalyst speeds up a reaction without being consumed. In computer systems, what is the temporary storage component that speeds up data access without changing the underlying data source? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T009",
+    "category": "transfer",
+    "difficulty": "hard",
+    "task_prompt": "In geology, stratigraphy is the study of rock layers (strata). In software engineering, what is the architectural pattern that divides a system into distinct layers of responsibility (e.g., presentation, business logic, data access)? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Two words",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "T010",
+    "category": "transfer",
+    "difficulty": "medium",
+    "task_prompt": "In computer science, a semaphore is a variable used to control access to a common resource by multiple processes. In musical notation, what is the sign placed at the beginning of a staff to indicate the pitch of the notes? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  }
+]

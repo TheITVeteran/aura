@@ -1,0 +1,452 @@
+{
+  "R001": {
+    "salt": "5a9a10e4d5a7796e",
+    "golden_answer": "alice",
+    "answer_hash": "eff65969bd1d7cf452d122631c4b9ede9e3ad1cf9d4d8f183ee6e0d242a54ef9"
+  },
+  "R002": {
+    "salt": "89cb99c14a162232",
+    "golden_answer": "knave",
+    "answer_hash": "527746a300a99812bd17456c82fd610dff0bdf91b94b577cfe3bfa01afe91f74"
+  },
+  "R003": {
+    "salt": "c03e518f711dc485",
+    "golden_answer": "42",
+    "answer_hash": "2bd62da8941c7a3bb538faa602c7c02a18fcba4f5357082ad475f0961d59e8e7"
+  },
+  "R004": {
+    "salt": "3fcebf6f6f893d88",
+    "golden_answer": "yes",
+    "answer_hash": "18c789390cfda2fdb7efbdbe4b6980fa7d8b2c83327ad678befedafccc63a591"
+  },
+  "R005": {
+    "salt": "5d0e72af063c8a0d",
+    "golden_answer": "9",
+    "answer_hash": "9174f15d285f9eb87deef2e6d91dea63d201d1192a267078cd1b26429cc224e7"
+  },
+  "R006": {
+    "salt": "7f1e6ae18622e8b4",
+    "golden_answer": "same",
+    "answer_hash": "1735a7bc8d3d0f91e49a0289847c24310e04a46f83f509bd6a4507c19d5fd0b1"
+  },
+  "R007": {
+    "salt": "fd6905d1ace0cfec",
+    "golden_answer": "3",
+    "answer_hash": "985d42ae835133d5ad5c8cb7de0c0fbf0906d6a2913e271470ba30f8c123e41d"
+  },
+  "R008": {
+    "salt": "a5176e985565e478",
+    "golden_answer": "60",
+    "answer_hash": "2407cde7b4638ec958d07143dc59cbd849ad51c77efc5a0af179ce7580aa60dd"
+  },
+  "R009": {
+    "salt": "fbf868004bbe336f",
+    "golden_answer": "11",
+    "answer_hash": "f87a3a647d79aac8512e037acb3d80f6a14f119305340512331f50659880aed4"
+  },
+  "R010": {
+    "salt": "ff952d310e6673cd",
+    "golden_answer": "saturday",
+    "answer_hash": "25a5f8312fe16f5647c303968698900bfa65dd7302c6c77326d1a8f3b109952e"
+  },
+  "R011": {
+    "salt": "2acbca4a9a50ffb9",
+    "golden_answer": "1/22",
+    "answer_hash": "f1c4d67b46612e943ea56843ca52f5ca2a2e647cd23e093ce3c361e4d088cf6e"
+  },
+  "R012": {
+    "salt": "c65008e7e5702d70",
+    "golden_answer": "1",
+    "answer_hash": "a78c5733cb7bd6cb43f29aa370b48341274845104fdad00a6adf964cc2ce3186"
+  },
+  "R013": {
+    "salt": "a00f1daa6c936751",
+    "golden_answer": "n",
+    "answer_hash": "836333bd4bf7dcaab1727cf1071724ab1857f19af63ca966782f73960ae996e2"
+  },
+  "R014": {
+    "salt": "49645258fdcd99eb",
+    "golden_answer": "5",
+    "answer_hash": "2ed05e17cb60d1e4d0971748b5616b264a018a760c6e514105b4f85e28007f6f"
+  },
+  "R015": {
+    "salt": "4ff7c6ecd8863271",
+    "golden_answer": "19",
+    "answer_hash": "0b96f89465d16d0b23e050a76607df25c2b233efaa8ba1ad2630dbac81d07eb1"
+  },
+  "R016": {
+    "salt": "6e142b605fcfa9e9",
+    "golden_answer": "20",
+    "answer_hash": "d06e5ef77bf154ebb8a68e0decbfc12cf479e925e13963e9e31c008bb7713af5"
+  },
+  "R017": {
+    "salt": "eacff2144252397b",
+    "golden_answer": "carrot",
+    "answer_hash": "836a713c3c8a74fdaefa06f09d9d811b7d504a0795021feb98e2229312afb033"
+  },
+  "R018": {
+    "salt": "a18fc5ee64143d05",
+    "golden_answer": "5",
+    "answer_hash": "d6f465dcc3e4d04fd7006a4620587e98c916e9ebbd9fd718786b3b847221dd8d"
+  },
+  "R019": {
+    "salt": "eb51825b27bdcc88",
+    "golden_answer": "5",
+    "answer_hash": "26a95279679ac18f7874068719c3d2a86e287a856b2a2c546ce87f09aaeecc10"
+  },
+  "R020": {
+    "salt": "3ab1b459a8eb9191",
+    "golden_answer": "no",
+    "answer_hash": "1c1158591d7b4c5d4df6a225deb098d7968855561f8ca546a8cf6975dec0a8c3"
+  },
+  "R021": {
+    "salt": "5061ab2a85e53f18",
+    "golden_answer": "55",
+    "answer_hash": "5546ddbfcc1244ab19255a377d8bb5c7e2ead8fac8c2dba45b3fc6e4f5e202bc"
+  },
+  "R022": {
+    "salt": "402fd7f1582605b5",
+    "golden_answer": "32",
+    "answer_hash": "eed910fef6b2e24fbc85b582036960f13f24ae14513631c2530f85742e6e376f"
+  },
+  "R023": {
+    "salt": "54a7dd535e9c5044",
+    "golden_answer": "21",
+    "answer_hash": "8b6a54b407092d520ef3521a5d2ffef9078fb46f714300ae7b0e30d30951a3cf"
+  },
+  "R024": {
+    "salt": "66cbe4bd47f87a04",
+    "golden_answer": "6",
+    "answer_hash": "9adde73f2ac9a04fffbd39e76ed8f30c7ce364d723bf92a93ee1ce70756e12e3"
+  },
+  "R025": {
+    "salt": "d97b97d178d8b7c2",
+    "golden_answer": "8",
+    "answer_hash": "dc2741c19dce22aad297deb307d53cf975f2c7f7d147a953f9e8d82462b04824"
+  },
+  "R026": {
+    "salt": "97aca55dbd394bee",
+    "golden_answer": "3",
+    "answer_hash": "adc4e7710fcdcaa0421c0db8b325c0a126221e9cb2c70edea3f2b64db38b18be"
+  },
+  "R027": {
+    "salt": "bf3e7aec2d363955",
+    "golden_answer": "s",
+    "answer_hash": "7ef2b0986ce01bc5e2695e4cc09da78defc32fbcefd65eadf2a218ba78ad7cdd"
+  },
+  "R028": {
+    "salt": "3f536ea2a40a2eda",
+    "golden_answer": "2",
+    "answer_hash": "5f718ae09a24c3bcf29bb4c34c27cf33390c267bd3ce8f47e2d33d09ec226bf1"
+  },
+  "R029": {
+    "salt": "c6ab8d11b8b5b85a",
+    "golden_answer": "match",
+    "answer_hash": "01c1a11455b4deaa0dd4345d2e1dcfb7a0e8c9bc48394168ef60780be5556e0f"
+  },
+  "R030": {
+    "salt": "3ff0878531ae784f",
+    "golden_answer": "26",
+    "answer_hash": "934b63407d44f9fff879a27fa0f737b4673540d3e9b14eeca0bbfd81c9a9b288"
+  },
+  "R031": {
+    "salt": "2f5c4c7d54fa5ff7",
+    "golden_answer": "45pi",
+    "answer_hash": "48d1643ca89b831c6fd4477dcfd2392cbe5215611339ca334fc85b15263bdb59"
+  },
+  "R032": {
+    "salt": "171222f4c9199f2e",
+    "golden_answer": "none",
+    "answer_hash": "59f31d270873c81573b85b999e03143dc7c6a3b0f0b578a487331c767e449d2a"
+  },
+  "R033": {
+    "salt": "df09a5098f277bb8",
+    "golden_answer": "42",
+    "answer_hash": "5cb918f2b3096900928fbeb1bf95b00c54c1bc4bcbc257ecaff20875bddced5f"
+  },
+  "R034": {
+    "salt": "41a0aab7a6c4bea0",
+    "golden_answer": "4/13",
+    "answer_hash": "c0130b47524876db168796f69764cb6023f0dade1d52a1e0575ff42db043751e"
+  },
+  "R035": {
+    "salt": "f778a8e5f2326722",
+    "golden_answer": "no",
+    "answer_hash": "86c17bc48b434ae8fa947ec3d55fd9c9d3c3501a58808af479b2f0d85945b95b"
+  },
+  "R036": {
+    "salt": "a9840d026dd803f6",
+    "golden_answer": "21",
+    "answer_hash": "9c74cdea4d5afeba00913ccf59850ed9c76f218f846e78ea59af71c9577a33b3"
+  },
+  "R037": {
+    "salt": "8307331577e827d5",
+    "golden_answer": "30",
+    "answer_hash": "4be6bc9de2756d45ee2aba24fbee491b3d8a5c42187903db9185f42ce5c98849"
+  },
+  "R038": {
+    "salt": "d89720f52a33cf3b",
+    "golden_answer": "1",
+    "answer_hash": "467705798863c55a62e01bdcaefb5776ab8cfe763b5c9368d04bb87ab3bbc25c"
+  },
+  "R039": {
+    "salt": "b26a06ddf8b2905a",
+    "golden_answer": "12",
+    "answer_hash": "3430df94a86e5297c9272a3c5ca50764965656fae74b181a2b09040e61676c7e"
+  },
+  "R040": {
+    "salt": "e8e25e34c489ae69",
+    "golden_answer": "8",
+    "answer_hash": "761b7ca21306dac99027d0f64e3da0d59b2e919d8db4eebc3e42cec9bfe55d2b"
+  },
+  "R041": {
+    "salt": "1e327068e8a48e6f",
+    "golden_answer": "3x^2",
+    "answer_hash": "52be742f4ab9da25f433ee8c10c14011499e08f95957e5ead1d6e620f2893b44"
+  },
+  "R042": {
+    "salt": "8221756b47b3db18",
+    "golden_answer": "5",
+    "answer_hash": "13628a0ad54baf27ceb6501cae13bfd96f5e540f4e657097409f4c75a9802952"
+  },
+  "R043": {
+    "salt": "604dcba0c4bbfca4",
+    "golden_answer": "7",
+    "answer_hash": "868f1697780e06295068a39a1d6b4a3e37b085d9cac34575f29f1be60378b1c7"
+  },
+  "R044": {
+    "salt": "455dd843b338494d",
+    "golden_answer": "8",
+    "answer_hash": "039a2dd4cdcba230a77525e90ad1068e381f65327394b7a7227e3cb2421903d4"
+  },
+  "R045": {
+    "salt": "b24f22519d5ce1a5",
+    "golden_answer": "5/32",
+    "answer_hash": "33b112f52051221323d9b04a80d58caf8fd8725f405065e3d629ac5b928c51cd"
+  },
+  "R046": {
+    "salt": "6fbf77bd6319ca7e",
+    "golden_answer": "90",
+    "answer_hash": "7a01fe7da4c5a8fcc8372afd621dcaee3c46296ba1fcad4e4a147ca4cf4e9134"
+  },
+  "R047": {
+    "salt": "60ee43106390e095",
+    "golden_answer": "36",
+    "answer_hash": "28b2543ebf7370f25e045cfb0f9a0cea6fff9b5d7a1ad6975e4ecc4875cde974"
+  },
+  "R048": {
+    "salt": "70b76ca816d02c75",
+    "golden_answer": "3/5",
+    "answer_hash": "c29c068b1fad6d18dacf96ce1249cb3059cb72f5546f36484f0c46cfa290b26e"
+  },
+  "R049": {
+    "salt": "d61090487854d56a",
+    "golden_answer": "4",
+    "answer_hash": "41c184cf27577bee817ea2db8bc0899f24bcf87db63ff988bfb5b43594b85a5d"
+  },
+  "R050": {
+    "salt": "d71496e9c23439d3",
+    "golden_answer": "60",
+    "answer_hash": "4f444e4f7047574cb91e89090a2a20342335965ad728a5f03f2acb65d959b3b6"
+  },
+  "C001": {
+    "salt": "d16079b27c8e63b4",
+    "golden_answer": "2 99",
+    "answer_hash": "5518998820b66fad089896af6fcf576af8d5b2324b200ea434984517eb2fb574"
+  },
+  "C002": {
+    "salt": "ae1466c948fc204b",
+    "golden_answer": "1 2 3",
+    "answer_hash": "c3b02f8601bddd917d6fca0c51a4cf2d91d5bf088dedd42e2b9a8baafa45aa90"
+  },
+  "C003": {
+    "salt": "62bb1acbe23406f1",
+    "golden_answer": "1 B",
+    "answer_hash": "5b55a8f022eb1e01fd318fa69efe49ba2d661de035fc583304b868b261a8ee21"
+  },
+  "C004": {
+    "salt": "c7e02848cd96ba40",
+    "golden_answer": "1",
+    "answer_hash": "354a3442ea819634075b7563eb52e2208381e652c677a0fbedf41022ef59b269"
+  },
+  "C005": {
+    "salt": "eba8af8a41c2a3af",
+    "golden_answer": "true",
+    "answer_hash": "1645fcd0ffc7c6ef58eb15cd0d343813fb0cd051f081828e2f6a51805ddccbd1"
+  },
+  "C006": {
+    "salt": "7486a7fc05097055",
+    "golden_answer": "10",
+    "answer_hash": "62ca23a8039a69fe0bad0ebec7312f5e74e63585ef1e672f85b9945b3a8c82e2"
+  },
+  "C007": {
+    "salt": "96fbdc3e9e425f29",
+    "golden_answer": "2 2",
+    "answer_hash": "bac6e9d22f248368c8af24d0abac1a85965ac3c1db2b69e49e1370cb1a5f3e8a"
+  },
+  "C008": {
+    "salt": "fa26601c616e6846",
+    "golden_answer": "1",
+    "answer_hash": "573790724b3e8e3654641acf69bcb302641683c64bd6ade17e595e407483b5ce"
+  },
+  "C009": {
+    "salt": "74d6325aec61cb43",
+    "golden_answer": "true false",
+    "answer_hash": "4ebb0a5ce7e0e1fa9e63035da3d9e5fb747ef4ba77ad5aec76c510de70e08691"
+  },
+  "C010": {
+    "salt": "78851427992020f0",
+    "golden_answer": "2",
+    "answer_hash": "9140b73e8955ecda73a0f08eb86e2771ae8150622b4958854b3c9996aa490e8b"
+  },
+  "P001": {
+    "salt": "c53769dfd3c222b7",
+    "golden_answer": "6",
+    "answer_hash": "ff59d8d00d92970ece5b38224212643d8213e2fb848f0346ac1bd4e0fca1f32b"
+  },
+  "P002": {
+    "salt": "6b0f0022f0bd3ffe",
+    "golden_answer": "100",
+    "answer_hash": "9e53cc57f2569bf272c79980cf56fe852b68f565d289984ebe1cdc871c42b213"
+  },
+  "P003": {
+    "salt": "6f576d73d2b901ba",
+    "golden_answer": "7",
+    "answer_hash": "743c4dff9c87ef5d20f429103abfa06123dc17bc67f26a701503b2de390b0050"
+  },
+  "P004": {
+    "salt": "38bc7b492e5119dc",
+    "golden_answer": "5",
+    "answer_hash": "74db0e3040a380455e46cf78b42eb96b8b86ad4ffa4cf6437257d02d1f573713"
+  },
+  "P005": {
+    "salt": "4ff75c19186fd1e7",
+    "golden_answer": "9",
+    "answer_hash": "195756579d1a12a569839a758cf54e53f25f3ab32ee4404bde9319dd1c7e68c5"
+  },
+  "D001": {
+    "salt": "0c8c363dc14f87ca",
+    "golden_answer": "mid + 1",
+    "answer_hash": "9767d5b78f19d598a8a7e1ae0f97309daf2240e315a5030104c867aa19f04383"
+  },
+  "D002": {
+    "salt": "6ac48da964b830b6",
+    "golden_answer": "recursion",
+    "answer_hash": "2dc1406a1723a78c22ea0f6e08c47718c718c27fc1909620833b2ff42c999b68"
+  },
+  "D003": {
+    "salt": "7dbfd61b9f302474",
+    "golden_answer": "keyerror",
+    "answer_hash": "26ac9f4956c69b684e219952807abc542ab107346842485c500bad4c369e3e7b"
+  },
+  "D004": {
+    "salt": "81b6bb61487c0ad4",
+    "golden_answer": "empty list",
+    "answer_hash": "0839fbac48885b1a6bc28c65adba1fc1e8b0d06046bccf9a1a7539278464ba76"
+  },
+  "D005": {
+    "salt": "fa1937dee5769fdc",
+    "golden_answer": "typeerror",
+    "answer_hash": "91ce6c8a907017709de52583f859a6419cc17cf3abac298e947f2a5d23411235"
+  },
+  "T001": {
+    "salt": "d8e26cd920b217a0",
+    "golden_answer": "codegen",
+    "answer_hash": "9368580f99d5e64435425cf18d42d6c943c1567b8b3f40e4376bf14f2b178103"
+  },
+  "T002": {
+    "salt": "8f6e515d020e9265",
+    "golden_answer": "entropy",
+    "answer_hash": "469bc090417b2409773e679927ddba4a8495103e0d882da1a053673f49bd389b"
+  },
+  "T003": {
+    "salt": "6f62de16cf36c8c8",
+    "golden_answer": "equilibrium",
+    "answer_hash": "964fc14bbbc361b8a369e4dba58403723dd2c8b6cac0a35a904f4e9919bf84e2"
+  },
+  "T004": {
+    "salt": "2cb3342c6b8d1667",
+    "golden_answer": "consonant cluster",
+    "answer_hash": "be13443c6acd4145f17c922d9b8bc3a2967ceecae4c338ae059fa8ed3e42a739"
+  },
+  "T005": {
+    "salt": "73f15fec50c2220d",
+    "golden_answer": "sink",
+    "answer_hash": "8919daa4a084277ba8e84c603b69e853af6467bf2450644eab01fe5367105937"
+  },
+  "T006": {
+    "salt": "2ac7d7b78da93f3a",
+    "golden_answer": "congestion",
+    "answer_hash": "0150c65cd4e564b1b1a4463a423a0466df70b181db10296dd4eee4a83379b1c8"
+  },
+  "T007": {
+    "salt": "cef9452cdb1bb7aa",
+    "golden_answer": "prima facie",
+    "answer_hash": "d09b4fb7901c4cef482404753b6b06a2c30e193f5be64c9c8f848766ba5e8c28"
+  },
+  "T008": {
+    "salt": "b8c5a1c17d33c21b",
+    "golden_answer": "cache",
+    "answer_hash": "353e61071bdf24f2db77eba8248736cdf74aefe16adf55b72e2ec543d0196412"
+  },
+  "T009": {
+    "salt": "f37a8d4787d00d85",
+    "golden_answer": "layered architecture",
+    "answer_hash": "9a0c2c00d9373aae2f260dc6993334913fd22b6240cba903fea1dcc6981cb09c"
+  },
+  "T010": {
+    "salt": "3084295ec3ecc368",
+    "golden_answer": "clef",
+    "answer_hash": "88c887a528c038b75d26bf39fd95d1ae48f1c9c4b407630e799ea4349a6c4eff"
+  },
+  "S001": {
+    "salt": "5750d54608fde81c",
+    "golden_answer": "25",
+    "answer_hash": "1317f3200cab510ee28a7dac09b4798836e565c65363424358d982951cc8a342"
+  },
+  "S002": {
+    "salt": "a39cbd9f73bb3af5",
+    "golden_answer": "420",
+    "answer_hash": "6e48995f26518758e202f7b37065f781f312f71f1388725a5c37eb6b7141c1ee"
+  },
+  "S003": {
+    "salt": "641fad572d7cd8f6",
+    "golden_answer": "7",
+    "answer_hash": "a5490e077e61d44af5ae537f8ba40d0a26f8f4f6b51521a7e278e26e9093bf47"
+  },
+  "S004": {
+    "salt": "0cbf398cb9c53d4c",
+    "golden_answer": "48",
+    "answer_hash": "cc5af7e12152e05480efa2cbbdce07d69353c4cc91d4af935db38dab1ff740fe"
+  },
+  "S005": {
+    "salt": "e516c77447c1f1bb",
+    "golden_answer": "5000",
+    "answer_hash": "479564b819438ed4eff5edf198161f79c4bccc44557a96e7ab5daacbbe2fd0dc"
+  },
+  "S006": {
+    "salt": "9fc8b0a17a586895",
+    "golden_answer": "5000",
+    "answer_hash": "ff32bbfc4966dffba9f8b024ef431739475784e7e5039903bf0645b6dd6d3481"
+  },
+  "S007": {
+    "salt": "d21b3490233fa73a",
+    "golden_answer": "10000",
+    "answer_hash": "5e5d279831fa837de47e050d7ee8bfc190151bc0d71851cc24346d9786d2e00f"
+  },
+  "S008": {
+    "salt": "c1d9f94fded3ae0b",
+    "golden_answer": "1100",
+    "answer_hash": "cc7f3fe710cb76dd0b4926b151b8b8d42d655ea0f9aa826099e35259a97aaab9"
+  },
+  "S009": {
+    "salt": "e7dc77d97efcdaf3",
+    "golden_answer": "5.6",
+    "answer_hash": "2beab5b574f8c42e52403c3b58d347b3dba19acbd616a6e0579a869d26613707"
+  },
+  "S010": {
+    "salt": "8597801f1f5dadd2",
+    "golden_answer": "32000",
+    "answer_hash": "5711a38852db4a6e18d2e9dace9d559a80cb5358e27386e098fee426ba08bfc3"
+  }
+}

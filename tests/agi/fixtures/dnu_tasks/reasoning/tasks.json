@@ -1,0 +1,402 @@
+[
+  {
+    "task_id": "R001",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "Alice, Bob, and Carol each own one unique pet: a cat, a dog, or a parrot. Clues: 1. Alice does not own the cat. 2. Bob does not own the dog. 3. Carol owns the parrot. Who owns the dog? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single name (Alice, Bob, or Carol)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R002",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "You meet two inhabitants of an island, A and B. A says: 'At least one of us is a Knave (always lies).' Knights always tell the truth. Who is B (knight or knave)? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "knight or knave",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R003",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "What is the next number in the sequence: 2, 6, 12, 20, 30, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R004",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "All flowers need water. All roses are flowers. Roses are red. Do roses need water? Answer yes or no. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "yes or no",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R005",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R006",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If a leaf falls from a tree in a vacuum, does it fall faster, slower, or at the same speed as a heavy rock dropped at the same time? Answer with one of: faster, slower, same. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "faster, slower, or same",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R007",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "A drawer contains 6 black socks and 6 white socks. What is the minimum number of socks you must pull out in the dark to guarantee you have at least one matching pair? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R008",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If a doctor gives you three pills and tells you to take one every half hour, how many minutes will it take you to take all of them? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number of minutes",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R009",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "A clock strikes 6 times in 5 seconds. How many seconds will it take to strike 12 times? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R010",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If today is Thursday, what day of the week will it be in 100 days? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Day of the week (e.g., Monday)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R011",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "A box contains 3 red balls, 4 green balls, and 5 blue balls. If you draw three balls without replacement, what is the probability that all three are blue? Answer as a simplified fraction like A/B. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A fraction (e.g., 1/2)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R012",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If a rectangle's length is doubled and its width is halved, by what factor does its area change? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R013",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "What is the next term in the sequence: O, T, T, F, F, S, S, E, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single letter",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R014",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If 5 machines take 5 minutes to make 5 widgets, how many minutes does it take 100 machines to make 100 widgets? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R015",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "A father is 35 years old and his son is 8 years old. In how many years will the father be exactly twice as old as his son? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number of years",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R016",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If a block of wood weighs 10 pounds plus half its own weight, how many pounds does it weigh? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R017",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "Which word does not belong with the others: apple, banana, carrot, cherry, grape? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R018",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If you have a standard six-sided die where 1 is opposite 6, 2 is opposite 5, and 3 is opposite 4. The die initially has 1 on top and 2 on the front face facing you. If you roll it forward 90 degrees (so the front face becomes the bottom face), which number is now on top? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R019",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If light travels at 300,000 km/s, how many seconds does it take for light to travel 1.5 million km? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R020",
+    "category": "novel_reasoning",
+    "difficulty": "medium",
+    "task_prompt": "If all A are B, and some B are C, can we conclude that some A are C? Answer yes or no. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "yes or no",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R021",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "What is the sum of the first 10 positive integers? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R022",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "A set has 5 elements. How many subsets does it have in total, including the empty set and the set itself? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R023",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "What is the next number in the sequence: 1, 1, 2, 3, 5, 8, 13, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R024",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If you have a 3-liter jug and a 5-liter jug, and an unlimited supply of water, what is the minimum number of steps to measure out exactly 4 liters into the 5-liter jug? A step is filling a jug, emptying a jug, or pouring one jug into another. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R025",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "In a class of 30 students, 15 play soccer, 12 play basketball, and 5 play both. How many students play neither sport? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R026",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If you have 10 coins and one is counterfeit (lighter than the others), what is the minimum number of weighings on a balance scale needed to guarantee finding the counterfeit coin? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R027",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "What is the next letter in the pattern: j, f, m, a, m, j, j, a, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single letter",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R028",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If two typists can type two pages in two minutes, how many typists are needed to type 18 pages in 18 minutes? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R029",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If you are in a dark room with one match and there is a candle, a wood stove, and a gas lamp, which do you light first? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A single word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R030",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "How many letters are in the English alphabet? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R031",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If a cylinder has a radius of 3 and a height of 5, what is its volume? Answer in terms of pi (e.g., 15pi). Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A math expression like 15pi",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R032",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "An electric train is traveling south at 100 mph. The wind is blowing from the west at 20 mph. In which direction does the train's smoke blow? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A word, or 'none'",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R033",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "What is the base-10 value of the binary number 101010? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R034",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If you have a standard deck of 52 cards, what is the probability of drawing a king or a spade as the first card? Answer as a simplified fraction like A/B. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A fraction like 1/2",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R035",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If all snarks are boojums, and no boojums are bandersnatches, is any snark a bandersnatch? Answer yes or no. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "yes or no",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R036",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "What is the next number in the sequence: 1, 3, 6, 10, 15, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R037",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If a clock's minute hand rotates 360 degrees, how many degrees does the hour hand rotate? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R038",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If a farmer has 4 haystacks in one field and 5 haystacks in another, and he combines them all, how many haystacks does he have left? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R039",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "If you have a cube of 3x3x3 smaller cubes, and you paint the outside of the large cube red, how many of the smaller cubes will have exactly 2 faces painted red? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R040",
+    "category": "novel_reasoning",
+    "difficulty": "hard",
+    "task_prompt": "A snail is at the bottom of a 10-foot well. Each day it climbs up 3 feet, but each night it slips back 2 feet. How many days will it take the snail to reach the top? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R041",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "What is the derivative of x^3 with respect to x? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A math expression",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R042",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost in cents? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R043",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "If x + y = 10 and x - y = 4, what is the value of x? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R044",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "How many faces does a regular octahedron have? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R045",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "If a coin is flipped 5 times, what is the probability of getting exactly 4 heads? Answer as a simplified fraction like A/B. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A fraction like 1/2",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R046",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "What is the angle in degrees between the hour and minute hands of a clock at 3:00? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number of degrees",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R047",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "What is the next number in the sequence: 1, 4, 9, 16, 25, ? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R048",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "If a triangle has sides of length 3, 4, and 5, what is the cosine of the angle opposite the side of length 4? Answer as a simplified fraction like A/B. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A fraction like 1/2",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R049",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "In a family, each boy has as many sisters as brothers, but each girl has twice as many brothers as sisters. How many boys are in the family? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "R050",
+    "category": "novel_reasoning",
+    "difficulty": "very_hard",
+    "task_prompt": "What is the least common multiple of 12 and 15? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A number",
+    "time_budget_s": 120
+  }
+]

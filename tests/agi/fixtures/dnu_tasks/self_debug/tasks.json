@@ -1,0 +1,42 @@
+[
+  {
+    "task_id": "D001",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "Consider this Python code for binary search which has an infinite loop on arr=[1, 3], target=2:\n```python\nleft, right = 0, len(arr) - 1\nwhile left <= right:\n    mid = (left + right) // 2\n    if arr[mid] == target:\n        return mid\n    elif arr[mid] < target:\n        left = mid\n    else:\n        right = mid\n```\nWhat should left be set to in line 7 to fix the infinite loop? Provide only the replacement expression for left = mid. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "A python expression (e.g. mid + 1)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D002",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "Consider this Python function:\n```python\ndef fib(n):\n    if n == 0:\n        return 0\n    return fib(n-1) + fib(n-2)\n```\nWhat error or symptom does this function cause when called with fib(2)? Answer with one of: slow, recursion, crash, none. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "One word",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D003",
+    "category": "self_debug",
+    "difficulty": "hard",
+    "task_prompt": "Consider this Python code:\n```python\nd = {'a': 1, 'b': 2}\nprint(d['c'])\n```\nWhat is the exact name of the exception raised by this code? Answer with lowercase class name. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Exception class name (e.g. keyerror)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D004",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "Consider this code:\n```python\ndef average(nums):\n    return sum(nums) / len(nums)\n```\nFor what type of input argument value does this function raise a ZeroDivisionError? Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Description (e.g. empty list)",
+    "time_budget_s": 120
+  },
+  {
+    "task_id": "D005",
+    "category": "self_debug",
+    "difficulty": "medium",
+    "task_prompt": "What exception class is raised when executing '2' + 2 in Python? Answer with lowercase class name. Output your final answer inside <answer>...</answer> tags.",
+    "answer_format": "Exception class name (e.g. typeerror)",
+    "time_budget_s": 120
+  }
+]
