@@ -36,6 +36,7 @@ _USER_FACING_ORIGINS = frozenset(
         "external",
         "audit",
         "simulate",
+        "test",
     }
 )
 

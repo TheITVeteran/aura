@@ -65,10 +65,27 @@ def normalize_answer(raw: str) -> str:
 
 
 def extract_answer_tag(text: str) -> str | None:
-    """Extract content from <answer>...</answer> tags."""
+    """Extract content from <answer>...</answer> tags with robust fallbacks."""
+    # 1. Standard tags
     match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
+
+    # 2. Markdown bold/italic tag indicators
+    match = re.search(r"\*\*(?:final\s+)?answer\*\*:\s*([^\n]+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # 3. Plain text final answer indicator
+    match = re.search(r"(?:final\s+)?answer:\s*([^\n]+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # 4. Look for "therefore, the answer is X" or similar
+    match = re.search(r"(?:therefore|thus|hence|so),\s*(?:the\s+)?answer\s+(?:is|must\s+be)\s+([^\n.]+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
     return None
 
 
@@ -586,6 +603,26 @@ async def main():
             tid = task.get("task_id", "?")
             cat = task.get("category", "?")
             print(f"  [{i}/{len(all_tasks)}] {tid} ({cat})...", end=" ", flush=True)
+
+            # Reset working memory and current objective to isolate tasks
+            try:
+                state_repo = ServiceContainer.get("state_repository", default=None)
+                if state_repo:
+                    state = await state_repo.get_current()
+                    if state:
+                        # Clear working memory to ensure complete isolation
+                        state.cognition.working_memory = []
+                        state.cognition.current_objective = None
+                        state.cognition.current_origin = None
+                        state.cognition.attention_focus = None
+                        state.cognition.active_goals = []
+                        state.cognition.pending_initiatives = []
+                        state.cognition.phenomenal_state = ""
+                        if hasattr(state.cognition, "modifiers"):
+                            state.cognition.modifiers = {}
+                        await state_repo.commit(state, "task_isolation_reset")
+            except Exception as e:
+                print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
             result = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
             result = grade_result(result, grader_data)

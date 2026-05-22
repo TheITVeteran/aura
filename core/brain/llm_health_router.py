@@ -83,6 +83,7 @@ _USER_FACING_ORIGINS = frozenset({
     "websocket",
     "direct",
     "external",
+    "test",
 })
 
 _BACKGROUND_ORIGIN_HINTS = frozenset({
@@ -1349,8 +1350,17 @@ class HealthAwareLLMRouter:
             "- Your memory spans working memory (short), RAG (semantic), and ColdStore (long-term)."
         )
         
-        if not classification_mode and (not system_prompt or "Aura" not in system_prompt):
-            system_prompt = f"{core_persona}\n\n{system_prompt or ''}".strip()
+        if not classification_mode:
+            cognition_guidelines = (
+                "COGNITION & REASONING:\n"
+                "- Think step-by-step for logic, math, planning, and diagnostic tasks before forming your final answer. Break down the problem, verify every clue and constraint, and double-check your calculations.\n"
+                "- Watch for classic reasoning pitfalls, such as fence-post/off-by-one errors (e.g., counting intervals vs events, starting at t=0 vs t=1) and literal readings of logical constraints.\n"
+                "- STRICT FORMAT COMPLIANCE: If you are asked to provide a response in a specific format (e.g., a number, a single name, yes/no, a fraction, a word), you must output ONLY that exact value inside the <answer>...</answer> tags. Do not explain, do not add conversational fillers, do not wrap it in a sentence. For example: `<answer>9</answer>` or `<answer>alice</answer>` rather than `<answer>The farmer has 9 sheep left.</answer>`."
+            )
+            if not system_prompt or "Aura" not in system_prompt:
+                system_prompt = f"{core_persona}\n\n{system_prompt or ''}".strip()
+            if "COGNITION & REASONING" not in system_prompt:
+                system_prompt = f"{system_prompt}\n\n{cognition_guidelines}".strip()
 
         # ── Autonomous Context Injection (Somatic/Affective Safety Net) ───────
         # [Fix #11] If prompt lacks state context, inject a condensed summary.

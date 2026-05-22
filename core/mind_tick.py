@@ -575,7 +575,7 @@ class MindTick:
                         logger.debug("MindTick continuity objective scrub failed: %s", exc)
                     if not objective:
                         return current_state
-                    if current_origin in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"}:
+                    if current_origin in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "test"}:
                         logger.debug("💓 MindTick: Skipping background tick for foreground-owned objective from origin=%s.", current_origin)
                         return current_state
                     if quiet_until > time.time():
@@ -699,7 +699,7 @@ class MindTick:
                                         b.reset()
                     
                         if "response_generation" not in tick_metadata.phases_executed:
-                            user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct")
+                            user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test")
                             current_origin = getattr(current_state.cognition, "current_origin", None)
                             if current_origin in user_origins:
                                 logger.warning("🛡️ MindTick: Emergency Fallback - Injecting reflexive response.")

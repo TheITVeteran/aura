@@ -127,6 +127,7 @@ _USER_FACING_ORIGINS = {
     "external",
     "frontend",
     "ui",
+    "test",
 }
 
 

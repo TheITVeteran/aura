@@ -137,6 +137,7 @@ _USER_FACING_ORIGINS = frozenset(
         "embodied_motor_reflex",
         "embodied",
         "reflex",
+        "test",
     }
 )
 

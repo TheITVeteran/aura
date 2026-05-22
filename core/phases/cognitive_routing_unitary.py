@@ -42,6 +42,7 @@ _USER_FACING_ORIGINS = frozenset(
         "websocket",
         "direct",
         "external",
+        "test",
     }
 )
 

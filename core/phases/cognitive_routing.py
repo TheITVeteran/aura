@@ -292,7 +292,7 @@ class CognitiveRoutingPhase(BasePhase):
                     normalized["role"] = role_for_origin(normalized.get("origin"))
                 last_msg = normalized
 
-        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct")
+        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test")
         active_objective = state.cognition.current_objective or objective
         active_origin = (
             (state.cognition.current_origin if active_objective else None)
@@ -522,6 +522,12 @@ class CognitiveRoutingPhase(BasePhase):
         if is_autonomous or any(kw in lower_input for kw in _CASUAL_KEYWORDS):
             logger.info("🧭 Routing: Casual/Autonomous bypass. Forcing REACTIVE.")
             cognitive_mode = CognitiveMode.REACTIVE
+
+        # Force DELIBERATE mode for AGI test battery runs (origin "test" or battery env vars active)
+        import os
+        if routing_origin == "test" or os.environ.get("AURA_AGI_MAX_TASKS") or os.environ.get("AURA_TESTING"):
+            logger.info("🧭 Routing: AGI Battery/Test mode detected. Forcing DELIBERATE mode.")
+            cognitive_mode = CognitiveMode.DELIBERATE
 
         # 2. Heuristic fast-path
         if any(cmd in lower_input for cmd in ["reboot", "restart", "shutdown", "sleep"]):

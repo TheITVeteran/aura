@@ -446,10 +446,61 @@ class StateRepository:
                     if attempt == 0:
                         await asyncio.sleep(0.2)
                         continue
-            if last_error:
-                raise last_error
         else:
-            logger.error("🛑 [STATE] Commit failed: ActorBus/Transport missing in Proxy Mode")
+            logger.warning(
+                "⚠️ [STATE] ActorBus/Transport missing in Proxy Mode (Standalone/Test runtime). Falling back to direct database persistence."
+            )
+            new_state.transition_cause = cause
+            new_state.updated_at = time.time()
+            self._current = new_state
+
+            try:
+                # Reconstruct/create schema just in case tables do not exist
+                db = await self._ensure_db()
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS state_log (
+                        state_id TEXT PRIMARY KEY,
+                        version INTEGER NOT NULL,
+                        parent_state_id TEXT,
+                        transition_cause TEXT,
+                        state_json TEXT NOT NULL,
+                        timestamp REAL NOT NULL
+                    )
+                """)
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_version ON state_log(version)")
+                await db.commit()
+            except _STATE_BOUNDARY_ERRORS as schema_err:
+                logger.error("⚠️ [STATE] Standalone fallback schema setup failed: %s", schema_err)
+
+            try:
+                serialized_data = await asyncio.to_thread(self._serialize, new_state)
+                db = await self._ensure_db()
+                for attempt in range(3):
+                    try:
+                        async with db.execute("BEGIN IMMEDIATE"):
+                            await db.execute(
+                                """INSERT OR REPLACE INTO state_log 
+                                   (state_id, version, parent_state_id, transition_cause, state_json, timestamp)
+                                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                (
+                                    new_state.state_id,
+                                    new_state.version,
+                                    new_state.parent_state_id,
+                                    new_state.transition_cause,
+                                    serialized_data,
+                                    new_state.updated_at,
+                                ),
+                            )
+                            await db.commit()
+                        logger.debug("💾 Standalone fallback: State v%s committed to local DB.", new_state.version)
+                        break
+                    except aiosqlite.OperationalError as e:
+                        if "database is locked" in str(e) and attempt < 2:
+                            await asyncio.sleep(0.1 * (attempt + 1))
+                            continue
+                        raise
+            except _STATE_BOUNDARY_ERRORS as db_err:
+                logger.error("🛑 [STATE] Standalone fallback direct database commit failed: %s", db_err)
 
         return new_state
 

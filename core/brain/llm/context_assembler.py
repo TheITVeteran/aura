@@ -1353,3 +1353,11 @@ class ContextAssembler:
             "  }\n"
             "}\n"
         )
+
+
+try:
+    from core.brain.llm.context_assembler_patch import patch_context_assembler
+    patch_context_assembler()
+except Exception:
+    pass
+

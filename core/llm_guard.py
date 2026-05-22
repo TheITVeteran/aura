@@ -112,7 +112,7 @@ def repair_json(text: str) -> str:
     # 4. Convert single quotes to double quotes for keys/values
     # Improved regex: Only target keys 'key': or values : 'val' to avoid breaking logic.
     text = re.sub(r"\'([a-zA-Z0-9_/ \-]+)\'(?=\s*:)", r'"\1"', text)
-    text = re.sub(r"(?<=:\s*)\'([^']+)\'", r'"\1"', text)
+    text = re.sub(r":\s*\'([^']+)\'", r': "\1"', text)
 
     # 5. Fix common "Infinity" or "NaN" (not valid JSON)
     text = text.replace(': Infinity', ': null').replace(': NaN', ': null')

@@ -38,6 +38,7 @@ _USER_FACING_ORIGIN_TOKENS = frozenset({
     "embodied",
     "reflex",
     "motor",
+    "test",
 })
 
 _BACKGROUND_ORIGIN_HINTS = frozenset({

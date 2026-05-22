@@ -75,7 +75,7 @@ _KERNEL_RECOVERABLE_ERRORS = (
     ConnectionError,
 )
 _USER_ORIGINS = frozenset(
-    {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"}
+    {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "test"}
 )
 MAX_KERNEL_MESSAGE_CHARS = 60_000
 MAX_ORIGIN_CHARS = 80
