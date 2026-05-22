@@ -1,9 +1,12 @@
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -23,6 +26,41 @@ from core.kernel.organ_fallbacks import (
 
 logger = logging.getLogger(__name__)
 
+_ORGAN_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+)
+_CRITICAL_ORGANS = frozenset({"brain", "llm", "memory", "continuity"})
+_FALLBACK_TYPES = (FallbackLLM, FallbackNeural, FallbackOrgan, FallbackVision, FallbackVoice)
+
+
+def _organ_severity(name: str) -> Severity:
+    return "critical" if name in _CRITICAL_ORGANS else "degraded"
+
+
+def _record_organ_degradation(
+    error: BaseException,
+    *,
+    organ: str,
+    action: str,
+    severity: Severity | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "organs",
+        error,
+        severity=severity or _organ_severity(organ),
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=(severity or _organ_severity(organ)) in {"degraded", "critical"},
+        extra={"organ": organ, **dict(extra or {})},
+    )
+
 
 @dataclass
 class OrganStub:
@@ -35,26 +73,82 @@ class OrganStub:
     """
 
     name: str
-    kernel: "AuraKernel"
+    kernel: AuraKernel
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     instance: Any = None
+    fallback_used: bool = False
+    resolved_kind: str = ""
+    failure_reason: str = ""
+    load_attempts: int = 0
 
     async def load(self) -> None:
         """Resolve the real subsystem, falling back on timeout or error."""
         logger.info("Loading organ: %s...", self.name)
+        self.load_attempts += 1
+        self.fallback_used = False
+        self.failure_reason = ""
         try:
             async with asyncio.timeout(5.0):
                 self.instance = await self._resolve()
-        except asyncio.TimeoutError:
+        except TimeoutError as exc:
             logger.warning("Organ %s load TIMEOUT — using fallback.", self.name)
-            self.instance = FallbackOrgan()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('organs', e)
+            self.instance = self._fallback_for_name()
+            self._mark_fallback(
+                exc,
+                action="organ load timed out and resolved to bounded fallback",
+            )
+        except _ORGAN_RECOVERABLE_ERRORS as e:
             logger.exception("Organ %s load failed: %s — using fallback.", self.name, e)
-            self.instance = FallbackOrgan()
+            self.instance = self._fallback_for_name()
+            self._mark_fallback(
+                e,
+                action="organ load failed and resolved to bounded fallback",
+            )
+        else:
+            self._mark_resolved(self.instance)
 
         self.ready.set()
         logger.debug("Organ %s load complete.", self.name)
+
+    def _fallback_for_name(self) -> Any:
+        if self.name in {"brain", "llm"}:
+            return FallbackLLM()
+        if self.name == "vision":
+            return FallbackVision()
+        if self.name == "neural":
+            return FallbackNeural()
+        if self.name == "voice":
+            return FallbackVoice()
+        return FallbackOrgan()
+
+    def _mark_resolved(self, instance: Any) -> None:
+        self.resolved_kind = type(instance).__qualname__ if instance is not None else "None"
+        self.fallback_used = isinstance(instance, _FALLBACK_TYPES)
+        if self.fallback_used and not self.failure_reason:
+            self.failure_reason = f"{self.name} resolved to {self.resolved_kind}"
+
+    def _mark_fallback(self, error: BaseException, *, action: str) -> None:
+        self._mark_resolved(self.instance)
+        self.failure_reason = f"{type(error).__qualname__}: {str(error)[:200]}"
+        _record_organ_degradation(
+            error,
+            organ=self.name,
+            action=action,
+            extra={
+                "fallback_type": self.resolved_kind,
+                "load_attempts": self.load_attempts,
+            },
+        )
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "ready": self.ready.is_set(),
+            "fallback_used": self.fallback_used,
+            "resolved_kind": self.resolved_kind,
+            "failure_reason": self.failure_reason,
+            "load_attempts": self.load_attempts,
+        }
 
     async def _resolve(self) -> Any:
         """Attempt to load the real subsystem for this organ."""
@@ -91,16 +185,31 @@ class OrganStub:
     # ── Organ-specific resolvers ────────────────────────────────────────
 
     async def _resolve_llm(self) -> Any:
+        lookup_failed = False
         try:
             from core.brain.llm.llm_router import IntelligentLLMRouter as LLMRouter
             instance = self.kernel.get(LLMRouter)
-        except (ImportError, AttributeError, RuntimeError):
+        except _ORGAN_RECOVERABLE_ERRORS as exc:
+            lookup_failed = True
+            _record_organ_degradation(
+                exc,
+                organ=self.name,
+                action="resolved LLM organ to fallback after router lookup failed",
+                severity="critical",
+            )
             instance = None
 
         if instance:
             if not hasattr(instance, "think") and hasattr(instance, "generate"):
                 instance.think = instance.generate
             return instance
+        if not lookup_failed:
+            _record_organ_degradation(
+                RuntimeError("LLM router unavailable"),
+                organ=self.name,
+                action="resolved LLM organ to fallback because no live router was available",
+                severity="critical",
+            )
         return FallbackLLM()
 
     async def _resolve_neural(self) -> Any:
@@ -113,8 +222,12 @@ class OrganStub:
             instance = await asyncio.wait_for(asyncio.to_thread(_build), timeout=1.5)
             await asyncio.wait_for(instance.load(), timeout=2.5 if safe_boot else 4.0)
             return instance
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('organs', e)
+        except _ORGAN_RECOVERABLE_ERRORS as e:
+            _record_organ_degradation(
+                e,
+                organ=self.name,
+                action="resolved neural organ to fallback after NeuralBridge load failed",
+            )
             logger.warning("NeuralBridge load failed: %s", e)
             return FallbackNeural()
 
@@ -127,8 +240,20 @@ class OrganStub:
                 )
                 if instance:
                     return instance
-            except asyncio.TimeoutError:
+            except TimeoutError as exc:
+                _record_organ_degradation(
+                    exc,
+                    organ=self.name,
+                    action="resolved voice organ to fallback after voice engine lookup timed out",
+                )
                 logger.warning("VoiceEngine resolution TIMEOUT.")
+            except _ORGAN_RECOVERABLE_ERRORS as exc:
+                _record_organ_degradation(
+                    exc,
+                    organ=self.name,
+                    action="resolved voice organ to fallback after voice engine lookup failed",
+                )
+                logger.warning("VoiceEngine resolution failed: %s", exc)
         return FallbackVoice()
 
     async def _resolve_continuity(self) -> Any:
@@ -137,8 +262,12 @@ class OrganStub:
             instance = KnowledgeContinuity(self.kernel)
             await asyncio.wait_for(instance.load(), timeout=3.0)
             return instance
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('organs', e)
+        except _ORGAN_RECOVERABLE_ERRORS as e:
+            _record_organ_degradation(
+                e,
+                organ=self.name,
+                action="resolved continuity organ to fallback after continuity load failed",
+            )
             logger.warning("Continuity organ load failed: %s", e)
             return FallbackOrgan()
 
@@ -151,14 +280,29 @@ class OrganStub:
             instance = cls(self.kernel)
             await instance.load()
             return instance
-        except (ImportError, AttributeError, RuntimeError):
+        except _ORGAN_RECOVERABLE_ERRORS as exc:
+            _record_organ_degradation(
+                exc,
+                organ=self.name,
+                action="resolved optional organ module to fallback after import/load failed",
+                severity="warning",
+                extra={"module_path": module_path, "class_name": class_name},
+            )
             return FallbackOrgan()
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
     def _resolve_from_container(self, service_name: str) -> Any:
         if ServiceContainer:
-            return ServiceContainer.get(service_name, default=None)
+            try:
+                return ServiceContainer.get(service_name, default=None)
+            except _ORGAN_RECOVERABLE_ERRORS as exc:
+                _record_organ_degradation(
+                    exc,
+                    organ=self.name,
+                    action="resolved organ container dependency to fallback after lookup failed",
+                    extra={"service_name": service_name},
+                )
         return None
 
     def get_instance(self) -> Any:
@@ -175,6 +319,16 @@ class OrganStub:
         hook = getattr(inst, "shutdown", None) or getattr(inst, "stop", None)
         if not callable(hook):
             return
-        result = hook()
-        if asyncio.iscoroutine(result):
-            await result
+        try:
+            result = hook()
+            if asyncio.iscoroutine(result):
+                await result
+        except _ORGAN_RECOVERABLE_ERRORS as exc:
+            _record_organ_degradation(
+                exc,
+                organ=self.name,
+                action="organ shutdown hook failed after kernel stop requested cleanup",
+                severity="warning",
+                extra={"resolved_kind": self.resolved_kind},
+            )
+            logger.warning("Organ %s shutdown hook failed: %s", self.name, exc)
