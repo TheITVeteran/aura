@@ -31,17 +31,52 @@ Model routing:
 Falls back gracefully: api_deep → api_fast → local → pattern fallback.
 """
 
-from core.runtime.errors import record_degradation
-import asyncio
+from __future__ import annotations
+
 import logging
 import re
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from core.inner_monologue import ThoughtPacket
-from core.synthesis import strip_meta_commentary as aggressive_strip # Centralized scrubber
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.synthesis import strip_meta_commentary as aggressive_strip  # Centralized scrubber
 
 logger = logging.getLogger("Aura.LanguageCenter")
+
+_LANGUAGE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+)
+_FOREGROUND_ORIGINS = {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"}
+
+
+def _is_background_origin(origin: str) -> bool:
+    return str(origin or "").strip().lower() not in _FOREGROUND_ORIGINS
+
+
+def _record_language_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "language_center",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=severity in {"degraded", "critical"},
+        extra=extra,
+    )
 
 
 # ─── Meta-commentary filter ──────────────────────────────────────────────────
@@ -87,6 +122,8 @@ class LanguageCenter:
         self._api_adapter = None
         self._router = None
         self._fallback_mode = False
+        self._mycelium_registered = False
+        self._router_last_error = ""
         logger.info("LanguageCenter constructed.")
 
     async def start(self):
@@ -99,21 +136,39 @@ class LanguageCenter:
                 "component": "language_center",
                 "hooks_into": ["inner_monologue", "api_adapter", "cognitive_engine"]
             })
-        except (ImportError, AttributeError, RuntimeError) as _e:
-            record_degradation('language_center', _e)
-            logger.debug('Ignored Exception in language_center.py: %s', _e)
+            self._mycelium_registered = True
+        except _LANGUAGE_RECOVERABLE_ERRORS as _e:
+            _record_language_degradation(
+                _e,
+                action="started language center without mycelium registration; expression remains available",
+                extra={"router_available": bool(self._router)},
+            )
+            logger.debug("LanguageCenter mycelium registration failed: %s", _e)
 
     async def _ensure_router(self) -> bool:
         """Fetch router from container if missing."""
         if self._router:
             return True
-            
-        from core.container import ServiceContainer
-        self._router = ServiceContainer.get("llm_router", default=None)
+
+        try:
+            from core.container import ServiceContainer
+
+            self._router = ServiceContainer.get("llm_router", default=None)
+        except _LANGUAGE_RECOVERABLE_ERRORS as exc:
+            self._router = None
+            self._router_last_error = f"{type(exc).__qualname__}: {str(exc)[:200]}"
+            _record_language_degradation(
+                exc,
+                action="kept language center in fallback mode because router lookup failed",
+                severity="degraded",
+            )
+            logger.warning("LanguageCenter router lookup failed: %s", exc)
+            return False
         
         if self._router:
-            logger.info("✅ LanguageCenter: Router recovered and linked.")
+            logger.info("LanguageCenter: Router recovered and linked.")
             self._fallback_mode = False
+            self._router_last_error = ""
             return True
         return False
 
@@ -123,18 +178,18 @@ class LanguageCenter:
         self,
         thought: ThoughtPacket,
         user_input: str,
-        history: Optional[List[Dict[str, str]]] = None,
+        history: list[dict[str, str]] | None = None,
         *,
         origin: str = "user",
     ) -> str:
         """
         v24 Hardening: Express a ThoughtPacket as natural language with fail-soft.
         """
-        # Phase 19: Try to recover router if missing
-        if not self._router:
-            await self._ensure_router()
-
         try:
+            # Phase 19: Try to recover router if missing.
+            if not self._router:
+                await self._ensure_router()
+
             if not self._router or self._fallback_mode:
                 return self._fallback_response(thought, user_input)
 
@@ -175,8 +230,13 @@ class LanguageCenter:
                          elapsed, thought.model_tier, len(response))
 
             return response
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('language_center', e)
+        except _LANGUAGE_RECOVERABLE_ERRORS as e:
+            _record_language_degradation(
+                e,
+                action="returned fallback expression after language generation failed",
+                severity="degraded",
+                extra={"model_tier": getattr(thought, "model_tier", "unknown"), "origin": origin},
+            )
             logger.error("LanguageCenter expression failed: %s", e, exc_info=True)
             try:
                 from core.health.degraded_events import record_degraded_event
@@ -192,8 +252,12 @@ class LanguageCenter:
                     context={"model_tier": getattr(thought, "model_tier", "unknown")},
                     exc=e,
                 )
-            except (ImportError, AttributeError, RuntimeError) as degraded_exc:
-                record_degradation('language_center', degraded_exc)
+            except _LANGUAGE_RECOVERABLE_ERRORS as degraded_exc:
+                _record_language_degradation(
+                    degraded_exc,
+                    action="returned fallback expression after degraded-event forwarding failed",
+                    extra={"original_error": type(e).__qualname__},
+                )
                 logger.debug("LanguageCenter degraded-event logging failed: %s", degraded_exc)
             return self._fallback_response(thought, user_input)
 
@@ -201,20 +265,29 @@ class LanguageCenter:
         self,
         thought: ThoughtPacket,
         user_input: str,
-        history: Optional[List[Dict[str, str]]] = None,
+        history: list[dict[str, str]] | None = None,
         *,
         origin: str = "user",
     ) -> AsyncGenerator[str, None]:
         """Streaming variant for WebSocket / SSE endpoints."""
+        if not self._router:
+            await self._ensure_router()
         if self._fallback_mode:
+            yield self._fallback_response(thought, user_input)
+            return
+        if not self._router:
             yield self._fallback_response(thought, user_input)
             return
 
         history = history or []
         prompt = self._build_prompt(thought, user_input, history)
 
+        emitted = False
         async for chunk in self._dispatch_stream(prompt, thought, origin=origin):
+            emitted = True
             yield chunk
+        if not emitted:
+            yield self._fallback_response(thought, user_input)
 
     # ─── Prompt construction ─────────────────────────────────────────────────
 
@@ -222,7 +295,7 @@ class LanguageCenter:
         self,
         thought: ThoughtPacket,
         user_input: str,
-        history: List[Dict],
+        history: list[dict[str, Any]],
     ) -> str:
         """
         Build the full prompt for the language model.
@@ -253,10 +326,10 @@ class LanguageCenter:
         self,
         thought: ThoughtPacket,
         user_input: str,
-        history: List[Dict],
-    ) -> List[Dict[str, str]]:
+        history: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
         """Build structured chat messages for the router/local runtimes."""
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
         system_content = thought.llm_briefing or thought.to_system_prompt()
         if system_content:
             messages.append({"role": "system", "content": str(system_content)})
@@ -275,15 +348,17 @@ class LanguageCenter:
         messages.append({"role": "user", "content": str(user_input or "")})
         return messages
 
-    def _format_history(self, history: List[Dict], budget_chars: int = 1200) -> str:
+    def _format_history(self, history: list[dict[str, Any]], budget_chars: int = 1200) -> str:
         """Format recent history within a character budget."""
         lines = []
         total = 0
         for entry in reversed(history[-10:]):
-            role    = entry.get("role", "")
-            content = entry.get("content", "")[:200]  # Cap per-message
-            label   = "Human" if role in ("user",) else "Aura"
-            line    = f"{label}: {content}"
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role", "") or "").strip().lower()
+            content = str(entry.get("content", "") or "")[:200]
+            label = "Human" if role in ("user",) else "Aura"
+            line = f"{label}: {content}"
             total  += len(line)
             if total > budget_chars:
                 break
@@ -309,10 +384,14 @@ class LanguageCenter:
                 max_tokens=max_tokens,
                 purpose="expression",
                 origin=origin,
-                is_background=origin not in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"},
+                is_background=_is_background_origin(origin),
             )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('language_center', e)
+        except _LANGUAGE_RECOVERABLE_ERRORS as e:
+            _record_language_degradation(
+                e,
+                action="returned empty dispatch so expression path can attempt alternate route",
+                extra={"dispatch": "prompt", "model_tier": tier, "origin": origin},
+            )
             logger.error("LanguageCenter router dispatch failed: %s", e)
             return ""
 
@@ -320,7 +399,7 @@ class LanguageCenter:
         self,
         thought: ThoughtPacket,
         user_input: str,
-        history: List[Dict],
+        history: list[dict[str, Any]],
         *,
         origin: str = "user",
     ) -> str:
@@ -342,10 +421,14 @@ class LanguageCenter:
                 max_tokens=max_tokens,
                 purpose="expression",
                 origin=origin,
-                is_background=origin not in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"},
+                is_background=_is_background_origin(origin),
             )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('language_center', e)
+        except _LANGUAGE_RECOVERABLE_ERRORS as e:
+            _record_language_degradation(
+                e,
+                action="returned empty message dispatch so expression path can attempt prompt route",
+                extra={"dispatch": "messages", "model_tier": tier, "origin": origin},
+            )
             logger.error("LanguageCenter router dispatch failed: %s", e)
             return ""
 
@@ -364,14 +447,18 @@ class LanguageCenter:
                 max_tokens=self._select_max_tokens(thought),
                 purpose="expression",
                 origin=origin,
-                is_background=origin not in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"},
+                is_background=_is_background_origin(origin),
             ):
                 if hasattr(event, "content"):
                     yield event.content
                 elif isinstance(event, str):
                     yield event
-        except (RuntimeError, AttributeError, TypeError) as e:
-            record_degradation('language_center', e)
+        except _LANGUAGE_RECOVERABLE_ERRORS as e:
+            _record_language_degradation(
+                e,
+                action="ended stream dispatch so caller can emit fallback expression",
+                extra={"model_tier": thought.model_tier, "origin": origin},
+            )
             logger.warning("Streaming router dispatch failed (%s)", e)
 
     # ─── Config helpers ───────────────────────────────────────────────────────
@@ -420,16 +507,18 @@ class LanguageCenter:
             "I logged the degraded output instead of asking you to repeat yourself."
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "router_available": bool(self._router),
             "fallback_mode":   self._fallback_mode,
+            "mycelium_registered": self._mycelium_registered,
+            "router_last_error": self._router_last_error,
         }
 
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_lc_instance: Optional[LanguageCenter] = None
+_lc_instance: LanguageCenter | None = None
 
 def get_language_center() -> LanguageCenter:
     global _lc_instance
