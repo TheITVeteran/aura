@@ -1,47 +1,184 @@
 """
 core/memory/semantic_defrag.py
-──────────────────────────────
-Implements "Semantic Sleep" for vector memory consolidation.
-Finds dense clusters of similar memories and merges them into unified concepts.
+
+Semantic sleep for vector memory consolidation.
+
+This module is deliberately conservative: it only merges very tight clusters,
+keeps every degradation receipt actionable, and never deletes source memories
+unless a consolidated memory was written first.
 """
-from core.runtime.errors import record_degradation
-import logging
-import time
+from __future__ import annotations
+
 import asyncio
+import logging
 import re
+import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
+
 from core.container import ServiceContainer
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.Memory.Defrag")
+
+DEFAULT_DEFRAG_INTERVAL_S = 5 * 60
+MAX_DEFRAG_BATCH = 50
+MIN_DEFRAG_BATCH = 10
+MAX_CLUSTER_SIMILARS = 5
+SIMILARITY_DISTANCE_THRESHOLD = 0.1
+MAX_CONSOLIDATED_WORDS = 100
+MAX_CONTEXT_DOC_CHARS = 800
+MAX_CONTEXT_BLOCK_CHARS = 8_000
+
+_SEMANTIC_DEFRAG_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_semantic_defrag_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, object] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "semantic_defrag",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation(
+                "semantic_defrag",
+                error,
+                severity=severity,
+                action=action,
+            )
+        except TypeError:
+            logger.debug(
+                "Semantic defrag degradation could not be recorded: %s",
+                signature_exc,
+            )
+
+
+def _safe_text(value: object, *, max_chars: int = 4096) -> str:
+    try:
+        text = str(value if value is not None else "")
+    except (RuntimeError, TypeError, ValueError):
+        return ""
+    return " ".join(text.replace("\x00", "").split())[:max_chars]
+
+
+def _safe_float(value: object, *, default: float = 1.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
 
 class SemanticDefragmenter:
     FILE_REFERENCE_RE = re.compile(
         r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.(?:py|tsx?|jsx?|json|md|ya?ml|toml|sh|go|rs|java|c|cpp|h))(?:[:#]\d+)?"
     )
 
-    def __init__(self, collection_name: str = "aura_memories"):
+    def __init__(
+        self,
+        collection_name: str = "aura_memories",
+        *,
+        interval_s: float = DEFAULT_DEFRAG_INTERVAL_S,
+    ):
         self.collection_name = collection_name
+        self.interval_s = max(1.0, float(interval_s))
         self.repo_root = Path(__file__).resolve().parents[2]
+        self._running = False
+        self._task: asyncio.Task | None = None
 
-    def _get_id(self, item: Dict[str, Any]) -> str:
+    def start(self) -> bool:
+        """Start managed semantic sleep scheduling on the active event loop."""
+        if self._running and self._task is not None and not self._task.done():
+            return True
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="semantic defrag scheduler not started because no event loop was running",
+                severity="warning",
+            )
+            return False
+
+        self._running = True
+        try:
+            from core.utils.task_tracker import get_task_tracker
+
+            self._task = get_task_tracker().create_task(
+                self._run_scheduler(),
+                name="semantic_defrag.scheduler",
+            )
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="started semantic defrag scheduler with raw asyncio task after task tracker failed",
+                severity="warning",
+            )
+            self._task = loop.create_task(self._run_scheduler(), name="semantic_defrag.scheduler")
+        logger.info("Semantic Defrag scheduler started for '%s'", self.collection_name)
+        return True
+
+    def stop(self) -> None:
+        """Stop managed semantic sleep scheduling."""
+        self._running = False
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+        logger.info("Semantic Defrag scheduler stopped for '%s'", self.collection_name)
+
+    async def _run_scheduler(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(self.interval_s)
+                if self._running:
+                    await self.run_defrag_cycle()
+            except asyncio.CancelledError:
+                return
+            except _SEMANTIC_DEFRAG_ERRORS as exc:
+                _record_semantic_defrag_degradation(
+                    exc,
+                    action="kept semantic defrag scheduler alive after one cycle failed",
+                    severity="degraded",
+                )
+
+    def _get_id(self, item: dict[str, Any]) -> str:
         metadata = dict(item.get("metadata") or {})
-        return str(item.get("id") or item.get("memory_id") or metadata.get("id") or "")
+        return _safe_text(item.get("id") or item.get("memory_id") or metadata.get("id") or metadata.get("created"))
 
-    def _collect_file_references(self, docs: List[str]) -> List[str]:
+    def _collect_file_references(self, docs: list[str]) -> list[str]:
         refs = set()
         for doc in docs:
             for match in self.FILE_REFERENCE_RE.finditer(doc or ""):
                 refs.add(match.group(1))
         return sorted(refs)
 
-    def _build_resolution_context(self, docs: List[str]) -> str:
+    def _build_resolution_context(self, docs: list[str]) -> str:
         refs = self._collect_file_references(docs)
         if not refs:
             return ""
 
-        existing: List[str] = []
-        missing: List[str] = []
+        existing: list[str] = []
+        missing: list[str] = []
         for ref in refs[:6]:
             candidate = Path(ref)
             if not candidate.is_absolute():
@@ -51,7 +188,7 @@ class SemanticDefragmenter:
             else:
                 missing.append(ref)
 
-        notes: List[str] = []
+        notes: list[str] = []
         if existing:
             notes.append("Live file check found existing references: " + ", ".join(existing))
         if missing:
@@ -60,125 +197,277 @@ class SemanticDefragmenter:
             notes.append("If the memories disagree on technical facts, preserve uncertainty rather than inventing a single confident file claim.")
         return "\n".join(notes)
 
-    async def run_defrag_cycle(self):
-        """
-        Scans the vector database, finds clusters, and consolidates them.
-        """
-        logger.info("🌙 SEMANTIC SLEEP: Starting defragmentation cycle for '%s'...", self.collection_name)
-        
+    async def run_defrag_cycle(self) -> dict[str, Any]:
+        """Scan vector memory for tight duplicate clusters and consolidate them."""
+        logger.info("Semantic sleep: starting defragmentation cycle for '%s'", self.collection_name)
+
         memory = ServiceContainer.get("vector_memory", default=None)
-        if not memory or memory._fallback_mode:
-            logger.warning("Semantic Defrag: Vector memory unavailable or in fallback mode. Skipping.")
-            return
+        if not memory or getattr(memory, "_fallback_mode", False):
+            logger.warning("Semantic Defrag: vector memory unavailable or in fallback mode; skipping.")
+            return {"status": "skipped", "reason": "vector_memory_unavailable"}
 
         try:
-            # 1. Fetch a micro-batch of recent memories
-            try:
-                results = memory._collection.get(include=["documents", "metadatas"], limit=50)
-            except TypeError:
-                # Fallback if limit is not supported by older ChromaDB get()
-                results = memory._collection.get(include=["documents", "metadatas"])
-                
-            ids = results.get("ids", [])
-            docs = results.get("documents", [])
-            metas = results.get("metadatas", [])
-            
-            # Slice to micro-batch if DB didn't support limit natively
-            if len(ids) > 50:
-                ids = ids[:50]
-                docs = docs[:50]
-                metas = metas[:50]
-                
-            if len(ids) < 10:
-                logger.debug("Semantic Defrag: Not enough memories in micro-batch to justify defrag. Sleeping.")
-                return
+            batch = self._fetch_batch(memory)
+            if len(batch) < MIN_DEFRAG_BATCH:
+                logger.debug("Semantic Defrag: not enough memories in micro-batch to justify defrag.")
+                return {"status": "skipped", "reason": "not_enough_memories", "count": len(batch)}
 
-            # 2. Find high-similarity clusters in this micro-batch
-            
-            to_merge = [] # List of (doc_ids, shared_topic)
-            
-            checked = set()
-            for i in range(len(ids)):
-                if ids[i] in checked: continue
-                
-                # Exclude already consolidated concepts
-                if metas[i].get("type") == "consolidated_concept":
-                    checked.add(ids[i])
-                    continue
-                    
-                # Find very similar docs to this one
-                similars = memory.search_similar(docs[i], limit=5)
-                cluster = [ids[i]]
-                cluster_docs = [docs[i]]
-                
-                for sim in similars:
-                    sim_id = self._get_id(sim)
-                    if sim_id == ids[i]: continue
-                    # threshold: distance < 0.1 (very similar in cosine space)
-                    if sim.get("distance", 1.0) < 0.1 and sim.get("metadata", {}).get("type") != "consolidated_concept":
-                        cluster.append(sim_id)
-                        cluster_docs.append(sim.get("content", ""))
-                        checked.add(sim_id)
-                
-                if len(cluster) > 2:
-                    to_merge.append((cluster, cluster_docs))
-                
-                checked.add(ids[i])
+            clusters = self._find_clusters(memory, batch)
+            if not clusters:
+                logger.info("Semantic Defrag: no fragmentation clusters detected.")
+                return {"status": "completed", "clusters": 0, "merged": 0}
 
-            if not to_merge:
-                logger.info("Semantic Defrag: No fragmentation clusters detected.")
-                return
-
-            # 3. Consolidate via LLM
             llm = ServiceContainer.get("llm_router", default=None)
-            for cluster_ids, cluster_docs in to_merge:
-                logger.info("🧠 Consolidating cluster of %s memories...", len(cluster_ids))
-                
-                context_block = "\n".join([f"- {d}" for d in cluster_docs])
-                resolution_context = self._build_resolution_context(cluster_docs)
-                sum_prompt = (
-                    "Synthesize the following fragmented memories into a single, dense, factual consolidated concept. "
-                    "Preserve all unique details but remove internal redundancies. Keep it under 100 words. "
-                    "If technical facts conflict, keep the uncertainty instead of inventing a false precise answer."
-                )
+            merged = 0
+            for cluster in clusters:
+                if await self._consolidate_cluster(memory, llm, cluster):
+                    merged += 1
 
-                full_req = f"{sum_prompt}\n\nMEMORIES:\n{context_block}"
-                if resolution_context:
-                    full_req = f"{sum_prompt}\n\nLIVE CHECKS:\n{resolution_context}\n\nMEMORIES:\n{context_block}"
-                from core.brain.types import ThinkingMode
-                response = await llm.think(
-                    full_req, 
-                    system_prompt="Memory Consolidation Subsystem.",
-                    mode=ThinkingMode.FAST
+            return {"status": "completed", "clusters": len(clusters), "merged": merged}
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="aborted current semantic defrag cycle without deleting source memories",
+                severity="degraded",
+            )
+            logger.error("Semantic Defrag failed: %s", exc)
+            return {"status": "failed", "error": type(exc).__name__}
+
+    def _fetch_batch(self, memory: Any) -> list[dict[str, Any]]:
+        collection = getattr(memory, "_collection", memory)
+        get = getattr(collection, "get", None)
+        if not callable(get):
+            raise AttributeError("vector memory collection does not expose get()")
+
+        try:
+            results = get(include=["documents", "metadatas"], limit=MAX_DEFRAG_BATCH)
+        except TypeError:
+            results = get(include=["documents", "metadatas"])
+
+        if not isinstance(results, dict):
+            raise TypeError("vector memory collection returned a non-dict result")
+
+        ids = list(results.get("ids") or [])
+        docs = list(results.get("documents") or [])
+        metas = list(results.get("metadatas") or [])
+        usable = min(len(ids), len(docs), MAX_DEFRAG_BATCH)
+        if usable < min(len(ids), len(docs)):
+            _record_semantic_defrag_degradation(
+                ValueError("vector memory batch exceeded semantic defrag limit"),
+                action="trimmed semantic defrag batch to bounded micro-batch size",
+                severity="warning",
+                extra={"received_ids": len(ids), "received_docs": len(docs), "used": usable},
+            )
+        if len(metas) < usable:
+            metas.extend({} for _ in range(usable - len(metas)))
+
+        batch: list[dict[str, Any]] = []
+        for index in range(usable):
+            memory_id = _safe_text(ids[index], max_chars=128)
+            content = _safe_text(docs[index], max_chars=MAX_CONTEXT_DOC_CHARS)
+            metadata = metas[index] if isinstance(metas[index], dict) else {}
+            if memory_id and content:
+                batch.append({"id": memory_id, "content": content, "metadata": dict(metadata)})
+        return batch
+
+    def _find_clusters(self, memory: Any, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        search_similar = getattr(memory, "search_similar", None)
+        if not callable(search_similar):
+            raise AttributeError("vector memory does not expose search_similar()")
+
+        metadata_by_id = {item["id"]: item["metadata"] for item in batch}
+        docs_by_id = {item["id"]: item["content"] for item in batch}
+        checked: set[str] = set()
+        clusters: list[dict[str, Any]] = []
+
+        for item in batch:
+            memory_id = item["id"]
+            if memory_id in checked:
+                continue
+            if item["metadata"].get("type") == "consolidated_concept":
+                checked.add(memory_id)
+                continue
+
+            cluster_ids = [memory_id]
+            cluster_docs = [item["content"]]
+            try:
+                similars = search_similar(item["content"], limit=MAX_CLUSTER_SIMILARS)
+            except _SEMANTIC_DEFRAG_ERRORS as exc:
+                _record_semantic_defrag_degradation(
+                    exc,
+                    action="skipped one semantic defrag seed after similarity search failed",
+                    severity="warning",
+                    extra={"memory_id": memory_id},
                 )
-                consolidated_content = response.strip()
-                
-                if consolidated_content:
-                    # Add new consolidated memory
-                    meta = {
-                        "type": "consolidated_concept",
-                        "original_count": len(cluster_ids),
-                        "timestamp": time.time(),
-                        "last_accessed": time.time(),
-                        "valence": sum(m.get("valence", 0) for m in metas if m.get("id") in cluster_ids) / len(cluster_ids)
+                checked.add(memory_id)
+                continue
+
+            for similar in similars or []:
+                if not isinstance(similar, dict):
+                    continue
+                similar_id = self._get_id(similar)
+                if not similar_id or similar_id == memory_id or similar_id in checked:
+                    continue
+                similar_metadata = dict(similar.get("metadata") or {})
+                if similar_metadata.get("type") == "consolidated_concept":
+                    continue
+                if _safe_float(similar.get("distance"), default=1.0) >= SIMILARITY_DISTANCE_THRESHOLD:
+                    continue
+
+                cluster_ids.append(similar_id)
+                cluster_docs.append(
+                    _safe_text(
+                        similar.get("content") or docs_by_id.get(similar_id, ""),
+                        max_chars=MAX_CONTEXT_DOC_CHARS,
+                    )
+                )
+                checked.add(similar_id)
+                metadata_by_id.setdefault(similar_id, similar_metadata)
+
+            if len(cluster_ids) > 2:
+                clusters.append(
+                    {
+                        "ids": cluster_ids,
+                        "docs": [doc for doc in cluster_docs if doc],
+                        "metadata_by_id": metadata_by_id,
                     }
-                    memory.add_memory(consolidated_content, metadata=meta)
-                    
-                    # Delete fragmented originals
-                    memory._collection.delete(ids=cluster_ids)
-                    logger.info("✅ Successfully merged %s memories into a single Concept.", len(cluster_ids))
+                )
+            checked.add(memory_id)
 
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('semantic_defrag', e)
-            logger.error("Semantic Defrag failed: %s", e)
+        return clusters
+
+    async def _consolidate_cluster(self, memory: Any, llm: Any, cluster: dict[str, Any]) -> bool:
+        cluster_ids = list(cluster["ids"])
+        cluster_docs = list(cluster["docs"])
+        logger.info("Consolidating cluster of %s memories", len(cluster_ids))
+
+        consolidated_content = await self._llm_summary(llm, cluster_docs)
+        merge_method = "llm"
+        if not consolidated_content:
+            consolidated_content = self._deterministic_summary(cluster_docs)
+            merge_method = "deterministic"
+
+        if not consolidated_content:
+            _record_semantic_defrag_degradation(
+                ValueError("empty semantic consolidation content"),
+                action="left source memories untouched because no consolidated content was produced",
+                severity="warning",
+                extra={"cluster_size": len(cluster_ids)},
+            )
+            return False
+
+        add_memory = getattr(memory, "add_memory", None)
+        if not callable(add_memory):
+            raise AttributeError("vector memory does not expose add_memory()")
+
+        metadata = {
+            "type": "consolidated_concept",
+            "original_count": len(cluster_ids),
+            "source_ids": cluster_ids,
+            "timestamp": time.time(),
+            "last_accessed": time.time(),
+            "valence": self._cluster_valence(cluster_ids, cluster.get("metadata_by_id", {})),
+            "merge_method": merge_method,
+        }
+
+        try:
+            add_memory(consolidated_content, metadata=metadata)
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="left source memories untouched after consolidated memory write failed",
+                severity="degraded",
+                extra={"cluster_size": len(cluster_ids)},
+            )
+            return False
+
+        delete = getattr(getattr(memory, "_collection", memory), "delete", None)
+        if not callable(delete):
+            _record_semantic_defrag_degradation(
+                AttributeError("vector memory collection does not expose delete()"),
+                action="wrote consolidated memory and kept source memories because delete is unavailable",
+                severity="warning",
+                extra={"cluster_size": len(cluster_ids)},
+            )
+            return True
+
+        try:
+            delete(ids=cluster_ids)
+            logger.info("Successfully merged %s memories into one concept", len(cluster_ids))
+            return True
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="wrote consolidated memory and kept source memories after delete failed",
+                severity="warning",
+                extra={"cluster_size": len(cluster_ids)},
+            )
+            return True
+
+    async def _llm_summary(self, llm: Any, cluster_docs: list[str]) -> str:
+        think = getattr(llm, "think", None)
+        if not callable(think):
+            return ""
+
+        context_block = "\n".join(f"- {doc}" for doc in cluster_docs)[:MAX_CONTEXT_BLOCK_CHARS]
+        resolution_context = self._build_resolution_context(cluster_docs)
+        sum_prompt = (
+            "Synthesize the following fragmented memories into a single, dense, factual consolidated concept. "
+            "Preserve all unique details but remove internal redundancies. Keep it under 100 words. "
+            "If technical facts conflict, keep the uncertainty instead of inventing a false precise answer."
+        )
+        full_request = f"{sum_prompt}\n\nMEMORIES:\n{context_block}"
+        if resolution_context:
+            full_request = f"{sum_prompt}\n\nLIVE CHECKS:\n{resolution_context}\n\nMEMORIES:\n{context_block}"
+
+        try:
+            from core.brain.types import ThinkingMode
+
+            result = think(
+                full_request,
+                system_prompt="Memory Consolidation Subsystem.",
+                mode=ThinkingMode.FAST,
+            )
+            response = await asyncio.wait_for(result, timeout=30.0) if asyncio.iscoroutine(result) else result
+            return _safe_text(response, max_chars=1200)
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="used deterministic consolidation after LLM summary failed",
+                severity="warning",
+                extra={"cluster_docs": len(cluster_docs)},
+            )
+            return ""
+
+    def _deterministic_summary(self, cluster_docs: list[str]) -> str:
+        words: list[str] = []
+        seen: set[str] = set()
+        for doc in cluster_docs:
+            for word in _safe_text(doc, max_chars=MAX_CONTEXT_DOC_CHARS).split():
+                normalized = word.lower().strip(".,;:()[]{}")
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                words.append(word)
+                if len(words) >= MAX_CONSOLIDATED_WORDS:
+                    return " ".join(words)
+        return " ".join(words)
+
+    def _cluster_valence(self, cluster_ids: list[str], metadata_by_id: dict[str, Any]) -> float:
+        values: list[float] = []
+        for memory_id in cluster_ids:
+            metadata = metadata_by_id.get(memory_id)
+            if isinstance(metadata, dict) and "valence" in metadata:
+                values.append(_safe_float(metadata.get("valence"), default=0.0))
+        return sum(values) / len(values) if values else 0.0
 
 
 _defrag_running = True
 
-async def start_defrag_scheduler():
+
+async def start_defrag_scheduler() -> None:
     """Continuous background daemon that runs micro-batch defrags periodically."""
     defragger = SemanticDefragmenter()
     while _defrag_running:
-        # Sleep for a short interval (e.g., 5 minutes) to run continuous micro-batches
-        await asyncio.sleep(5 * 60)
+        await asyncio.sleep(DEFAULT_DEFRAG_INTERVAL_S)
         await defragger.run_defrag_cycle()
