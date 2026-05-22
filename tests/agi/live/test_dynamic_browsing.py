@@ -2,12 +2,13 @@ import http.server
 import socket
 import threading
 from pathlib import Path
+
 import pytest
 
 from tools.agi.run_dynamic_browsing_task import run_browsing_task
 
 
-class MockHTTPServer:
+class LocalHTTPServer:
     """A simple threaded local HTTP server to host dynamic test fixtures."""
 
     def __init__(self, port: int, root_dir: Path):
@@ -23,7 +24,7 @@ class MockHTTPServer:
                 super().__init__(*args, directory=root_dir_str, **kwargs)
 
             def log_message(self, format, *args):
-                pass  # suppress logging
+                return None
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -72,7 +73,7 @@ def local_web_server(tmp_path):
     (tmp_path / "doc.html").write_text(doc_content)
 
     port = get_free_port()
-    server = MockHTTPServer(port, tmp_path)
+    server = LocalHTTPServer(port, tmp_path)
     server.start()
     
     yield f"http://127.0.0.1:{port}"

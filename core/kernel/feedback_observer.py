@@ -1,19 +1,59 @@
+"""core/kernel/feedback_observer.py - The Causal Chain Observer."""
+
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
 import logging
-"""core/kernel/feedback_observer.py - The Causal Chain Observer."""
+import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.state.aura_state import phenomenal_text
 
 logger = logging.getLogger("Aura.FeedbackObserver")
 
-import time
-from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Callable, Deque, Dict, List, Optional, TYPE_CHECKING
-from core.state.aura_state import phenomenal_text
+_FEEDBACK_RECOVERABLE_ERRORS = (RuntimeError, AttributeError, TypeError, ValueError)
+_CALLBACK_FAILURE_LIMIT = 3
 
 if TYPE_CHECKING:
     from core.state.aura_state import AuraState
+
+
+def _record_feedback_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "feedback_observer",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.AUDIT_GAP,
+        receipt_required=severity in {"degraded", "critical"},
+        extra=extra,
+    )
+
+
+def _callback_label(callback: Callable[[TickEntry], None]) -> str:
+    module = getattr(callback, "__module__", "") or ""
+    name = getattr(callback, "__qualname__", None) or getattr(callback, "__name__", None)
+    if name:
+        return f"{module}.{name}" if module else str(name)
+    return type(callback).__qualname__
+
+
+@dataclass
+class ObserverCallback:
+    callback: Callable[[TickEntry], None]
+    label: str
+    consecutive_failures: int = 0
+    disabled: bool = False
+    disabled_reason: str = ""
 
 
 @dataclass
@@ -30,8 +70,8 @@ class TickEntry:
     arousal_before:      float
     curiosity_before:    float
     dominant_before:     str
-    phenomenal_before:   Optional[Any]
-    top_emotions_before: Dict[str, float]   # top-3 by value
+    phenomenal_before:   Any | None
+    top_emotions_before: dict[str, float]   # top-3 by value
     origin:              str                 = ""
     priority:            bool                = False
 
@@ -42,8 +82,8 @@ class TickEntry:
     arousal_after:       float               = 0.0
     curiosity_after:     float               = 0.0
     dominant_after:      str                 = ""
-    phenomenal_after:    Optional[Any]       = None
-    top_emotions_after:  Dict[str, float]    = field(default_factory=dict)
+    phenomenal_after:    Any | None          = None
+    top_emotions_after:  dict[str, float]    = field(default_factory=dict)
     response_preview:    str                 = ""   # first 120 chars
     tick_duration_ms:    float               = 0.0
     priority_tick:       bool                = False
@@ -151,15 +191,15 @@ class FeedbackObserver:
 
     def __init__(self):
         """Initialize the observer with an empty history and no registered callbacks."""
-        self._history:   Deque[TickEntry] = deque(maxlen=self.MAX_HISTORY)
+        self._history:   deque[TickEntry] = deque(maxlen=self.MAX_HISTORY)
         self._tick_id:   int = 0
-        self._callbacks: List[Callable[[TickEntry], None]] = []
+        self._callbacks: list[ObserverCallback] = []
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
     def begin_tick(
         self,
-        state: "AuraState",
+        state: AuraState,
         objective: str,
         *,
         origin: str = "",
@@ -194,8 +234,8 @@ class FeedbackObserver:
     def end_tick(
         self,
         entry: TickEntry,
-        response: Optional[str],
-        new_state: "AuraState",
+        response: str | None,
+        new_state: AuraState,
         start_time: float,
     ) -> TickEntry:
         """
@@ -218,31 +258,68 @@ class FeedbackObserver:
 
         self._history.append(entry)
 
-        # Fire callbacks (non-blocking; exceptions are swallowed)
-        for cb in self._callbacks:
+        # Fire callbacks without letting optional observers destabilize the tick.
+        for binding in self._callbacks:
+            if binding.disabled:
+                continue
             try:
-                cb(entry)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
-                record_degradation('feedback_observer', _e)
-                logging.debug('Ignored Exception in feedback_observer.py: %s', _e)
+                binding.callback(entry)
+            except _FEEDBACK_RECOVERABLE_ERRORS as _e:
+                binding.consecutive_failures += 1
+                extra = {
+                    "callback": binding.label,
+                    "tick_id": entry.tick_id,
+                    "consecutive_failures": binding.consecutive_failures,
+                    "failure_limit": _CALLBACK_FAILURE_LIMIT,
+                }
+                if binding.consecutive_failures >= _CALLBACK_FAILURE_LIMIT:
+                    binding.disabled = True
+                    binding.disabled_reason = f"{type(_e).__qualname__}: {str(_e)[:160]}"
+                    action = (
+                        "disabled failing feedback callback after repeated failures; "
+                        "tick history and other observers continued"
+                    )
+                else:
+                    action = "isolated feedback callback failure; tick history and other observers continued"
+                _record_feedback_degradation(_e, action=action, extra=extra)
+                logger.debug("Feedback callback %s failed: %s", binding.label, _e)
+            else:
+                binding.consecutive_failures = 0
 
         return entry
 
     def on_tick(self, callback: Callable[[TickEntry], None]) -> None:
         """Register a callback that fires after every tick completes."""
-        self._callbacks.append(callback)
+        if not callable(callback):
+            raise TypeError("feedback observer callback must be callable")
+        self._callbacks.append(ObserverCallback(callback=callback, label=_callback_label(callback)))
 
-    def get_last_trace(self, n: int = 10) -> List[TickEntry]:
+    def get_callback_status(self) -> list[dict[str, Any]]:
+        """Return callback health for dashboards and runtime diagnostics."""
+        return [
+            {
+                "label": binding.label,
+                "consecutive_failures": binding.consecutive_failures,
+                "disabled": binding.disabled,
+                "disabled_reason": binding.disabled_reason,
+            }
+            for binding in self._callbacks
+        ]
+
+    def get_last_trace(self, n: int = 10) -> list[TickEntry]:
         """Return the last N TickEntry records."""
         return list(self._history)[-n:]
 
-    def get_current_loop_state(self) -> Dict[str, Any]:
+    def get_current_loop_state(self) -> dict[str, Any]:
         """
         Snapshot of the live loop: latest tick + a short causal summary.
         Useful for dashboards and debug endpoints.
         """
         if not self._history:
-            return {"status": "no_ticks_yet"}
+            return {
+                "status": "no_ticks_yet",
+                "callbacks": self.get_callback_status(),
+            }
 
         last = self._history[-1]
         recent = list(self._history)[-5:]
@@ -266,6 +343,7 @@ class FeedbackObserver:
             "recent_ticks":     len(recent),
             "avg_phi_delta_5":  round(avg_phi_delta, 4),
             "avg_val_delta_5":  round(avg_valence_delta, 4),
+            "callbacks":        self.get_callback_status(),
         }
 
     def print_loop(self, n: int = 5) -> None:

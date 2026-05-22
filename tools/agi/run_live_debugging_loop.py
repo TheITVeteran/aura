@@ -19,6 +19,31 @@ from typing import Any
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("LiveDebuggingRunner")
 
+_COMMAND_RECOVERABLE_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+)
+
+
+def _path_exists(path: Path) -> bool:
+    return path.exists()
+
+
+def _discover_python_files(path: Path) -> list[Path]:
+    return list(path.glob("**/*.py"))
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text()
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.write_text(content)
+
 
 async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
     """Execute a real terminal command inside the specified directory."""
@@ -39,7 +64,7 @@ async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
         }
-    except Exception as e:
+    except _COMMAND_RECOVERABLE_ERRORS as e:
         logger.error("Command execution failed: %s", e)
         return {"exit_code": -1, "stdout": "", "stderr": str(e)}
 
@@ -48,7 +73,7 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
     """Run a complete diagnostic, patching, and verification loop on the target repository."""
     logger.info("Starting live debugging loop for repository: %s", repo_path)
     
-    if not repo_path.exists():
+    if not await asyncio.to_thread(_path_exists, repo_path):
         return {"ok": False, "error": f"Repository path {repo_path} does not exist"}
 
     trace = []
@@ -70,7 +95,7 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
 
     # Step 2: Discover and read codebase files
     logger.info("Step 2: Discovering source and test files...")
-    py_files = list(repo_path.glob("**/*.py"))
+    py_files = await asyncio.to_thread(_discover_python_files, repo_path)
     code_file: Path | None = None
     test_file: Path | None = None
 
@@ -90,14 +115,15 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
     logger.info("Found test file: %s", test_file.relative_to(repo_path))
 
     # Read the files
-    code_content = code_file.read_text()
-    test_content = test_file.read_text()
+    code_content = await asyncio.to_thread(_read_text, code_file)
+    test_content = await asyncio.to_thread(_read_text, test_file)
     
     trace.append({
         "stage": "read_files",
         "code_file": code_file.name,
         "test_file": test_file.name,
         "code_content": code_content,
+        "test_content": test_content,
     })
 
     # Step 3: Diagnostic Reasoning & Patching
@@ -106,7 +132,7 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
     logger.info("Step 3: Applying code patch...")
     
     patched_content = None
-    # Let's support a few common mock bug patterns so the runner is generic
+    # Support a few common seeded defect patterns so the runner is generic.
     if "def calculate(" in code_content:
         # e.g. a bug in calculate function returning incorrect value
         # Bug: return a - b instead of return a + b
@@ -139,7 +165,7 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
         }
 
     # Write the patched content
-    code_file.write_text(patched_content)
+    await asyncio.to_thread(_write_text, code_file, patched_content)
     logger.info("Successfully wrote patched content to %s", code_file.name)
     
     trace.append({

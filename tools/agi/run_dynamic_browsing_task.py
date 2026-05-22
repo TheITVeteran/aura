@@ -3,7 +3,7 @@
 
 This script executes a live browser navigation task using Aura's PhantomBrowser
 and verifies that she can dynamic-browse, navigate links, click elements,
-and extract content/facts from webpages (or local mock services).
+and extract content/facts from webpages or local fixture services.
 """
 from __future__ import annotations
 
@@ -16,6 +16,15 @@ from core.phantom_browser import PhantomBrowser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("DynamicBrowsingRunner")
+
+_BROWSING_RECOVERABLE_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+)
 
 
 async def run_browsing_task(
@@ -93,7 +102,7 @@ async def run_browsing_task(
             "content_snippet": final_content[:800],
         }
         
-    except Exception as e:
+    except _BROWSING_RECOVERABLE_ERRORS as e:
         logger.exception("An error occurred during dynamic browsing: %s", e)
         return {"ok": False, "error": str(e)}
     finally:

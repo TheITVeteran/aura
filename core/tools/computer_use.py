@@ -5,21 +5,70 @@ surface: screen perception, window detection, OCR, UI grounding,
 cursor/keyboard control, app state tracking, undo/rollback, and
 approval before destructive actions.
 
-This module provides the *contract* without bundling a real screen
-driver. Every action call routes through a sandbox policy + capability
-token + verifier. Real platform-specific drivers register themselves
-via ``register_driver`` once they exist.
+Every action call routes through a sandbox policy + capability token +
+optional verifier. Platform-specific default drivers provide real macOS
+screen/control attempts and fail honestly when the host does not grant the
+required permissions.
 """
 from __future__ import annotations
 
+import asyncio
+import base64
+import contextlib
+import io
 import logging
+import os
+import subprocess
+import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger(__name__)
+
+_COMPUTER_USE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+    subprocess.SubprocessError,
+)
+
+
+def _record_computer_use_tool_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "computer_use",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        extra=extra,
+    )
+
+
+def _driver_failure_reason(output: Any) -> str | None:
+    if not isinstance(output, dict) or output.get("ok") is not False:
+        return None
+    reason = output.get("error") or output.get("failure_reason") or output.get("detail")
+    return str(reason or "driver reported failure")
+
+
+def _read_png_base64(path: str) -> str | None:
+    if not os.path.exists(path) or os.path.getsize(path) <= 0:
+        return None
+    with open(path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
 
 
 @dataclass
@@ -56,6 +105,7 @@ class ComputerUseSkill:
     expected text appeared) before returning success_verified.
     """
 
+    READ_ACTIONS = frozenset({"screenshot", "ocr", "detect_windows"})
     DESTRUCTIVE_ACTIONS = frozenset({"click", "type", "drag"})
 
     def __init__(self):
@@ -70,88 +120,136 @@ class ComputerUseSkill:
         self.register_driver("detect_windows", self._default_detect_windows)
 
     async def _default_screenshot(self, action: ComputerUseAction) -> str:
-        import base64
-        import tempfile
-        import os
-        import asyncio
-        import subprocess
-
-        # 1. Try macOS screencapture
+        errors: list[str] = []
+        temp_path: str | None = None
         try:
             fd, temp_path = tempfile.mkstemp(suffix=".png")
             os.close(fd)
             proc = await asyncio.create_subprocess_exec(
-                "screencapture", "-x", temp_path,
+                "screencapture",
+                "-x",
+                temp_path,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
-            await proc.wait()
-            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                with open(temp_path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
-                os.unlink(temp_path)
+            await asyncio.wait_for(proc.wait(), timeout=10.0)
+            if proc.returncode != 0:
+                raise RuntimeError(f"screencapture exited with {proc.returncode}")
+            encoded = await asyncio.to_thread(_read_png_base64, temp_path)
+            if encoded:
                 return encoded
-        except Exception:
-            pass
+            raise RuntimeError("screencapture produced no image")
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            errors.append(f"screencapture:{type(exc).__qualname__}:{exc}")
+            _record_computer_use_tool_degradation(
+                exc,
+                action="fell back from macOS screencapture to pyautogui screenshot",
+                severity="warning",
+                extra={"target": action.target},
+            )
+        finally:
+            if temp_path:
+                with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
+                    os.unlink(temp_path)
 
-        # 2. Try pyautogui
         try:
             from core.skills._pyautogui_runtime import get_pyautogui
+
             pyautogui, _ = get_pyautogui()
             if pyautogui:
-                import io
                 img = pyautogui.screenshot()
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
-        except Exception:
-            pass
+            errors.append("pyautogui:unavailable")
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            errors.append(f"pyautogui:{type(exc).__qualname__}:{exc}")
+            _record_computer_use_tool_degradation(
+                exc,
+                action="screen capture failed after pyautogui fallback attempt",
+                severity="warning",
+                extra={"target": action.target},
+            )
 
-        # 3. Transparent 1x1 pixel PNG fallback
-        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        raise RuntimeError(f"screen capture unavailable: {'; '.join(errors) or 'no backend'}")
 
     async def _default_click(self, action: ComputerUseAction) -> dict[str, Any]:
         try:
             from core.skills.computer_use import ComputerUseSkill as CoreSkill
+
             skill = CoreSkill()
             x = action.payload.get("x", 0)
             y = action.payload.get("y", 0)
             return await skill.execute({"action": "click", "x": x, "y": y}, {})
-        except Exception as exc:
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_tool_degradation(
+                exc,
+                action="click driver failed before a verified desktop action could complete",
+                severity="degraded",
+                extra={"target": action.target, "payload": dict(action.payload)},
+            )
             return {"ok": False, "error": f"click fallback error: {exc!r}"}
 
     async def _default_type(self, action: ComputerUseAction) -> dict[str, Any]:
         try:
             from core.skills.computer_use import ComputerUseSkill as CoreSkill
+
             skill = CoreSkill()
             x = action.payload.get("x", 0)
             y = action.payload.get("y", 0)
             return await skill.execute({"action": "type", "target": action.target, "x": x, "y": y}, {})
-        except Exception as exc:
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_tool_degradation(
+                exc,
+                action="type driver failed before a verified desktop action could complete",
+                severity="degraded",
+                extra={"target": action.target, "payload": dict(action.payload)},
+            )
             return {"ok": False, "error": f"type fallback error: {exc!r}"}
 
     async def _default_ocr(self, action: ComputerUseAction) -> dict[str, Any]:
         try:
             from core.skills.computer_use import ComputerUseSkill as CoreSkill
+
             skill = CoreSkill()
             return await skill.execute({"action": "read_screen_text", "target": action.target}, {})
-        except Exception as exc:
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_tool_degradation(
+                exc,
+                action="ocr driver failed before screen text could be read",
+                severity="degraded",
+                extra={"target": action.target},
+            )
             return {"ok": False, "error": f"ocr fallback error: {exc!r}"}
 
     async def _default_detect_windows(self, action: ComputerUseAction) -> dict[str, Any]:
-        import asyncio
         try:
             from core.skills.computer_use import ComputerUseSkill as CoreSkill
+
             skill = CoreSkill()
             tree = await asyncio.to_thread(skill._query_system_events_window_tree)
             return {"ok": True, "window_tree": tree}
-        except Exception as exc:
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_tool_degradation(
+                exc,
+                action="window detection driver failed before UI tree could be read",
+                severity="degraded",
+                extra={"target": action.target},
+            )
             return {"ok": False, "error": f"detect_windows fallback error: {exc!r}"}
 
     def register_driver(self, kind: str, driver: DriverFn) -> None:
+        if not str(kind or "").strip():
+            raise ValueError("computer-use driver kind must be non-empty")
+        if not callable(driver):
+            raise TypeError("computer-use driver must be callable")
         self._drivers[kind] = driver
 
     def register_verifier(self, kind: str, verifier: VerifierFn) -> None:
+        if not str(kind or "").strip():
+            raise ValueError("computer-use verifier kind must be non-empty")
+        if not callable(verifier):
+            raise TypeError("computer-use verifier must be callable")
         self._verifiers[kind] = verifier
 
     async def perform(
@@ -167,7 +265,7 @@ class ComputerUseSkill:
             return ComputerUseResult(
                 ok=False, action=action, failure_reason="no capability token"
             )
-        cap_kind = "browser.read" if action.kind in {"screenshot", "ocr"} else "self.modify"
+        cap_kind = "browser.read" if action.kind in self.READ_ACTIONS else "self.modify"
         # destructive UI events use file.write-style sandbox decision
         if action.kind in self.DESTRUCTIVE_ACTIONS:
             if not approval_for_destructive:
@@ -189,11 +287,24 @@ class ComputerUseSkill:
             )
         try:
             output = await driver(action)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("computer_use", exc)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_tool_degradation(
+                exc,
+                action="driver raised before action could be verified",
+                severity="degraded",
+                extra={"kind": action.kind, "target": action.target},
+            )
             logger.debug("Computer-use driver failed for %s: %s", action.kind, exc)
             return ComputerUseResult(
                 ok=False, action=action, failure_reason=f"driver failed: {exc!r}"
+            )
+        if failure_reason := _driver_failure_reason(output):
+            return ComputerUseResult(
+                ok=False,
+                action=action,
+                output=output,
+                failure_reason=f"driver rejected action: {failure_reason}",
+                receipt_id=receipt_id,
             )
         verifier = self._verifiers.get(action.kind)
         evidence: dict[str, Any] = {}
@@ -201,8 +312,13 @@ class ComputerUseSkill:
         if verifier is not None:
             try:
                 verified, evidence = await verifier(action, output)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("computer_use", exc)
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                _record_computer_use_tool_degradation(
+                    exc,
+                    action="verifier raised after driver output; action was not accepted",
+                    severity="warning",
+                    extra={"kind": action.kind, "target": action.target},
+                )
                 logger.debug("Computer-use verifier failed for %s: %s", action.kind, exc)
                 return ComputerUseResult(
                     ok=False,
@@ -210,6 +326,8 @@ class ComputerUseSkill:
                     output=output,
                     failure_reason=f"verifier raised: {exc!r}",
                 )
+            if not isinstance(evidence, dict):
+                evidence = {"raw_evidence": evidence}
         return ComputerUseResult(
             ok=verified,
             action=action,
