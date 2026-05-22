@@ -25,9 +25,6 @@ Integration:
   - InsightJournal receives findings from research passes
 """
 
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import json
 import logging
@@ -35,9 +32,56 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.config import config
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.InquiryEngine")
+
+def _record_inquiry_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    classification: FallbackClassification = FallbackClassification.SAFE_FALLBACK,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "inquiry_engine",
+        error,
+        severity=severity,
+        action=action,
+        classification=classification,
+        receipt_required=severity in {"degraded", "critical"},
+        extra=extra,
+    )
+
+
+def _clamp(value: Any, *, low: float, high: float, default: float) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, numeric))
+
+
+def _default_db_path() -> Path:
+    return config.paths.data_dir / "inquiry_journal.json"
+
+
+def _strip_json_fence(raw: str) -> str:
+    clean = str(raw or "").strip()
+    if not clean.startswith("```"):
+        return clean
+    lines = clean.splitlines()
+    if lines and lines[0].strip().lower() in {"```json", "```"}:
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 # ─── Data structures ────────────────────────────────────────────────────────
@@ -64,8 +108,8 @@ class OpenQuestion:
     urgency: float             # 0.0-1.0, from EpistemicTracker
     opened_at: float
     last_active: float
-    evidence: List[Evidence] = field(default_factory=list)
-    sub_questions: List[str] = field(default_factory=list)
+    evidence: list[Evidence] = field(default_factory=list)
+    sub_questions: list[str] = field(default_factory=list)
     provisional_answer: str = ""  # Aura's current best guess
     confidence: float = 0.0       # How sure Aura is of provisional_answer
     research_attempts: int = 0
@@ -136,14 +180,14 @@ class InquiryEngine:
     EVIDENCE_FOR_PROVISIONAL = 2
 
     def __init__(self):
-        self._questions: List[OpenQuestion] = []
-        self._settled: List[OpenQuestion] = []
-        self._db_path = Path.home() / ".aura" / "data" / "inquiry_journal.json"
+        self._questions: list[OpenQuestion] = []
+        self._settled: list[OpenQuestion] = []
+        self._db_path = _default_db_path()
         self._api_adapter = None
         self._epistemic = None
         self._insight_journal = None
         self._belief_engine = None
-        self._research_task: Optional[asyncio.Task] = None
+        self._research_task: asyncio.Task | None = None
         self.running = False
         self._load()
         logger.info("InquiryEngine constructed (%d active questions).", len(self._questions))
@@ -170,9 +214,14 @@ class InquiryEngine:
                 "hooks_into": ["epistemic_tracker", "api_adapter", "insight_journal",
                                "cognitive_kernel", "volition_engine"]
             })
-        except (ImportError, AttributeError, RuntimeError) as _e:
-            record_degradation('inquiry_engine', _e)
-            logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_inquiry_degradation(
+                exc,
+                action="continued online after mycelium registration failed",
+                classification=FallbackClassification.AUDIT_GAP,
+                extra={"component": "inquiry_engine"},
+            )
+            logger.debug("InquiryEngine mycelium registration failed: %s", exc)
 
         logger.info("✅ InquiryEngine ONLINE — %d active questions.", len(self._questions))
 
@@ -270,7 +319,7 @@ class InquiryEngine:
         logger.info("✅ Question settled: %s → %s (conf=%.2f)",
                     q.question[:50], final_answer[:80], confidence)
 
-    def get_active_question(self) -> Optional[OpenQuestion]:
+    def get_active_question(self) -> OpenQuestion | None:
         """
         Return the most urgent active question.
         Used by VolitionEngine to drive autonomous behavior.
@@ -389,14 +438,19 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
             })
             await self._process_research_result(q, raw)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('inquiry_engine', e)
+            _record_inquiry_degradation(
+                e,
+                action="kept inquiry open and incremented research attempt after research pass failed",
+                severity="degraded",
+                extra={"question_id": q.id, "domain": q.domain},
+            )
             logger.warning("InquiryEngine research failed for '%s': %s", q.question[:40], e)
             q.research_attempts += 1
 
     async def _process_research_result(self, q: OpenQuestion, raw: str):
         """Parse and integrate research findings."""
         try:
-            clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            clean = _strip_json_fence(raw)
             data = json.loads(clean)
 
             # Add evidence
@@ -446,9 +500,16 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                     tags=[q.domain, "inquiry"],
                 ))
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            _record_inquiry_degradation(
+                e,
+                action="kept inquiry open after malformed research result",
+                extra={"question_id": q.id, "domain": q.domain},
+            )
             logger.warning("InquiryEngine: failed to parse research result: %s", e)
             q.research_attempts += 1
+            q.last_active = time.time()
+            self._save()
 
     # ─── Seeding ─────────────────────────────────────────────────────────────
 
@@ -490,7 +551,7 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
             q.status = "suspended"
         self._questions = keep
 
-    def _get_by_id(self, question_id: str) -> Optional[OpenQuestion]:
+    def _get_by_id(self, question_id: str) -> OpenQuestion | None:
         return next((q for q in self._questions if q.id == question_id), None)
 
     @staticmethod
@@ -504,6 +565,75 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
 
     # ─── Persistence ─────────────────────────────────────────────────────────
 
+    def _restore_evidence(self, payload: Any) -> Evidence:
+        if not isinstance(payload, dict):
+            raise TypeError("evidence payload must be an object")
+        return Evidence(
+            content=str(payload.get("content", ""))[:800],
+            source=str(payload.get("source", "unknown") or "unknown")[:80],
+            weight=_clamp(payload.get("weight", 0.0), low=-1.0, high=1.0, default=0.0),
+            timestamp=_clamp(payload.get("timestamp", time.time()), low=0.0, high=time.time(), default=time.time()),
+            confidence=_clamp(payload.get("confidence", 0.6), low=0.0, high=1.0, default=0.6),
+        )
+
+    def _restore_question(self, payload: Any) -> OpenQuestion:
+        if not isinstance(payload, dict):
+            raise TypeError("question payload must be an object")
+        question_text = str(payload.get("question", "") or "").strip()
+        if not question_text:
+            raise ValueError("question text is required")
+        status = str(payload.get("status", "open") or "open").lower()
+        if status not in {"open", "forming", "settled", "suspended", "contested"}:
+            status = "open"
+        opened_at = _clamp(payload.get("opened_at", time.time()), low=0.0, high=time.time(), default=time.time())
+        last_active = _clamp(payload.get("last_active", opened_at), low=opened_at, high=time.time(), default=opened_at)
+        question = OpenQuestion(
+            id=str(payload.get("id") or str(uuid.uuid4())[:8])[:80],
+            question=question_text[:500],
+            domain=str(payload.get("domain", "general") or "general")[:120],
+            urgency=_clamp(payload.get("urgency", 0.5), low=0.0, high=1.0, default=0.5),
+            opened_at=opened_at,
+            last_active=last_active,
+            provisional_answer=str(payload.get("provisional_answer", "") or "")[:1200],
+            confidence=_clamp(payload.get("confidence", 0.0), low=0.0, high=1.0, default=0.0),
+            research_attempts=max(0, int(payload.get("research_attempts", 0) or 0)),
+            status=status,
+            conversation_references=max(0, int(payload.get("conversation_references", 0) or 0)),
+        )
+        evidence_payloads = payload.get("evidence", [])
+        if not isinstance(evidence_payloads, list):
+            evidence_payloads = []
+        restored_evidence: list[Evidence] = []
+        for item in evidence_payloads[:50]:
+            try:
+                restored_evidence.append(self._restore_evidence(item))
+            except (TypeError, ValueError) as exc:
+                _record_inquiry_degradation(
+                    exc,
+                    action="skipped invalid inquiry evidence while loading durable store",
+                    extra={"question_id": question.id},
+                )
+        question.evidence = restored_evidence
+        sub_questions = payload.get("sub_questions", [])
+        if isinstance(sub_questions, list):
+            question.sub_questions = [str(item)[:500] for item in sub_questions[:20] if str(item or "").strip()]
+        return question
+
+    def _quarantine_corrupt_store(self) -> None:
+        quarantine_path = self._db_path.with_name(
+            f"{self._db_path.stem}.corrupt-{int(time.time())}{self._db_path.suffix}"
+        )
+        try:
+            self._db_path.replace(quarantine_path)
+        except OSError as exc:
+            _record_inquiry_degradation(
+                exc,
+                action="left corrupt inquiry journal in place after quarantine move failed",
+                severity="degraded",
+                classification=FallbackClassification.AUDIT_GAP,
+                extra={"path": str(self._db_path)},
+            )
+
     def _save(self):
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -512,38 +642,72 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
                 "settled":   [asdict(q) for q in self._settled[-50:]],
             }
             atomic_write_text(self._db_path, json.dumps(data, indent=2))
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            record_degradation('inquiry_engine', e)
+        except (OSError, TypeError, ValueError) as e:
+            _record_inquiry_degradation(
+                e,
+                action="kept in-memory inquiries after durable save failed",
+                severity="degraded",
+                extra={"path": str(self._db_path), "active_questions": len(self._questions)},
+            )
             logger.debug("InquiryEngine save failed: %s", e)
 
     def _load(self):
         if not self._db_path.exists():
             return
         try:
-            data = json.loads(self._db_path.read_text())
-            for qd in data.get("questions", []):
-                try:
-                    evidences = [Evidence(**e) for e in qd.pop("evidence", [])]
-                    q = OpenQuestion(**qd)
-                    q.evidence = evidences
-                    self._questions.append(q)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
-                    record_degradation('inquiry_engine', _e)
-                    logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
-            for qd in data.get("settled", []):
-                try:
-                    evidences = [Evidence(**e) for e in qd.pop("evidence", [])]
-                    q = OpenQuestion(**qd)
-                    q.evidence = evidences
-                    self._settled.append(q)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
-                    record_degradation('inquiry_engine', _e)
-                    logger.debug('Ignored Exception in inquiry_engine.py: %s', _e)
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('inquiry_engine', e)
+            raw = self._db_path.read_text(encoding="utf-8")
+        except OSError as e:
+            _record_inquiry_degradation(
+                e,
+                action="started with empty inquiry journal after durable load failed",
+                severity="degraded",
+                extra={"path": str(self._db_path)},
+            )
             logger.debug("InquiryEngine load failed: %s", e)
+            return
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            _record_inquiry_degradation(
+                e,
+                action="started with empty inquiry journal and quarantined corrupt store",
+                severity="degraded",
+                classification=FallbackClassification.AUDIT_GAP,
+                extra={"path": str(self._db_path)},
+            )
+            self._quarantine_corrupt_store()
+            return
+        if not isinstance(data, dict):
+            _record_inquiry_degradation(
+                TypeError("inquiry journal root must be an object"),
+                action="started with empty inquiry journal after invalid store root",
+                severity="degraded",
+                classification=FallbackClassification.AUDIT_GAP,
+                extra={"path": str(self._db_path)},
+            )
+            return
+        for qd in data.get("questions", []):
+            try:
+                self._questions.append(self._restore_question(qd))
+            except (AttributeError, TypeError, ValueError) as exc:
+                _record_inquiry_degradation(
+                    exc,
+                    action="skipped invalid active inquiry while loading durable store",
+                    extra={"path": str(self._db_path)},
+                )
+                logger.debug("Skipped invalid active inquiry: %s", exc)
+        for qd in data.get("settled", []):
+            try:
+                self._settled.append(self._restore_question(qd))
+            except (AttributeError, TypeError, ValueError) as exc:
+                _record_inquiry_degradation(
+                    exc,
+                    action="skipped invalid settled inquiry while loading durable store",
+                    extra={"path": str(self._db_path)},
+                )
+                logger.debug("Skipped invalid settled inquiry: %s", exc)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "active_questions": len(self._questions),
             "settled":          len(self._settled),
@@ -556,7 +720,7 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_engine: Optional[InquiryEngine] = None
+_engine: InquiryEngine | None = None
 
 def get_inquiry_engine() -> InquiryEngine:
     global _engine
