@@ -9,8 +9,10 @@ the lineage hash externally, and measures whether improver quality rises.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -26,6 +28,7 @@ from core.learning.rsi_lineage import (
 )
 from core.promotion.dynamic_benchmark import Task
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.substrate_expansion import (
     ExpansionMode,
     SubstrateExpansionController,
@@ -35,6 +38,67 @@ from core.runtime.substrate_expansion import (
 
 HANDLER_ORDER = ["gcd", "mod", "compose", "sort", "palindrome"]
 ARITHMETIC_FAMILY = {"gcd", "mod", "compose"}
+SUPPORTED_HANDLERS = frozenset(HANDLER_ORDER)
+
+_RSI_GENERATION_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    SyntaxError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+_GENERATED_SOLVER_ALLOWED_IMPORTS = {"math"}
+_GENERATED_SOLVER_ALLOWED_FROM_IMPORTS = {"__future__"}
+_GENERATED_SOLVER_BANNED_CALLS = {
+    "__import__",
+    "breakpoint",
+    "compile",
+    "eval",
+    "exec",
+    "globals",
+    "input",
+    "locals",
+    "open",
+    "vars",
+}
+_GENERATED_SOLVER_BANNED_ROOTS = {
+    "asyncio",
+    "builtins",
+    "importlib",
+    "os",
+    "pathlib",
+    "shutil",
+    "socket",
+    "subprocess",
+    "sys",
+    "tempfile",
+}
+
+
+class GeneratedSolverError(ValueError):
+    """Raised when a generated successor solver violates the static contract."""
+
+
+def _record_autonomous_rsi_degradation(
+    subsystem: str,
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "degraded",
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        subsystem,
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 
 def _canonical(obj: Any) -> bytes:
@@ -47,6 +111,88 @@ def _sha(obj: Any) -> str:
 
 def _hash_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_handler_set(handlers: set[str]) -> list[str]:
+    unknown = sorted(set(handlers) - SUPPORTED_HANDLERS)
+    if unknown:
+        raise ValueError(f"unsupported RSI solver handlers: {unknown}")
+    return sorted(handlers)
+
+
+def _root_name(node: ast.AST) -> str:
+    current = node
+    while isinstance(current, ast.Attribute):
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id
+    return ""
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parts = [node.attr]
+        current = node.value
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _static_validate_generated_solver_source(
+    source: str,
+    *,
+    expected_handlers: set[str] | None = None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    try:
+        if expected_handlers is not None:
+            _validate_handler_set(expected_handlers)
+        tree = ast.parse(source, filename="<generated-rsi-solver>")
+    except (SyntaxError, ValueError) as exc:
+        return {"pass": False, "errors": [f"{type(exc).__name__}:{exc}"]}
+
+    solve_defs = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "solve"
+    ]
+    if len(solve_defs) != 1:
+        errors.append("expected exactly one top-level solve(task) function")
+    elif len(solve_defs[0].args.args) != 1:
+        errors.append("solve must accept exactly one task parameter")
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
+                names = {alias.name.split(".", 1)[0] for alias in node.names}
+                bad = sorted(names - _GENERATED_SOLVER_ALLOWED_IMPORTS)
+                if bad:
+                    errors.append(f"disallowed import: {bad}")
+            elif (node.module or "").split(".", 1)[0] not in _GENERATED_SOLVER_ALLOWED_FROM_IMPORTS:
+                errors.append(f"disallowed from-import: {node.module}")
+            continue
+
+        if isinstance(node, ast.Call):
+            call = _call_name(node.func)
+            root = _root_name(node.func)
+            if call in _GENERATED_SOLVER_BANNED_CALLS or root in _GENERATED_SOLVER_BANNED_ROOTS:
+                errors.append(f"disallowed call: {call or root}")
+
+        if isinstance(node, ast.Attribute):
+            root = _root_name(node)
+            if root in _GENERATED_SOLVER_BANNED_ROOTS:
+                errors.append(f"disallowed attribute root: {root}")
+            if node.attr.startswith("__") and node.attr.endswith("__"):
+                errors.append(f"disallowed dunder attribute: {node.attr}")
+
+        if isinstance(node, ast.Name) and node.id in _GENERATED_SOLVER_BANNED_ROOTS:
+            errors.append(f"disallowed name: {node.id}")
+
+    return {"pass": not errors, "errors": sorted(set(errors))}
 
 
 @dataclass(frozen=True)
@@ -240,6 +386,10 @@ def solve_with_handlers(task: Task, handlers: set[str]) -> Any:
 
 
 def _run_generated_solver(task: Task, source: str) -> tuple[bool, Any, str]:
+    static_report = _static_validate_generated_solver_source(source)
+    if not static_report.get("pass"):
+        return False, None, "static_reject:" + json.dumps(static_report, sort_keys=True)
+
     wrapper = f"""
 {source}
 
@@ -257,7 +407,6 @@ if __name__ == '__main__':
     result = solve(t)
     print(json.dumps({{"result": result}}))
 """
-    import json
     import os
     import subprocess
     import tempfile
@@ -268,9 +417,9 @@ if __name__ == '__main__':
             f.write(wrapper)
             tmp_path = f.name
 
-        # Security: sandboxed subprocess execution of LLM-generated code
+        # Security: sandboxed subprocess execution of generated successor code.
         proc = subprocess.run(
-            ["python", tmp_path],
+            [sys.executable, "-I", "-B", tmp_path],
             input=json.dumps({"kind": task.kind, "metadata": task.metadata}),
             text=True,
             capture_output=True,
@@ -286,22 +435,24 @@ if __name__ == '__main__':
                 return False, None, f"json_decode_error:{exc}:{proc.stdout[-240:]}"
         return False, None, (proc.stderr or proc.stdout or f"returncode:{proc.returncode}")[-500:]
     except (OSError, ConnectionError, TimeoutError, subprocess.TimeoutExpired) as exc:
-        from core.runtime.errors import record_degradation
-
-        record_degradation("rsi_solver_execution", exc)
+        _record_autonomous_rsi_degradation(
+            "rsi_solver_execution",
+            exc,
+            action="failed generated solver execution closed and returned baseline-safe miss",
+            extra={"task_kind": task.kind},
+        )
         return False, None, repr(exc)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
             except OSError as exc:
-                from core.runtime.errors import record_degradation
-
-                record_degradation(
+                _record_autonomous_rsi_degradation(
                     "rsi_solver_cleanup",
                     exc,
                     severity="warning",
                     action="left temporary generated solver file for OS cleanup after unlink failed",
+                    extra={"tmp_path": tmp_path},
                 )
 
 
@@ -313,6 +464,15 @@ def solve_with_generated_code(task: Task, source: str) -> Any:
 
 
 def _sandbox_solver_source(source: str, handlers: set[str]) -> dict[str, Any]:
+    static_report = _static_validate_generated_solver_source(source, expected_handlers=handlers)
+    if not static_report.get("pass"):
+        return {
+            "pass": False,
+            "stage": "static_validation",
+            "static_report": static_report,
+            "checks": [],
+        }
+
     fixtures: dict[str, tuple[Task, Any]] = {
         "gcd": (Task("gcd", "", 6, {"a": 54, "b": 24}), 6),
         "mod": (Task("mod", "", 1, {"a": 7, "b": 4, "m": 5}), 1),
@@ -363,7 +523,8 @@ def baseline_solver(task: Task) -> Any:
 
 
 def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[str, dict[str, Any]]:
-    handlers_literal = sorted(handlers)
+    handlers_literal = _validate_handler_set(set(handlers))
+    handlers = set(handlers_literal)
     examples_by_kind = {
         "gcd": "- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.",
         "mod": "- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.",
@@ -405,6 +566,12 @@ def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[s
         "parse_result": "fallback",
         "sandbox_result": "untested",
         "generated_source_hash": None,
+        "safety_contract": {
+            "static_validation": True,
+            "sandbox_fixtures": True,
+            "unsupported_kinds_return_none": True,
+            "allowed_imports": sorted(_GENERATED_SOLVER_ALLOWED_IMPORTS),
+        },
     }
 
     try:
@@ -483,13 +650,33 @@ def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[s
             raise RuntimeError(
                 f"generated solver failed sandbox after repair attempts: {repair_feedback}"
             )
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        from core.runtime.errors import record_degradation
-
-        record_degradation("autonomous_rsi_generation", exc)
+    except _RSI_GENERATION_RECOVERABLE_ERRORS as exc:
+        _record_autonomous_rsi_degradation(
+            "autonomous_rsi_generation",
+            exc,
+            action=(
+                "demoted failed LLM successor source and selected deterministic solver "
+                "only after static validation plus sandbox fixtures"
+            ),
+            extra={
+                "generation_id": generation_id,
+                "handlers": handlers_literal,
+                "repair_requested": True,
+                "attempt_count": len(metadata.get("attempts", [])),
+            },
+        )
         metadata["parse_result"] = str(exc)
 
-    metadata["sandbox_result"] = _sandbox_solver_source(fallback_code, handlers)
+    fallback_sandbox = _sandbox_solver_source(fallback_code, handlers)
+    if not fallback_sandbox.get("pass"):
+        raise GeneratedSolverError(
+            "deterministic RSI solver failed its static/sandbox contract: "
+            + json.dumps(fallback_sandbox, sort_keys=True, default=str)
+        )
+    metadata["parse_result"] = (
+        "deterministic_verified" if metadata["parse_result"] == "fallback" else metadata["parse_result"]
+    )
+    metadata["sandbox_result"] = fallback_sandbox
     metadata["generated_source_hash"] = hashlib.sha256(fallback_code.encode("utf-8")).hexdigest()
     return fallback_code, metadata
 

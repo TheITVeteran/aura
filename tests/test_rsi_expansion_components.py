@@ -18,13 +18,13 @@ from core.learning.proof_obligations import ProofObligationEngine, ProofStatus
 from core.learning.rsi_test_catalog import catalog_summary, default_rsi_test_catalog
 from core.learning.successor_lab import SuccessorLab
 from core.phases.affect_update import AffectUpdatePhase
-from core.state.aura_state import AffectVector
 from core.runtime.substrate_expansion import (
     ExpansionMode,
     SubstrateExpansionController,
     SubstrateExpansionPlan,
     SubstrateNodeSpec,
 )
+from core.state.aura_state import AffectVector
 
 
 def _cube(value: int) -> int:
@@ -188,8 +188,8 @@ def test_successor_lab_generates_monotone_g1_to_g4_lineage(tmp_path: Path):
     assert result.verdict.verdict == "STRONG_RSI"
     capability = [record.after_score for record in result.records]
     improver = [record.improver_score for record in result.records]
-    assert all(b > a for a, b in zip(capability, capability[1:]))
-    assert all(b > a for a, b in zip(improver, improver[1:]))
+    assert all(b > a for a, b in zip(capability, capability[1:], strict=False))
+    assert all(b > a for a, b in zip(improver, improver[1:], strict=False))
     assert Path(result.ledger_path).exists()
 
 
@@ -244,8 +244,8 @@ def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: P
 
     capability = [record.after_score for record in result.records]
     improver = [record.improver_score for record in result.records]
-    assert all(b > a for a, b in zip(capability, capability[1:]))
-    assert all(b > a for a, b in zip(improver, improver[1:]))
+    assert all(b > a for a, b in zip(capability, capability[1:], strict=False))
+    assert all(b > a for a, b in zip(improver, improver[1:], strict=False))
 
     for artifact in result.artifacts:
         artifact_dir = Path(artifact.directory)
