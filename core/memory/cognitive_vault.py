@@ -1,150 +1,266 @@
-"""core/memory/cognitive_vault.py — Aura 3.0: Cognitive Vault
-=========================================================
-Implements the Phase 5 unified memory façade. Replaces the legacy 
-decentralized SQLite writes with a single, thread-safe, batched write pipeline.
+"""core/memory/cognitive_vault.py - Aura 3.0: Cognitive Vault.
 
-ZENITH Protocol compliance:
-  - All writes are batched and executed via an async queue.
-  - Transactions use WAL mode and synchronous=NORMAL for peak persistence safety.
-  - Zero raw disk writes in the hot path.
+Unified memory persistence layer with a serialized SQLite write queue.
+The vault never builds SQL from untrusted identifiers and never lets a failed
+background write wedge shutdown.
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from __future__ import annotations
+
 import asyncio
-import sqlite3
+import json
 import logging
 import os
+import sqlite3
 import time
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.CognitiveVault")
 
+_VAULT_RECOVERABLE_ERRORS = (
+    AttributeError,
+    FileNotFoundError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    sqlite3.Error,
+)
 
-@dataclass
+_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "memories": ("topic", "content", "metadata"),
+    "audit_log": ("event", "details"),
+}
+
+
+def _record_vault_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: str = "warning",
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        "cognitive_vault",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
+
+
+@dataclass(frozen=True)
 class VaultTransaction:
     """A single atomic write targeting the cognitive vault."""
+
     table: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
     timestamp: float = 0.0
 
     def __post_init__(self):
-        self.timestamp = self.timestamp or time.time()
+        if not self.timestamp:
+            object.__setattr__(self, "timestamp", time.time())
 
 
 class CognitiveVault:
-    """
-    Unified memory persistence layer.
-    
-    ZENITH Purity:
-      - All SQLite interactions are serialized via a dedicated worker thread.
-      - Uses an internal queue to prevent cognitive stalls during heavy I/O.
-    """
+    """Unified memory persistence layer with a dedicated async write queue."""
 
     def __init__(self, db_path: str = "~/.aura/vault.db"):
         self.db_path = os.path.expanduser(db_path)
         self._queue: asyncio.Queue[VaultTransaction] = asyncio.Queue(maxsize=1024)
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task[None] | None = None
         self._running = False
+        self._failed_writes = 0
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-    async def on_start_async(self):
+    async def on_start_async(self) -> bool:
         """Initializes the database schema and starts the write worker."""
-        await asyncio.to_thread(self._initialize_schema)
-        self._running = True
-        self._worker_task = get_task_tracker().create_task(self._write_worker(), name="CognitiveVault.Worker")
-        logger.info("CognitiveVault ONLINE. Unified write pipeline active.")
+        try:
+            await asyncio.to_thread(self._initialize_schema)
+        except _VAULT_RECOVERABLE_ERRORS as exc:
+            _record_vault_degradation(
+                exc,
+                action="failed cognitive vault startup closed before accepting writes",
+                severity="critical",
+                extra={"db_path": self.db_path},
+            )
+            raise
 
-    async def on_stop_async(self):
+        self._running = True
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = get_task_tracker().create_task(
+                self._write_worker(),
+                name="CognitiveVault.Worker",
+            )
+        logger.info("CognitiveVault ONLINE. Unified write pipeline active.")
+        return True
+
+    async def on_stop_async(self) -> bool:
         """Flushes the queue and closes the database."""
         self._running = False
         if self._worker_task:
-            # Wait for queue to empty
             await self._queue.join()
             self._worker_task.cancel()
             try:
-                await self._worker_task
-            except asyncio.CancelledError as _exc:
-                logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
+                await asyncio.wait_for(self._worker_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            finally:
+                self._worker_task = None
         logger.info("CognitiveVault SHUTDOWN.")
+        return self._failed_writes == 0
 
-    async def commit(self, table: str, data: Dict[str, Any]):
-        """Non-blocking entry point for persistent storage."""
-        tx = VaultTransaction(table=table, data=data)
+    async def commit(self, table: str, data: dict[str, Any]) -> bool:
+        """Queue persistent storage, falling back to direct write under pressure."""
+        try:
+            tx = self._build_transaction(table, data)
+        except ValueError as exc:
+            _record_vault_degradation(
+                exc,
+                action="rejected invalid cognitive vault transaction before SQL execution",
+                extra={"table": str(table)[:80]},
+            )
+            return False
+
+        if not self._running:
+            return await self._execute_direct_fallback(tx, reason="vault worker is not running")
+
         try:
             self._queue.put_nowait(tx)
-        except asyncio.QueueFull:
-            logger.error("Vault queue CRITICAL FULL. Insights may be lost.")
+            return True
+        except asyncio.QueueFull as exc:
+            _record_vault_degradation(
+                exc,
+                action="applied bounded backpressure after cognitive vault queue filled",
+                extra={"table": tx.table, "queue_size": self._queue.qsize()},
+            )
 
-    def _initialize_schema(self):
-        """Sets up the WAL mode and core tables."""
-        conn = sqlite3.connect(self.db_path)
         try:
+            await asyncio.wait_for(self._queue.put(tx), timeout=0.5)
+            return True
+        except TimeoutError:
+            return await self._execute_direct_fallback(tx, reason="queue backpressure timeout")
+
+    def _initialize_schema(self) -> None:
+        """Sets up WAL mode and core tables."""
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
-            
-            # Core memory table
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic TEXT,
                     content TEXT,
                     metadata TEXT,
-                    timestamp REAL
+                    timestamp REAL NOT NULL
                 )
-            """)
-            
-            # Audit log for Zenith Protocol
-            conn.execute("""
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event TEXT,
                     details TEXT,
-                    timestamp REAL
+                    timestamp REAL NOT NULL
                 )
-            """)
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_timestamp ON memories(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
             conn.commit()
-        finally:
-            conn.close()
 
-    async def _write_worker(self):
+    async def _write_worker(self) -> None:
         """Background coroutine that handles serialized database writes."""
-        while self._running:
+        while self._running or not self._queue.empty():
+            tx = None
             try:
-                # Zenith: Batching would happen here for high throughput
                 tx = await asyncio.wait_for(self._queue.get(), timeout=1.0)
                 await asyncio.to_thread(self._execute_tx, tx)
-                self._queue.task_done()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
-                break
-            except (OSError, ConnectionError, TimeoutError) as e:
-                record_degradation('cognitive_vault', e)
-                logger.error("Vault worker error: %s", e)
+                raise
+            except _VAULT_RECOVERABLE_ERRORS as exc:
+                self._failed_writes += 1
+                _record_vault_degradation(
+                    exc,
+                    action="kept vault worker alive after a transaction failed",
+                    severity="degraded",
+                    extra={"table": tx.table if tx else None},
+                )
+                logger.error("Vault worker error: %s", exc)
+            finally:
+                if tx is not None:
+                    self._queue.task_done()
 
-    def _execute_tx(self, tx: VaultTransaction):
-        """Low-level SQLite execution."""
-        conn = sqlite3.sqlite3.connect(self.db_path) # wait, sqlite3.connect
-        # logic...
-        # Fix: using sqlite3 directly
-        import sqlite3 as sqlite
-        conn = sqlite.connect(self.db_path)
-        try:
-            import json
-            keys = ", ".join(tx.data.keys())
-            placeholders = ", ".join(["?" for _ in tx.data])
-            values = list(tx.data.values())
-            
-            # Map complex types to JSON
-            values = [json.dumps(v) if isinstance(v, (dict, list)) else v for v in values]
-            
-            query = f"INSERT INTO {tx.table} ({keys}, timestamp) VALUES ({placeholders}, ?)"
-            conn.execute(query, values + [tx.timestamp])
+    def _execute_tx(self, tx: VaultTransaction) -> None:
+        """Low-level SQLite execution using allowlisted table and column names."""
+        columns = _TABLE_COLUMNS[tx.table]
+        payload = self._coerce_payload(tx, columns)
+        insert_columns = [column for column in columns if column in payload]
+        insert_columns.append("timestamp")
+        placeholders = ", ".join("?" for _ in insert_columns)
+        quoted_columns = ", ".join(insert_columns)
+        values = [payload[column] for column in insert_columns if column != "timestamp"]
+        values.append(tx.timestamp)
+        query = f"INSERT INTO {tx.table} ({quoted_columns}) VALUES ({placeholders})"
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+            conn.execute(query, values)
             conn.commit()
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('cognitive_vault', e)
-            logger.error("Database commit failure: %s", e)
-        finally:
-            conn.close()
+
+    async def _execute_direct_fallback(self, tx: VaultTransaction, *, reason: str) -> bool:
+        try:
+            await asyncio.to_thread(self._execute_tx, tx)
+            _record_vault_degradation(
+                RuntimeError(reason),
+                action="persisted cognitive vault transaction through direct bounded fallback",
+                extra={"table": tx.table},
+            )
+            return True
+        except _VAULT_RECOVERABLE_ERRORS as exc:
+            self._failed_writes += 1
+            _record_vault_degradation(
+                exc,
+                action="reported cognitive vault write failure after queue and direct fallback failed",
+                severity="degraded",
+                extra={"table": tx.table, "reason": reason},
+            )
+            return False
+
+    def _build_transaction(self, table: str, data: dict[str, Any]) -> VaultTransaction:
+        normalized_table = str(table or "").strip()
+        if normalized_table not in _TABLE_COLUMNS:
+            raise ValueError(f"unsupported cognitive vault table: {normalized_table!r}")
+        if not isinstance(data, dict) or not data:
+            raise ValueError("cognitive vault transaction data must be a non-empty mapping")
+        allowed = set(_TABLE_COLUMNS[normalized_table])
+        unknown = sorted(set(data) - allowed)
+        if unknown:
+            raise ValueError(f"unsupported cognitive vault columns: {', '.join(unknown)}")
+        return VaultTransaction(table=normalized_table, data=dict(data))
+
+    def _coerce_payload(self, tx: VaultTransaction, columns: tuple[str, ...]) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for column in columns:
+            if column not in tx.data:
+                continue
+            value = tx.data[column]
+            if isinstance(value, (dict, list, tuple, set)):
+                payload[column] = json.dumps(value, sort_keys=True, default=str)
+            elif value is None:
+                payload[column] = None
+            else:
+                payload[column] = str(value)
+        if not payload:
+            raise ValueError("cognitive vault transaction has no writable columns")
+        return payload
