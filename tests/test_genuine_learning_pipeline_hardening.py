@@ -1,7 +1,10 @@
+import asyncio
 import json
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
-from core.learning.genuine_learning_pipeline import LoRATrainer
+from core.learning.genuine_learning_pipeline import LearningScheduler, LoRATrainer
 from core.tasks.managed_command import ManagedCommandResult
 
 
@@ -80,3 +83,68 @@ def test_lora_trainer_reports_runner_error(tmp_path: Path) -> None:
     assert calls
     assert success is False
     assert output == "runner unavailable"
+
+
+def test_lora_trainer_restores_adapter_snapshot(tmp_path: Path) -> None:
+    adapter_dir = tmp_path / "adapters"
+    adapter_dir.mkdir()
+    weight_file = adapter_dir / "weights.safetensors"
+    weight_file.write_text("old", encoding="utf-8")
+    trainer = LoRATrainer(model_path="/models/aura", adapter_dir=str(adapter_dir))
+
+    snapshot = trainer.create_rollback_snapshot()
+    weight_file.write_text("new", encoding="utf-8")
+
+    assert trainer.restore_rollback_snapshot(snapshot) is True
+    assert weight_file.read_text(encoding="utf-8") == "old"
+
+
+def test_learning_scheduler_rolls_back_when_benchmark_fails(monkeypatch, tmp_path: Path) -> None:
+    import core.will as will_module
+
+    adapter_dir = tmp_path / "adapters"
+    adapter_dir.mkdir()
+    weight_file = adapter_dir / "weights.safetensors"
+    weight_file.write_text("old", encoding="utf-8")
+
+    def runner(command: tuple[str, ...], _timeout_s: float) -> ManagedCommandResult:
+        weight_file.write_text("new", encoding="utf-8")
+        return ManagedCommandResult(command, 0, "trained", "", 0.1)
+
+    class Buffer:
+        def __len__(self) -> int:
+            return 1
+
+        def get_training_batch(self, n: int = 50, min_quality: float = 0.65) -> list[dict]:
+            return [_training_record()]
+
+    class Benchmark:
+        async def run(self, _inference_fn):
+            return False, ["identity regression"]
+
+    class Decision:
+        reason = "approved"
+        receipt_id = "receipt-learning-test"
+
+        def is_approved(self) -> bool:
+            return True
+
+    trainer = LoRATrainer(
+        model_path="/models/aura",
+        adapter_dir=str(adapter_dir),
+        command_runner=runner,
+    )
+    trainer.MIN_TRAIN_INTERVAL_S = 0.0
+    scheduler = LearningScheduler(Buffer(), trainer, Benchmark(), batch_size=1)
+    scheduler._last_activity = time.time() - 120.0
+
+    monkeypatch.setattr(
+        will_module,
+        "get_will",
+        lambda: SimpleNamespace(decide=lambda **_kwargs: Decision()),
+    )
+
+    accepted = asyncio.run(scheduler.run_if_ready(lambda _prompt: "regressed"))
+
+    assert accepted is False
+    assert weight_file.read_text(encoding="utf-8") == "old"

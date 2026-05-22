@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import sys
 import threading
 import time
@@ -10,10 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from core.runtime.atomic_writer import atomic_write_text
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, record_degradation
 from core.tasks.managed_command import ManagedCommandResult, run_project_command
 
 logger = logging.getLogger("Aura.GenuineLearning")
@@ -29,6 +28,27 @@ _LEARNING_RECOVERABLE_ERRORS = (
     ValueError,
 )
 TrainingCommandRunner = Callable[[tuple[str, ...], float], ManagedCommandResult]
+
+
+def _record_learning_degradation(
+    subsystem: str,
+    error: BaseException,
+    *,
+    action: str,
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        subsystem,
+        error,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
+
+
+def _clamp_score(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Structures
@@ -99,16 +119,36 @@ class ExperienceBuffer:
 
     def _load_existing(self):
         """Load previously buffered examples (survive restarts)."""
-        if self.db_path.exists():
-            with open(self.db_path) as f:
-                for line in f:
+        if not self.db_path.exists():
+            return
+
+        malformed = 0
+        try:
+            with open(self.db_path, encoding="utf-8") as f:
+                for line_number, line in enumerate(f, start=1):
                     try:
                         data = json.loads(line)
                         # Reconstruct lightweight — we only need training format
                         self._buffer.append(data)
-                    except json.JSONDecodeError:
-                        continue
+                    except json.JSONDecodeError as exc:
+                        malformed += 1
+                        if malformed == 1:
+                            _record_learning_degradation(
+                                "genuine_learning_pipeline",
+                                exc,
+                                action="skipped malformed experience-buffer row during startup load",
+                                extra={"path": str(self.db_path), "line": line_number},
+                            )
+            if malformed:
+                logger.warning("Skipped %d malformed experience-buffer rows", malformed)
             logger.info("📚 Experience buffer loaded: %d examples", len(self._buffer))
+        except _LEARNING_RECOVERABLE_ERRORS as exc:
+            _record_learning_degradation(
+                "genuine_learning_pipeline",
+                exc,
+                action="started with an empty experience buffer after persisted buffer load failed",
+                extra={"path": str(self.db_path)},
+            )
 
     def score_interaction(
         self,
@@ -144,7 +184,7 @@ class ExperienceBuffer:
         if response and response[-1] not in '.!?"\n':
             score -= 0.2
 
-        return float(np.clip(score, 0.0, 1.0))
+        return _clamp_score(score)
 
     def record(
         self,
@@ -182,12 +222,17 @@ class ExperienceBuffer:
             # Persist immediately in background to prevent I/O blocking the hot path
             def _write_record():
                 try:
-                    with open(self.db_path, 'a') as f:
-                        f.write(json.dumps(record) + '\n')
+                    with open(self.db_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(record) + "\n")
                 except _LEARNING_RECOVERABLE_ERRORS as exc:
-                    record_degradation("genuine_learning_pipeline", exc)
+                    _record_learning_degradation(
+                        "genuine_learning_pipeline",
+                        exc,
+                        action="kept training example in memory after background disk append failed",
+                        extra={"path": str(self.db_path), "source": source},
+                    )
                     logger.debug("Training example background persist failed: %s", exc)
-            import threading
+
             threading.Thread(target=_write_record, daemon=True).start()
 
         logger.debug("📖 Recorded experience (quality=%.2f, source=%s)", quality_score, source)
@@ -280,7 +325,12 @@ class BehavioralBenchmark:
             except TimeoutError:
                 failures.append(f"FAIL [{case.description}]: Inference timed out")
             except _LEARNING_RECOVERABLE_ERRORS as exc:
-                record_degradation("genuine_learning_pipeline", exc)
+                _record_learning_degradation(
+                    "genuine_learning_pipeline",
+                    exc,
+                    action="failed behavioral benchmark case closed and rejected adapter promotion",
+                    extra={"benchmark_case": case.description},
+                )
                 failures.append(f"FAIL [{case.description}]: Exception during inference: {exc}")
 
         passed = len(failures) == 0
@@ -337,7 +387,43 @@ class LoRATrainer:
         self._training_lock = threading.Lock()
         self._last_train_time: float = 0.0
         self.MIN_TRAIN_INTERVAL_S = 3600  # Don't train more than once per hour
-        self._command_runner = command_runner or (lambda command, timeout_s: run_project_command(command, timeout_s=timeout_s))
+        self._command_runner = command_runner or (
+            lambda command, timeout_s: run_project_command(command, timeout_s=timeout_s)
+        )
+
+    @property
+    def rollback_snapshot_dir(self) -> Path:
+        return self.adapter_dir.with_name(f"{self.adapter_dir.name}.rollback")
+
+    def create_rollback_snapshot(self) -> Path:
+        """Capture the current adapter state before any weight update."""
+        snapshot = self.rollback_snapshot_dir
+        if snapshot.exists():
+            shutil.rmtree(snapshot)
+        snapshot.mkdir(parents=True, exist_ok=True)
+        if self.adapter_dir.exists():
+            shutil.copytree(
+                self.adapter_dir,
+                snapshot,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("*.tmp", "train_batch.jsonl"),
+            )
+        return snapshot
+
+    def restore_rollback_snapshot(self, snapshot: Path | None = None) -> bool:
+        """Restore the last adapter snapshot after failed training validation."""
+        snapshot = snapshot or self.rollback_snapshot_dir
+        if not snapshot.exists():
+            return False
+        if self.adapter_dir.exists():
+            shutil.rmtree(self.adapter_dir)
+        shutil.copytree(snapshot, self.adapter_dir)
+        return True
+
+    def discard_rollback_snapshot(self, snapshot: Path | None = None) -> None:
+        snapshot = snapshot or self.rollback_snapshot_dir
+        if snapshot.exists():
+            shutil.rmtree(snapshot)
 
     def _get_modulated_lr(self) -> float:
         """Modulate learning rate based on Soul's Competence drive."""
@@ -353,7 +439,12 @@ class LoRATrainer:
                     multiplier = 1.0 + drive.urgency
                     return self.learning_rate * multiplier
         except _LEARNING_RECOVERABLE_ERRORS as exc:
-            record_degradation("genuine_learning_pipeline", exc)
+            _record_learning_degradation(
+                "genuine_learning_pipeline",
+                exc,
+                action="used configured base learning rate after drive modulation failed",
+                extra={"base_learning_rate": self.learning_rate},
+            )
             logger.debug("Learning-rate drive modulation skipped: %s", exc)
         return self.learning_rate
 
@@ -402,7 +493,12 @@ class LoRATrainer:
             logger.error("❌ Training failed:\n%s", result.stderr[-500:])
             return False, result.stderr
         except _LEARNING_RECOVERABLE_ERRORS as exc:
-            record_degradation("genuine_learning_pipeline", exc)
+            _record_learning_degradation(
+                "genuine_learning_pipeline",
+                exc,
+                action="failed training command closed and left adapter promotion uncommitted",
+                extra={"adapter_dir": str(self.adapter_dir), "model_path": str(self.model_path)},
+            )
             logger.error("❌ Training command error: %s", exc)
             return False, str(exc)
 
@@ -457,7 +553,12 @@ class LoRATrainer:
                             metadata={"examples": len(examples), "timestamp": time.time()}
                         )
                 except _LEARNING_RECOVERABLE_ERRORS as exc:
-                    record_degradation("genuine_learning_pipeline", exc)
+                    _record_learning_degradation(
+                        "genuine_learning_pipeline",
+                        exc,
+                        action="kept trained adapter after noncritical knowledge graph receipt failed",
+                        extra={"adapter_dir": str(self.adapter_dir), "examples": len(examples)},
+                    )
                     logger.debug("Knowledge graph training event write skipped: %s", exc)
 
             return success
@@ -551,30 +652,74 @@ class LearningScheduler:
                     return False
                 logger.info("✅ Will approved training run (Receipt: %s)", decision.receipt_id)
             except _LEARNING_RECOVERABLE_ERRORS as exc:
-                record_degradation("genuine_learning_will", exc)
+                _record_learning_degradation(
+                    "genuine_learning_will",
+                    exc,
+                    action="blocked training run because Will approval could not be established",
+                    extra={"reason": reason, "examples": len(examples)},
+                )
                 logger.warning("🚫 Will unavailable; blocking training run: %s", exc)
                 return False
 
+            try:
+                snapshot = await asyncio.to_thread(self.trainer.create_rollback_snapshot)
+            except _LEARNING_RECOVERABLE_ERRORS as exc:
+                _record_learning_degradation(
+                    "genuine_learning_pipeline",
+                    exc,
+                    action="blocked training run because adapter rollback snapshot failed",
+                    extra={"adapter_dir": str(self.trainer.adapter_dir)},
+                )
+                return False
+
             # Train
-            success = await self.trainer.train(examples)
+            try:
+                success = await self.trainer.train(examples)
+            except _LEARNING_RECOVERABLE_ERRORS as exc:
+                _record_learning_degradation(
+                    "genuine_learning_pipeline",
+                    exc,
+                    action="restored adapter snapshot after trainer raised before validation",
+                    extra={"adapter_dir": str(self.trainer.adapter_dir)},
+                )
+                await asyncio.to_thread(self.trainer.restore_rollback_snapshot, snapshot)
+                return False
             if not success:
+                await asyncio.to_thread(self.trainer.restore_rollback_snapshot, snapshot)
                 return False
 
             # Run behavioral benchmark before accepting new weights
             if inference_fn:
-                passed, failures = await self.benchmark.run(inference_fn)
+                try:
+                    passed, failures = await self.benchmark.run(inference_fn)
+                except _LEARNING_RECOVERABLE_ERRORS as exc:
+                    _record_learning_degradation(
+                        "genuine_learning_pipeline",
+                        exc,
+                        action="restored adapter snapshot after behavioral benchmark failed",
+                        extra={"adapter_dir": str(self.trainer.adapter_dir)},
+                    )
+                    await asyncio.to_thread(self.trainer.restore_rollback_snapshot, snapshot)
+                    return False
                 if not passed:
                     logger.error(
                         "🔄 Rolling back training — behavioral benchmark failed:\n%s",
                         "\n".join(failures)
                     )
-                    # Restore previous adapter
-                    backup = self.trainer.adapter_dir / "backup"
-                    if backup.exists():
-                        import shutil
-                        shutil.copytree(backup, self.trainer.adapter_dir, dirs_exist_ok=True)
+                    restored = await asyncio.to_thread(
+                        self.trainer.restore_rollback_snapshot,
+                        snapshot,
+                    )
+                    if not restored:
+                        _record_learning_degradation(
+                            "genuine_learning_pipeline",
+                            RuntimeError("adapter rollback snapshot missing"),
+                            action="left failed adapter in place and reported rollback failure",
+                            extra={"adapter_dir": str(self.trainer.adapter_dir)},
+                        )
                     return False
 
+            await asyncio.to_thread(self.trainer.discard_rollback_snapshot, snapshot)
             logger.info("✨ Training accepted and committed. Aura has genuinely learned.")
             return True
 
@@ -642,7 +787,12 @@ class ContinuousLearner:
             if soul and hasattr(soul, "update_state"):
                 soul.update_state("learning_activity", {"type": "record_turn"})
         except _LEARNING_RECOVERABLE_ERRORS as exc:
-            record_degradation("genuine_learning_pipeline", exc)
+            _record_learning_degradation(
+                "genuine_learning_pipeline",
+                exc,
+                action="recorded turn without Soul activity signal after noncritical signal failure",
+                extra={"user_input_chars": len(user_input), "response_chars": len(response)},
+            )
             logger.debug("Soul learning activity signal skipped: %s", exc)
 
         if explicit_correction:
