@@ -1,12 +1,13 @@
 import json
-import subprocess
 import sys
 import threading
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
-from core.learning.live_learner import LiveLearner, TrainingPolicy
+import core.learning.live_learner as live_learner_module
+from core.learning.live_learner import AdapterRegistry, LiveLearner, TrainingPolicy
+from core.tasks.managed_command import ManagedCommandResult
 
 
 def _example(i: int, quality: float = 0.8) -> dict:
@@ -112,19 +113,19 @@ def test_mlx_command_uses_supported_config_flags_and_no_removed_lora_flags(monke
     adapter_dir.mkdir()
     captured = {}
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, *, timeout_s):
         captured["cmd"] = cmd
-        captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        captured["timeout_s"] = timeout_s
+        return ManagedCommandResult(tuple(cmd), 0, "ok", "", 0.1)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(live_learner_module, "run_project_command", fake_run)
 
     ok, output = learner._run_lora_subprocess("/models/aura-base", data_dir, adapter_dir)
 
     assert ok is True
     assert output == "ok"
     cmd = captured["cmd"]
-    assert cmd[:4] == [sys.executable, "-m", "mlx_lm", "lora"]
+    assert cmd[:4] == (sys.executable, "-m", "mlx_lm", "lora")
     assert "--fine-tune-type" in cmd
     assert "lora" in cmd
     assert "--lora-rank" not in cmd
@@ -133,6 +134,35 @@ def test_mlx_command_uses_supported_config_flags_and_no_removed_lora_flags(monke
     config_text = (adapter_dir / "lora_config.yaml").read_text(encoding="utf-8")
     assert "rank: 12" in config_text
     assert "scale: 24.0" in config_text
+
+
+def test_mlx_command_reports_managed_timeout(monkeypatch, tmp_path):
+    policy = TrainingPolicy(iters=3, timeout_seconds=90)
+    learner = _bare_learner(tmp_path, policy=policy)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+
+    def fake_run(cmd, *, timeout_s):
+        return ManagedCommandResult(tuple(cmd), None, "", "", timeout_s, timed_out=True)
+
+    monkeypatch.setattr(live_learner_module, "run_project_command", fake_run)
+
+    ok, output = learner._run_lora_subprocess("/models/aura-base", data_dir, adapter_dir)
+
+    assert ok is False
+    assert output == "timeout after 90 seconds"
+
+
+def test_adapter_registry_malformed_json_starts_empty(tmp_path):
+    adapter_base = tmp_path / "adapters"
+    adapter_base.mkdir()
+    (adapter_base / "registry.json").write_text("{bad json", encoding="utf-8")
+
+    registry = AdapterRegistry(adapter_base)
+
+    assert registry.list_versions() == []
 
 
 def test_record_tick_accepts_affect_payload_without_state_affect_object(tmp_path):

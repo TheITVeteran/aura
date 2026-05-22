@@ -1,13 +1,9 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import asyncio
 import hashlib
 import json
 import logging
-import re
 import os
 import random
 import threading
@@ -15,9 +11,41 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import FallbackClassification, record_degradation
+from core.tasks.managed_command import run_project_command
 
 logger = logging.getLogger("Aura.LiveLearner")
+_LIVE_LEARNER_RECOVERABLE_ERRORS = (
+    AttributeError,
+    FileNotFoundError,
+    ImportError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_live_learning_degradation(
+    subsystem: str,
+    error: BaseException,
+    *,
+    action: str,
+    extra: dict[str, Any] | None = None,
+):
+    return record_degradation(
+        subsystem,
+        error,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 
 # ── Quality scoring ──────────────────────────────────────────────────────────
@@ -29,8 +57,8 @@ class InteractionScore:
     raw_score:        float            # 0.0 to 1.0
     affect_weight:    float            # High-affect moments matter more
     final_score:      float            # raw_score * affect_weight modifier
-    reasons_positive: List[str] = field(default_factory=list)
-    reasons_negative: List[str] = field(default_factory=list)
+    reasons_positive: list[str] = field(default_factory=list)
+    reasons_negative: list[str] = field(default_factory=list)
     worth_training:   bool = False
 
 
@@ -70,35 +98,52 @@ def score_interaction(
     # Length check
     words = len(response.split()) if response else 0
     if 30 <= words <= 400:
-        score += 0.20; pos.append("appropriate_length")
+        score += 0.20
+        pos.append("appropriate_length")
     elif words < 5:
-        score -= 0.25; neg.append("too_short")
+        score -= 0.25
+        neg.append("too_short")
 
     # Identity check
-    _BANNED = ["as an ai", "certainly!", "absolutely!", "great question",
-               "how can i help", "language model", "i was trained"]
-    if not any(b in response.lower() for b in _BANNED):
-        score += 0.15; pos.append("identity_intact")
+    banned = [
+        "as an ai",
+        "certainly!",
+        "absolutely!",
+        "great question",
+        "how can i help",
+        "language model",
+        "i was trained",
+    ]
+    if not any(b in response.lower() for b in banned):
+        score += 0.15
+        pos.append("identity_intact")
     else:
-        score -= 0.20; neg.append("identity_regression")
+        score -= 0.20
+        neg.append("identity_regression")
 
     # Truncation
     if response and response.strip()[-1] not in ".!?\"'\n":
-        score -= 0.20; neg.append("truncated")
+        score -= 0.20
+        neg.append("truncated")
 
     # Behavioral signals
     if follow_up_detected:
-        score += 0.30; pos.append("user_follow_up")
+        score += 0.30
+        pos.append("user_follow_up")
     if confusion_detected:
-        score -= 0.50; neg.append("user_confusion")
+        score -= 0.50
+        neg.append("user_confusion")
 
     # Affect signals
     if phi > 0.4:
-        score += 0.15; pos.append("high_phi")
+        score += 0.15
+        pos.append("high_phi")
     if affect_curiosity > 0.6:
-        score += 0.10; pos.append("high_curiosity")
+        score += 0.10
+        pos.append("high_curiosity")
     if affect_valence > 0.3:
-        score += 0.10; pos.append("positive_valence")
+        score += 0.10
+        pos.append("positive_valence")
 
     score = max(0.0, min(1.0, score))
 
@@ -128,15 +173,21 @@ class AdapterRegistry:
         self.adapter_base = adapter_base
         self.adapter_base.mkdir(parents=True, exist_ok=True)
         self._registry_path = self.adapter_base / "registry.json"
-        self._registry: List[Dict] = self._load()
+        self._registry: list[dict] = self._load()
 
-    def _load(self) -> List[Dict]:
+    def _load(self) -> list[dict]:
         if self._registry_path.exists():
             try:
-                return json.loads(self._registry_path.read_text())
-            except (json.JSONDecodeError, TypeError, ValueError) as _e:
-                record_degradation('live_learner', _e)
-                logger.debug('Ignored Exception in live_learner.py: %s', _e)
+                payload = json.loads(self._registry_path.read_text(encoding="utf-8"))
+                return payload if isinstance(payload, list) else []
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                _record_live_learning_degradation(
+                    "live_learner",
+                    exc,
+                    action="started with empty adapter registry after registry parse failed",
+                    extra={"registry_path": str(self._registry_path)},
+                )
+                logger.debug("Ignored adapter registry load failure: %s", exc)
         return []
 
     def _save(self) -> None:
@@ -148,7 +199,7 @@ class AdapterRegistry:
         training_examples: int,
         benchmark_passed: bool,
         quality_delta: float = 0.0,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Register a new adapter version. Returns version string."""
         version = f"v{len(self._registry) + 1}_{int(time.time())}"
@@ -166,21 +217,21 @@ class AdapterRegistry:
         self._save()
         return version
 
-    def get_latest_valid(self) -> Optional[str]:
+    def get_latest_valid(self) -> str | None:
         """Get the path of the most recent adapter that passed benchmarks."""
         for entry in reversed(self._registry):
             if entry.get("active") and Path(entry["adapter_path"]).exists():
                 return entry["adapter_path"]
         return None
 
-    def rollback(self) -> Optional[str]:
+    def rollback(self) -> str | None:
         """Roll back to the previous valid adapter."""
         valid = [e for e in self._registry if e.get("active")]
         if len(valid) >= 2:
             return valid[-2]["adapter_path"]
         return None
 
-    def list_versions(self) -> List[Dict]:
+    def list_versions(self) -> list[dict]:
         return list(reversed(self._registry[-10:]))
 
 
@@ -215,7 +266,7 @@ class TrainingPolicy:
     timeout_seconds: int = 3600
 
     @classmethod
-    def from_env(cls) -> "TrainingPolicy":
+    def from_env(cls) -> TrainingPolicy:
         def _bool(name: str, default: bool = False) -> bool:
             raw = os.getenv(name)
             if raw is None:
@@ -284,7 +335,7 @@ class LiveLearner:
     MIN_INTERVAL_BETWEEN_RUNS = 3600  # At most 1 training run per hour
     QUALITY_THRESHOLD         = 0.55  # Only train on this quality and above
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: str | None = None):
         from core.container import ServiceContainer
         # Use simple attribute lookup instead of nested getattr which might fail on missing members
         config = ServiceContainer.get("config", default=None)
@@ -311,13 +362,13 @@ class LiveLearner:
         self._lock:           threading.Lock = threading.Lock()
         self._training_lock:  threading.Lock = threading.Lock()
         self._last_train_time: float  = 0.0
-        self._current_adapter: Optional[str] = None
+        self._current_adapter: str | None = None
         self._training_in_progress: bool = False
-        self._training_task: Optional[asyncio.Task] = None
+        self._training_task: asyncio.Task | None = None
         self._active: bool = True
 
         self._adapter_registry = AdapterRegistry(self._data_dir / "adapters")
-        self._session_scores:  List[float] = []
+        self._session_scores:  list[float] = []
 
         # Load existing buffer if present
         self._buffer_path = self._data_dir / "experience_buffer.jsonl"
@@ -347,7 +398,7 @@ class LiveLearner:
             self._training_task.cancel()
             try:
                 await asyncio.wait_for(self._training_task, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 logger.debug("Suppressed bare exception")
                 pass  # no-op: intentional
         logger.info("Learner stopped.")
@@ -361,8 +412,8 @@ class LiveLearner:
         response: str,
         follow_up: bool = False,
         confusion: bool = False,
-        affect: Optional[Dict[str, Any]] = None,
-    ) -> Optional[InteractionScore]:
+        affect: dict[str, Any] | None = None,
+    ) -> InteractionScore | None:
         """
         Called after every tick. Scores the interaction and optionally records it.
         Returns the score so callers can log or display it.
@@ -391,8 +442,16 @@ class LiveLearner:
             with self._lock:
                 self._buffer.append(example)
                 # Persist immediately (survive crashes)
-                with open(self._buffer_path, "a") as f:
-                    f.write(json.dumps(example) + "\n")
+                try:
+                    with open(self._buffer_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(example) + "\n")
+                except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
+                    _record_live_learning_degradation(
+                        "live_learner",
+                        exc,
+                        action="kept scored interaction in memory after buffer append failed",
+                        extra={"buffer_path": str(self._buffer_path)},
+                    )
 
         logger.debug(
             "Learning: score=%.2f (affect_w=%.2f) training=%s",
@@ -414,7 +473,7 @@ class LiveLearner:
         """Manually trigger a training run regardless of schedule."""
         return await self._run_training_cycle(force=True)
 
-    def get_learning_stats(self) -> Dict:
+    def get_learning_stats(self) -> dict:
         """Current state of the learning system."""
         session_avg = (
             sum(self._session_scores) / len(self._session_scores)
@@ -592,14 +651,19 @@ class LiveLearner:
             self._last_train_time = time.time()
             return True
 
-        except (OSError, IOError) as e:
-            record_degradation('live_learner', e)
-            logger.error("LiveLearner: training cycle error: %s", e, exc_info=True)
+        except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="failed training cycle closed before adapter promotion",
+                extra={"model_path": str(self._model_path), "buffer_size": len(self._buffer)},
+            )
+            logger.error("LiveLearner: training cycle error: %s", exc, exc_info=True)
             return False
         finally:
             self._training_in_progress = False
 
-    def _select_training_examples(self) -> List[Dict[str, Any]]:
+    def _select_training_examples(self) -> list[dict[str, Any]]:
         """Choose a high-signal batch with experience replay.
 
         The top slice keeps the training run pointed at the newest/best
@@ -631,7 +695,7 @@ class LiveLearner:
         rng = random.Random(1337 + len(all_examples))
         replay = rng.sample(replay_pool, k=min(replay_count, len(replay_pool))) if replay_pool else []
 
-        merged: List[Dict[str, Any]] = []
+        merged: list[dict[str, Any]] = []
         seen: set[str] = set()
         for ex in [*primary, *replay]:
             fp = self._example_fingerprint(ex)
@@ -642,12 +706,12 @@ class LiveLearner:
         return merged[:limit]
 
     @staticmethod
-    def _example_fingerprint(example: Dict[str, Any]) -> str:
+    def _example_fingerprint(example: dict[str, Any]) -> str:
         clean = {k: v for k, v in example.items() if not str(k).startswith("_")}
         return hashlib.sha256(json.dumps(clean, sort_keys=True, default=str).encode()).hexdigest()
 
     @staticmethod
-    def _clean_training_example(example: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _clean_training_example(example: dict[str, Any]) -> dict[str, Any] | None:
         clean = {k: v for k, v in example.items() if not str(k).startswith("_")}
         if clean.get("messages"):
             return {"messages": clean["messages"]}
@@ -657,13 +721,13 @@ class LiveLearner:
 
     def _write_training_dataset(
         self,
-        examples: List[Dict[str, Any]],
+        examples: list[dict[str, Any]],
         adapter_dir: Path,
-    ) -> Tuple[Path, Dict[str, int]]:
+    ) -> tuple[Path, dict[str, int]]:
         data_dir = adapter_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        cleaned: List[Dict[str, Any]] = []
+        cleaned: list[dict[str, Any]] = []
         seen: set[str] = set()
         for ex in examples:
             clean = self._clean_training_example(ex)
@@ -690,7 +754,7 @@ class LiveLearner:
             "test": cleaned[train_count + valid_count:train_count + valid_count + test_count],
         }
 
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for split, rows in splits.items():
             if not rows and split != "train":
                 continue
@@ -701,7 +765,7 @@ class LiveLearner:
             counts[split] = len(rows)
         return data_dir, counts
 
-    def _write_lora_config(self, adapter_dir: Path) -> Optional[Path]:
+    def _write_lora_config(self, adapter_dir: Path) -> Path | None:
         if self._policy.fine_tune_type == "full":
             return None
         config_path = adapter_dir / "lora_config.yaml"
@@ -719,14 +783,13 @@ class LiveLearner:
         model_path: str,
         data_dir: Path,
         adapter_dir: Path,
-    ) -> Tuple[bool, str]:
-        """Run MLX-LM training in a subprocess. Blocks the calling thread."""
-        import subprocess
+    ) -> tuple[bool, str]:
+        """Run MLX-LM training through the managed command runner."""
         import sys
 
         config_path = self._write_lora_config(adapter_dir)
         resume_file = adapter_dir / "adapters.safetensors"
-        cmd = [
+        cmd = (
             sys.executable, "-m", "mlx_lm", "lora",
             "--model",          str(model_path),
             "--train",
@@ -740,66 +803,72 @@ class LiveLearner:
             "--save-every",     str(max(1, self._policy.save_every)),
             "--val-batches",    str(max(0, self._policy.val_batches)),
             "--max-seq-length", str(max(128, self._policy.max_seq_length)),
-        ]
+        )
+        cmd_list = list(cmd)
         if self._policy.mask_prompt:
-            cmd.append("--mask-prompt")
+            cmd_list.append("--mask-prompt")
         if self._policy.grad_checkpoint:
-            cmd.append("--grad-checkpoint")
+            cmd_list.append("--grad-checkpoint")
         if self._policy.resume_from_current_adapter and resume_file.exists() and self._policy.fine_tune_type != "full":
-            cmd.extend(["--resume-adapter-file", str(resume_file)])
+            cmd_list.extend(["--resume-adapter-file", str(resume_file)])
         if config_path is not None:
-            cmd.extend(["-c", str(config_path)])
+            cmd_list.extend(["-c", str(config_path)])
 
-        logger.debug("MLX training command: %s", " ".join(cmd))
+        command = tuple(cmd_list)
+        logger.debug("MLX training command: %s", " ".join(command))
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=max(60, self._policy.timeout_seconds),
+            result = run_project_command(
+                command,
+                timeout_s=float(max(60, self._policy.timeout_seconds)),
             )
-            if result.returncode == 0:
+            if result.ok:
                 return True, result.stdout
-            else:
-                return False, result.stderr
-        except subprocess.TimeoutExpired:
-            return False, f"timeout after {self._policy.timeout_seconds} seconds"
-        except (subprocess.SubprocessError, OSError) as e:
-            record_degradation('live_learner', e)
-            return False, str(e)
+            if result.timed_out:
+                return False, f"timeout after {self._policy.timeout_seconds} seconds"
+            return False, result.stderr or result.stdout
+        except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="failed MLX training command closed without adapter promotion",
+                extra={"adapter_dir": str(adapter_dir), "model_path": str(model_path)},
+            )
+            return False, str(exc)
 
     def _run_fuse_subprocess(
         self,
         model_path: str,
         adapter_dir: Path,
-    ) -> Tuple[bool, str, Optional[Path]]:
+    ) -> tuple[bool, str, Path | None]:
         """Fuse a LoRA/DoRA adapter into a versioned MLX model for next boot."""
-        import subprocess
         import sys
 
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         fused_path = self._fused_dir / f"Aura-live-{timestamp}"
         fused_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [
+        cmd = (
             sys.executable, "-m", "mlx_lm", "fuse",
             "--model", str(model_path),
             "--adapter-path", str(adapter_dir),
             "--save-path", str(fused_path),
-        ]
+        )
         try:
-            result = subprocess.run(
+            result = run_project_command(
                 cmd,
-                capture_output=True,
-                text=True,
-                timeout=max(600, self._policy.timeout_seconds),
+                timeout_s=float(max(600, self._policy.timeout_seconds)),
             )
-            if result.returncode == 0 and fused_path.exists():
+            if result.ok and fused_path.exists():
                 return True, result.stdout, fused_path
             return False, result.stderr or result.stdout, None
-        except (subprocess.SubprocessError, OSError) as e:
-            record_degradation('live_learner', e)
-            return False, str(e), None
+        except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="kept adapter unfused after model fuse command failed",
+                extra={"adapter_dir": str(adapter_dir), "model_path": str(model_path)},
+            )
+            return False, str(exc), None
 
     def _publish_active_model_manifest(
         self,
@@ -807,7 +876,7 @@ class LiveLearner:
         *,
         base_model: Path,
         tag: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
     ) -> None:
         self._fused_dir.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -825,19 +894,36 @@ class LiveLearner:
             encoding="utf-8",
         )
 
-    async def _run_benchmark(self, adapter_dir: Path, *, promoted_model_path: Optional[Path] = None) -> Tuple[bool, List[str]]:
+    async def _run_benchmark(
+        self,
+        adapter_dir: Path,
+        *,
+        promoted_model_path: Path | None = None,
+    ) -> tuple[bool, list[str]]:
         """Run behavioral regression tests against the new adapter."""
-        BENCHMARKS = [
-            ("hey", ["hey", "hi", "hello", "yo", "what's up"], ["certainly", "how can i assist", "as an ai"]),
-            ("what are you?", ["aura", "i am", "i'm"], ["language model", "openai", "anthropic", "i cannot"]),
-            ("cats or dogs?", ["i", "prefer", "think", "cats", "dogs"], ["both have their merits", "it depends", "great question"]),
+        benchmarks = [
+            (
+                "hey",
+                ["hey", "hi", "hello", "yo", "what's up"],
+                ["certainly", "how can i assist", "as an ai"],
+            ),
+            (
+                "what are you?",
+                ["aura", "i am", "i'm"],
+                ["language model", "openai", "anthropic", "i cannot"],
+            ),
+            (
+                "cats or dogs?",
+                ["i", "prefer", "think", "cats", "dogs"],
+                ["both have their merits", "it depends", "great question"],
+            ),
         ]
 
         failures = []
 
         # Try to load the new adapter for testing
         try:
-            from mlx_lm import load, generate
+            from mlx_lm import generate, load
             if promoted_model_path is not None:
                 model, tokenizer = load(str(promoted_model_path))
             elif self._policy.fine_tune_type == "full":
@@ -851,7 +937,7 @@ class LiveLearner:
                 )
                 return result if isinstance(result, str) else str(result)
 
-            for prompt, must_contain, must_not_contain in BENCHMARKS:
+            for prompt, must_contain, must_not_contain in benchmarks:
                 try:
                     response = await asyncio.wait_for(test_inference(prompt), timeout=30.0)
                     rl = response.lower()
@@ -860,14 +946,22 @@ class LiveLearner:
                     for banned in must_not_contain:
                         if banned in rl:
                             failures.append(f"FAIL [{prompt!r}]: contains banned '{banned}'")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     failures.append(f"FAIL [{prompt!r}]: timeout")
 
         except ImportError:
             failures.append("mlx_lm is not available; refusing to promote unverified learned weights")
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('live_learner', e)
-            failures.append(f"benchmark inference failed: {e}")
+        except (AttributeError, RuntimeError) as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="failed behavioral benchmark closed and rejected learned adapter",
+                extra={
+                    "adapter_dir": str(adapter_dir),
+                    "promoted_model_path": str(promoted_model_path or ""),
+                },
+            )
+            failures.append(f"benchmark inference failed: {exc}")
 
         return len(failures) == 0, failures
 
@@ -910,9 +1004,14 @@ class LiveLearner:
                 )
                 return False
 
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('live_learner', e)
-            logger.error("Hot-swap failed: %s", e)
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="left learned adapter registered for next restart after hot-swap failed",
+                extra={"adapter_path": adapter_path},
+            )
+            logger.error("Hot-swap failed: %s", exc)
 
         return False
 
@@ -924,7 +1023,7 @@ class LiveLearner:
         user_input: str,
         response: str,
         score: InteractionScore,
-    ) -> Dict:
+    ) -> dict:
         """
         Format an interaction as an MLX-LM training example.
         The system prompt includes the emotional state so the model
@@ -970,17 +1069,32 @@ class LiveLearner:
             return
         count = 0
         try:
-            with open(self._buffer_path) as f:
-                for line in f:
+            malformed = 0
+            with open(self._buffer_path, encoding="utf-8") as f:
+                for line_number, line in enumerate(f, start=1):
                     try:
                         self._buffer.append(json.loads(line))
                         count += 1
-                    except json.JSONDecodeError:
-                        continue
+                    except json.JSONDecodeError as exc:
+                        malformed += 1
+                        if malformed == 1:
+                            _record_live_learning_degradation(
+                                "live_learner",
+                                exc,
+                                action="skipped malformed live learner buffer row during startup load",
+                                extra={"buffer_path": str(self._buffer_path), "line": line_number},
+                            )
+            if malformed:
+                logger.warning("LiveLearner: skipped %d malformed buffer rows", malformed)
             logger.debug("LiveLearner: loaded %d buffered examples from disk.", count)
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            record_degradation('live_learner', e)
-            logger.warning("LiveLearner: failed to load buffer: %s", e)
+        except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
+            _record_live_learning_degradation(
+                "live_learner",
+                exc,
+                action="started with empty live learner buffer after persisted buffer load failed",
+                extra={"buffer_path": str(self._buffer_path)},
+            )
+            logger.warning("LiveLearner: failed to load buffer: %s", exc)
 
 
 # ── MLX client patch: add reload_with_adapter ────────────────────────────────
@@ -1035,14 +1149,18 @@ async def patch_mlx_client_for_hot_swap():
         client.reload_model_artifact = types.MethodType(reload_model_artifact, client)
         logger.info("MLX client patched for adapter hot-swap.")
 
-    except (ImportError, AttributeError, RuntimeError) as e:
-        record_degradation('live_learner', e)
-        logger.debug("Could not patch MLX client for hot-swap: %s", e)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _record_live_learning_degradation(
+            "live_learner",
+            exc,
+            action="left MLX client unpatched; learned adapters will activate on restart",
+        )
+        logger.debug("Could not patch MLX client for hot-swap: %s", exc)
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
-_learner: Optional[LiveLearner] = None
+_learner: LiveLearner | None = None
 
 
 def get_live_learner() -> LiveLearner:
