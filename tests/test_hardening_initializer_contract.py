@@ -432,3 +432,47 @@ def test_legacy_orchestrator_types_bridge_uses_canonical_handler():
 
     assert legacy_types.SystemStatus is orchestrator_types.SystemStatus
     assert legacy_types._bg_task_exception_handler is orchestrator_types._bg_task_exception_handler
+
+
+def test_affect_update_records_substrate_telemetry_failure_without_losing_affect():
+    from core.phases.affect_update import AffectUpdatePhase
+    from core.state.aura_state import AuraState
+
+    class _Substrate:
+        def update(self, **kwargs):
+            assert isinstance(kwargs["valence"], float)
+            raise RuntimeError("substrate unavailable")
+
+    state = AuraState.default()
+    state.cognition.working_memory.append({"role": "user", "content": "hello"})
+    ServiceContainer.register_instance("liquid_substrate", _Substrate())
+    phase = AffectUpdatePhase(SimpleNamespace(organs={}))
+
+    result = asyncio.run(phase.execute(state))
+
+    assert result is state
+    degraded = state.cognition.modifiers["affect_update_degraded"]
+    assert degraded["stage"] == "substrate_telemetry"
+    recent = get_degradation_tracker().recent(subsystem="affect_update")
+    assert recent[-1].severity == "warning"
+    assert "substrate" in recent[-1].action
+
+
+def test_affect_update_keeps_physiology_when_empathy_audit_fails():
+    from core.phases.affect_update import AffectUpdatePhase
+    from core.state.aura_state import AuraState
+
+    class _Prober:
+        def audit(self, state):
+            assert state.affect is not None
+            raise RuntimeError("audit unavailable")
+
+    state = AuraState.default()
+    kernel = SimpleNamespace(organs={"prober": SimpleNamespace(instance=_Prober())})
+    phase = AffectUpdatePhase(kernel)
+
+    phase._update_physiology(state.affect, state)
+
+    assert state.affect.physiology["heart_rate"] >= 60
+    degraded = state.cognition.modifiers["affect_update_degraded"]
+    assert degraded["stage"] == "vk_empathy_audit"

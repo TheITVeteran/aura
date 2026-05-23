@@ -1,20 +1,57 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-from core.utils.task_tracker import get_task_tracker
+import asyncio
+import inspect
 import logging
-import time
 import random
-import math
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
+
 from core.health.degraded_events import get_unified_failure_state
 from core.kernel.bridge import Phase
-from core.state.aura_state import AuraState, AffectVector
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.state.aura_state import AffectVector, AuraState
+from core.utils.task_tracker import get_task_tracker
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
 
 logger = logging.getLogger(__name__)
+
+_AFFECT_UPDATE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_affect_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "affect_update",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation("affect_update", error, severity=severity, action=action)
+        except TypeError:
+            logger.debug("AffectUpdate degradation could not be recorded: %s", signature_exc)
+
 
 class AffectUpdatePhase(Phase):
     """
@@ -22,7 +59,7 @@ class AffectUpdatePhase(Phase):
     Ported from DamasioV2 logic. Perform emotional decay, 
     somatic updates, and reactive emotional shifts.
     """
-    def __init__(self, kernel: "AuraKernel"):
+    def __init__(self, kernel: AuraKernel):
         # Resolve kernel from container if passed a container class/instance
         from core.container import ServiceContainer
         if isinstance(kernel, type) and issubclass(kernel, ServiceContainer):
@@ -36,7 +73,7 @@ class AffectUpdatePhase(Phase):
         self._riiu_checked: bool = False
         self._fe_checked:   bool = False
 
-    async def execute(self, state: AuraState, objective: Optional[str] = None, **kwargs) -> AuraState:
+    async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """Processes emotional state based on recent percepts and time decay.
         
         This method updates the affective substrate of Aura, performing emotional decay,
@@ -86,19 +123,77 @@ class AffectUpdatePhase(Phase):
         from core.container import ServiceContainer
         ls = ServiceContainer.get("liquid_substrate", default=None)
         if ls:
-            try:
-                # Fire and forget update
-                import asyncio
-                get_task_tracker().create_task(ls.update(valence=affect.valence, arousal=affect.arousal))
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('affect_update', e)
-                logger.debug("Failed to push VAD to substrate: %s", e)
+            self._schedule_substrate_update(ls, affect, state)
         
         # 7. Despair Spiral check (Injection)
         self._check_resilience_surges(affect)
         
         logger.debug("Affect Phase complete: mood=%s, valence=%.2f", affect.dominant_emotion, affect.valence)
         return state
+
+    def _mark_phase_degraded(self, state: AuraState, stage: str, exc: BaseException) -> None:
+        modifiers = dict(getattr(state.cognition, "modifiers", {}) or {})
+        degraded = dict(modifiers.get("affect_update_degraded", {}) or {})
+        degraded.update(
+            {
+                "stage": stage,
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:240],
+                "at": time.time(),
+            }
+        )
+        modifiers["affect_update_degraded"] = degraded
+        state.cognition.modifiers = modifiers
+
+    def _record_phase_degradation(
+        self,
+        state: AuraState,
+        exc: BaseException,
+        *,
+        stage: str,
+        action: str,
+        severity: Severity = "warning",
+    ) -> None:
+        self._mark_phase_degraded(state, stage, exc)
+        _record_affect_degradation(
+            exc,
+            action=action,
+            severity=severity,
+            extra={"stage": stage},
+        )
+
+    def _schedule_substrate_update(self, substrate: Any, affect: AffectVector, state: AuraState) -> None:
+        try:
+            update = getattr(substrate, "update", None)
+            if not callable(update):
+                return
+            result = update(valence=affect.valence, arousal=affect.arousal)
+            if not inspect.isawaitable(result):
+                return
+            try:
+                get_task_tracker().create_task(result, name="affect_update.liquid_substrate")
+            except _AFFECT_UPDATE_ERRORS as tracker_exc:
+                try:
+                    asyncio.create_task(result, name="affect_update.liquid_substrate")
+                except _AFFECT_UPDATE_ERRORS as raw_task_exc:
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    raise tracker_exc from raw_task_exc
+                self._record_phase_degradation(
+                    state,
+                    tracker_exc,
+                    stage="substrate_telemetry_tracker",
+                    action="scheduled liquid substrate affect telemetry with raw asyncio task after task tracker failed",
+                )
+        except _AFFECT_UPDATE_ERRORS as exc:
+            self._record_phase_degradation(
+                state,
+                exc,
+                stage="substrate_telemetry",
+                action="kept affect state update after liquid substrate telemetry scheduling failed",
+            )
+            logger.debug("Failed to push VAD to substrate: %s", exc)
 
     def _update_resonance(self, state: AuraState):
         """Synthesizes character influences into a persistent resonance profile in the state."""
@@ -129,7 +224,8 @@ class AffectUpdatePhase(Phase):
         if len(res) > 4:
             sorted_keys = sorted(res, key=lambda k: res[k], reverse=True)
             res = {k: res[k] for k in sorted_keys[:4]}
-            if "Aura (Core)" not in res: res["Aura (Core)"] = 0.4
+            if "Aura (Core)" not in res:
+                res["Aura (Core)"] = 0.4
 
         affect.resonance = res
 
@@ -150,7 +246,7 @@ class AffectUpdatePhase(Phase):
             decayed = (current_val * affect.momentum) + (baseline * (1 - affect.momentum))
             affect.emotions[emotion] = float(max(0.0, min(1.0, decayed + drift)))
 
-    def _process_percepts(self, affect: AffectVector, percepts: List[Dict]):
+    def _process_percepts(self, affect: AffectVector, percepts: list[dict]):
         """Maps recent world events to emotional triggers."""
         emotion_map = {
             "positive_interaction": ["joy", "trust"],
@@ -203,12 +299,21 @@ class AffectUpdatePhase(Phase):
         # [VK] Perform Voight-Kampff Empathy Audit
         prober = self.kernel.organs.get("prober") if self.kernel else None
         if prober and prober.instance:
-            audit_report = prober.instance.audit(state)
-            if audit_report["needs_correction"]:
-                correction = prober.instance.get_correction_payload()
-                for emo, boost in correction.items():
-                    state.affect.emotions[emo] = max(0.0, min(1.0, state.affect.emotions.get(emo, 0.1) + boost))
-                logger.info("🛡️ [VK] Corrective surge applied to stabilize persona.")
+            try:
+                audit_report = prober.instance.audit(state)
+                if audit_report["needs_correction"]:
+                    correction = prober.instance.get_correction_payload()
+                    for emo, boost in correction.items():
+                        state.affect.emotions[emo] = max(0.0, min(1.0, state.affect.emotions.get(emo, 0.1) + boost))
+                    logger.info("🛡️ [VK] Corrective surge applied to stabilize persona.")
+            except _AFFECT_UPDATE_ERRORS as exc:
+                self._record_phase_degradation(
+                    state,
+                    exc,
+                    stage="vk_empathy_audit",
+                    action="kept somatic affect update after empathy audit failed",
+                )
+                logger.debug("Voight-Kampff affect audit skipped: %s", exc)
 
         # Engagement is a proxy of arousal and valence
         affect.engagement = (affect.arousal + abs(affect.valence)) / 2
@@ -283,9 +388,14 @@ class AffectUpdatePhase(Phase):
                 elif rapport < 0.3:
                     # Low rapport → slight anxiety
                     affect.emotions["fear"] = min(1.0, affect.emotions.get("fear", 0.0) + 0.02)
-        except (ImportError, AttributeError, RuntimeError) as _exc:
-            record_degradation('affect_update', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+        except _AFFECT_UPDATE_ERRORS as exc:
+            self._record_phase_degradation(
+                state,
+                exc,
+                stage="theory_of_mind_rapport",
+                action="kept conversation affect feedback after rapport lookup failed",
+            )
+            logger.debug("Theory-of-mind rapport affect feedback skipped: %s", exc)
 
         # ── Discourse depth → curiosity satisfaction ──────────────────────
         depth = getattr(cognition, "discourse_depth", 0)
@@ -353,8 +463,13 @@ class AffectUpdatePhase(Phase):
                 interaction_signals = ServiceContainer.get("interaction_signals", default=None)
                 if interaction_signals and hasattr(interaction_signals, "get_status"):
                     signal_status = interaction_signals.get_status() or {}
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('affect_update', exc)
+            except _AFFECT_UPDATE_ERRORS as exc:
+                self._record_phase_degradation(
+                    state,
+                    exc,
+                    stage="interaction_signals",
+                    action="used neutral interaction signals after affect signal lookup failed",
+                )
                 logger.debug("Interaction signal affect feedback skipped: %s", exc)
                 signal_status = {}
 
