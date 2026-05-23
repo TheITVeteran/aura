@@ -1,13 +1,54 @@
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
 import logging
 import time
 import uuid
-from typing import Any, Optional
-from . import BasePhase
-from ..state.aura_state import AuraState
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+
 from ..consciousness.executive_authority import get_executive_authority
+from ..state.aura_state import AuraState
+from . import BasePhase
 
 logger = logging.getLogger(__name__)
+
+_MEMORY_CONSOLIDATION_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_memory_consolidation_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "memory_consolidation",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation("memory_consolidation", error, severity=severity, action=action)
+        except TypeError:
+            logger.debug("Memory consolidation degradation could not be recorded: %s", signature_exc)
+
 
 class MemoryConsolidationPhase(BasePhase):
     """
@@ -19,14 +60,14 @@ class MemoryConsolidationPhase(BasePhase):
     def __init__(self, container: Any):
         self.container = container
 
-    async def execute(self, state: AuraState, objective: Optional[str] = None, **kwargs) -> AuraState:
+    async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """
         Persist recent interactions to long-term storage and prune working memory.
 
         Detects completed user/assistant turns (or high-arousal forced consolidation),
         optionally distils content through the SovereignPruner, queues a knowledge
         evolution entry on the ColdStore, detects and degrades stability on
-        conversational loops, and caps working memory at MAX_WORKING_MEMORY entries.
+        conversational loops, and caps working memory at max_working_memory entries.
         """
         # Pure Transformation: Stop direct side-effects.
         # Create a derived state for any modifications.
@@ -60,8 +101,19 @@ class MemoryConsolidationPhase(BasePhase):
                     if fe.current.surprise > 0.7:
                         force_consolidation = True  # High surprise = memorable event
                         logger.debug("💾 Force consolidation: high surprise (%.2f)", fe.current.surprise)
-            except (ImportError, AttributeError, RuntimeError):
-                pass  # no-op: intentional
+            except _MEMORY_CONSOLIDATION_ERRORS as exc:
+                self._mark_consolidation_status(
+                    new_state,
+                    status="partial",
+                    stage="consolidation_trigger_probe",
+                    error=exc,
+                )
+                _record_memory_consolidation_degradation(
+                    exc,
+                    action="continued memory consolidation after optional trigger probe failed",
+                    severity="warning",
+                    extra={"stage": "consolidation_trigger_probe"},
+                )
         
         if len(new_state.cognition.working_memory) < 1:
             return new_state
@@ -215,8 +267,32 @@ class MemoryConsolidationPhase(BasePhase):
                         "resonance": affect_signature.get("resonance", getattr(new_state.affect, "get_resonance_string", lambda: "")()),
                     },
                 )
-            except (OSError, ConnectionError, TimeoutError) as e:
-                record_degradation('memory_consolidation', e)
+                self._mark_consolidation_status(
+                    new_state,
+                    status="committed",
+                    stage="memory_facade",
+                )
+            except _MEMORY_CONSOLIDATION_ERRORS as e:
+                self._mark_consolidation_status(
+                    new_state,
+                    status="degraded",
+                    stage="memory_facade",
+                    error=e,
+                )
+                self._queue_failed_commit(
+                    error=e,
+                    content=content,
+                    objective=objective,
+                    interaction_context=interaction_context,
+                    interaction_action=interaction_action,
+                    interaction_outcome=interaction_outcome,
+                )
+                _record_memory_consolidation_degradation(
+                    e,
+                    action="preserved consolidation in ColdStore and queued failed memory facade commit for retry",
+                    severity="warning",
+                    extra={"stage": "memory_facade"},
+                )
                 logger.debug("MemoryConsolidation: MemoryFacade commit failed: %s", e)
  
         # Queue the knowledge for the ColdStore to process asynchronously.
@@ -241,9 +317,9 @@ class MemoryConsolidationPhase(BasePhase):
         # Pass 1: Drop verbose tool/skill results first (they're already in episodic memory)
         # Pass 2: If still over limit, drop oldest non-user messages
         # Always preserve: most recent user message, system messages, high-importance episodes
-        MAX_WORKING_MEMORY: int = 30
+        max_working_memory: int = 30
         wm = new_state.cognition.working_memory
-        if len(wm) > MAX_WORKING_MEMORY:
+        if len(wm) > max_working_memory:
             # Pass 1: Remove tool/skill result messages (most verbose, already persisted)
             trimmed = []
             dropped_tools = 0
@@ -269,7 +345,7 @@ class MemoryConsolidationPhase(BasePhase):
             # Pass 2: If still over, keep most recent messages with bias toward user turns
             # IMPORTANT: Messages with >2000 chars of user content are treated as
             # "high-importance" (stories, code blocks, etc.) and are exempt from pruning
-            if len(wm) > MAX_WORKING_MEMORY:
+            if len(wm) > max_working_memory:
                 # Always keep last 4 messages (current conversation turn)
                 tail = wm[-4:]
                 older = wm[:-4]
@@ -281,7 +357,7 @@ class MemoryConsolidationPhase(BasePhase):
                         or len(str(m.get("content", ""))) > 2000
                     )
                 ]
-                remaining = MAX_WORKING_MEMORY - len(tail) - len(keep_older)
+                remaining = max_working_memory - len(tail) - len(keep_older)
                 if remaining > 0:
                     non_user = [
                         m for m in older
@@ -295,3 +371,64 @@ class MemoryConsolidationPhase(BasePhase):
             new_state.cognition.working_memory = wm
             
         return new_state
+
+    def _mark_consolidation_status(
+        self,
+        state: AuraState,
+        *,
+        status: str,
+        stage: str,
+        error: BaseException | None = None,
+    ) -> None:
+        modifiers = dict(getattr(state.cognition, "modifiers", {}) or {})
+        payload: dict[str, Any] = {
+            "status": status,
+            "stage": stage,
+            "at": time.time(),
+        }
+        if error is not None:
+            payload["error_type"] = type(error).__name__
+            payload["error"] = str(error)[:240]
+        modifiers["memory_consolidation_status"] = payload
+        state.cognition.modifiers = modifiers
+
+    def _queue_failed_commit(
+        self,
+        *,
+        error: BaseException,
+        content: str,
+        objective: str | None,
+        interaction_context: str,
+        interaction_action: str,
+        interaction_outcome: str,
+    ) -> None:
+        try:
+            dlq = self.container.get("dead_letter_queue", default=None)
+            if dlq is None:
+                return
+            payload = {
+                "content": content[:2_000],
+                "objective": str(objective or "")[:240],
+                "context": interaction_context[:1_000],
+                "action": interaction_action,
+                "outcome": interaction_outcome[:1_000],
+            }
+            push = getattr(dlq, "push", None)
+            if callable(push):
+                push("memory_consolidation.commit_interaction", payload, str(error)[:500])
+                return
+            capture_failure = getattr(dlq, "capture_failure", None)
+            if callable(capture_failure):
+                capture_failure(
+                    message=content,
+                    context=payload,
+                    error=error,
+                    source="memory_consolidation",
+                )
+        except _MEMORY_CONSOLIDATION_ERRORS as dlq_exc:
+            _record_memory_consolidation_degradation(
+                dlq_exc,
+                action="kept ColdStore fallback after failed memory commit could not be queued",
+                severity="warning",
+                extra={"stage": "dead_letter_queue"},
+            )

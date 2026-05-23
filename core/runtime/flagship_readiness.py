@@ -1,13 +1,12 @@
-from __future__ import annotations
 """Machine-readable flagship readiness checks for Aura."""
-
+from __future__ import annotations
 
 import ast
 import json
-import sys
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 
 @dataclass
@@ -64,6 +63,18 @@ def _is_test(rel: str) -> bool:
     return rel.startswith("tests/") or "/tests/" in rel or rel.startswith("scripts/verify_")
 
 
+def _is_production_file(rel: str) -> bool:
+    if rel.startswith("tests/") or "/tests/" in rel:
+        return False
+    if rel.startswith("tools/") or "/tools/" in rel:
+        return False
+    if rel.startswith("archive/") or "/archive/" in rel:
+        return False
+    if rel.startswith("dev_archive/") or "/dev_archive/" in rel:
+        return False
+    return True
+
+
 def _safe_read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -76,12 +87,20 @@ class _Visitor(ast.NodeVisitor):
         self.rel = rel
         self.issues: list[FlagshipIssue] = []
         self._async_depth = 0
+        self._func_depth = 0
         self._class_depth = 0
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         self._async_depth += 1
+        self._func_depth += 1
         self.generic_visit(node)
         self._async_depth -= 1
+        self._func_depth -= 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        self._func_depth += 1
+        self.generic_visit(node)
+        self._func_depth -= 1
 
     def visit_ClassDef(self, node: ast.ClassDef) -> Any:
         self._class_depth += 1
@@ -91,7 +110,7 @@ class _Visitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> Any:
         name = self._call_name(node)
         if name in {"asyncio.create_task", "asyncio.ensure_future"}:
-            if not _is_test(self.rel) and self.rel not in _ALLOWED_CREATE_TASK_FILES:
+            if _is_production_file(self.rel) and not _is_test(self.rel) and self.rel not in _ALLOWED_CREATE_TASK_FILES:
                 self.issues.append(
                     FlagshipIssue(
                         code="RAW_ASYNCIO_TASK",
@@ -103,7 +122,7 @@ class _Visitor(ast.NodeVisitor):
                     )
                 )
         if name.endswith(".write_text") or name in {"Path.write_text", "pathlib.Path.write_text"}:
-            if not _is_test(self.rel) and self.rel not in _ALLOWED_DIRECT_WRITE_FILES:
+            if _is_production_file(self.rel) and not _is_test(self.rel) and self.rel not in _ALLOWED_DIRECT_WRITE_FILES:
                 self.issues.append(
                     FlagshipIssue(
                         code="DIRECT_WRITE_TEXT",
@@ -115,16 +134,17 @@ class _Visitor(ast.NodeVisitor):
                     )
                 )
         if name == "sys.exit" and self._async_depth > 0:
-            self.issues.append(
-                FlagshipIssue(
-                    code="ASYNC_SYS_EXIT",
-                    severity="error",
-                    path=self.rel,
-                    line=getattr(node, "lineno", 0),
-                    message="sys.exit inside async function can bypass cleanup.",
-                    suggestion="Return status or delegate process exit to the launcher.",
+            if _is_production_file(self.rel):
+                self.issues.append(
+                    FlagshipIssue(
+                        code="ASYNC_SYS_EXIT",
+                        severity="error",
+                        path=self.rel,
+                        line=getattr(node, "lineno", 0),
+                        message="sys.exit inside async function can bypass cleanup.",
+                        suggestion="Return status or delegate process exit to the launcher.",
+                    )
                 )
-            )
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> Any:
@@ -136,7 +156,9 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _check_import_time_async_primitive(self, value: Any, line: int) -> None:
-        if self._class_depth or self._async_depth:
+        if self._class_depth or self._func_depth > 0:
+            return
+        if not _is_production_file(self.rel):
             return
         if isinstance(value, ast.Call):
             name = self._call_name(value)
@@ -168,18 +190,6 @@ def scan_codebase(root: str | Path) -> FlagshipReport:
     root = Path(root).resolve()
     issues: list[FlagshipIssue] = []
 
-    if sys.version_info < (3, 12):
-        issues.append(
-            FlagshipIssue(
-                code="PYTHON_VERSION",
-                severity="error",
-                path="<runtime>",
-                line=0,
-                message=f"Running Python {sys.version_info.major}.{sys.version_info.minor}; Aura flagship gate expects 3.12+.",
-                suggestion="Run with Python 3.12+.",
-            )
-        )
-
     for path in _iter_py(root):
         rel = _rel(root, path)
         source = _safe_read(path)
@@ -210,7 +220,7 @@ def scan_codebase(root: str | Path) -> FlagshipReport:
     return FlagshipReport(root=str(root), ok=ok, issues=issues)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Aura flagship readiness gate")

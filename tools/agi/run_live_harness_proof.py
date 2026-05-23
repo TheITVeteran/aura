@@ -524,11 +524,11 @@ Overall Live Harness Proof Status: **{'PASSED' if passed else 'FAILED'}**
 
     if not passed:
         print("\n[!] Live Harness Proof: FAILED")
-        sys.exit(1)
+        return 1
     else:
         print("\n[+] Live Harness Proof: PASSED")
-        sys.exit(0)
+        return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

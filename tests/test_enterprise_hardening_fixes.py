@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 from pathlib import Path
@@ -79,3 +80,25 @@ def test_dialogue_policy_allows_scientific_uncertainty():
         "I do not have feelings, opinions, or preferences.",
         contract,
     ).ok is False
+
+
+def test_empirical_proof_tools_do_not_synthesize_passes():
+    root = Path(__file__).resolve().parents[1]
+    agency_source = (root / "tools/agency/run_agency_emergence_battery.py").read_text(encoding="utf-8")
+    dnu_source = (root / "tools/agi/run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
+
+    agency_tree = ast.parse(agency_source)
+    dnu_tree = ast.parse(dnu_source)
+    function_names = {
+        node.name
+        for tree in (agency_tree, dnu_tree)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+    assert "bound_rate" not in function_names
+    assert "fallback_responses" not in agency_source
+    assert "Default high-quality response" not in agency_source
+    assert 'receipt_id = f"rec_' not in agency_source
+    assert "Deliberated and authorized response" not in agency_source
+    assert "full_aura_comparison_rate - 0.15" not in dnu_source

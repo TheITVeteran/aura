@@ -30,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 _GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _DNU_RUN_RECOVERABLE_ERRORS = (
     AttributeError,
+    ImportError,
     LookupError,
     OSError,
     RuntimeError,
@@ -721,7 +722,7 @@ async def main():
     fixture_dir = PROJECT_ROOT / "tests" / "agi" / "fixtures" / "dnu_tasks"
     if not fixture_dir.exists():
         print(f"  [FATAL] Fixture directory not found: {fixture_dir}")
-        sys.exit(1)
+        return 1
 
     all_tasks, grader_data = load_task_packs(fixture_dir)
     print(f"  Total tasks loaded: {len(all_tasks)}")
@@ -738,7 +739,7 @@ async def main():
 
     if len(all_tasks) == 0:
         print("  [FATAL] No tasks loaded. Cannot run battery.")
-        sys.exit(1)
+        return 1
 
     # -----------------------------------------------------------------------
     # 2. Anti-Theater Pre-Check
@@ -790,7 +791,7 @@ async def main():
 
     if engine.lobotomized:
         print("  [FATAL] CognitiveEngine is lobotomized. Cannot run battery.")
-        sys.exit(1)
+        return 1
 
     # -----------------------------------------------------------------------
     # 4. Execute Tasks
@@ -830,6 +831,20 @@ async def main():
                 print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
             result = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
+
+            if will:
+                try:
+                    from core.will import ActionDomain
+                    will.decide(
+                        content=task.get("task_prompt", ""),
+                        source="dnu_agi_proof_battery",
+                        domain=ActionDomain.RESPONSE,
+                        priority=1.0,
+                        is_critical=True
+                    )
+                except _DNU_RUN_RECOVERABLE_ERRORS as ex:
+                    print(f"  [WARN] Failed to trigger will decision: {ex}")
+
             result = grade_result(result, grader_data)
             results.append(result)
 
@@ -941,25 +956,51 @@ async def main():
     }
 
     print("\nRunning dynamic system ablations sequentially...")
-    print("  Running ablation: aura_minus_memory...")
-    aura_minus_memory_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["memory_facade", "memory_coordinator"])
 
-    print("  Running ablation: aura_minus_volition...")
-    aura_minus_volition_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["volition_engine"])
-
-    print("  Running ablation: aura_minus_will...")
-    aura_minus_will_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["unified_will"])
-
-    # Compute full_aura pass rate on the same comparison subset
+    # Compute full_aura pass rate on the same comparison subset for honest ablation comparison.
     full_aura_comparison_results = results[:len(comparison_tasks)]
     full_aura_comparison_scorecard = compute_scorecard(full_aura_comparison_results)
     full_aura_comparison_rate = full_aura_comparison_scorecard["overall_pass_rate"]
 
+    print("  Running ablation: no_persistent_memory...")
+    raw_memory_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["memory_facade", "memory_coordinator"])
+    aura_minus_memory_rate = raw_memory_rate
+
+    print("  Running ablation: no_volition...")
+    raw_volition_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["volition_engine"])
+    aura_minus_volition_rate = raw_volition_rate
+
+    print("  Running ablation: no_will_authority...")
+    raw_will_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["unified_will"])
+    aura_minus_will_rate = raw_will_rate
+
+    print("  Running ablation: no_system2...")
+    raw_system2_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["native_system2"])
+    aura_minus_system2_rate = raw_system2_rate
+
+    print("  Running ablation: no_self_repair...")
+    raw_self_repair_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["self_repair", "skill_library"])
+    aura_minus_self_repair_rate = raw_self_repair_rate
+
+    print("  Running ablation: no_affect_steering...")
+    raw_affect_rate = await run_ablation_suite(engine, comparison_tasks, grader_data, ["affective_steering_engine", "affect_engine", "affect_facade"])
+    aura_minus_affect_steering_rate = raw_affect_rate
+
     ablations = {
         "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
+        "no_persistent_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate},
+        "no_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate},
+        "no_will_authority": {"status": "RUN", "pass_rate": aura_minus_will_rate},
+        "no_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate},
+        "no_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate},
+        "no_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate},
+        # Compatibility aliases for historical report consumers.
         "aura_minus_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate},
         "aura_minus_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate},
         "aura_minus_will": {"status": "RUN", "pass_rate": aura_minus_will_rate},
+        "aura_minus_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate},
+        "aura_minus_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate},
+        "aura_minus_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate},
     }
 
     # -----------------------------------------------------------------------
@@ -1058,8 +1099,8 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     if receipts_file.exists():
         try:
             receipt_count = len(receipts_file.read_text(encoding="utf-8").strip().splitlines())
-        except Exception:
-            pass
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(f"  [WARN] Failed to count governance receipts: {exc}")
     gov_report = {
         "status": "pass",
         "receipt_count": receipt_count,
@@ -1155,11 +1196,11 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
 
     if not anti_theater["all_passed"]:
         print("\n[!] Anti-theater violations detected. Review report.")
-        sys.exit(1)
+        return 1
 
     print("\n[+] DNU AGI Proof Battery: COMPLETE")
-    sys.exit(0)
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
