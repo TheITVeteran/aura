@@ -237,3 +237,80 @@ def test_lymphatic_reaper_sweep_preserves_step_errors(monkeypatch, tmp_path):
     assert result["storage_reclaimed_bytes"] == 128
     assert "hunt_orphans" in result["step_errors"]
     assert reaper.get_status()["last_sweep_status"]["storage_reclaimed_bytes"] == 128
+
+
+def test_metabolic_monitor_dispatches_pressure_mitigation(monkeypatch):
+    import core.ops.metabolic_monitor as metabolic_module
+    import core.resource.resource_governor as governor_module
+
+    actions = []
+
+    class _Process:
+        def cpu_percent(self) -> float:
+            return 145.0
+
+        def memory_info(self) -> SimpleNamespace:
+            return SimpleNamespace(rss=2048 * 1024 * 1024)
+
+    class _Governor:
+        def execute_eviction(self, tier) -> int:
+            actions.append(tier.value)
+            return 1
+
+    monkeypatch.setattr(metabolic_module.psutil, "Process", lambda *_args, **_kwargs: _Process())
+    monkeypatch.setattr(
+        metabolic_module.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=96.5, total=64 * 1024 * 1024 * 1024),
+    )
+    monkeypatch.setattr(metabolic_module.psutil, "disk_usage", lambda _path: SimpleNamespace(percent=72.0))
+    monkeypatch.setattr(governor_module, "get_resource_governor", lambda: _Governor())
+
+    monitor = metabolic_module.MetabolicMonitor(ram_threshold_mb=1024, cpu_threshold=80.0)
+    monkeypatch.setattr(monitor, "_sync_registry", lambda _snapshot: None)
+
+    snapshot = monitor.get_current_metabolism()
+
+    assert snapshot.pressure_state == "critical"
+    assert actions == ["aggressive"]
+    assert monitor.get_status_report()["pressure_actions_total"] == 1
+
+
+def test_metabolic_monitor_loop_records_failure_without_exiting_silently(monkeypatch):
+    import core.ops.metabolic_monitor as metabolic_module
+
+    monitor = metabolic_module.MetabolicMonitor()
+    calls = {"count": 0}
+
+    def failing_sample():
+        calls["count"] += 1
+        monitor._running = False
+        assert calls["count"] == 1
+        raise RuntimeError("sample unavailable")
+
+    monkeypatch.setattr(monitor, "get_current_metabolism", failing_sample)
+    monitor._interval = 0.01
+    monitor._running = True
+
+    monitor._run_loop()
+
+    assert monitor._consecutive_failures == 1
+    recent = get_degradation_tracker().recent(subsystem="metabolic_monitor")
+    assert recent[-1].severity == "degraded"
+    assert "backed off" in recent[-1].action
+
+
+def test_compute_cost_tracker_handles_corrupt_state_and_clamps_invalid_inputs(tmp_path):
+    import core.ops.metabolic_monitor as metabolic_module
+
+    state_path = tmp_path / "metabolic_state.json"
+    state_path.write_text("{not json")
+
+    tracker = metabolic_module.PersistentComputeCostTracker(state_path=state_path)
+    ergs = tracker.record_operation("invalid", -10, float("nan"))
+
+    assert tracker.total_ergs == 0.0
+    assert ergs == 0.0
+    assert tracker.cost_history[-1]["tokens"] == 0
+    assert tracker.cost_history[-1]["duration"] == 0.0
+    assert get_degradation_tracker().count("metabolic_monitor") >= 2
