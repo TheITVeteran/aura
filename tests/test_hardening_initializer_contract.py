@@ -314,3 +314,74 @@ def test_compute_cost_tracker_handles_corrupt_state_and_clamps_invalid_inputs(tm
     assert tracker.cost_history[-1]["tokens"] == 0
     assert tracker.cost_history[-1]["duration"] == 0.0
     assert get_degradation_tracker().count("metabolic_monitor") >= 2
+
+
+def test_aegis_pulse_restores_missing_mycelial_network(monkeypatch):
+    import core.mycelium as mycelium_module
+    from core.orchestrator.handlers import aegis
+
+    class _MycelialNetwork:
+        def __init__(self) -> None:
+            self._aegis_locked = True
+
+    monkeypatch.setattr(mycelium_module, "MycelialNetwork", _MycelialNetwork)
+    orchestrator = SimpleNamespace()
+
+    status = asyncio.run(aegis._aegis_pulse(orchestrator))
+
+    assert status["state"] == "restored"
+    assert status["locked"] is True
+    assert ServiceContainer.get("mycelial_network")._aegis_locked is True
+
+
+def test_aegis_pulse_marks_integrity_failure_when_lock_restore_fails(monkeypatch):
+    import core.mycelium as mycelium_module
+    from core.orchestrator.handlers import aegis
+
+    class _MycelialNetwork:
+        @classmethod
+        async def restore_from_vault(cls) -> bool:
+            return False
+
+    monkeypatch.setattr(mycelium_module, "MycelialNetwork", _MycelialNetwork)
+    ServiceContainer.register_instance("mycelial_network", SimpleNamespace(_aegis_locked=False))
+    orchestrator = SimpleNamespace()
+
+    status = asyncio.run(aegis._aegis_pulse(orchestrator))
+
+    assert status["state"] == "failed_closed"
+    assert status["reason"] == "true_lock_restore_failed"
+    assert orchestrator._aegis_integrity_failed is True
+    recent = get_degradation_tracker().recent(subsystem="aegis")
+    assert recent[-1].severity == "critical"
+
+
+def test_aegis_loop_records_degraded_pulse_and_exits_on_stop(monkeypatch):
+    from core.orchestrator.handlers import aegis
+
+    class _StopEvent:
+        def __init__(self) -> None:
+            self._set = False
+
+        def is_set(self) -> bool:
+            return self._set
+
+        def set(self) -> None:
+            self._set = True
+
+    orchestrator = SimpleNamespace(_stop_event=_StopEvent())
+
+    async def failing_pulse(_orch, *, vault_sync_interval_s: float) -> dict:
+        assert vault_sync_interval_s == 60.0
+        orchestrator._stop_event.set()
+        raise RuntimeError("aegis pulse unavailable")
+
+    monkeypatch.setattr(aegis, "_aegis_pulse", failing_pulse)
+
+    asyncio.run(aegis.aegis_sentinel_loop(orchestrator, interval_s=0.01))
+
+    assert orchestrator.aegis_status["state"] == "degraded"
+    assert orchestrator.aegis_status["consecutive_failures"] == 1
+    recent = get_degradation_tracker().recent(subsystem="aegis")
+    assert recent[-1].severity == "degraded"
+    assert "backed off" in recent[-1].action
