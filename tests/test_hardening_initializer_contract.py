@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -132,3 +133,107 @@ def test_long_run_supervisors_are_part_of_runtime_health_contract():
     assert set(required) == {"reaper", "hypervisor", "event_loop_monitor"}
     assert all(requirement.tier == ServiceTier.IMPORTANT for requirement in required.values())
     assert all(requirement.liveness_check == "is_alive" for requirement in required.values())
+
+
+class _ChildProcess:
+    def __init__(self, status: str, *, pid: int = 1001) -> None:
+        self._status = status
+        self.pid = pid
+        self.terminated = False
+        self.waited = False
+        self.wait_timeout = object()
+
+    def status(self) -> str:
+        return self._status
+
+    def create_time(self) -> float:
+        return 0.0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> None:
+        self.waited = True
+        self.wait_timeout = timeout
+
+
+class _CurrentProcess:
+    def __init__(self, children: list[_ChildProcess]) -> None:
+        self._children = children
+
+    def children(self, *, recursive: bool = False) -> list[_ChildProcess]:
+        assert recursive is True
+        return list(self._children)
+
+
+def test_lymphatic_reaper_retains_long_lived_children_without_opt_in(monkeypatch, tmp_path):
+    import core.ops.lymphatic_reaper as reaper_module
+
+    monkeypatch.delenv("AURA_REAPER_TERMINATE_LONG_CHILDREN", raising=False)
+    child = _ChildProcess("sleeping")
+    current = _CurrentProcess([child])
+    monkeypatch.setattr(reaper_module.psutil, "Process", lambda: current)
+    monkeypatch.setattr(reaper_module.time, "time", lambda: reaper_module.LONG_CHILD_AGE_S + 60.0)
+
+    reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
+
+    assert reaper._hunt_orphans() == 0
+    assert child.terminated is False
+    assert child.waited is False
+
+
+def test_lymphatic_reaper_reaps_zombie_children(monkeypatch, tmp_path):
+    import core.ops.lymphatic_reaper as reaper_module
+
+    child = _ChildProcess(reaper_module.psutil.STATUS_ZOMBIE)
+    current = _CurrentProcess([child])
+    monkeypatch.setattr(reaper_module.psutil, "Process", lambda: current)
+
+    reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
+
+    assert reaper._hunt_orphans() == 1
+    assert child.waited is True
+    assert child.wait_timeout == 0
+    assert child.terminated is False
+
+
+def test_lymphatic_reaper_unlinks_stale_symlink_without_touching_target(monkeypatch, tmp_path):
+    import core.ops.lymphatic_reaper as reaper_module
+
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    link_path = tmp_dir / "old-target-link"
+    link_path.symlink_to(target_dir, target_is_directory=True)
+    os.utime(link_path, (1.0, 1.0), follow_symlinks=False)
+    monkeypatch.setattr(reaper_module.time, "time", lambda: reaper_module.STALE_TMP_AGE_S + 2.0)
+
+    reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
+
+    assert reaper._filesystem_sweep() >= 0
+    assert not link_path.exists()
+    assert target_dir.exists()
+
+
+def test_lymphatic_reaper_sweep_preserves_step_errors(monkeypatch, tmp_path):
+    import core.ops.lymphatic_reaper as reaper_module
+
+    marker = {"called": False}
+
+    def failing_hunt() -> int:
+        marker["called"] = True
+        assert marker["called"] is True
+        raise RuntimeError("process scan unavailable")
+
+    reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
+    monkeypatch.setattr(reaper, "_hunt_orphans", failing_hunt)
+    monkeypatch.setattr(reaper, "_filesystem_sweep", lambda: 128)
+    monkeypatch.setattr(reaper, "_defragment_memory", lambda: True)
+
+    result = asyncio.run(reaper.sweep())
+
+    assert result["processes_reaped"] == 0
+    assert result["storage_reclaimed_bytes"] == 128
+    assert "hunt_orphans" in result["step_errors"]
+    assert reaper.get_status()["last_sweep_status"]["storage_reclaimed_bytes"] == 128

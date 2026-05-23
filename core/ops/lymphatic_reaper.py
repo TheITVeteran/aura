@@ -1,131 +1,308 @@
 """
 core/ops/lymphatic_reaper.py
-Enterprise Maintenance: Cleans uporphaned processes, stale file handles, and fragments.
-Inspired by the biological lymphatic system.
+
+Enterprise maintenance for stale temporary files, zombie children, and runtime
+cache pressure. The reaper is intentionally conservative: it does not terminate
+long-lived child processes unless explicitly enabled.
 """
+from __future__ import annotations
 
 import asyncio
 import logging
 import os
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import psutil
 
 from core.observability.metrics import get_metrics
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.Reaper")
 metrics = get_metrics()
 
+STALE_TMP_AGE_S = 86_400
+LONG_CHILD_AGE_S = 3_600
+
+_REAPER_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    psutil.Error,
+)
+
+
+def _record_reaper_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, object] | None = None,
+) -> None:
+    try:
+        record_degradation(
+            "lymphatic_reaper",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=True,
+            extra=extra,
+        )
+    except TypeError as signature_exc:
+        try:
+            record_degradation("lymphatic_reaper", error, severity=severity, action=action)
+        except TypeError:
+            logger.debug("LymphaticReaper degradation could not be recorded: %s", signature_exc)
+
 
 class LymphaticReaper:
-    def __init__(self, interval_s: float = 300.0):
-        self._interval = interval_s
+    def __init__(self, interval_s: float = 300.0, *, data_dir: Path | None = None):
+        self._interval = max(1.0, float(interval_s))
         self._running = False
         self._task: asyncio.Task | None = None
-        self._data_dir = Path(os.environ.get("AURA_DATA_DIR", "~/.aura/data")).expanduser()
+        self._data_dir = Path(data_dir or os.environ.get("AURA_DATA_DIR", "~/.aura/data")).expanduser()
+        self._terminate_long_children = os.getenv("AURA_REAPER_TERMINATE_LONG_CHILDREN", "0") == "1"
+        self._last_sweep_at = 0.0
+        self._last_error = ""
+        self._last_error_at = 0.0
+        self._consecutive_failures = 0
+        self._last_step_errors: dict[str, str] = {}
+        self._last_sweep_status: dict[str, Any] = {}
 
-    async def start(self):
+    async def start(self) -> None:
         if self._running:
             return
         self._running = True
-        self._task = get_task_tracker().create_task(self._run_loop())
-        logger.info("🛡️ Lymphatic Reaper active (Interval: %.1fs)", self._interval)
+        try:
+            from core.utils.task_tracker import get_task_tracker
 
-    async def stop(self):
+            self._task = get_task_tracker().create_task(
+                self._run_loop(),
+                name="lymphatic_reaper.loop",
+            )
+        except _REAPER_ERRORS as exc:
+            _record_reaper_degradation(
+                exc,
+                action="started lymphatic reaper with raw asyncio task after task tracker failed",
+                severity="warning",
+            )
+            self._task = asyncio.create_task(self._run_loop(), name="lymphatic_reaper.loop")
+        logger.info("Lymphatic Reaper active (interval %.1fs)", self._interval)
+
+    async def stop(self) -> None:
         self._running = False
         if self._task:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError as _e:
-                logger.debug("Ignored asyncio.CancelledError in lymphatic_reaper.py: %s", _e)
-        logger.info("🛡️ Lymphatic Reaper shutdown.")
+            except asyncio.CancelledError:
+                pass
+            except _REAPER_ERRORS as exc:
+                self._remember_error(exc)
+                _record_reaper_degradation(
+                    exc,
+                    action="completed lymphatic reaper shutdown after loop task ended with a known failure",
+                    severity="warning",
+                )
+            self._task = None
+        logger.info("Lymphatic Reaper shutdown.")
 
     def is_alive(self) -> bool:
         """Return True only when the reaper loop is actively supervised."""
         return bool(self._running and self._task is not None and not self._task.done())
 
-    async def _run_loop(self):
+    async def _run_loop(self) -> None:
         while self._running:
+            sleep_s = self._interval
             try:
                 await self.sweep()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation("lymphatic_reaper", e)
-                logger.error("Reaper sweep failed: %s", e)
-            await asyncio.sleep(self._interval)
+                self._consecutive_failures = 0
+            except _REAPER_ERRORS as exc:
+                self._remember_error(exc)
+                sleep_s = min(self._interval * (1 + self._consecutive_failures), self._interval * 6)
+                _record_reaper_degradation(
+                    exc,
+                    action="kept reaper loop alive and backed off after sweep failure",
+                    severity="degraded",
+                    extra={"consecutive_failures": self._consecutive_failures},
+                )
+                logger.error("Reaper sweep failed: %s", exc)
+            await asyncio.sleep(sleep_s)
 
-    async def sweep(self):
-        """Execute all maintenance tasks."""
+    async def sweep(self) -> dict[str, Any]:
+        """Execute all maintenance tasks independently."""
         start_time = time.time()
-        logger.debug("🧼 Starting lymphatic sweep...")
+        logger.debug("Starting lymphatic sweep")
 
-        proc_cleaned = self._hunt_orphans()
-        fs_cleaned = self._filesystem_sweep()
-        memory_defragmented = self._defragment_memory()
+        proc_cleaned = self._run_step("hunt_orphans", self._hunt_orphans, default=0)
+        fs_cleaned = self._run_step("filesystem_sweep", self._filesystem_sweep, default=0)
+        memory_defragmented = self._run_step("defragment_memory", self._defragment_memory, default=False)
 
         duration = time.time() - start_time
+        self._last_sweep_at = time.time()
         logger.info(
-            "🧼 Sweep complete: %d procs reaped, %.1fMB storage reclaimed. (Duration: %.2fs)",
+            "Sweep complete: %d procs reaped, %.1fMB storage reclaimed. (Duration: %.2fs)",
             proc_cleaned,
             fs_cleaned / (1024 * 1024),
             duration,
         )
 
-        metrics.gauge("reaper.sweep_duration_s", duration)
-        metrics.gauge("reaper.memory_defragmented", 1.0 if memory_defragmented else 0.0)
-        metrics.increment("reaper.sweeps_total")
+        self._emit_metrics(duration, memory_defragmented)
+        self._last_sweep_status = {
+            "processes_reaped": proc_cleaned,
+            "storage_reclaimed_bytes": fs_cleaned,
+            "memory_defragmented": memory_defragmented,
+            "duration_s": duration,
+            "step_errors": dict(self._last_step_errors),
+        }
+        return dict(self._last_sweep_status)
+
+    def _run_step(self, name: str, fn: Callable[[], Any], *, default: Any) -> Any:
+        try:
+            result = fn()
+            self._last_step_errors.pop(name, None)
+            return result
+        except _REAPER_ERRORS as exc:
+            self._remember_error(exc)
+            self._last_step_errors[name] = f"{type(exc).__name__}: {exc}"
+            _record_reaper_degradation(
+                exc,
+                action="skipped one lymphatic maintenance step and continued remaining sweep",
+                severity="warning",
+                extra={"step": name},
+            )
+            logger.debug("Reaper step %s failed: %s", name, exc)
+            return default
 
     def _hunt_orphans(self) -> int:
-        """Find and terminate orphaned child processes."""
+        """Reap zombies; optionally terminate long-lived children when explicitly enabled."""
         count = 0
         current_proc = psutil.Process()
         for child in current_proc.children(recursive=True):
             try:
-                # Check if process is a zombie or hanging
-                if child.status() == psutil.STATUS_ZOMBIE:
-                    child.wait()
+                status = child.status()
+                if status == psutil.STATUS_ZOMBIE:
+                    child.wait(timeout=0)
                     count += 1
-                elif (
-                    time.time() - child.create_time() > 3600
-                ):  # 1 hour limit for anonymous children
+                    continue
+
+                age_s = time.time() - child.create_time()
+                if age_s > LONG_CHILD_AGE_S and self._terminate_long_children:
                     child.terminate()
                     count += 1
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                logger.debug("Ignored Exception in lymphatic_reaper.py: %s", "unknown_error")
+                elif age_s > LONG_CHILD_AGE_S:
+                    logger.debug("Long-lived child retained by policy: pid=%s age_s=%.1f", child.pid, age_s)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired) as exc:
+                _record_reaper_degradation(
+                    exc,
+                    action="skipped inaccessible child process during orphan sweep",
+                    severity="debug",
+                    extra={"pid": getattr(child, "pid", None)},
+                )
         return count
 
     def _filesystem_sweep(self) -> int:
-        """Clean temporary files, stale locks, and logs."""
+        """Clean temporary files, stale locks, and logs below Aura's data tmp directory."""
         reclaimed = 0
         tmp_dir = self._data_dir / "tmp"
-        if tmp_dir.exists():
-            for f in tmp_dir.glob("*"):
-                try:
-                    # Remove files older than 24 hours
-                    if time.time() - f.stat().st_mtime > 86400:
-                        if f.is_file():
-                            reclaimed += f.stat().st_size
-                            f.unlink()
-                        elif f.is_dir():
-                            shutil.rmtree(f)
-                except OSError as e:
-                    record_degradation("lymphatic_reaper", e)
-                    logger.debug("Reaper: failed to clean %s: %s", f, e)
+        if not tmp_dir.exists():
+            return 0
+
+        tmp_root = tmp_dir.resolve()
+        for path in tmp_dir.iterdir():
+            try:
+                if not self._is_safe_tmp_child(path, tmp_root):
+                    continue
+                if time.time() - self._path_mtime(path) <= STALE_TMP_AGE_S:
+                    continue
+                if path.is_symlink() or path.is_file():
+                    reclaimed += path.lstat().st_size
+                    path.unlink()
+                elif path.is_dir():
+                    reclaimed += self._directory_size(path)
+                    shutil.rmtree(path)
+            except OSError as exc:
+                _record_reaper_degradation(
+                    exc,
+                    action="left stale tmp path in place after cleanup failed",
+                    severity="warning",
+                    extra={"path": str(path)[:240]},
+                )
+                logger.debug("Reaper failed to clean %s: %s", path, exc)
         return reclaimed
 
+    @staticmethod
+    def _is_safe_tmp_child(path: Path, tmp_root: Path) -> bool:
+        try:
+            if path.is_symlink():
+                return path.parent.resolve() == tmp_root
+            return path.resolve().parent == tmp_root
+        except OSError:
+            return False
+
+    @staticmethod
+    def _directory_size(path: Path) -> int:
+        total = 0
+        for child in path.rglob("*"):
+            try:
+                if child.is_file() and not child.is_symlink():
+                    total += child.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    @staticmethod
+    def _path_mtime(path: Path) -> float:
+        if path.is_symlink():
+            return path.lstat().st_mtime
+        return path.stat().st_mtime
+
     def _defragment_memory(self) -> bool:
-        """Clear internal caches and trigger GC."""
+        """Clear internal Python caches and trigger GC."""
         import gc
 
         gc.collect()
-
-        # If we have a vector store or MLX model, trigger their specific clears if possible
-        # For now, just a generic log
         return True
+
+    def _emit_metrics(self, duration: float, memory_defragmented: bool) -> None:
+        try:
+            metrics.gauge("reaper.sweep_duration_s", duration)
+            metrics.gauge("reaper.memory_defragmented", 1.0 if memory_defragmented else 0.0)
+            metrics.increment("reaper.sweeps_total")
+        except _REAPER_ERRORS as exc:
+            _record_reaper_degradation(
+                exc,
+                action="completed sweep while metrics emission failed",
+                severity="warning",
+            )
+
+    def _remember_error(self, exc: BaseException) -> None:
+        self._consecutive_failures += 1
+        self._last_error = f"{type(exc).__name__}: {exc}"
+        self._last_error_at = time.time()
+
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "running": self._running,
+            "alive": self.is_alive(),
+            "interval_s": self._interval,
+            "data_dir": str(self._data_dir),
+            "terminate_long_children": self._terminate_long_children,
+            "last_sweep_at": self._last_sweep_at,
+            "last_error": self._last_error,
+            "last_error_at": self._last_error_at,
+            "consecutive_failures": self._consecutive_failures,
+            "last_step_errors": dict(self._last_step_errors),
+            "last_sweep_status": dict(self._last_sweep_status),
+        }
 
 
 _reaper: LymphaticReaper | None = None
