@@ -385,3 +385,50 @@ def test_aegis_loop_records_degraded_pulse_and_exits_on_stop(monkeypatch):
     recent = get_degradation_tracker().recent(subsystem="aegis")
     assert recent[-1].severity == "degraded"
     assert "backed off" in recent[-1].action
+
+
+def test_orchestrator_background_task_handler_records_and_routes_failure(monkeypatch):
+    from core.orchestrator import orchestrator_types
+
+    orchestrator_types._BACKGROUND_TASK_FAILURES.clear()
+    routed = []
+
+    def route_immune(task_name, exc) -> None:
+        routed.append(("immune", task_name, type(exc).__name__))
+
+    def route_morphogenesis(task_name, exc) -> None:
+        routed.append(("morphogenesis", task_name, type(exc).__name__))
+
+    async def run_task() -> None:
+        async def failing_task() -> None:
+            assert True
+            raise RuntimeError("background failure")
+
+        task = asyncio.create_task(failing_task(), name="unit-background")
+        await asyncio.sleep(0)
+        assert task.done()
+        orchestrator_types._bg_task_exception_handler(task)
+
+    monkeypatch.setattr(orchestrator_types, "_notify_immune_system", route_immune)
+    monkeypatch.setattr(orchestrator_types, "_notify_morphogenesis", route_morphogenesis)
+
+    asyncio.run(run_task())
+
+    status = orchestrator_types.get_background_task_failure_status()
+    assert status["recent_failure_count"] == 1
+    assert status["recent_failures"][-1]["task"] == "unit-background"
+    assert routed == [
+        ("immune", "unit-background", "RuntimeError"),
+        ("morphogenesis", "unit-background", "RuntimeError"),
+    ]
+    recent = get_degradation_tracker().recent(subsystem="orchestrator_types")
+    assert recent[-1].severity == "degraded"
+    assert "routed" in recent[-1].action
+
+
+def test_legacy_orchestrator_types_bridge_uses_canonical_handler():
+    import core.orchestrator_types as legacy_types
+    from core.orchestrator import orchestrator_types
+
+    assert legacy_types.SystemStatus is orchestrator_types.SystemStatus
+    assert legacy_types._bg_task_exception_handler is orchestrator_types._bg_task_exception_handler
