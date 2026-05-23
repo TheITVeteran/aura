@@ -1,5 +1,6 @@
 import asyncio
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -74,6 +75,69 @@ def test_narrative_thread_uses_available_evidence(monkeypatch):
     assert "memory consolidation" in narrative
     assert "What should improve next?" in narrative
     assert thread.get_current_snapshot()["evidence"]["belief_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_narrative_thread_start_seeds_snapshot_and_falls_back_task_tracker(monkeypatch):
+    import core.narrative_thread as narrative_module
+    from core.container import ServiceContainer
+
+    recorded: list[tuple[str, str, dict[str, object]]] = []
+
+    def get_task_tracker():
+        attempted = True
+        assert attempted
+        raise RuntimeError("task tracker offline")
+
+    def record_degradation(module, exc, **kwargs):
+        recorded.append((module, type(exc).__name__, kwargs))
+
+    tracker_module = ModuleType("core.utils.task_tracker")
+    tracker_module.get_task_tracker = get_task_tracker
+    monkeypatch.setitem(sys.modules, "core.utils.task_tracker", tracker_module)
+    monkeypatch.setattr(narrative_module, "record_degradation", record_degradation)
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: default))
+
+    thread = NarrativeThread()
+    await thread.start()
+
+    assert thread.get_status()["running"] is True
+    assert thread.get_status()["task_alive"] is True
+    assert thread.get_status()["has_snapshot"] is True
+    assert thread.get_narrative_context() == thread.get_current_narrative()
+    assert "raw asyncio task" in str(recorded[0][2]["action"])
+
+    await thread.stop()
+
+
+@pytest.mark.asyncio
+async def test_narrative_thread_refresh_failure_writes_degraded_snapshot(monkeypatch):
+    import core.narrative_thread as narrative_module
+
+    recorded: list[tuple[str, str, dict[str, object]]] = []
+
+    def record_degradation(module, exc, **kwargs):
+        recorded.append((module, type(exc).__name__, kwargs))
+
+    thread = NarrativeThread()
+    thread._is_running = True
+
+    async def failing_generate():
+        thread._is_running = False
+        raise RuntimeError("narrative synthesis unavailable")
+
+    monkeypatch.setattr(narrative_module, "record_degradation", record_degradation)
+    monkeypatch.setattr(narrative_module, "_INITIAL_REFRESH_DELAY_S", 0)
+    monkeypatch.setattr(narrative_module, "_ERROR_BACKOFF_BASE_S", 0)
+    monkeypatch.setattr(thread, "generate_narrative", failing_generate)
+
+    await thread._run_refresh_loop()
+
+    snapshot = thread.get_current_snapshot()
+    assert snapshot["evidence"]["degraded"] is True
+    assert "degraded" in snapshot["narrative"]
+    assert thread.get_status()["consecutive_refresh_failures"] == 1
+    assert "backed off" in str(recorded[0][2]["action"])
 
 
 def test_emotional_coloring_uses_memory_affect_and_liquid_state(monkeypatch):
