@@ -5,17 +5,19 @@ It uses strictly local monitoring (psutil) and implements exponential backoff
 to prevent rapid crash loops from consuming resources.
 """
 
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
+import asyncio
 import logging
 import os
 import signal
-import subprocess
 import sys
 import threading
 import time
-import asyncio
 from pathlib import Path
-from typing import List, Optional
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 try:
     import psutil
@@ -29,11 +31,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Sovereign.Supervisor")
 
+_SUPERVISOR_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+_CRASH_WINDOW_SECONDS = 60.0
+_MAX_RESTART_BACKOFF_SECONDS = 300.0
+
+
+def _record_supervisor_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict | None = None,
+) -> None:
+    record_degradation(
+        "supervisor",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
+
+
 class SovereignSupervisor:
-    def __init__(self, target_script: str, args: List[str] = None):
+    def __init__(self, target_script: str, args: list[str] | None = None):
         self.target_script = Path(target_script)
         self.args = args or []
-        self.process: Optional[subprocess.Popen] = None
+        self.process: asyncio.subprocess.Process | None = None
         self.should_run = True
         self.crash_count = 0
         self.last_crash_time = 0
@@ -53,10 +84,21 @@ class SovereignSupervisor:
                 await self._monitor_process()
             except KeyboardInterrupt:
                 await self.stop()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('supervisor', e)
+            except _SUPERVISOR_ERRORS as e:
+                self.crash_count += 1
+                delay_s = min(_MAX_RESTART_BACKOFF_SECONDS, 5.0 * (2 ** min(self.crash_count - 1, 5)))
+                _record_supervisor_degradation(
+                    e,
+                    action="backed off supervisor launch loop after monitor failure",
+                    severity="warning",
+                    extra={
+                        "target": str(self.target_script),
+                        "crash_count": self.crash_count,
+                        "backoff_s": delay_s,
+                    },
+                )
                 logger.error("Supervisor loop error: %s", e)
-                await asyncio.sleep(5)
+                await asyncio.sleep(delay_s)
 
     async def stop(self):
         """Gracefully stops the supervisor and child process."""
@@ -78,8 +120,16 @@ class SovereignSupervisor:
             cwd=str(Path.cwd())
         )
 
-        asyncio.create_task(self._pipe_logger_async(self.process.stdout, logging.INFO, "stdout"))
-        asyncio.create_task(self._pipe_logger_async(self.process.stderr, logging.ERROR, "stderr"))
+        if self.process.stdout is not None:
+            get_task_tracker().create_task(
+                self._pipe_logger_async(self.process.stdout, logging.INFO, "stdout"),
+                name="sovereign_supervisor.pipe.stdout",
+            )
+        if self.process.stderr is not None:
+            get_task_tracker().create_task(
+                self._pipe_logger_async(self.process.stderr, logging.ERROR, "stderr"),
+                name="sovereign_supervisor.pipe.stderr",
+            )
 
     async def _pipe_logger_async(self, pipe: asyncio.StreamReader, level: int, label: str):
         """Reads from an asyncio stream and logs each line."""
@@ -94,8 +144,13 @@ class SovereignSupervisor:
                     line = line_bytes.decode('latin-1', errors='replace').strip()
                 if line:
                     logger.log(level, "[Sub] %s", line)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('supervisor', e)
+        except _SUPERVISOR_ERRORS as e:
+            _record_supervisor_degradation(
+                e,
+                action="kept supervisor alive after subprocess pipe logger failed",
+                severity="warning",
+                extra={"pipe": label},
+            )
             logger.error("Error reading pipe %s: %s", label, e)
 
     async def _monitor_process(self):
@@ -111,7 +166,7 @@ class SovereignSupervisor:
 
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # 5-second poll timeout passed, process still alive
                 continue
             except ProcessLookupError:
@@ -120,7 +175,7 @@ class SovereignSupervisor:
         return_code = self.process.returncode
         await self._handle_exit(return_code)
 
-    async def _handle_exit(self, return_code: Optional[int]):
+    async def _handle_exit(self, return_code: int | None):
         """Decide whether/how quickly to restart based on exit code."""
         if not self.should_run:
             logger.info("Process exited (code %s). Supervisor stopping.", return_code)
@@ -140,14 +195,15 @@ class SovereignSupervisor:
         logger.warning("Process crashed/exited without grace flag (code %s)", return_code)
         
         now = time.time()
-        if now - self.last_crash_time < 60:
+        if now - self.last_crash_time < _CRASH_WINDOW_SECONDS:
             self.crash_count += 1
         else:
             self.crash_count = 1  # Reset window
         self.last_crash_time = now
 
-        # Instant reboot (0s wait) on crash
-        logger.info("Resurrection instant (crash #%d in current window)", self.crash_count)
+        backoff_s = min(_MAX_RESTART_BACKOFF_SECONDS, 2.0 ** min(self.crash_count - 1, 8))
+        logger.info("Restarting after %.1fs crash backoff (crash #%d in current window)", backoff_s, self.crash_count)
+        await asyncio.sleep(backoff_s)
         return
 
     def _kill_process_tree(self, pid):
@@ -155,8 +211,13 @@ class SovereignSupervisor:
         if not psutil:
             try:
                 os.kill(pid, signal.SIGTERM)
-            except OSError:
-                logger.debug("Exception caught during execution", exc_info=True)
+            except OSError as exc:
+                _record_supervisor_degradation(
+                    exc,
+                    action="ignored missing process while stopping supervised tree without psutil",
+                    severity="debug",
+                    extra={"pid": pid},
+                )
             return
 
         try:
@@ -166,11 +227,16 @@ class SovereignSupervisor:
                 child.terminate()
             parent.terminate()
             
-            gone, alive = psutil.wait_procs(children + [parent], timeout=3)
+            _gone, alive = psutil.wait_procs(children + [parent], timeout=3)
             for p in alive:
                 p.kill()
-        except psutil.NoSuchProcess:
-            logger.debug("Exception caught during execution", exc_info=True)
+        except psutil.NoSuchProcess as exc:
+            _record_supervisor_degradation(
+                exc,
+                action="ignored missing process while stopping supervised tree",
+                severity="debug",
+                extra={"pid": pid},
+            )
 
 if __name__ == "__main__":
     # Example usage: Watch run_aura.py

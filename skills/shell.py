@@ -199,7 +199,13 @@ class ShellSkill(BaseSkill):
                     process.kill()
                     await process.wait()  # Ensure cleanup
                 except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
-                    record_degradation("shell", exc)
+                    record_degradation(
+                        "shell",
+                        exc,
+                        severity="warning",
+                        action="returned shell timeout result after process cleanup failed",
+                        extra={"command": command[:240], "timeout_s": timeout},
+                    )
                     logger.debug("Shell timed-out process cleanup failed: %s", exc)
                 return {"ok": False, "error": f"Command timed out after {timeout}s."}
 

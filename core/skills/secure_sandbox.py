@@ -74,7 +74,12 @@ class SecureDockerSandbox:
                 try:
                     container.remove(force=True)
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    record_degradation('secure_sandbox', exc)
+                    record_degradation(
+                        "secure_sandbox",
+                        exc,
+                        severity="warning",
+                        action="reported sandbox result after container cleanup failed",
+                    )
                     logger.debug("Suppressed: %s", exc)
 
     def verify_safety(self) -> bool:

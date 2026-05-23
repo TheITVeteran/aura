@@ -179,7 +179,13 @@ If no refinement is needed, return {{"found": false}}.
                     "priority": "high"
                 }]
         except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('kernel_refiner', e)
+            record_degradation(
+                "kernel_refiner",
+                e,
+                severity="warning",
+                action="returned no semantic kernel refinements after deep audit failed",
+                extra={"target": str(self.kernel_path)},
+            )
             logger.error("Deep audit failed: %s", e)
             
         return []

@@ -226,7 +226,13 @@ def get_runtime_state() -> dict[str, Any]:
             self_model_data = {**self_model_data, **merged_self}
 
     except (ImportError, AttributeError, RuntimeError) as e:
-        record_degradation('runtime_tools', e)
+        record_degradation(
+            "runtime_tools",
+            e,
+            severity="warning",
+            action="returned partial runtime state after optional subsystem sampling failed",
+            extra={"stage": "runtime_state_sampling"},
+        )
         logger.debug("Runtime state sampling skipped (pre-init): %s", e)
 
     state = {

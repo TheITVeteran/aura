@@ -334,7 +334,13 @@ class UnifiedBrowserSkill(BaseSkill):
                     extractor.feed(raw_content)
                     content = extractor.get_text()
                 except (ImportError, AttributeError, RuntimeError) as exc:
-                    record_degradation("browser_action", exc)
+                    record_degradation(
+                        "browser_action",
+                        exc,
+                        severity="warning",
+                        action="returned raw response text after HTML text extraction failed",
+                        extra={"url": url[:240]},
+                    )
                     logger.debug("Text-only HTML extraction failed: %s", exc)
                     content = raw_content
             else:

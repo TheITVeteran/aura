@@ -13,18 +13,45 @@ Design notes:
   the freeze."
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import os
-import time
-import threading
-import traceback
 import sys
+import threading
+import time
+import traceback
+from importlib import import_module
 from pathlib import Path
-from typing import Optional
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.Resilience.Watchdog")
+
+_STALL_WATCHDOG_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_watchdog_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict | None = None,
+) -> None:
+    record_degradation(
+        "stall_watchdog",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 # How long an asyncio task can be pending (not done) before the watchdog
 # considers it suspect during a stall and cancels it. Conservative — only
@@ -64,8 +91,13 @@ class StallWatchdog(threading.Thread):
             except RuntimeError:
                 # Event loop closed during shutdown — exit silently
                 break
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('stall_watchdog', e)
+            except (AttributeError, TypeError, ValueError) as e:
+                _record_watchdog_degradation(
+                    e,
+                    action="skipped watchdog heartbeat schedule and kept monitoring thread alive",
+                    severity="warning",
+                    extra={"stage": "heartbeat_schedule"},
+                )
                 logger.debug("Watchdog heartbeat schedule issue: %s", e)
 
             time.sleep(1.0)  # Check every second
@@ -108,8 +140,13 @@ class StallWatchdog(threading.Thread):
             for tid in list(self._task_birth.keys()):
                 if tid not in seen:
                     self._task_birth.pop(tid, None)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('stall_watchdog', exc)
+        except _STALL_WATCHDOG_ERRORS as exc:
+            _record_watchdog_degradation(
+                exc,
+                action="kept watchdog alive after task-age bookkeeping failed",
+                severity="warning",
+                extra={"stage": "task_age_bookkeeping"},
+            )
             logger.debug("Task age bookkeeping failed: %s", exc)
 
     def _should_suppress_stall(self, elapsed: float) -> bool:
@@ -214,8 +251,13 @@ class StallWatchdog(threading.Thread):
             )
         except RuntimeError:
             return
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('stall_watchdog', exc)
+        except (AttributeError, TypeError, ValueError) as exc:
+            _record_watchdog_degradation(
+                exc,
+                action="continued watchdog reporting after active recovery scheduling failed",
+                severity="warning",
+                extra={"stage": "active_recovery_schedule", "elapsed_s": elapsed},
+            )
             logger.debug("Stall recovery scheduling failed: %s", exc)
 
     async def _recover_on_loop(self, elapsed: float) -> None:
@@ -260,7 +302,12 @@ class StallWatchdog(threading.Thread):
                     task.cancel()
                     cancelled += 1
                 except RuntimeError as exc:
-                    record_degradation('stall_watchdog', exc)
+                    _record_watchdog_degradation(
+                        exc,
+                        action="continued stall recovery after hung-task cancellation failed",
+                        severity="warning",
+                        extra={"stage": "cancel_hung_task", "task_name": name},
+                    )
                     logger.debug("Stall recovery: failed to cancel %s: %s", name, exc)
         else:
             message = (
@@ -284,19 +331,25 @@ class StallWatchdog(threading.Thread):
         # stale-handshake path in mlx_client._ensure_worker_alive will
         # recycle anyone that's been wedged.
         try:
-            from core.brain.llm.mlx_client import _LIVE_MLX_CLIENTS  # type: ignore
+            mlx_client_module = import_module("core.brain.llm.mlx_client")
+            live_mlx_clients = getattr(mlx_client_module, "_LIVE_MLX_CLIENTS", None)
         except (ImportError, AttributeError, RuntimeError):
-            _LIVE_MLX_CLIENTS = None  # type: ignore
+            live_mlx_clients = None
 
-        if _LIVE_MLX_CLIENTS:
-            for client in list(_LIVE_MLX_CLIENTS):
+        if live_mlx_clients:
+            for client in list(live_mlx_clients):
                 try:
                     if hasattr(client, "_lane_state") and client._lane_state == "handshaking":
                         # Schedule a no-op alive probe so the stale-handshake
                         # branch fires on next entry.
                         self.loop.call_soon(client._mark_progress)
                 except (OSError, ConnectionError, TimeoutError) as exc:
-                    record_degradation('stall_watchdog', exc)
+                    _record_watchdog_degradation(
+                        exc,
+                        action="continued stall recovery after MLX liveness poke failed",
+                        severity="warning",
+                        extra={"stage": "mlx_liveness_poke"},
+                    )
                     logger.debug("Stall recovery MLX poke failed: %s", exc)
 
         # If we've taken many long stalls in a row, ask the orchestrator's
@@ -309,10 +362,15 @@ class StallWatchdog(threading.Thread):
                     state_repo.request_flush()
                     logger.info("💉 [IMMUNE] Requested state vault flush after %d consecutive stalls.", self._consecutive_long_stalls)
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('stall_watchdog', exc)
+                _record_watchdog_degradation(
+                    exc,
+                    action="continued stall recovery after state flush request failed",
+                    severity="warning",
+                    extra={"stage": "state_flush_request"},
+                )
                 logger.debug("Stall recovery state-flush request failed: %s", exc)
 
-def start_watchdog(loop: Optional[asyncio.AbstractEventLoop] = None, threshold: float = 5.0):
+def start_watchdog(loop: asyncio.AbstractEventLoop | None = None, threshold: float = 5.0):
     """Convenience helper to start the watchdog."""
     try:
         target_loop = loop or asyncio.get_running_loop()

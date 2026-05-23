@@ -1,13 +1,41 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-from typing import Optional, Any
-from prometheus_client import start_http_server, Gauge, Counter, REGISTRY
-import psutil
+import socket
 import time
 
+import psutil
+from prometheus_client import Counter, Gauge, start_http_server
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.Metrics")
+
+_METRICS_EXPORTER_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_metrics_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict | None = None,
+) -> None:
+    record_degradation(
+        "metrics_exporter",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 # Core System Metrics
 MEM_USAGE = Gauge('aura_memory_usage_bytes', 'Current RSS memory usage in bytes')
@@ -24,14 +52,14 @@ class MetricsExporter:
     """
     def __init__(self, port: int = 9090):
         self.port = port
-        self.actual_port: Optional[int] = None
+        self.actual_port: int | None = None
         self.running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._start_time = time.time()
+        self._monitor_failures = 0
 
     def _find_free_port(self, start_port: int, max_attempts: int = 10) -> int:
         """Find an available port starting from start_port."""
-        import socket
         for p in range(start_port, start_port + max_attempts):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
@@ -58,11 +86,20 @@ class MetricsExporter:
             # We wrap it in to_thread to prevent event loop stalls during boot.
             await asyncio.to_thread(start_http_server, self.actual_port)
             logger.info("📊 Metrics Exporter ONLINE (port %s)", self.actual_port)
-            self._task = get_task_tracker().create_task(self._monitor_loop())
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('metrics_exporter', e)
+            self._task = get_task_tracker().create_task(
+                self._monitor_loop(),
+                name="metrics_exporter.monitor_loop",
+            )
+        except _METRICS_EXPORTER_ERRORS as e:
+            _record_metrics_degradation(
+                e,
+                action="left metrics exporter offline after Prometheus startup failed",
+                severity="warning",
+                extra={"requested_port": self.port, "actual_port": self.actual_port},
+            )
             logger.error("Failed to start Metrics Exporter: %s", e)
             self.running = False
+            self.actual_port = None
 
     async def stop(self):
         self.running = False
@@ -72,6 +109,7 @@ class MetricsExporter:
                 await self._task
             except asyncio.CancelledError as _e:
                 logger.debug('Ignored asyncio.CancelledError in metrics_exporter.py: %s', _e)
+            self._task = None
         logger.info("📊 Metrics Exporter OFFLINE")
 
     async def _monitor_loop(self):
@@ -82,14 +120,26 @@ class MetricsExporter:
                 MEM_USAGE.set(process.memory_info().rss)
                 CPU_USAGE.set(psutil.cpu_percent())
                 UPTIME.set(time.time() - self._start_time)
+                self._monitor_failures = 0
                 
                 await asyncio.sleep(5)
             except asyncio.CancelledError:
                 break
-            except (ImportError, OSError, AttributeError) as e:
-                record_degradation('metrics_exporter', e)
+            except _METRICS_EXPORTER_ERRORS as e:
+                self._monitor_failures += 1
+                backoff_s = min(60.0, 5.0 * (2 ** min(self._monitor_failures - 1, 4)))
+                _record_metrics_degradation(
+                    e,
+                    action="kept metrics exporter loop alive after sample collection failed",
+                    severity="warning",
+                    extra={
+                        "stage": "monitor_loop",
+                        "consecutive_errors": self._monitor_failures,
+                        "backoff_s": backoff_s,
+                    },
+                )
                 logger.debug("Metrics monitor tick failed: %s", e)
-                await asyncio.sleep(10)
+                await asyncio.sleep(backoff_s)
 
 # Global helper for counting tokens
 def report_tokens(model: str, count: int, token_type: str = "output"):

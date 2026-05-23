@@ -31,7 +31,12 @@ class EmbodimentSkill(BaseSkill):
         try:
             manager: HardwareManager = ServiceContainer.get("hardware_manager", default=None)
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('embodiment_skill', e)
+            record_degradation(
+                "embodiment_skill",
+                e,
+                severity="warning",
+                action="returned hardware-manager unavailable status without executing embodiment action",
+            )
             logger.warning("Hardware manager not available: %s", e)
             manager = None
             

@@ -325,7 +325,13 @@ class RuntimeHygieneManager:
             tracemalloc.start(self.tracemalloc_frames)
             self._tracemalloc_started_by_hygiene = True
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('runtime_hygiene', exc)
+            record_degradation(
+                "runtime_hygiene",
+                exc,
+                severity="warning",
+                action="continued runtime hygiene with tracemalloc disabled",
+                extra={"tracemalloc_frames": self.tracemalloc_frames},
+            )
             logger.debug("RuntimeHygiene: tracemalloc start failed: %s", exc)
 
     def _adopt_active_child_processes(self) -> None:

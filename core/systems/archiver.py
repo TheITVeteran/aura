@@ -92,5 +92,11 @@ class ArchiveEngine:
                 oldest.unlink()
                 logger.debug("Pruned old archive: %s", oldest.name)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('archiver', exc)
+            record_degradation(
+                "archiver",
+                exc,
+                severity="warning",
+                action="kept new dream archive and skipped old archive pruning",
+                extra={"archive_dir": str(self.archive_dir)},
+            )
             logger.warning("Archive pruning failed: %s", exc)

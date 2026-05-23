@@ -116,7 +116,13 @@ class BrowserAgent:
             self.state = AgentState.COMPLETE
             
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('computer_use_agent', e)
+            record_degradation(
+                "computer_use_agent",
+                e,
+                severity="warning",
+                action="failed current computer-use iteration and preserved agent history",
+                extra={"goal": goal[:240], "history_len": len(self._history)},
+            )
             logger.error("Computer Use step failed: %s", e)
             self.state = AgentState.FAILED
             self._history.append({"role": "system", "content": f"Error: {e}"})

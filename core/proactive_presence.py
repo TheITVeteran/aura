@@ -22,7 +22,7 @@ from typing import Any
 
 from core.brain.aura_persona import AURA_IDENTITY
 from core.container import ServiceContainer
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.queues import USER_FACING_ORIGINS
 from core.utils.task_tracker import get_task_tracker
 
@@ -36,6 +36,35 @@ MAX_SPONTANEOUS_PER_HOUR = 20    # [RELAXED] Hard cap on unsolicited outputs per
 PRESENCE_LOOP_INTERVAL_SECONDS = 10.0
 CHECKIN_IDLE_SECONDS = 300.0     # [RELAXED] 5 minutes before a visible "still there?" check-in
 ACTIVE_DISCUSSION_WINDOW_SECONDS = 3600.0
+
+_PROACTIVE_PRESENCE_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_presence_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "proactive_presence",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 
 class ProactivePresence:
@@ -93,6 +122,8 @@ class ProactivePresence:
         self._user_away_since: float = 0.0
         self._queued_messages: deque[dict[str, Any]] = deque(maxlen=12)
         self._last_user_message_at: float = 0.0
+        self._loop_failures: int = 0
+        self._next_loop_attempt_at: float = 0.0
 
     async def start(self):
         self._running = True
@@ -130,7 +161,7 @@ class ProactivePresence:
             get_substrate_voice_engine().on_user_spoke()
         except ImportError as exc:
             logger.debug("Substrate voice engine unavailable for user-spoke notification: %s", exc)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Substrate voice user-spoke notification failed: %s", exc)
         # Record user response for adaptive backoff
@@ -139,7 +170,7 @@ class ProactivePresence:
             get_user_response_tracker().record_user_response()
         except ImportError as exc:
             logger.debug("User response tracker unavailable for user response record: %s", exc)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("User response tracker failed to record response: %s", exc)
 
@@ -194,11 +225,14 @@ class ProactivePresence:
         while self._running:
             try:
                 await asyncio.sleep(PRESENCE_LOOP_INTERVAL_SECONDS)
+                now = time.time()
+                if self._next_loop_attempt_at > now:
+                    continue
 
                 # Reset hourly counter
-                if time.time() - self._hour_start > 3600:
+                if now - self._hour_start > 3600:
                     self._outputs_this_hour = 0
-                    self._hour_start = time.time()
+                    self._hour_start = now
 
                 queued = self._next_ready_queued_message()
                 if queued is not None:
@@ -228,8 +262,23 @@ class ProactivePresence:
                         visible_presence=visible_presence,
                     )
 
-            except (OSError, ConnectionError, TimeoutError) as e:
-                record_degradation('proactive_presence', e)
+                self._loop_failures = 0
+                self._next_loop_attempt_at = 0.0
+            except _PROACTIVE_PRESENCE_ERRORS as e:
+                self._loop_failures += 1
+                backoff_s = min(120.0, 10.0 * (2 ** min(self._loop_failures - 1, 4)))
+                self._next_loop_attempt_at = time.time() + backoff_s
+                _record_presence_degradation(
+                    e,
+                    action="backed off proactive presence loop and preserved queued messages",
+                    severity="warning",
+                    extra={
+                        "stage": "presence_loop",
+                        "consecutive_errors": self._loop_failures,
+                        "backoff_s": backoff_s,
+                        "queued_messages": len(self._queued_messages),
+                    },
+                )
                 logger.debug("[ProactivePresence] Loop error: %s", e)
 
     def _should_speak_now(self, *, queued: bool = False, allow_during_away: bool = False) -> bool:
@@ -250,7 +299,7 @@ class ProactivePresence:
             if reason:
                 logger.debug("[ProactivePresence] Held by background policy: %s", reason)
                 return False
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("[ProactivePresence] Background policy check failed: %s", exc)
 
@@ -301,7 +350,7 @@ class ProactivePresence:
             effective_gap *= get_user_response_tracker().get_backoff_multiplier()
         except ImportError as exc:
             logger.debug("User response tracker unavailable for proactive backoff: %s", exc)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("User response tracker backoff lookup failed: %s", exc)
         if now - self._last_output_time < effective_gap:
@@ -421,8 +470,13 @@ class ProactivePresence:
             from core.brain.entropy import PhysicalEntropyInjector
             # Map entropy [0, 0.4] → [0, total] using total as scale
             r = (PhysicalEntropyInjector.calculate_hardware_chaos() / 0.40) * total
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("proactive_presence", exc)
+        except (AttributeError, RuntimeError) as exc:
+            _record_presence_degradation(
+                exc,
+                action="used PRNG fallback after hardware entropy probe failed",
+                severity="warning",
+                extra={"stage": "spontaneous_choice_entropy"},
+            )
             logger.debug("Hardware entropy unavailable for proactive choice; using PRNG fallback: %s", exc)
             r = random.uniform(0, total)
         cumulative = 0
@@ -447,7 +501,15 @@ class ProactivePresence:
                 return None
             return (content, selected_source, True, selected_initiative_activity)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('proactive_presence', e)
+            _record_presence_degradation(
+                e,
+                action="suppressed spontaneous output after selected generator failed",
+                severity="warning",
+                extra={
+                    "stage": "selected_generator",
+                    "generator": getattr(selected_fn, "__name__", "unknown"),
+                },
+            )
             logger.debug("[ProactivePresence] Generation failed (%s): %s",
                         getattr(selected_fn, "__name__", "unknown"), e)
             return None
@@ -631,7 +693,7 @@ class ProactivePresence:
         except ImportError as exc:
             logger.debug("Conversational dynamics unavailable for proactive hint: %s", exc)
             return ""
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("proactive_presence", exc)
             logger.debug("Conversational dynamics context lookup failed: %s", exc)
             return ""
@@ -829,7 +891,7 @@ class ProactivePresence:
                 get_user_response_tracker().record_proactive_sent(source="proactive_presence")
             except ImportError as exc:
                 logger.debug("User response tracker unavailable for proactive send record: %s", exc)
-            except (ImportError, AttributeError, RuntimeError) as exc:
+            except (AttributeError, RuntimeError) as exc:
                 record_degradation("proactive_presence", exc)
                 logger.debug("User response tracker failed to record proactive send: %s", exc)
 

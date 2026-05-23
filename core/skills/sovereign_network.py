@@ -69,7 +69,13 @@ class SovereignNetworkSkill(BaseSkill):
                     require_conversation_ready=False,
                 )
             except (ImportError, AttributeError, RuntimeError) as policy_exc:
-                record_degradation('sovereign_network', policy_exc)
+                record_degradation(
+                    "sovereign_network",
+                    policy_exc,
+                    severity="warning",
+                    action="denied network action because background policy was unavailable",
+                    extra={"mode": mode},
+                )
                 reason = "background_policy_unavailable"
             if reason:
                 return {

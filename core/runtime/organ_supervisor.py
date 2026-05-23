@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import struct
 import time
 from dataclasses import asdict, dataclass, field
@@ -132,7 +133,13 @@ class OrganSupervisor:
                     except TimeoutError:
                         record.proc.kill()  # type: ignore[union-attr]
                 except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
-                    record_degradation('organ_supervisor', exc)
+                    record_degradation(
+                        "organ_supervisor",
+                        exc,
+                        severity="warning",
+                        action="continued organ shutdown after one organ stop failed",
+                        extra={"organ": record.name},
+                    )
                     logger.debug("organ stop %s failed: %s", record.name, exc)
 
     async def _start_organ(self, record: OrganRecord) -> None:
@@ -152,7 +159,14 @@ class OrganSupervisor:
             record.started_at = time.time()
             logger.info("🩻 organ '%s' launched (pid=%s)", record.name, record.proc.pid)
         except (subprocess.SubprocessError, OSError) as exc:
-            record_degradation('organ_supervisor', exc)
+            record.proc = None
+            record_degradation(
+                "organ_supervisor",
+                exc,
+                severity="warning",
+                action="left organ down for watchdog restart after launch failed",
+                extra={"organ": record.name, "cmd": record.cmd[:3]},
+            )
             logger.warning("organ '%s' failed to launch: %s", record.name, exc)
 
     async def _watchdog(self) -> None:

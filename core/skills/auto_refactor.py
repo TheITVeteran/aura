@@ -61,7 +61,13 @@ class AutoRefactorSkill(BaseSkill):
                     "stderr": pytest_res.stderr[-2000:]
                 }
             except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('auto_refactor', e)
+                record_degradation(
+                    "auto_refactor",
+                    e,
+                    severity="warning",
+                    action="continued static refactor scan with dynamic test results marked unavailable",
+                    extra={"target_path": target_path},
+                )
                 logger.warning("Dynamic test execution failed: %s", e)
                 test_results = {"ok": False, "error": str(e)}
         

@@ -399,17 +399,25 @@ class StabilityGuardian:
             self._check_background_tasks,
         ]
         for fn in check_fns + self._extra_checks:
+            check_name = getattr(fn, "__name__", "unknown")
             try:
                 result = await fn() if inspect.iscoroutinefunction(fn) else fn()
                 if isinstance(result, HealthCheckResult):
                     checks.append(result)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('stability_guardian', e)
+                record_degradation(
+                    "stability_guardian",
+                    e,
+                    severity="warning",
+                    action="marked failed health check unhealthy and continued remaining checks",
+                    extra={"check": check_name},
+                )
                 checks.append(HealthCheckResult(
-                    name    = getattr(fn, "__name__", "unknown"),
+                    name    = check_name,
                     healthy = False,
                     message = f"Check raised exception: {e}",
                     severity = "error",
+                    action_taken = "continued remaining stability checks",
                 ))
 
         # System metrics

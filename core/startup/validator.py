@@ -60,7 +60,13 @@ class StartupValidator:
                 elif result:
                     results.append(result)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('validator', e)
+                record_degradation(
+                    "validator",
+                    e,
+                    severity="warning",
+                    action="marked startup validation check failed and continued remaining checks",
+                    extra={"check": check_fn.__name__},
+                )
                 results.append(ValidationResult(
                     name=check_fn.__name__,
                     passed=False,

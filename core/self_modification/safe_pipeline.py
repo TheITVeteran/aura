@@ -206,7 +206,13 @@ class SafePipeline:
                 reg.register(organ)
                 reg.capture(organ, before_source, schema_version="1")
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('safe_pipeline', exc)
+                record_degradation(
+                    "safe_pipeline",
+                    exc,
+                    severity="warning",
+                    action="continued self-modification pipeline with textual rollback plan after stem-cell capture failed",
+                    extra={"stage": Stage.ROLLBACK_PLAN.value, "target": file_path},
+                )
                 logger.debug("stem-cell capture during rollback plan failed: %s", exc)
             proposal.rollback_plan = f"stem_cell:selfmod_target_{Path(file_path).stem}"
             _record(proposal, "rollback_planned")

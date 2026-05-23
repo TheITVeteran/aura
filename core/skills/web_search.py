@@ -190,7 +190,13 @@ class EnhancedWebSearchSkill(BaseSkill):
                     return normalized
                 logger.warning("Deep Research returned an empty answer for '%s'; falling back to retrieval pipeline.", query)
             except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('web_search', e)
+                record_degradation(
+                    "web_search",
+                    e,
+                    severity="warning",
+                    action="fell back to retrieval pipeline after deep research failed",
+                    extra={"query": query[:240]},
+                )
                 logger.error("Deep Research failed, falling back to legacy: %s", e)
 
         # Legacy direct search

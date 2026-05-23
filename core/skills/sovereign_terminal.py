@@ -144,7 +144,13 @@ class SovereignTerminalSkill(BaseSkill):
                 try:
                     process.kill()
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('sovereign_terminal', e)
+                    record_degradation(
+                        "sovereign_terminal",
+                        e,
+                        severity="warning",
+                        action="returned terminal timeout result after process kill failed",
+                        extra={"pid": getattr(process, "pid", None), "command": command[:240]},
+                    )
                     logger.debug("Failed to kill process %s: %s", process.pid, e)
                 
                 stdout_str = b"".join(stdout_chunks).decode(errors="replace")

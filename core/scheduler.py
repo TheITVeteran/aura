@@ -147,8 +147,14 @@ class Scheduler:
             self._health[spec.name] = "cancelled"
             raise
         except (RuntimeError, AttributeError, TypeError) as e:
-            record_degradation('scheduler', e)
             self._health[spec.name] = f"error: {type(e).__name__}"
+            record_degradation(
+                "scheduler",
+                e,
+                severity="warning" if not spec.critical else "degraded",
+                action="marked scheduled task failed and escalated critical task to recovery",
+                extra={"task": spec.name, "critical": spec.critical},
+            )
             logger.error("Task %s failed: %s", spec.name, e)
             if spec.critical:
                 logger.critical("CRITICAL Task %s failed! Triggering recovery.", spec.name)

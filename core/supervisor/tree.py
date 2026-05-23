@@ -336,7 +336,13 @@ class SupervisionTree:
             try:
                 callback(name, new_pipe)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('tree', e)
+                record_degradation(
+                    "tree",
+                    e,
+                    severity="warning",
+                    action="kept restarted actor running after restart callback failed",
+                    extra={"actor": name},
+                )
                 logger.error("❌ Restart callback failed for %s: %s", name, e)
 
     def stop_all(self):

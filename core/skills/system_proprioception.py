@@ -79,7 +79,13 @@ class SystemProprioceptionSkill(BaseSkill):
                                 service_info["description"] = doc.split('\n')[0] # First line only for brevity
                                 
                     except (RuntimeError, AttributeError, TypeError) as e:
-                        record_degradation('system_proprioception', e)
+                        record_degradation(
+                            "system_proprioception",
+                            e,
+                            severity="warning",
+                            action="reported service without optional metadata after introspection failed",
+                            extra={"service": name},
+                        )
                         self.logger.debug("Metadata extraction failed for %s: %s", name, e)
 
                 system_map.append(service_info)

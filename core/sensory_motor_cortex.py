@@ -168,7 +168,13 @@ class SensoryMotorCortex:
 
             cap.release()
         except (OSError, IOError) as e:
-            record_degradation('sensory_motor_cortex', e)
+            record_degradation(
+                "sensory_motor_cortex",
+                e,
+                severity="warning",
+                action="stopped OpenCV stream and left visual cortex inactive after camera failure",
+                extra={"stage": "opencv_stream"},
+            )
             logger.error("Visual cortex exception: %s", e)
 
     def _trigger_visual_cognition(self, frame_data):

@@ -164,7 +164,9 @@ async def main():
     engine = CognitiveEngine()
     engine.setup()
 
-    will = ServiceContainer.get("unified_will", default=None)
+    from core.will import get_will
+    will = get_will()
+    await will.start()
 
     # 2. Run tasks
     results = []
@@ -373,20 +375,6 @@ async def main():
     ]
     (dest_dir / "AGENCY_EMERGENCE_PROOF.md").write_text("\n".join(report_lines), encoding="utf-8")
 
-    # 7. Write Manifest
-    manifest = {
-        "run_id": run_id,
-        "timestamp": scorecard["timestamp"],
-        "files": {}
-    }
-    for item in dest_dir.iterdir():
-        if item.is_file() and item.name != "MANIFEST.json":
-            manifest["files"][item.name] = {
-                "sha256": hashlib.sha256(item.read_bytes()).hexdigest(),
-                "size_bytes": item.stat().st_size
-            }
-    (dest_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
     # Copy bundle to JSON report format
     proof_json = {
         "system_info": {
@@ -402,6 +390,20 @@ async def main():
         "passed": proof_passed
     }
     (dest_dir / "AGENCY_EMERGENCE_PROOF.json").write_text(json.dumps(proof_json, indent=2), encoding="utf-8")
+
+    # 7. Write Manifest
+    manifest = {
+        "run_id": run_id,
+        "timestamp": scorecard["timestamp"],
+        "files": {}
+    }
+    for item in dest_dir.iterdir():
+        if item.is_file() and item.name != "MANIFEST.json":
+            manifest["files"][item.name] = {
+                "sha256": hashlib.sha256(item.read_bytes()).hexdigest(),
+                "size_bytes": item.stat().st_size
+            }
+    (dest_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     print(f"\n[+] Empirical battery complete. Artifacts written to: {dest_dir}")
     return 0 if proof_passed else 1

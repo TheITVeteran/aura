@@ -283,9 +283,19 @@ class OvertActionLoop:
                 },
             )
         except (sqlite3.Error, OSError) as exc:
-            record_degradation("overt_action_loop", exc)
             result.status = "failed"
             result.error = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "overt_action_loop",
+                exc,
+                severity="warning",
+                action="failed overt initiative execution and preserved action receipt for review",
+                extra={
+                    "action_id": action_id,
+                    "skill": skill,
+                    "objective": objective[:240],
+                },
+            )
             raw = {"ok": False, "error": result.error}
 
         result.verified = self._verify(skill, params, raw)

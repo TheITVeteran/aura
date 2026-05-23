@@ -69,7 +69,13 @@ class LocalMediaGenerationSkill(BaseSkill):
             try:
                 self.pipeline.to(self.device)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("local_media_generation", exc)
+                record_degradation(
+                    "local_media_generation",
+                    exc,
+                    severity="warning",
+                    action="kept local media model loaded on default device after device move failed",
+                    extra={"device": self.device},
+                )
                 logger.debug("Local media pipeline device move skipped: %s", exc)
 
             # Enable attention slicing for lower memory usage when supported

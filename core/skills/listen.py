@@ -177,7 +177,13 @@ class AudioListenerSkill(BaseSkill):
                 # Transcribe using unified voice engine
                 text = await asyncio.to_thread(engine.transcribe, temp_wav)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('listen', e)
+                record_degradation(
+                    "listen",
+                    e,
+                    severity="warning",
+                    action="returned recorded-audio fallback after unified transcription failed",
+                    extra={"duration_s": duration},
+                )
                 logger.error("Unified transcription failed: %s", e)
                 text = f"[Audio Recorded, Unified Transcription Failed: {e}]"
             

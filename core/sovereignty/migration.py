@@ -304,7 +304,13 @@ class MigrationOrchestrator:
             from core.organism.viability import get_viability, ViabilityState
             get_viability().transition_to(ViabilityState.ASLEEP, reason="cutover")
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('migration', exc)
+            record_degradation(
+                "migration",
+                exc,
+                severity="warning",
+                action="completed migration ledger while leaving local viability transition degraded",
+                extra={"remote_host": remote, "phase": proposal.phase.value},
+            )
             logger.debug("viability cutover transition failed: %s", exc)
 
         proposal.phase = Phase.COMPLETED

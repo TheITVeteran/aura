@@ -10,10 +10,36 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Proactive")
+
+_PROACTIVE_COMMUNICATION_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_proactive_degradation(
+    error: BaseException,
+    *,
+    action: str,
+    severity: Severity = "warning",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    record_degradation(
+        "proactive_communication",
+        error,
+        severity=severity,
+        action=action,
+        classification=FallbackClassification.SAFE_FALLBACK,
+        receipt_required=True,
+        extra=extra,
+    )
 
 
 def _proactivity_suppressed_now(now: float | None = None) -> bool:
@@ -26,8 +52,13 @@ def _proactivity_suppressed_now(now: float | None = None) -> bool:
         now = time.time() if now is None else now
         quiet_until = float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         return quiet_until > now
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation("proactive_communication", exc)
+    except _PROACTIVE_COMMUNICATION_ERRORS as exc:
+        _record_proactive_degradation(
+            exc,
+            action="kept proactive messaging enabled after quiet-window probe failed",
+            severity="warning",
+            extra={"stage": "suppression_probe"},
+        )
         logger.debug("Proactivity suppression probe failed: %s", exc)
         return False
 
@@ -109,6 +140,8 @@ class ProactiveCommunicationManager:
         
         self._background_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._consecutive_processing_errors = 0
+        self._next_processing_attempt_at = 0.0
 
     def record_user_interaction(self):
         """Reset idle timer and unanswered counter"""
@@ -133,12 +166,15 @@ class ProactiveCommunicationManager:
         if self._background_task:
             self._stop_event.set()
             await self._background_task
+            self._background_task = None
 
     async def _process_messages(self):
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(5)
                 now = time.time()
+                if self._next_processing_attempt_at > now:
+                    continue
                 
                 # Simple rate limiting check
                 if self.messages_sent_today >= self.daily_message_limit:
@@ -177,8 +213,23 @@ class ProactiveCommunicationManager:
 
                 for msg in ready:
                     await self._send_msg(msg)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('proactive_communication', e)
+                self._consecutive_processing_errors = 0
+                self._next_processing_attempt_at = 0.0
+            except _PROACTIVE_COMMUNICATION_ERRORS as e:
+                self._consecutive_processing_errors += 1
+                backoff_s = min(60.0, 5.0 * (2 ** min(self._consecutive_processing_errors - 1, 4)))
+                self._next_processing_attempt_at = time.time() + backoff_s
+                _record_proactive_degradation(
+                    e,
+                    action="backed off proactive communication loop and preserved pending messages",
+                    severity="warning",
+                    extra={
+                        "stage": "process_messages",
+                        "consecutive_errors": self._consecutive_processing_errors,
+                        "backoff_s": backoff_s,
+                        "pending_messages": len(self.pending_messages),
+                    },
+                )
                 logger.error("Proactive comm error: %s", e)
 
     async def _send_msg(self, msg: ProactiveMessage):
@@ -200,8 +251,13 @@ class ProactiveCommunicationManager:
                     or ServiceContainer.has("kernel_interface")
                     or bool(getattr(ServiceContainer, "_registration_locked", False))
                 )
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation("proactive_communication", exc)
+            except _PROACTIVE_COMMUNICATION_ERRORS as exc:
+                _record_proactive_degradation(
+                    exc,
+                    action="treated constitutional runtime as unavailable after probe failed",
+                    severity="warning",
+                    extra={"stage": "constitutional_runtime_probe"},
+                )
                 logger.debug("Constitutional runtime probe failed: %s", exc)
                 return False
 
@@ -225,8 +281,13 @@ class ProactiveCommunicationManager:
                 },
             )
             delivered = bool(decision.get("ok"))
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('proactive_communication', exc)
+        except _PROACTIVE_COMMUNICATION_ERRORS as exc:
+            _record_proactive_degradation(
+                exc,
+                action="suppressed proactive expression after executive authority routing failed",
+                severity="warning",
+                extra={"stage": "executive_authority_routing", "urgency": msg.urgency.name},
+            )
             logger.debug("Executive authority routing failed for proactive comm: %s", exc)
 
         if not delivered:
@@ -245,8 +306,13 @@ class ProactiveCommunicationManager:
                         "constitutional_runtime_live": _constitutional_runtime_live(),
                     },
                 )
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation('proactive_communication', exc)
+            except _PROACTIVE_COMMUNICATION_ERRORS as exc:
+                _record_proactive_degradation(
+                    exc,
+                    action="suppressed proactive expression after degraded-event recording failed",
+                    severity="warning",
+                    extra={"stage": "degraded_event_recording", "urgency": msg.urgency.name},
+                )
                 logger.debug("Proactive comm degraded-event logging failed: %s", exc)
             return
 

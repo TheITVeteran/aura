@@ -273,8 +273,14 @@ class SelfEvolutionSkill(BaseSkill):
                 thought = await self._think_with_timeout(brain, prompt, context, default_timeout=12.0)
                 proposal = thought.content
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('self_evolution', e)
                 fallback_reason = str(e)
+                record_degradation(
+                    "self_evolution",
+                    e,
+                    severity="warning",
+                    action="used deterministic self-evolution plan after model proposal failed",
+                    extra={"objective": objective[:240]},
+                )
                 self.logger.warning(
                     "Falling back to deterministic self-evolution planning for '%s': %s",
                     objective,

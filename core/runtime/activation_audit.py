@@ -88,7 +88,13 @@ async def _start_autonomy_conductor(orchestrator: Any) -> Any:
 
         ServiceContainer.register_instance("autonomy_conductor", conductor, required=False)
     except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation("activation_audit", exc)
+        record_degradation(
+            "activation_audit",
+            exc,
+            severity="warning",
+            action="started autonomy conductor but marked service-container registration degraded",
+            extra={"service": "autonomy_conductor"},
+        )
     return conductor
 
 

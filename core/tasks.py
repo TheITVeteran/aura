@@ -56,7 +56,12 @@ def run_orchestrator():
         logger.info("Orchestrator created, entering run loop...")
         loop.run_until_complete(orchestrator.run())
     except _RECOVERABLE_TASK_ERRORS as exc:
-        record_degradation("tasks", exc)
+        record_degradation(
+            "tasks",
+            exc,
+            severity="degraded",
+            action="stopped orchestrator task after run loop failed and closed event loop",
+        )
         logger.critical("Orchestrator task failed: %s", exc, exc_info=True)
     finally:
         loop.close()

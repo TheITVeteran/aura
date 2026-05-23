@@ -166,7 +166,13 @@ class PlatformRoot:
             except asyncio.CancelledError:
                 break
             except (ImportError, OSError, AttributeError) as e:
-                record_degradation('platform_root', e)
+                record_degradation(
+                    "platform_root",
+                    e,
+                    severity="warning",
+                    action="kept platform monitor alive with delayed retry after pulse loop failure",
+                    extra={"pulse_interval_s": self._pulse_interval},
+                )
                 logger.error("[PLATFORM ROOT] Monitor loop error: %s", e)
                 await asyncio.sleep(5.0)
 

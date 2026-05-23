@@ -800,7 +800,9 @@ async def main():
     results = []
     trace_file = run_dir / "TASK_TRACE.jsonl"
     receipts_file = run_dir / "RECEIPTS.jsonl"
-    will = ServiceContainer.get("unified_will", default=None)
+    from core.will import get_will
+    will = get_will()
+    await will.start()
 
     with trace_file.open("w", encoding="utf-8") as trace_fh, receipts_file.open("w", encoding="utf-8") as receipts_fh:
         for i, task in enumerate(all_tasks, 1):

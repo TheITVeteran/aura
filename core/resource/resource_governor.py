@@ -190,6 +190,7 @@ class ResourceGovernor:
         self._last_sample_time: float = 0.0
         self._sample_interval_s: float = 5.0
         self._eviction_callbacks: List = []
+        self._eviction_callback_failures: dict[int, int] = {}
         self._throttle_active: bool = False
         self._consecutive_pressure_samples: int = 0
 
@@ -321,11 +322,33 @@ class ResourceGovernor:
 
         invoked = 0
         for cb in self._eviction_callbacks:
+            callback_id = id(cb)
+            if self._eviction_callback_failures.get(callback_id, 0) >= 3:
+                logger.debug("ResourceGovernor: skipping quarantined eviction callback %r", cb)
+                continue
             try:
                 cb(tier)
                 invoked += 1
+                self._eviction_callback_failures.pop(callback_id, None)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("resource_governor", exc)
+                failure_count = self._eviction_callback_failures.get(callback_id, 0) + 1
+                self._eviction_callback_failures[callback_id] = failure_count
+                action = (
+                    "quarantined failing eviction callback and continued eviction"
+                    if failure_count >= 3
+                    else "continued eviction after callback failed"
+                )
+                record_degradation(
+                    "resource_governor",
+                    exc,
+                    severity="warning",
+                    action=action,
+                    extra={
+                        "tier": tier.value,
+                        "callback": repr(cb),
+                        "failure_count": failure_count,
+                    },
+                )
                 logger.debug("Eviction callback failed: %s", exc)
 
         # Force garbage collection at moderate+ tiers
