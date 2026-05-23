@@ -476,3 +476,60 @@ def test_affect_update_keeps_physiology_when_empathy_audit_fails():
     assert state.affect.physiology["heart_rate"] >= 60
     degraded = state.cognition.modifiers["affect_update_degraded"]
     assert degraded["stage"] == "vk_empathy_audit"
+
+
+def test_inference_phase_normalizes_router_payload():
+    from core.phases.inference_phase import InferencePhase
+    from core.service_names import ServiceNames
+    from core.state.aura_state import AuraState
+
+    class _Router:
+        async def think(self, *_args, **_kwargs) -> str:
+            return (
+                '{"implicit_intent":"needs help","affective_subtext":"anxious",'
+                '"momentum":"LOUD","conversation_hooks":"runtime health"}'
+            )
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return _Router() if name == ServiceNames.LLM_ROUTER else default
+
+    state = AuraState.default()
+    state.cognition.current_origin = "user"
+    phase = InferencePhase(_Container())
+
+    asyncio.run(phase.execute(state, objective="Can you check this?"))
+
+    assert state.cognition.modifiers["inferred_intent"] == "needs help"
+    assert state.cognition.modifiers["user_subtext"] == "anxious"
+    assert state.cognition.modifiers["momentum"] == "flowing"
+    assert state.cognition.modifiers["conversation_hooks"] == ["runtime health"]
+    assert state.cognition.modifiers["deep_inference_status"]["status"] == "ok"
+
+
+def test_inference_phase_marks_parse_failure_explicitly():
+    from core.phases.inference_phase import InferencePhase
+    from core.service_names import ServiceNames
+    from core.state.aura_state import AuraState
+
+    class _Router:
+        async def think(self, *_args, **_kwargs) -> str:
+            return "no structured object"
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return _Router() if name == ServiceNames.LLM_ROUTER else default
+
+    state = AuraState.default()
+    state.cognition.current_origin = "user"
+    phase = InferencePhase(_Container())
+
+    asyncio.run(phase.execute(state, objective="Can you check this?"))
+
+    status = state.cognition.modifiers["deep_inference_status"]
+    assert status["status"] == "degraded"
+    recent = get_degradation_tracker().recent(subsystem="inference_phase")
+    assert recent[-1].severity == "warning"
+    assert "explicit degraded inference status" in recent[-1].action
