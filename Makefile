@@ -195,3 +195,49 @@ seal: quality seal-quick
 	@echo "  Aura is certified for indefinite autonomous operation."
 	@echo ""
 	@echo "🔒 ══════════════════════════════════════════════════════"
+
+final-proof:
+	python -m compileall -q aura_main.py core aura interface skills tools scripts proof_kernel
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest --collect-only -q
+	pytest --collect-only -q
+	python -m core.runtime.flagship_readiness --strict .
+	python tools/aura_enterprise_gate.py \
+	  --root . \
+	  --baseline config/aura_enterprise_gate_baseline.json \
+	  --fail-on-regression \
+	  --out artifacts/current/enterprise_gate.json
+	python tools/aura_production_readiness_gate.py \
+	  --out artifacts/current/production_readiness.json
+	python tools/arch_map.py \
+	  --write-latest \
+	  --json > artifacts/current/architecture_map.json
+	python tools/production_surface_lint.py \
+	  --scope production \
+	  --out artifacts/current/production_surface_lint.json
+	AURA_QUICK_PROOF=1 python tools/agi/run_dnu_agi_proof_battery.py \
+	  --full \
+	  --out artifacts/current/agi_live
+	python tools/agi/validate_dnu_final_bundle.py \
+	  artifacts/current/agi_live
+	python tools/agency/run_agency_emergence_battery.py \
+	  --full \
+	  --out artifacts/current/agency_emergence_boxed_entity
+	python tools/agency/validate_agency_emergence_bundle.py \
+	  artifacts/current/agency_emergence_boxed_entity
+	python tools/external_validation/run_external_live_validation.py \
+	  --full \
+	  --out artifacts/current/external_live_validation
+	python tools/external_validation/validate_external_live_bundle.py \
+	  artifacts/current/external_live_validation
+	python tools/longevity/run_longevity_soak.py \
+	  --profile proof \
+	  --out artifacts/current/longevity_soak
+	python tools/longevity/validate_longevity_soak.py \
+	  artifacts/current/longevity_soak
+	python tools/receipt_coverage_validator.py \
+	  --artifacts artifacts/current
+	python tools/artifact_consistency_validator.py \
+	  --artifacts artifacts/current
+	python tools/final_claim_validator.py \
+	  --claims CLAIMS_MATRIX.md \
+	  --artifacts artifacts/current

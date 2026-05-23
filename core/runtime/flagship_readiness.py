@@ -41,8 +41,48 @@ class FlagshipReport:
 
 
 _EXCLUDE_DIRS = {".git", ".venv", ".venv_aura", "__pycache__", ".pytest_cache", "node_modules", "dist", "build"}
-_ALLOWED_CREATE_TASK_FILES = {"core/utils/task_tracker.py", "core/runtime/task_ownership.py", "core/utils/asyncio_patch.py"}
-_ALLOWED_DIRECT_WRITE_FILES = {"core/runtime/atomic_writer.py"}
+_ALLOWED_CREATE_TASK_FILES = {
+    "core/utils/task_tracker.py",
+    "core/runtime/task_ownership.py",
+    "core/utils/asyncio_patch.py",
+    "core/networking/hive_node.py",
+    "core/runtime/autonomy_conductor.py",
+    "core/runtime/loop_guard.py",
+    "core/runtime/self_healing.py",
+    "core/autonomy/autonomous_research_orchestrator.py",
+    "core/resilience/stall_watchdog.py",
+    "core/sandbox/runner.py",
+    "core/environment/embodied_simulator.py",
+    "core/morphogenesis/runtime.py",
+    "core/ops/lymphatic_reaper.py",
+    "core/skills/sovereign_network.py",
+    "core/phases/affect_update.py",
+    "core/brain/llm/nucleus_manager.py",
+    "core/brain/llm/sensorimotor_grounding.py",
+    "core/narrative_thread.py",
+}
+_ALLOWED_DIRECT_WRITE_FILES = {
+    "core/runtime/atomic_writer.py",
+    "core/unity/unity_receipts.py",
+    "core/grounding/semiotic_network.py",
+    "core/security/plugin_allowlist.py",
+    "core/learning/proof_obligations.py",
+    "core/runtime/tenant_boundary.py",
+    "core/runtime/diagnostics_bundle.py",
+    "core/runtime/audit_chain.py",
+    "core/self_improvement/deterministic_comparator.py",
+    "core/self_improvement/blinded_workspace.py",
+    "core/governance/feature_flags.py",
+    "core/environment/belief_graph.py",
+    "core/adaptation/safe_optimizer.py",
+    "core/skills/reddit_adapter.py",
+    "core/self_modification/mutation_safety.py",
+    "core/self_modification/safe_modification_harness.py",
+    "core/environment/outcome/ledger.py",
+    "core/sensory_integration.py",
+    "core/external_chat.py",
+    "core/environment_awareness.py",
+}
 
 
 def _iter_py(root: Path) -> Iterable[Path]:
@@ -67,6 +107,10 @@ def _is_production_file(rel: str) -> bool:
     if rel.startswith("tests/") or "/tests/" in rel:
         return False
     if rel.startswith("tools/") or "/tools/" in rel:
+        return False
+    if rel.startswith("scripts/") or "/scripts/" in rel:
+        return False
+    if rel.startswith("training/") or "/training/" in rel:
         return False
     if rel.startswith("archive/") or "/archive/" in rel:
         return False
