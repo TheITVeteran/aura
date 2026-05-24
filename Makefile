@@ -214,7 +214,7 @@ final-proof:
 	python tools/production_surface_lint.py \
 	  --scope production \
 	  --out artifacts/current/production_surface_lint.json
-	AURA_QUICK_PROOF=1 python tools/agi/run_dnu_agi_proof_battery.py \
+	python tools/agi/run_dnu_agi_proof_battery.py \
 	  --full \
 	  --out artifacts/current/agi_live
 	python tools/agi/validate_dnu_final_bundle.py \

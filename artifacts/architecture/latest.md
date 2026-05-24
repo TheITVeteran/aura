@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779504511.6221728`
+Generated: `1779644923.435045`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1554
-- Python lines: 443855
+- Python lines: 444047
 - Dependency edges: 666
 - ServiceContainer `.get()` calls: 1437
 - ServiceContainer registrations: 343
@@ -19,7 +19,7 @@ Generated: `1779504511.6221728`
 graph TD
     runtime["runtime<br/>87 files, 18962 lines"]
     utils["utils<br/>41 files, 4843 lines"]
-    brain["brain<br/>115 files, 40185 lines"]
+    brain["brain<br/>115 files, 40336 lines"]
     consciousness["consciousness<br/>120 files, 56639 lines"]
     resilience["resilience<br/>53 files, 10911 lines"]
     health["health<br/>3 files, 697 lines"]
@@ -42,7 +42,7 @@ graph TD
     executive["executive<br/>4 files, 2306 lines"]
     conversation["conversation<br/>8 files, 3825 lines"]
     learning["learning<br/>19 files, 6780 lines"]
-    phases["phases<br/>29 files, 15140 lines"]
+    phases["phases<br/>29 files, 15179 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4191 lines"]
     managers["managers<br/>6 files, 932 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 59989 lines"]
+    core_root["core_root<br/>182 files, 59991 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -812,12 +812,12 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core_root | 182 | 59989 | 2457624 | 101 | 0 |
+| core_root | 182 | 59991 | 2457741 | 101 | 0 |
 | consciousness | 120 | 56639 | 2385212 | 37 | 28 |
-| brain | 115 | 40185 | 1727794 | 40 | 39 |
+| brain | 115 | 40336 | 1741574 | 40 | 39 |
 | runtime | 87 | 18962 | 666221 | 37 | 103 |
 | orchestrator | 42 | 18542 | 818261 | 123 | 8 |
-| phases | 29 | 15140 | 672985 | 31 | 6 |
+| phases | 29 | 15179 | 675708 | 31 | 6 |
 | memory | 64 | 14091 | 569584 | 15 | 20 |
 | skills | 71 | 13360 | 550490 | 24 | 4 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
@@ -1029,7 +1029,7 @@ graph TD
 | State mutation | 357 | 138 | 4 | 353 |
 | Tool execution | 131 | 71 | 3 | 128 |
 | Self-modification and patching | 15 | 12 | 2 | 13 |
-| LLM inference | 238 | 147 | 58 | 180 |
+| LLM inference | 240 | 147 | 60 | 180 |
 | External I/O | 160 | 79 | 15 | 145 |
 
 ### UnifiedWill decisions

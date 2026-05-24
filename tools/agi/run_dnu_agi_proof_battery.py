@@ -266,18 +266,15 @@ async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: async
     }
     t0 = time.time()
     try:
-        if os.environ.get("AURA_QUICK_PROOF") == "1":
-            response = "<answer>Alice</answer>"
-        else:
-            async with sem:
-                response = await asyncio.wait_for(
-                    router.generate(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        origin="test",
-                    ),
-                    timeout=120,
-                )
+        async with sem:
+            response = await asyncio.wait_for(
+                router.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    origin="test",
+                ),
+                timeout=120,
+            )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
         result["status"] = "success"
@@ -330,18 +327,15 @@ async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio
     }
     t0 = time.time()
     try:
-        if os.environ.get("AURA_QUICK_PROOF") == "1":
-            response = "<answer>Alice</answer>"
-        else:
-            async with sem:
-                response = await asyncio.wait_for(
-                    router.generate(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        origin="test",
-                    ),
-                    timeout=120,
-                )
+        async with sem:
+            response = await asyncio.wait_for(
+                router.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    origin="test",
+                ),
+                timeout=120,
+            )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
         result["status"] = "success"
@@ -420,25 +414,19 @@ async def execute_task(engine, task: dict, timeout_s: int = 120) -> dict:
 
     t0 = time.time()
     try:
-        if os.environ.get("AURA_QUICK_PROOF") == "1":
-            thought_content = "<answer>Alice</answer>"
-            result["response_text"] = thought_content
-            result["elapsed_s"] = 0.001
-            result["status"] = "success"
-        else:
-            # Execute through CognitiveEngine with origin="test" to avoid
-            # background suppression and user-facing constraints
-            thought = await asyncio.wait_for(
-                engine.think(
-                    objective=prompt,
-                    origin="test",
-                ),
-                timeout=budget,
-            )
+        # Execute through CognitiveEngine with origin="test" to avoid
+        # background suppression and user-facing constraints
+        thought = await asyncio.wait_for(
+            engine.think(
+                objective=prompt,
+                origin="test",
+            ),
+            timeout=budget,
+        )
 
-            result["response_text"] = thought.content or ""
-            result["elapsed_s"] = time.time() - t0
-            result["status"] = "success"
+        result["response_text"] = thought.content or ""
+        result["elapsed_s"] = time.time() - t0
+        result["status"] = "success"
 
         # Extract answer from <answer> tags
         extracted = extract_answer_tag(result["response_text"])
@@ -954,12 +942,10 @@ async def main():
     # -----------------------------------------------------------------------
     print("\nRunning raw LLM and ReAct agent baselines...")
     # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
-    is_live_test = os.environ.get("AURA_AGI_LIVE_TEST") == "1"
-    cap_limit = 1 if is_live_test else 6
-    comparison_tasks = all_tasks[:cap_limit] if len(all_tasks) > cap_limit else all_tasks
-    print(f"  Using {len(comparison_tasks)} representative tasks for comparisons to save time.")
+    comparison_tasks = all_tasks
+    print(f"  Using all {len(comparison_tasks)} tasks for full-distribution comparisons.")
 
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(1)
     raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]
     react_tasks = [execute_react_task(router, task, grader_data, sem) for task in comparison_tasks]
 

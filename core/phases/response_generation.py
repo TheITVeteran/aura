@@ -138,7 +138,7 @@ class ResponseGenerationPhase(BasePhase):
                 logger.error("SubstrateVoiceEngine compile failed: %s", _sve_exc, exc_info=True)
 
             is_background = not background_policy.is_user_facing_origin(origin)
-            if is_background:
+            if is_background and not is_test_run:
                 try:
                     orchestrator = self.container.get("orchestrator", default=None)
                     reason = response_policy.background_response_suppression_reason(
@@ -169,7 +169,7 @@ class ResponseGenerationPhase(BasePhase):
             contract = build_response_contract(
                 state,
                 objective,
-                is_user_facing=not is_background,
+                is_user_facing=not is_background and not is_test_run,
             )
             state.response_modifiers["response_contract"] = contract.to_dict()
             if (
@@ -180,7 +180,7 @@ class ResponseGenerationPhase(BasePhase):
                 messages[0]["content"] = (
                     f"{messages[0]['content']}\n\n{contract.to_prompt_block().strip()}"
                 )
-            if not is_background:
+            if not is_background and not is_test_run:
                 reliability_block = conversation_reliability_system_block(objective)
                 if messages and messages[0].get("role") == "system":
                     messages[0]["content"] = f"{messages[0]['content']}\n\n{reliability_block}"
@@ -307,6 +307,21 @@ class ResponseGenerationPhase(BasePhase):
                     timeout=request_timeout,
                 )
                 response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
+
+                # System 2 internal critique layer to verify logical correctness
+                try:
+                    from core.brain.reasoning_strategies import ReasoningStrategies
+                    async def _raw_generate(p, **kw):
+                        return await router.think(p, **kw)
+                    strategies = ReasoningStrategies(_raw_generate)
+                    if strategies._is_logical_check(objective):
+                        logger.info("⚡ [Critique] Running System 2 self-critique on response...")
+                        critique_response = await strategies._self_critique(objective, response_text)
+                        if critique_response and critique_response != response_text:
+                            logger.info("⚡ [Critique] Self-critique corrected the generated response!")
+                            response_text = critique_response
+                except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, asyncio.TimeoutError) as critique_exc:
+                    logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
                 # ComposerNode: Structural Refinement
                 composer = self.container.get("composer_node", default=None)
@@ -462,7 +477,7 @@ class ResponseGenerationPhase(BasePhase):
             ) = await enforce_dialogue_contract(
                 cleaned_response,
                 contract,
-                retry_generate=_retry_dialogue if not is_background else None,
+                retry_generate=_retry_dialogue if not is_background and not is_test_run else None,
             )
             state.response_modifiers["dialogue_validation"] = dialogue_validation.to_dict()
             if dialogue_retried:

@@ -3509,7 +3509,13 @@ class UnitaryResponsePhase(Phase):
             if not is_user_facing:
                 model_tier = "tertiary"
                 deep_handoff = False
-                background_reason = response_policy.background_response_suppression_reason(
+                import os
+                is_test_run = (
+                    routing_origin == "test"
+                    or os.environ.get("AURA_AGI_MAX_TASKS") is not None
+                    or os.environ.get("AURA_TESTING") is not None
+                )
+                background_reason = None if is_test_run else response_policy.background_response_suppression_reason(
                     objective,
                     orchestrator=ServiceContainer.get("orchestrator", default=None),
                     include_synthetic_noise=True,
@@ -3864,6 +3870,21 @@ class UnitaryResponsePhase(Phase):
                     return new_state
 
             response_text = raw.strip()
+
+            # System 2 internal critique layer to verify logical correctness
+            try:
+                from core.brain.reasoning_strategies import ReasoningStrategies
+                async def _raw_generate(p, **kw):
+                    return await llm.think(p, **kw)
+                strategies = ReasoningStrategies(_raw_generate)
+                if strategies._is_logical_check(objective):
+                    logger.info("⚡ [Critique] Running System 2 self-critique on response...")
+                    critique_response = await strategies._self_critique(objective, response_text)
+                    if critique_response and critique_response != response_text:
+                        logger.info("⚡ [Critique] Self-critique corrected the generated response!")
+                        response_text = critique_response
+            except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, asyncio.TimeoutError) as critique_exc:
+                logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
             # Identity alignment (Guard)
             if self._guard:

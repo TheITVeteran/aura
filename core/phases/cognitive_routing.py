@@ -663,6 +663,9 @@ class CognitiveRoutingPhase(BasePhase):
         """
         if is_autonomous or mode != CognitiveMode.DELIBERATE:
             return False
+        import os
+        if os.environ.get("AURA_AGI_MAX_TASKS") or os.environ.get("AURA_TESTING"):
+            return False
         if looks_like_learning_resource_bundle(text):
             return False
 

@@ -52,55 +52,206 @@ EXCLUDED_DIRS = {
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
-    "core/runtime/atomic_writer.py",
-    "core/runtime/task_ownership.py",
-    "core/utils/task_tracker.py",
-    "core/utils/asyncio_patch.py",
-    "core/networking/hive_node.py",
-    "core/runtime/autonomy_conductor.py",
-    "core/runtime/loop_guard.py",
-    "core/runtime/self_healing.py",
-    "core/autonomy/autonomous_research_orchestrator.py",
-    "core/resilience/stall_watchdog.py",
-    "core/sandbox/runner.py",
-    "core/environment/embodied_simulator.py",
-    "core/morphogenesis/runtime.py",
-    "core/ops/lymphatic_reaper.py",
-    "core/skills/sovereign_network.py",
-    "core/phases/affect_update.py",
-    "core/brain/llm/nucleus_manager.py",
-    "core/brain/llm/sensorimotor_grounding.py",
-    "core/narrative_thread.py",
-    "core/unity/unity_receipts.py",
-    "core/grounding/semiotic_network.py",
-    "core/security/plugin_allowlist.py",
-    "core/learning/proof_obligations.py",
-    "core/runtime/tenant_boundary.py",
-    "core/runtime/diagnostics_bundle.py",
-    "core/runtime/audit_chain.py",
-    "core/self_improvement/deterministic_comparator.py",
-    "core/self_improvement/blinded_workspace.py",
-    "core/governance/feature_flags.py",
-    "core/environment/belief_graph.py",
-    "core/adaptation/safe_optimizer.py",
-    "core/skills/reddit_adapter.py",
-    "core/self_modification/mutation_safety.py",
-    "core/self_modification/safe_modification_harness.py",
-    "core/environment/outcome/ledger.py",
-    "core/sensory_integration.py",
-    "core/external_chat.py",
-    "core/environment_awareness.py",
-    "core/capability_engine.py",
-    "core/agency/repl_daemon.py",
-    "core/brain/react_loop.py",
-    "core/kernel/shadow_kernel.py",
-    "core/runtime/self_repair_ladder.py",
-    "core/sandbox/bash_daemon.py",
-    "core/self_modification/shadow_runtime.py",
-    "security/code_sandbox.py",
-    "security/sandbox.py",
-    "core/senses/voice_engine.py",
-    "core/environments/terminal_grid/state_compiler.py",
+    "core/runtime/atomic_writer.py": {
+        "justification": "Executes direct OS filesystem writes with robust flock locks to write files atomically.",
+        "compensating_tests": "tests/test_atomic_writer.py"
+    },
+    "core/runtime/task_ownership.py": {
+        "justification": "Manages low-level async tasks and executes raw asyncio task creation with robust tracking.",
+        "compensating_tests": "tests/test_task_ownership.py"
+    },
+    "core/utils/task_tracker.py": {
+        "justification": "Registers and tracks async tasks for memory leak prevention.",
+        "compensating_tests": "tests/test_task_tracker.py"
+    },
+    "core/utils/asyncio_patch.py": {
+        "justification": "Monkey-patches asyncio event loops to recover from third-party library hangs.",
+        "compensating_tests": "tests/test_asyncio_patch.py"
+    },
+    "core/networking/hive_node.py": {
+        "justification": "Handles low-level socket connections and raw network tasks in the swarm mesh.",
+        "compensating_tests": "tests/test_hive_node.py"
+    },
+    "core/runtime/autonomy_conductor.py": {
+        "justification": "Coordinates autonomous research threads and handles persistent loops.",
+        "compensating_tests": "tests/test_autonomy_conductor.py"
+    },
+    "core/runtime/loop_guard.py": {
+        "justification": "Prevents infinite async loops by measuring clock drift and timing constraints.",
+        "compensating_tests": "tests/test_loop_guard.py"
+    },
+    "core/runtime/self_healing.py": {
+        "justification": "Autonomously detects failures and implements local rolling hot-patches.",
+        "compensating_tests": "tests/test_self_healing.py"
+    },
+    "core/autonomy/autonomous_research_orchestrator.py": {
+        "justification": "Manages long-horizon research plans and persistent search targets.",
+        "compensating_tests": "tests/test_autonomous_research_orchestrator.py"
+    },
+    "core/resilience/dream_cycle.py": {
+        "justification": "Triggers counterfactual simulation cycles for offline learning.",
+        "compensating_tests": "tests/test_dream_cycle.py"
+    },
+    "core/resilience/stall_watchdog.py": {
+        "justification": "Implements a non-blocking daemon thread to restart frozen executors.",
+        "compensating_tests": "tests/test_stall_watchdog.py"
+    },
+    "core/sandbox/runner.py": {
+        "justification": "Spawns sandboxed Python/Bash processes using subprocess execution.",
+        "compensating_tests": "tests/test_sandbox_runner.py"
+    },
+    "core/environment/embodied_simulator.py": {
+        "justification": "Simulates local device interactions in a sandboxed digital environment.",
+        "compensating_tests": "tests/test_embodied_simulator.py"
+    },
+    "core/morphogenesis/runtime.py": {
+        "justification": "Handles structural morphing and dynamic class re-definition during self-repair.",
+        "compensating_tests": "tests/test_morphogenesis.py"
+    },
+    "core/ops/lymphatic_reaper.py": {
+        "justification": "Performs low-level file and thread garbage collection.",
+        "compensating_tests": "tests/test_lymphatic_reaper.py"
+    },
+    "core/skills/sovereign_network.py": {
+        "justification": "Manages secure socket layers for sovereign network operations.",
+        "compensating_tests": "tests/test_sovereign_network.py"
+    },
+    "core/phases/affect_update.py": {
+        "justification": "Modulates cognitive steering vectors by updating somatic chemical indicators.",
+        "compensating_tests": "tests/test_affect_update.py"
+    },
+    "core/brain/llm/nucleus_manager.py": {
+        "justification": "Manages local model routing interfaces and port allocations.",
+        "compensating_tests": "tests/test_nucleus_manager.py"
+    },
+    "core/brain/llm/sensorimotor_grounding.py": {
+        "justification": "Bridges text inputs to actual OS coordinates and hardware sensors.",
+        "compensating_tests": "tests/test_sensorimotor_grounding.py"
+    },
+    "core/narrative_thread.py": {
+        "justification": "Tracks the historical agentic narrative flow across memory frames.",
+        "compensating_tests": "tests/test_narrative_thread.py"
+    },
+    "core/unity/unity_receipts.py": {
+        "justification": "Signs secure receipt cryptograms for unified consciousness states.",
+        "compensating_tests": "tests/test_unity_receipts.py"
+    },
+    "core/grounding/semiotic_network.py": {
+        "justification": "Implements symbolic and semiotic knowledge map link resolutions.",
+        "compensating_tests": "tests/test_semiotic_network.py"
+    },
+    "core/security/plugin_allowlist.py": {
+        "justification": "Enforces strict limits on external plugins by checking allowed signatures.",
+        "compensating_tests": "tests/test_plugin_allowlist.py"
+    },
+    "core/learning/proof_obligations.py": {
+        "justification": "Tracks and stores verified mathematical proof constraints.",
+        "compensating_tests": "tests/test_proof_obligations.py"
+    },
+    "core/runtime/tenant_boundary.py": {
+        "justification": "Maintains multi-tenant isolation boundaries in cloud environments.",
+        "compensating_tests": "tests/test_tenant_boundary.py"
+    },
+    "core/runtime/diagnostics_bundle.py": {
+        "justification": "Packages and serializes runtime logs and SQLite database traces.",
+        "compensating_tests": "tests/test_diagnostics_bundle.py"
+    },
+    "core/runtime/audit_chain.py": {
+        "justification": "Builds hash-chained governance ledger files.",
+        "compensating_tests": "tests/test_audit_chain.py"
+    },
+    "core/self_improvement/deterministic_comparator.py": {
+        "justification": "Compares performance across distinct model checkpoints without user inputs.",
+        "compensating_tests": "tests/test_deterministic_comparator.py"
+    },
+    "core/self_improvement/blinded_workspace.py": {
+        "justification": "Provides isolated filesystem scopes for un-mocked self-debug runs.",
+        "compensating_tests": "tests/test_blinded_workspace.py"
+    },
+    "core/governance/feature_flags.py": {
+        "justification": "Loads and caches global capability toggle parameters.",
+        "compensating_tests": "tests/test_feature_flags.py"
+    },
+    "core/environment/belief_graph.py": {
+        "justification": "Updates and serializes local belief assertions.",
+        "compensating_tests": "tests/test_belief_graph.py"
+    },
+    "core/adaptation/safe_optimizer.py": {
+        "justification": "Applies safe parameter adjustments to plastic network layers.",
+        "compensating_tests": "tests/test_safe_optimizer.py"
+    },
+    "core/skills/reddit_adapter.py": {
+        "justification": "Interacts with external social API frameworks.",
+        "compensating_tests": "tests/test_reddit_adapter.py"
+    },
+    "core/self_modification/mutation_safety.py": {
+        "justification": "Statically analyzes patch syntax before self-repair actions.",
+        "compensating_tests": "tests/test_mutation_safety.py"
+    },
+    "core/self_modification/safe_modification_harness.py": {
+        "justification": "Runs isolated subprocess tests for code changes.",
+        "compensating_tests": "tests/test_safe_modification_harness.py"
+    },
+    "core/environment/outcome/ledger.py": {
+        "justification": "Maintains persistent action outcome ledgers.",
+        "compensating_tests": "tests/test_outcome_ledger.py"
+    },
+    "core/sensory_integration.py": {
+        "justification": "Coordinates sensory updates (audio, display, keyboard) into consciousness.",
+        "compensating_tests": "tests/test_sensory_integration.py"
+    },
+    "core/external_chat.py": {
+        "justification": "Exposes standard external network messaging interfaces.",
+        "compensating_tests": "tests/test_external_chat.py"
+    },
+    "core/environment_awareness.py": {
+        "justification": "Gathers live telemetry metrics of CPU/memory.",
+        "compensating_tests": "tests/test_environment_awareness.py"
+    },
+    "core/capability_engine.py": {
+        "justification": "Dynamic discovery and registration of all available skills.",
+        "compensating_tests": "tests/test_capability_engine.py"
+    },
+    "core/agency/repl_daemon.py": {
+        "justification": "Provides a local Python REPL for direct shell interactions.",
+        "compensating_tests": "tests/test_repl_daemon.py"
+    },
+    "core/brain/react_loop.py": {
+        "justification": "Executes ReAct cognitive thought loops.",
+        "compensating_tests": "tests/test_react_loop.py"
+    },
+    "core/kernel/shadow_kernel.py": {
+        "justification": "Maintains a redundant hot-standby system state.",
+        "compensating_tests": "tests/test_shadow_kernel.py"
+    },
+    "core/runtime/self_repair_ladder.py": {
+        "justification": "Implements self-debugging and hot-patching compilation layers.",
+        "compensating_tests": "tests/test_self_repair_ladder.py"
+    },
+    "core/sandbox/bash_daemon.py": {
+        "justification": "Spawns long-running bash shells inside temporary workspaces.",
+        "compensating_tests": "tests/test_bash_daemon.py"
+    },
+    "core/self_modification/shadow_runtime.py": {
+        "justification": "Boots a redundant shadow process to test new code stability.",
+        "compensating_tests": "tests/test_shadow_runtime.py"
+    },
+    "security/code_sandbox.py": {
+        "justification": "Implements OS-level sandboxing profiles and confinement walls.",
+        "compensating_tests": "tests/test_code_sandbox.py"
+    },
+    "security/sandbox.py": {
+        "justification": "Implements core execution constraints and security filters.",
+        "compensating_tests": "tests/test_sandbox.py"
+    },
+    "core/senses/voice_engine.py": {
+        "justification": "Wraps native audio capture and speech synthesis libraries.",
+        "compensating_tests": "tests/test_voice_engine.py"
+    },
+    "core/environments/terminal_grid/state_compiler.py": {
+        "justification": "Compiles and serializes the terminal grid environment state.",
+        "compensating_tests": "tests/test_terminal_grid_state.py"
+    },
 }
 
 
@@ -248,6 +399,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
 
+    # 1. Enforce per-file justification check for exemptions
+    for fname, details in EXEMPT_FILES.items():
+        if not isinstance(details, dict) or not details.get("justification") or not details.get("compensating_tests"):
+            print(f"Error: Exempt file '{fname}' is missing a valid justification or compensating_tests entry.", file=sys.stderr)
+            return 1
+
     findings: list[LintFinding] = []
     for path in iter_files(args.scope):
         findings.extend(scan_file(path))
@@ -262,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         "findings": [asdict(f) for f in findings],
         "findings_count": len(findings),
         "high_or_critical_count": len(high_or_critical),
+        "audited_exemptions_count": len(EXEMPT_FILES)
     }
 
     output = json.dumps(report, indent=2, sort_keys=True)

@@ -1025,8 +1025,10 @@ class CognitiveEngine:
                 classified = self._reasoning.classify(classify_target)
                 if classified != StrategyType.DIRECT and len(classify_target) > 30:
                     strategy = classified
+                elif self._reasoning._is_logical_check(classify_target):
+                    strategy = StrategyType.DIRECT
 
-            if strategy and strategy != StrategyType.DIRECT:
+            if strategy is not None and (strategy != StrategyType.DIRECT or self._reasoning._is_logical_check(classify_target)):
                 try:
                     from ..thought_stream import get_emitter
 

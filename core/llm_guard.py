@@ -159,7 +159,9 @@ def validate_json_response(raw: str, expected_keys: list[str] | None = None) -> 
 
 def _validate_keys(obj: Any, expected_keys: list[str] | None = None) -> tuple[bool, Any, str]:
     """Helper to check for mandatory keys."""
-    if expected_keys and isinstance(obj, dict):
+    if expected_keys:
+        if not isinstance(obj, dict):
+            return False, obj, f"Expected JSON object (dict) to validate keys, got {type(obj).__name__}"
         missing = [k for k in expected_keys if k not in obj]
         if missing:
             return False, obj, f"Response missing expected keys: {missing}"
