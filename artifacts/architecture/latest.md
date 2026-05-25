@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779644923.435045`
+Generated: `1779690114.73885`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1554
-- Python lines: 444047
+- Python lines: 444140
 - Dependency edges: 666
 - ServiceContainer `.get()` calls: 1437
 - ServiceContainer registrations: 343
@@ -19,7 +19,7 @@ Generated: `1779644923.435045`
 graph TD
     runtime["runtime<br/>87 files, 18962 lines"]
     utils["utils<br/>41 files, 4843 lines"]
-    brain["brain<br/>115 files, 40336 lines"]
+    brain["brain<br/>115 files, 40352 lines"]
     consciousness["consciousness<br/>120 files, 56639 lines"]
     resilience["resilience<br/>53 files, 10911 lines"]
     health["health<br/>3 files, 697 lines"]
@@ -42,7 +42,7 @@ graph TD
     executive["executive<br/>4 files, 2306 lines"]
     conversation["conversation<br/>8 files, 3825 lines"]
     learning["learning<br/>19 files, 6780 lines"]
-    phases["phases<br/>29 files, 15179 lines"]
+    phases["phases<br/>29 files, 15256 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4191 lines"]
     managers["managers<br/>6 files, 932 lines"]
@@ -814,10 +814,10 @@ graph TD
 | --- | ---: | ---: | ---: | ---: | ---: |
 | core_root | 182 | 59991 | 2457741 | 101 | 0 |
 | consciousness | 120 | 56639 | 2385212 | 37 | 28 |
-| brain | 115 | 40336 | 1741574 | 40 | 39 |
+| brain | 115 | 40352 | 1742980 | 40 | 39 |
 | runtime | 87 | 18962 | 666221 | 37 | 103 |
 | orchestrator | 42 | 18542 | 818261 | 123 | 8 |
-| phases | 29 | 15179 | 675708 | 31 | 6 |
+| phases | 29 | 15256 | 680876 | 31 | 6 |
 | memory | 64 | 14091 | 569584 | 15 | 20 |
 | skills | 71 | 13360 | 550490 | 24 | 4 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
@@ -1226,8 +1226,8 @@ Review candidates:
 - `core/autonomic/iot_bridge.py:89` [autonomic] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/autonomy/content_fetcher.py:584` [autonomy] `urllib.request.Request` - req = urllib.request.Request(url, headers={"User-Agent": "Aura/1.0 (+research)"})
 - `core/autonomy/content_fetcher.py:587` [autonomy] `urllib.request.urlopen` - with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-- `core/brain/llm/gemini_adapter.py:312` [brain] `httpx.AsyncClient` - self._client = httpx.AsyncClient(
-- `core/brain/llm/gemini_adapter.py:313` [brain] `httpx.Timeout` - timeout=httpx.Timeout(self.timeout, connect=10.0),
+- `core/brain/llm/gemini_adapter.py:316` [brain] `httpx.AsyncClient` - self._client = httpx.AsyncClient(
+- `core/brain/llm/gemini_adapter.py:317` [brain] `httpx.Timeout` - timeout=httpx.Timeout(self.timeout, connect=10.0),
 - `core/brain/llm/llm_router.py:327` [brain] `httpx.AsyncClient` - async with httpx.AsyncClient(timeout=self.endpoint.timeout) as client:
 - `core/brain/llm/local_llm_setup.py:78` [brain] `httpx.AsyncClient` - async with httpx.AsyncClient() as client:
 - `core/brain/llm/local_llm_setup.py:101` [brain] `subprocess.run` - subprocess.run(
