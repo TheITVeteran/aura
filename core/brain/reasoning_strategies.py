@@ -562,7 +562,13 @@ class ReasoningStrategies:
         if critique_result and len(critique_result.strip()) > 0:
             # If the critic just confirms correctness or doesn't provide a corrected tag when the original had one, keep the original
             lower_critique = critique_result.lower()
-            if "100% correct" in lower_critique or "is correct" in lower_critique or "proposed answer is correct" in lower_critique:
+            confirm_phrases = (
+                "100% correct", "is correct", "proposed answer is correct",
+                "no corrections", "no correction", "looks correct",
+                "answer is correct", "answer looks correct", "is accurate",
+                "correct.", "correct:", "proposed answer is accurate"
+            )
+            if any(phrase in lower_critique for phrase in confirm_phrases):
                 return response
             if "<answer>" in response.lower() and "<answer>" not in critique_result.lower():
                 return response

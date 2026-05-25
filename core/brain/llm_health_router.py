@@ -1522,7 +1522,9 @@ class HealthAwareLLMRouter:
                 logger.warning("🛡️ Tier Lock: Background task attempted to use '%s' tier. Demoting to 'tertiary'.", prefer_tier)
             prefer_tier = "tertiary"
             deep_handoff = False
-            allow_cloud_fallback = False
+            # Allow explicit cloud fallback requests to bypass demotion lock
+            if not kwargs.get("allow_cloud_fallback", False):
+                allow_cloud_fallback = False
         elif prefer_tier == "secondary" and not deep_handoff:
             logger.info("🛡️ Router: suppressing implicit secondary request without explicit deep handoff.")
             prefer_tier = "primary"

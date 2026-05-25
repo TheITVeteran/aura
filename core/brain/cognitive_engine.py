@@ -734,6 +734,43 @@ class CognitiveEngine:
             )
             return self._empty_thought(mode, "background_cycle_no_response")
 
+        # If the objective requires a strict answer format, do not return conversational evasive fallbacks.
+        # Instead, attempt a direct, single-turn LLM generation as a high-fidelity recovery mechanism.
+        is_strict_answer = "<answer>" in objective.lower() or "answer_format" in kwargs
+        if is_strict_answer:
+            logger.warning("⚠️ [COGNITION] Structured answer required but phase execution produced no response. Running last-resort direct recovery...")
+            try:
+                from core.brain.llm_health_router import get_llm_router
+                router = get_llm_router()
+                system_prompt = (
+                    "You are a precise solver. Solve the user's problem directly. "
+                    "Put your final answer strictly inside <answer>...</answer> tags. "
+                    "Do not include any conversational preamble."
+                )
+                # Force cloud fallback for last-resort recovery
+                content = await router.think(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": objective}
+                    ],
+                    origin=f"recovery_{origin}",
+                    allow_cloud_fallback=True,
+                    prefer_tier="primary",
+                    protected_foreground_lane=True
+                )
+                if content and len(content.strip()) > 0:
+                    thought = Thought(
+                        id=str(uuid.uuid4()),
+                        content=content,
+                        mode=mode,
+                        confidence=0.8,
+                        reasoning=["Last-resort direct structured recovery succeeded."],
+                    )
+                    self.thoughts.append(thought)
+                    return thought
+            except Exception as rec_err:
+                logger.error("Failed last-resort structured recovery: %s", rec_err)
+
         import random
 
         _processing_fallbacks = [
