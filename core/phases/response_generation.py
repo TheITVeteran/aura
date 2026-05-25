@@ -431,6 +431,45 @@ class ResponseGenerationPhase(BasePhase):
                         else:
                             content = response_text
 
+            # Proactive XML Answer Tag formatting guard:
+            # If the user prompt or system instruction requires XML answer tagging (e.g. "<answer>"),
+            # but the model's generated text doesn't contain a valid "<answer>...</answer>" tag:
+            # We use a robust regex parsing cascade to extract the plain-text answer from the model's explanation,
+            # and automatically wrap it in a clean "<answer>...</answer>" block at the end of the text.
+            lower_objective = objective.lower() if objective else ""
+            lower_response = content.lower() if content else ""
+            if ("<answer>" in lower_objective or "answer_format" in kwargs) and content and not "<answer>" in lower_response:
+                import re
+                extracted_ans = None
+                
+                # 1. Look for markdown bolded final answer (e.g. **Answer**: 5 or **Final Answer**: Alice)
+                match = re.search(r"\*\*(?:final\s+)?answer\*\*:\s*([^\n]+)", content, re.IGNORECASE)
+                if match:
+                    extracted_ans = match.group(1).strip()
+                
+                # 2. Look for plain-text answer prefix (e.g. Final Answer: same)
+                if not extracted_ans:
+                    match = re.search(r"(?:final\s+)?answer:\s*([^\n]+)", content, re.IGNORECASE)
+                    if match:
+                        extracted_ans = match.group(1).strip()
+                
+                # 3. Look for concluding "therefore, the answer is X"
+                if not extracted_ans:
+                    match = re.search(r"(?:therefore|thus|hence|so),\s*(?:the\s+)?answer\s+(?:is|must\s+be)\s+([^\n.]+)", content, re.IGNORECASE)
+                    if match:
+                        extracted_ans = match.group(1).strip()
+                
+                # 4. If the response is short enough (e.g. under 60 chars) and has no explanation, use the whole text
+                if not extracted_ans and len(content.strip()) < 60 and not any(k in lower_response for k in ("because", "since", "as we", "therefore")):
+                    extracted_ans = content.strip()
+                
+                if extracted_ans:
+                    # Clean trailing punctuation
+                    extracted_ans = extracted_ans.rstrip(".,;:!?* ")
+                    # Wrap and append
+                    content += f"\n\n<answer>{extracted_ans}</answer>"
+                    logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
+
             # 5. Executive Guard — real-time identity alignment
             guard = get_executive_guard()
             cleaned_response, was_corrected, violations = guard.align(content)

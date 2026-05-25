@@ -80,6 +80,8 @@ class DailyRateLimiter:
         "gemini-flash-latest": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
         "gemini-2.0-flash": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
         "gemini-2.5-pro": int(os.environ.get("AURA_GEMINI_RPD_THINKING", 2000)),
+        "gemini-3.5-flash": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
+        "gemini-3.5-pro": int(os.environ.get("AURA_GEMINI_RPD_THINKING", 2000)),
     }
     
     # Per-minute limits (High-performance baseline for paid tiers)
@@ -89,6 +91,8 @@ class DailyRateLimiter:
         "gemini-flash-latest": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
         "gemini-2.0-flash": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
         "gemini-2.5-pro": int(os.environ.get("AURA_GEMINI_RPM_THINKING", 50)),
+        "gemini-3.5-flash": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
+        "gemini-3.5-pro": int(os.environ.get("AURA_GEMINI_RPM_THINKING", 50)),
     }
     
     def __init__(self, state_path: str | None = None):
@@ -278,10 +282,10 @@ class GeminiAdapter:
     
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     
-    # Gemini 2.x/2.5: Flash for speed, 2.5-Flash for deep, 2.5-Pro for thinking
-    CHAT_MODEL = "gemini-2.0-flash"
-    DEEP_MODEL = "gemini-2.5-flash"  # Stable deep fallback (GA June 2025)
-    THINKING_MODEL = "gemini-2.5-pro"  # Best reasoning model (GA March 2025)
+    # Gemini 3.5 family: Flash for speed and deep, Pro for thinking/advanced reasoning
+    CHAT_MODEL = os.environ.get("AURA_GEMINI_CHAT_MODEL", "gemini-3.5-flash")
+    DEEP_MODEL = os.environ.get("AURA_GEMINI_DEEP_MODEL", "gemini-3.5-flash")
+    THINKING_MODEL = os.environ.get("AURA_GEMINI_THINKING_MODEL", "gemini-3.5-pro")
     
     def __init__(self, api_key: str, model: str = None, 
                  rate_limiter: DailyRateLimiter | None = None,
