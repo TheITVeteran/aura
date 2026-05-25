@@ -1,14 +1,14 @@
 # DNU AGI Proof Battery Report
 
-**Run ID:** `48fc37d4-6f41-48b1-98b0-af8216671a45`
-**Timestamp:** `1779710578.638295`
-**Commit SHA:** `252852e6c13ebe7805160b6eb8b864b4927b92f0`
+**Run ID:** `5269e5ae-f61f-430a-88eb-9b40aabd4181`
+**Timestamp:** `1779733452.028239`
+**Commit SHA:** `c991266ff05ea3a0554b0ee66557e2fc0942f931`
 **Platform:** `macOS-26.4.1-arm64-arm-64bit`
 **Python:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 
 ## Assigned Tier
 
-**Tier 5: Expert** (Overall Pass Rate: 100.0%)
+**Tier 0: No Capability** (Overall Pass Rate: 0.0%)
 
 ## Anti-Theater Controls
 
@@ -18,38 +18,33 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Tasks | 100 |
-| Passed | 100 |
+| Total Tasks | 1 |
+| Passed | 0 |
 | Failed | 0 |
-| Timed Out | 0 |
+| Timed Out | 1 |
 | Errors | 0 |
 | No Answer | 0 |
-| **Overall Pass Rate** | **100.0%** |
+| **Overall Pass Rate** | **0.0%** |
 
 ## Category Breakdown
 
 | Category | Attempted | Passed | Failed | Timeout | Pass Rate |
 |----------|-----------|--------|--------|---------|-----------|
-| coding | 10 | 10 | 0 | 0 | 100.0% |
-| novel_reasoning | 50 | 50 | 0 | 0 | 100.0% |
-| planning | 10 | 10 | 0 | 0 | 100.0% |
-| research | 10 | 10 | 0 | 0 | 100.0% |
-| self_debug | 10 | 10 | 0 | 0 | 100.0% |
-| transfer | 10 | 10 | 0 | 0 | 100.0% |
+| novel_reasoning | 1 | 0 | 0 | 1 | 0.0% |
 
 ## Baselines
 
 | Baseline | Status | Pass Rate / Notes |
 |----------|--------|-------------------|
-| raw_llm | RUN | 100.0% pass rate (100/100) |
-| llm_with_tools | RUN | 100.0% pass rate (100/100) |
-| react_agent | RUN | 100.0% pass rate (100/100) |
+| raw_llm | RUN | 100.0% pass rate (1/1) |
+| llm_with_tools | RUN | 100.0% pass rate (1/1) |
+| react_agent | RUN | 100.0% pass rate (1/1) |
 
 ## Ablations
 
 | Configuration | Status | Pass Rate / Notes |
 |---------------|--------|-------------------|
-| full_aura | RUN | 100.0% pass rate (Lesion Verified: N/A) |
+| full_aura | RUN | 0.0% pass rate (Lesion Verified: N/A) |
 | no_persistent_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_will_authority | RUN | 100.0% pass rate (Lesion Verified: Yes) |
@@ -63,10 +58,14 @@
 | aura_minus_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 
+## Failed Tasks (Sample)
+
+- **R001** (novel_reasoning): timeout — Retry failed: TimeoutError: 
+
 ## Reproduction
 
 ```bash
-# Commit: 252852e6c13ebe7805160b6eb8b864b4927b92f0
+# Commit: c991266ff05ea3a0554b0ee66557e2fc0942f931
 # Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
 python tools/agi/run_dnu_agi_proof_battery.py
 ```

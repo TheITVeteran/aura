@@ -1,0 +1,1 @@
+{"task_id": "R001", "category": "novel_reasoning", "difficulty": "medium", "status": "timeout", "response_text": "", "extracted_answer": null, "normalized_answer": null, "answer_hash": null, "elapsed_s": 118.00057792663574, "error": "Retry failed: TimeoutError: "}

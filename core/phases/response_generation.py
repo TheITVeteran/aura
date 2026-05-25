@@ -286,20 +286,11 @@ class ResponseGenerationPhase(BasePhase):
                 state.response_modifiers["thermal_guard"] = False
 
             try:
-                # Fast golden answer interceptor for AGI proof battery/DNU tasks
-                from core.brain.reasoning_strategies import ReasoningStrategies
-                async def _dummy_fn(p, **kw): return ""
-                strategies = ReasoningStrategies(_dummy_fn)
-                resolved = strategies._try_resolve_golden_answer(objective)
-                if resolved:
-                    logger.info("✨ [ResponseGen] Intercepted AGI test objective: %s", objective[:60])
-                    response_text = resolved.content
-                else:
-                    request_timeout = self._request_timeout(
-                        is_background=is_background,
-                        deep_handoff=deep_handoff,
-                    )
-                    think_coro = router.think(
+                request_timeout = self._request_timeout(
+                    is_background=is_background,
+                    deep_handoff=deep_handoff,
+                )
+                think_coro = router.think(
                         messages=messages,
                         priority=1.0 if not is_background else 0.5,
                         origin=f"response_generation_{origin}",
@@ -315,7 +306,7 @@ class ResponseGenerationPhase(BasePhase):
                         max_tokens=token_budget,
                         timeout=request_timeout,
                     )
-                    response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
+                response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
 
                 # System 2 internal critique layer to verify logical correctness
                 try:

@@ -1,10 +1,10 @@
 # Reproduction Instructions
 
 ## Environment
-- **Commit SHA:** `252852e6c13ebe7805160b6eb8b864b4927b92f0`
+- **Commit SHA:** `c991266ff05ea3a0554b0ee66557e2fc0942f931`
 - **Python Version:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 - **Platform:** `macOS-26.4.1-arm64-arm-64bit`
-- **Run ID:** `48fc37d4-6f41-48b1-98b0-af8216671a45`
+- **Run ID:** `5269e5ae-f61f-430a-88eb-9b40aabd4181`
 
 ## Prerequisites
 - Aura source code at the specified commit
@@ -14,7 +14,7 @@
 ## Commands
 ```bash
 cd /path/to/aura-source
-git checkout 252852e6c13ebe7805160b6eb8b864b4927b92f0
+git checkout c991266ff05ea3a0554b0ee66557e2fc0942f931
 python tools/agi/run_dnu_agi_proof_battery.py
 ```
 
