@@ -139,20 +139,16 @@ def test_dnu_agi_proof_battery(live_harness):
         f"Anti-theater violations detected: "
         f"pre={anti_theater.get('pre_check_violations', [])}, "
         f"post={anti_theater.get('post_check_violations', [])}"
-    )
-
-    # ------------------------------------------------------------------
+    )    # ------------------------------------------------------------------
     # 7. Baselines must be honestly reported
     # ------------------------------------------------------------------
     baselines = proof.get("baselines", {})
     assert len(baselines) > 0, "Missing baselines section"
 
-    # Verify that raw_llm and react_agent are dynamically executed and scored
-    assert baselines.get("raw_llm", {}).get("status") == "RUN"
-    assert "pass_rate" in baselines.get("raw_llm", {})
-    assert baselines.get("react_agent", {}).get("status") == "RUN"
-    assert "pass_rate" in baselines.get("react_agent", {})
-    assert baselines.get("llm_with_tools", {}).get("status") == "NOT_RUN"
+    # Verify that all three baselines are dynamically executed and scored
+    for name in ("raw_llm", "react_agent", "llm_with_tools"):
+        assert baselines.get(name, {}).get("status") == "RUN", f"Baseline '{name}' must have status 'RUN'"
+        assert "pass_rate" in baselines.get(name, {}), f"Baseline '{name}' must report a pass_rate"
 
     for name, baseline in baselines.items():
         status = baseline.get("status", "")
