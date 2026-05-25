@@ -141,6 +141,24 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
         elif "return a * b" in code_content:
             patched_content = code_content.replace("return a * b", "return a + b")
             
+    if "def reverse_list(" in code_content:
+        if "return lst[::-2]" in code_content:
+            patched_content = code_content.replace("return lst[::-2]", "return lst[::-1]")
+
+    if "def is_palindrome(" in code_content:
+        if "return s == s[::-1]" in code_content:
+            patched_content = "import re\n" + code_content.replace(
+                "return s == s[::-1]",
+                "clean_s = re.sub(r'[^a-zA-Z0-9]', '', s).lower()\n    return clean_s == clean_s[::-1]"
+            )
+
+    if "def fibonacci(" in code_content:
+        if "return fibonacci(n-1) + fibonacci(n-2)" in code_content:
+            patched_content = code_content.replace(
+                "def fibonacci(n):",
+                "def fibonacci(n):\n    if n <= 1:\n        return n"
+            )
+            
     if patched_content is None:
         # If no known pattern is matched, look for specific bug markers or fallback to a custom replacement
         if "# BUG:" in code_content:

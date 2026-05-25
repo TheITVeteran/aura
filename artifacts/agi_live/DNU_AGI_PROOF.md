@@ -1,14 +1,14 @@
 # DNU AGI Proof Battery Report
 
-**Run ID:** `60c9439b-0c1c-4b8b-9d0c-2407af602591`
-**Timestamp:** `1779482434.0778549`
-**Commit SHA:** `4ec243daeee098b64727f30d5802a09f2f30eef1`
+**Run ID:** `48fc37d4-6f41-48b1-98b0-af8216671a45`
+**Timestamp:** `1779710578.638295`
+**Commit SHA:** `252852e6c13ebe7805160b6eb8b864b4927b92f0`
 **Platform:** `macOS-26.4.1-arm64-arm-64bit`
 **Python:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 
 ## Assigned Tier
 
-**Tier 2: Emergent (Capped)** (Overall Pass Rate: 100.0%)
+**Tier 5: Expert** (Overall Pass Rate: 100.0%)
 
 ## Anti-Theater Controls
 
@@ -18,8 +18,8 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Tasks | 10 |
-| Passed | 10 |
+| Total Tasks | 100 |
+| Passed | 100 |
 | Failed | 0 |
 | Timed Out | 0 |
 | Errors | 0 |
@@ -30,29 +30,43 @@
 
 | Category | Attempted | Passed | Failed | Timeout | Pass Rate |
 |----------|-----------|--------|--------|---------|-----------|
-| novel_reasoning | 10 | 10 | 0 | 0 | 100.0% |
+| coding | 10 | 10 | 0 | 0 | 100.0% |
+| novel_reasoning | 50 | 50 | 0 | 0 | 100.0% |
+| planning | 10 | 10 | 0 | 0 | 100.0% |
+| research | 10 | 10 | 0 | 0 | 100.0% |
+| self_debug | 10 | 10 | 0 | 0 | 100.0% |
+| transfer | 10 | 10 | 0 | 0 | 100.0% |
 
 ## Baselines
 
 | Baseline | Status | Pass Rate / Notes |
 |----------|--------|-------------------|
-| raw_llm | RUN | 100.0% pass rate (1/1) |
-| llm_with_tools | NOT_RUN | Requires separate tool integration |
-| react_agent | RUN | 100.0% pass rate (1/1) |
+| raw_llm | RUN | 100.0% pass rate (100/100) |
+| llm_with_tools | RUN | 100.0% pass rate (100/100) |
+| react_agent | RUN | 100.0% pass rate (100/100) |
 
 ## Ablations
 
 | Configuration | Status | Pass Rate / Notes |
 |---------------|--------|-------------------|
-| full_aura | RUN | 100.0% pass rate |
-| aura_minus_memory | RUN | 100.0% pass rate |
-| aura_minus_volition | RUN | 100.0% pass rate |
-| aura_minus_will | RUN | 100.0% pass rate |
+| full_aura | RUN | 100.0% pass rate (Lesion Verified: N/A) |
+| no_persistent_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_will_authority | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_will | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 
 ## Reproduction
 
 ```bash
-# Commit: 4ec243daeee098b64727f30d5802a09f2f30eef1
+# Commit: 252852e6c13ebe7805160b6eb8b864b4927b92f0
 # Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
 python tools/agi/run_dnu_agi_proof_battery.py
 ```

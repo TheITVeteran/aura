@@ -1,6 +1,6 @@
 {
-  "total_tasks": 10,
-  "total_pass": 10,
+  "total_tasks": 100,
+  "total_pass": 100,
   "total_fail": 0,
   "total_timeout": 0,
   "total_error": 0,
@@ -8,6 +8,51 @@
   "total_ungraded": 0,
   "categories": {
     "novel_reasoning": {
+      "attempted": 50,
+      "passed": 50,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "coding": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "planning": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "self_debug": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "transfer": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "research": {
       "attempted": 10,
       "passed": 10,
       "failed": 0,

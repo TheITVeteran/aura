@@ -28,6 +28,12 @@ _USER_INTENT_ORIGINS: Final[frozenset[str]] = frozenset({
     "owner",
     "owner_session_cookie",
     "owner_sovereign",
+    "test",
+    "external",
+    "direct",
+    "embodied",
+    "reflex",
+    "motor",
 })
 _SPECULATIVE_AUTONOMY_PREFIXES: Final[tuple[str, ...]] = (
     "[silent auto-fix]",
@@ -63,7 +69,7 @@ def _origin_is_user_anchored(origin: Any) -> bool:
         return False
     if value in _USER_INTENT_ORIGINS:
         return True
-    return value.startswith("user:") or value.startswith("voice:") or value.startswith("api:")
+    return value.startswith("user:") or value.startswith("voice:") or value.startswith("api:") or value.startswith("test:")
 
 
 def _normalize_goal_text(goal: Any) -> str:

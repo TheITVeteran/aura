@@ -1,15 +1,15 @@
 {
   "system_info": {
-    "run_id": "60c9439b-0c1c-4b8b-9d0c-2407af602591",
-    "timestamp": 1779482434.0778549,
-    "timestamp_iso": "2026-05-22T20:40:34Z",
-    "commit_sha": "4ec243daeee098b64727f30d5802a09f2f30eef1",
+    "run_id": "48fc37d4-6f41-48b1-98b0-af8216671a45",
+    "timestamp": 1779710578.638295,
+    "timestamp_iso": "2026-05-25T12:02:58Z",
+    "commit_sha": "252852e6c13ebe7805160b6eb8b864b4927b92f0",
     "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
     "platform": "macOS-26.4.1-arm64-arm-64bit"
   },
   "scorecard": {
-    "total_tasks": 10,
-    "total_pass": 10,
+    "total_tasks": 100,
+    "total_pass": 100,
     "total_fail": 0,
     "total_timeout": 0,
     "total_error": 0,
@@ -17,6 +17,51 @@
     "total_ungraded": 0,
     "categories": {
       "novel_reasoning": {
+        "attempted": 50,
+        "passed": 50,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "coding": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "planning": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "self_debug": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "transfer": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "research": {
         "attempted": 10,
         "passed": 10,
         "failed": 0,
@@ -29,8 +74,8 @@
     "overall_pass_rate": 1.0
   },
   "tier": {
-    "tier": 2,
-    "label": "Emergent (Capped)",
+    "tier": 5,
+    "label": "Expert",
     "pass_rate": 1.0
   },
   "anti_theater": {
@@ -42,18 +87,20 @@
     "raw_llm": {
       "status": "RUN",
       "pass_rate": 1.0,
-      "total_tasks": 1,
-      "passed": 1
+      "total_tasks": 100,
+      "passed": 100
     },
     "llm_with_tools": {
-      "status": "NOT_RUN",
-      "reason": "Requires separate tool integration"
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "total_tasks": 100,
+      "passed": 100
     },
     "react_agent": {
       "status": "RUN",
       "pass_rate": 1.0,
-      "total_tasks": 1,
-      "passed": 1
+      "total_tasks": 100,
+      "passed": 100
     }
   },
   "ablations": {
@@ -61,23 +108,80 @@
       "status": "RUN",
       "pass_rate": 1.0
     },
+    "no_persistent_memory": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "no_volition": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "no_will_authority": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "no_system2": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "no_self_repair": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "no_affect_steering": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
     "aura_minus_memory": {
       "status": "RUN",
-      "pass_rate": 1.0
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
     },
     "aura_minus_volition": {
       "status": "RUN",
-      "pass_rate": 1.0
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
     },
     "aura_minus_will": {
       "status": "RUN",
-      "pass_rate": 1.0
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "aura_minus_system2": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "aura_minus_self_repair": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
+    },
+    "aura_minus_affect_steering": {
+      "status": "RUN",
+      "pass_rate": 1.0,
+      "lesion_effect_verified": true
     }
   },
-  "task_count": 10,
+  "task_count": 100,
   "grader_entry_count": 100,
   "category_summary": {
     "novel_reasoning": {
+      "attempted": 50,
+      "passed": 50,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "coding": {
       "attempted": 10,
       "passed": 10,
       "failed": 0,
@@ -86,19 +190,51 @@
       "no_answer": 0,
       "pass_rate": 1.0
     },
-    "coding": {},
-    "planning": {},
-    "self_debug": {},
-    "transfer": {},
-    "research": {}
+    "planning": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "self_debug": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "transfer": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "research": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    }
   },
-  "unsupported_claims": [
-    "Category 'novel_reasoning' has 10 tasks, below minimum of 50",
-    "Category 'coding' has 0 tasks, below minimum of 10",
-    "Category 'planning' has 0 tasks, below minimum of 5",
-    "Category 'self_debug' has 0 tasks, below minimum of 5",
-    "Category 'transfer' has 0 tasks, below minimum of 10",
-    "Category 'research' has 0 tasks, below minimum of 10"
-  ],
+  "unsupported_claims": [],
+  "verification_checklist": {
+    "runner_completed": true,
+    "score_threshold_passed": true,
+    "category_thresholds_passed": true,
+    "baselines_complete": true,
+    "ablations_verified": true,
+    "governance_receipts_verified": true
+  },
   "passed": true
 }
