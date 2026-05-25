@@ -1,37 +1,37 @@
 {
   "system_info": {
-    "run_id": "5269e5ae-f61f-430a-88eb-9b40aabd4181",
-    "timestamp": 1779733452.028239,
-    "timestamp_iso": "2026-05-25T18:24:12Z",
-    "commit_sha": "c991266ff05ea3a0554b0ee66557e2fc0942f931",
+    "run_id": "217ddd86-066e-4376-9ece-b6848d5c0c58",
+    "timestamp": 1779738054.174528,
+    "timestamp_iso": "2026-05-25T19:40:54Z",
+    "commit_sha": "a579e4fd925aebf4dec644dc1064f077e2589237",
     "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
     "platform": "macOS-26.4.1-arm64-arm-64bit"
   },
   "scorecard": {
     "total_tasks": 1,
-    "total_pass": 0,
+    "total_pass": 1,
     "total_fail": 0,
-    "total_timeout": 1,
+    "total_timeout": 0,
     "total_error": 0,
     "total_no_answer": 0,
     "total_ungraded": 0,
     "categories": {
       "novel_reasoning": {
         "attempted": 1,
-        "passed": 0,
+        "passed": 1,
         "failed": 0,
-        "timed_out": 1,
+        "timed_out": 0,
         "errors": 0,
         "no_answer": 0,
-        "pass_rate": 0.0
+        "pass_rate": 1.0
       }
     },
-    "overall_pass_rate": 0.0
+    "overall_pass_rate": 1.0
   },
   "tier": {
-    "tier": 0,
-    "label": "No Capability",
-    "pass_rate": 0.0
+    "tier": 2,
+    "label": "Emergent (Capped)",
+    "pass_rate": 1.0
   },
   "anti_theater": {
     "pre_check_violations": [],
@@ -61,7 +61,7 @@
   "ablations": {
     "full_aura": {
       "status": "RUN",
-      "pass_rate": 0.0
+      "pass_rate": 1.0
     },
     "no_persistent_memory": {
       "status": "RUN",
@@ -85,7 +85,7 @@
     },
     "no_self_repair": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_affect_steering": {
@@ -115,7 +115,7 @@
     },
     "aura_minus_self_repair": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_affect_steering": {
@@ -129,12 +129,12 @@
   "category_summary": {
     "novel_reasoning": {
       "attempted": 1,
-      "passed": 0,
+      "passed": 1,
       "failed": 0,
-      "timed_out": 1,
+      "timed_out": 0,
       "errors": 0,
       "no_answer": 0,
-      "pass_rate": 0.0
+      "pass_rate": 1.0
     },
     "coding": {},
     "planning": {},
@@ -152,11 +152,11 @@
   ],
   "verification_checklist": {
     "runner_completed": true,
-    "score_threshold_passed": false,
+    "score_threshold_passed": true,
     "category_thresholds_passed": true,
     "baselines_complete": true,
     "ablations_verified": true,
     "governance_receipts_verified": true
   },
-  "passed": false
+  "passed": true
 }

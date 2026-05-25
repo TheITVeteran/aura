@@ -460,11 +460,11 @@ class ReasoningStrategies:
         )
         
         # Prevent infinite recursion by passing bypass_critique=True
-        # Upgrade critique to leverage the highly capable SECONDARY (Solver) tier
+        # Use the highly capable and already resident PRIMARY (Cortex 32B) tier to prevent OOM/timeouts on local 72B loading.
         critique_kwargs = dict(kwargs)
         critique_kwargs["bypass_critique"] = True
-        critique_kwargs["prefer_tier"] = "secondary"
-        critique_kwargs["deep_handoff"] = True
+        critique_kwargs["prefer_tier"] = "primary"
+        critique_kwargs["deep_handoff"] = False
         critique_kwargs["allow_cloud_fallback"] = True
         
         critique_result = await self._generate_text(critique_prompt, **critique_kwargs)

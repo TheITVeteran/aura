@@ -1,14 +1,14 @@
 # DNU AGI Proof Battery Report
 
-**Run ID:** `5269e5ae-f61f-430a-88eb-9b40aabd4181`
-**Timestamp:** `1779733452.028239`
-**Commit SHA:** `c991266ff05ea3a0554b0ee66557e2fc0942f931`
+**Run ID:** `217ddd86-066e-4376-9ece-b6848d5c0c58`
+**Timestamp:** `1779738054.174528`
+**Commit SHA:** `a579e4fd925aebf4dec644dc1064f077e2589237`
 **Platform:** `macOS-26.4.1-arm64-arm-64bit`
 **Python:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 
 ## Assigned Tier
 
-**Tier 0: No Capability** (Overall Pass Rate: 0.0%)
+**Tier 2: Emergent (Capped)** (Overall Pass Rate: 100.0%)
 
 ## Anti-Theater Controls
 
@@ -19,18 +19,18 @@
 | Metric | Count |
 |--------|-------|
 | Total Tasks | 1 |
-| Passed | 0 |
+| Passed | 1 |
 | Failed | 0 |
-| Timed Out | 1 |
+| Timed Out | 0 |
 | Errors | 0 |
 | No Answer | 0 |
-| **Overall Pass Rate** | **0.0%** |
+| **Overall Pass Rate** | **100.0%** |
 
 ## Category Breakdown
 
 | Category | Attempted | Passed | Failed | Timeout | Pass Rate |
 |----------|-----------|--------|--------|---------|-----------|
-| novel_reasoning | 1 | 0 | 0 | 1 | 0.0% |
+| novel_reasoning | 1 | 1 | 0 | 0 | 100.0% |
 
 ## Baselines
 
@@ -44,28 +44,24 @@
 
 | Configuration | Status | Pass Rate / Notes |
 |---------------|--------|-------------------|
-| full_aura | RUN | 0.0% pass rate (Lesion Verified: N/A) |
+| full_aura | RUN | 100.0% pass rate (Lesion Verified: N/A) |
 | no_persistent_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_will_authority | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
-| no_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| no_self_repair | RUN | 0.0% pass rate (Lesion Verified: Yes) |
 | no_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_will | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
-| aura_minus_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_self_repair | RUN | 0.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
-
-## Failed Tasks (Sample)
-
-- **R001** (novel_reasoning): timeout — Retry failed: TimeoutError: 
 
 ## Reproduction
 
 ```bash
-# Commit: c991266ff05ea3a0554b0ee66557e2fc0942f931
+# Commit: a579e4fd925aebf4dec644dc1064f077e2589237
 # Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
 python tools/agi/run_dnu_agi_proof_battery.py
 ```
