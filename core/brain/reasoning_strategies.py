@@ -551,8 +551,12 @@ class ReasoningStrategies:
         )
         
         # Prevent infinite recursion by passing bypass_critique=True
+        # Upgrade critique to leverage the highly capable SECONDARY (Solver) tier
         critique_kwargs = dict(kwargs)
         critique_kwargs["bypass_critique"] = True
+        critique_kwargs["prefer_tier"] = "secondary"
+        critique_kwargs["deep_handoff"] = True
+        critique_kwargs["allow_cloud_fallback"] = True
         
         critique_result = await self._generate_text(critique_prompt, **critique_kwargs)
         if critique_result and len(critique_result.strip()) > 0:
