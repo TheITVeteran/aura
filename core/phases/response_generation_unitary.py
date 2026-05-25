@@ -3880,7 +3880,7 @@ class UnitaryResponsePhase(Phase):
                 strategies = ReasoningStrategies(_raw_generate)
                 if strategies._is_logical_check(objective):
                     logger.info("⚡ [Critique] Running System 2 self-critique on response...")
-                    critique_response = await strategies._self_critique(objective, response_text)
+                    critique_response = await strategies._self_critique(objective, response_text, origin=routing_origin)
                     if critique_response and critique_response != response_text:
                         logger.info("⚡ [Critique] Self-critique corrected the generated response!")
                         response_text = critique_response

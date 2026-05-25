@@ -560,7 +560,12 @@ class ReasoningStrategies:
         
         critique_result = await self._generate_text(critique_prompt, **critique_kwargs)
         if critique_result and len(critique_result.strip()) > 0:
-            # If the critique found a mistake, return the critique output containing the corrected answer
+            # If the critic just confirms correctness or doesn't provide a corrected tag when the original had one, keep the original
+            lower_critique = critique_result.lower()
+            if "100% correct" in lower_critique or "is correct" in lower_critique or "proposed answer is correct" in lower_critique:
+                return response
+            if "<answer>" in response.lower() and "<answer>" not in critique_result.lower():
+                return response
             return critique_result
         return response
 
