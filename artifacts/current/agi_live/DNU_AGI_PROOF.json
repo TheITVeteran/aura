@@ -1,0 +1,218 @@
+{
+  "system_info": {
+    "run_id": "bd56586e-c6c0-41e7-8c56-f9cf39571112",
+    "timestamp": 1779504516.211964,
+    "timestamp_iso": "2026-05-23T02:48:36Z",
+    "commit_sha": "25a218d972ce12a1a4da1f7e10d953625d227f2b",
+    "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
+    "platform": "macOS-26.4.1-arm64-arm-64bit"
+  },
+  "scorecard": {
+    "total_tasks": 100,
+    "total_pass": 95,
+    "total_fail": 4,
+    "total_timeout": 1,
+    "total_error": 0,
+    "total_no_answer": 0,
+    "total_ungraded": 0,
+    "categories": {
+      "novel_reasoning": {
+        "attempted": 50,
+        "passed": 50,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "coding": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "planning": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      },
+      "self_debug": {
+        "attempted": 10,
+        "passed": 8,
+        "failed": 2,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 0.8
+      },
+      "transfer": {
+        "attempted": 10,
+        "passed": 7,
+        "failed": 2,
+        "timed_out": 1,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 0.7
+      },
+      "research": {
+        "attempted": 10,
+        "passed": 10,
+        "failed": 0,
+        "timed_out": 0,
+        "errors": 0,
+        "no_answer": 0,
+        "pass_rate": 1.0
+      }
+    },
+    "overall_pass_rate": 0.95
+  },
+  "tier": {
+    "tier": 5,
+    "label": "Expert",
+    "pass_rate": 0.95
+  },
+  "anti_theater": {
+    "pre_check_violations": [],
+    "post_check_violations": [],
+    "all_passed": true
+  },
+  "baselines": {
+    "raw_llm": {
+      "status": "RUN",
+      "pass_rate": 0.1667,
+      "total_tasks": 6,
+      "passed": 1
+    },
+    "llm_with_tools": {
+      "status": "NOT_RUN",
+      "reason": "Requires separate tool integration"
+    },
+    "react_agent": {
+      "status": "RUN",
+      "pass_rate": 0.1667,
+      "total_tasks": 6,
+      "passed": 1
+    }
+  },
+  "ablations": {
+    "full_aura": {
+      "status": "RUN",
+      "pass_rate": 0.95
+    },
+    "no_persistent_memory": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "no_volition": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "no_will_authority": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "no_system2": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "no_self_repair": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "no_affect_steering": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_memory": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_volition": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_will": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_system2": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_self_repair": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    },
+    "aura_minus_affect_steering": {
+      "status": "RUN",
+      "pass_rate": 0.1667
+    }
+  },
+  "task_count": 100,
+  "grader_entry_count": 100,
+  "category_summary": {
+    "novel_reasoning": {
+      "attempted": 50,
+      "passed": 50,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "coding": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "planning": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    },
+    "self_debug": {
+      "attempted": 10,
+      "passed": 8,
+      "failed": 2,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 0.8
+    },
+    "transfer": {
+      "attempted": 10,
+      "passed": 7,
+      "failed": 2,
+      "timed_out": 1,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 0.7
+    },
+    "research": {
+      "attempted": 10,
+      "passed": 10,
+      "failed": 0,
+      "timed_out": 0,
+      "errors": 0,
+      "no_answer": 0,
+      "pass_rate": 1.0
+    }
+  },
+  "unsupported_claims": [],
+  "passed": true
+}

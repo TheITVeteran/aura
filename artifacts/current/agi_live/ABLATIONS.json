@@ -1,0 +1,54 @@
+{
+  "full_aura": {
+    "status": "RUN",
+    "pass_rate": 0.95
+  },
+  "no_persistent_memory": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "no_volition": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "no_will_authority": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "no_system2": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "no_self_repair": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "no_affect_steering": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_memory": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_volition": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_will": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_system2": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_self_repair": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  },
+  "aura_minus_affect_steering": {
+    "status": "RUN",
+    "pass_rate": 0.1667
+  }
+}
