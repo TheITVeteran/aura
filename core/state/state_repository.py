@@ -881,7 +881,13 @@ class StateRepository:
         if not bool(status["state_available"]):
             return False
         if self.is_vault_owner:
-            return bool(status["db_connected"] and status["consumer_alive"])
+            # db_connected is the hard gate. The mutation consumer may take a
+            # moment to schedule its first iteration after boot — that is a
+            # liveness concern handled by repair_runtime, not an initialization
+            # prerequisite. Blocking boot health on consumer_alive causes a
+            # race where the health contract evaluates before the event loop
+            # has had a chance to run the consumer coroutine.
+            return bool(status["db_connected"])
         # For proxy/client repositories, we are initialized if the state is hydrated and available.
         # This prevents transient startup delays in SHM/ActorBus registration from blocking HTTP health probes.
         return True
