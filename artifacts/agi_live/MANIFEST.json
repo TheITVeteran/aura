@@ -1,26 +1,26 @@
 {
-  "run_id": "217ddd86-066e-4376-9ece-b6848d5c0c58",
-  "commit_sha": "a579e4fd925aebf4dec644dc1064f077e2589237",
+  "run_id": "bba057be-d306-4df5-a98e-c8ec1b104a99",
+  "commit_sha": "5e10147cccf6cff2b33a280150a29909f176b9fa",
   "files": {
     "DNU_AGI_PROOF.json": {
       "path": "artifacts/agi_live/DNU_AGI_PROOF.json",
-      "sha256": "93d9d446932c7cd07b0c31ee3b6476d0fdab92b4bb4e5058143ed40c87244bb3"
+      "sha256": "31cec7f74bbea9eed62c1dee0de79b6dcd47fe4be089f3f3183d2d4059f3d07a"
     },
     "DNU_AGI_PROOF.md": {
       "path": "artifacts/agi_live/DNU_AGI_PROOF.md",
-      "sha256": "78484613607b8fb9be1b435d5463c077f9e46495b16d5f4337408e04e0eb6fbd"
+      "sha256": "8342971768f029016a33b091c09788c515dacbbfda4e021da17249938480069f"
     },
     "SCORECARD.json": {
       "path": "artifacts/agi_live/SCORECARD.json",
-      "sha256": "5384cb8eeff92667716f0d61ed30ba99f91e28fc46e59dbb8cfa5211451e2af6"
+      "sha256": "d7706b33b48d2877fd5c99ed5e1f836296839bc39e0cb499415958fcc6a43adf"
     },
     "RECEIPTS.jsonl": {
       "path": "artifacts/agi_live/RECEIPTS.jsonl",
-      "sha256": "7711d404d956cad7f4cb3010fa504f6cb368807dbbd726a907bd10fb462ee0e8"
+      "sha256": "b5ab04ba4f4f97701abb56ffda27bf7e03413f4fe17684ed54bdf068b5efc6ad"
     },
     "GOVERNANCE_REPORT.json": {
       "path": "artifacts/agi_live/GOVERNANCE_REPORT.json",
-      "sha256": "feb6ba90e30ca03174a71cdcde098e48388e20dbc0729faee51a4bcd75cefcfd"
+      "sha256": "5633a2c913b36e94ad567011345892d3fc61077cc80534771b4bae8027f9f097"
     },
     "LEAKAGE_REPORT.json": {
       "path": "artifacts/agi_live/LEAKAGE_REPORT.json",

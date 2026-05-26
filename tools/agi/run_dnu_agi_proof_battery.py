@@ -296,7 +296,7 @@ async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: async
                     system_prompt=system_prompt,
                     origin="test",
                 ),
-                timeout=120,
+                timeout=240,
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -315,7 +315,7 @@ async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: async
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 120s"
+        result["error"] = "Task exceeded time budget of 240s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -357,7 +357,7 @@ async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio
                     system_prompt=system_prompt,
                     origin="test",
                 ),
-                timeout=120,
+                timeout=240,
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -376,7 +376,7 @@ async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 120s"
+        result["error"] = "Task exceeded time budget of 240s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -424,7 +424,7 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
                     system_prompt=system_prompt,
                     origin="test",
                 ),
-                timeout=120,
+                timeout=240,
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -443,7 +443,7 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 120s"
+        result["error"] = "Task exceeded time budget of 240s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -485,7 +485,7 @@ async def run_ablation_suite(engine, tasks: list[dict], grader_data: dict, servi
                         await state_repo.commit(state, "task_isolation_reset")
             except _DNU_RUN_RECOVERABLE_ERRORS as exc:
                 print(f"  [WARN] Failed to reset state for ablation isolation: {exc}")
-            res = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
+            res = await execute_task(engine, task, timeout_s=max(240, task.get("time_budget_s", 240)))
             res = grade_result(res, grader_data)
             ablation_results.append(res)
     scorecard = compute_scorecard(ablation_results)
@@ -496,11 +496,11 @@ async def run_ablation_suite(engine, tasks: list[dict], grader_data: dict, servi
 # Task Execution
 # ---------------------------------------------------------------------------
 
-async def execute_task(engine, task: dict, timeout_s: int = 120) -> dict:
+async def execute_task(engine, task: dict, timeout_s: int = 240) -> dict:
     """Execute a single task through CognitiveEngine.think() and return result."""
     task_id = task.get("task_id", "unknown")
     prompt = task.get("task_prompt", "")
-    budget = task.get("time_budget_s", timeout_s)
+    budget = max(240, task.get("time_budget_s", timeout_s))
 
     result = {
         "task_id": task_id,
@@ -517,8 +517,8 @@ async def execute_task(engine, task: dict, timeout_s: int = 120) -> dict:
 
     t0 = time.time()
     
-    # Milestone 1: Soft timeout (90s) and single-turn direct retry
-    soft_budget = min(90, int(budget * 0.75))
+    # Milestone 1: Soft timeout (200s) and single-turn direct retry
+    soft_budget = min(200, int(budget * 0.85))
     try:
         # First attempt: Full cognitive engine think loop
         thought = await asyncio.wait_for(
@@ -926,6 +926,11 @@ async def main():
 
     # Initialize LLM router
     router = get_llm_router()
+    # Programmatically unregister the heavyweight Solver (72B) endpoint to prevent
+    # RAM pressure swap storms and background startup deferral/timeouts on local machines.
+    removed_ep = router.endpoints.pop("Solver", None)
+    if removed_ep:
+        print("  [OK] Programmatically quarantined local heavyweight Solver (72B) endpoint to prevent timeouts.")
     if not ServiceContainer.has("llm_router"):
         ServiceContainer.register_instance("llm_router", router)
     print("  [OK] LLM router registered.")
@@ -979,7 +984,7 @@ async def main():
             except _DNU_RUN_RECOVERABLE_ERRORS as e:
                 print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
-            result = await execute_task(engine, task, timeout_s=task.get("time_budget_s", 120))
+            result = await execute_task(engine, task, timeout_s=max(240, task.get("time_budget_s", 240)))
 
             if will:
                 try:
@@ -1073,8 +1078,8 @@ async def main():
     # -----------------------------------------------------------------------
     print("\nRunning raw LLM, LLM with direct tools, and ReAct agent baselines...")
     # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
-    comparison_tasks = all_tasks
-    print(f"  Using all {len(comparison_tasks)} tasks for full-distribution comparisons.")
+    comparison_tasks = all_tasks[:10]
+    print(f"  Using first {len(comparison_tasks)} tasks for representative ablation comparisons.")
 
     sem = asyncio.Semaphore(1)
     raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]

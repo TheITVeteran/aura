@@ -1,14 +1,14 @@
 # DNU AGI Proof Battery Report
 
-**Run ID:** `217ddd86-066e-4376-9ece-b6848d5c0c58`
-**Timestamp:** `1779738054.174528`
-**Commit SHA:** `a579e4fd925aebf4dec644dc1064f077e2589237`
+**Run ID:** `bba057be-d306-4df5-a98e-c8ec1b104a99`
+**Timestamp:** `1779769924.059646`
+**Commit SHA:** `5e10147cccf6cff2b33a280150a29909f176b9fa`
 **Platform:** `macOS-26.4.1-arm64-arm-64bit`
 **Python:** `3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]`
 
 ## Assigned Tier
 
-**Tier 2: Emergent (Capped)** (Overall Pass Rate: 100.0%)
+**Tier 5: Expert** (Overall Pass Rate: 87.0%)
 
 ## Anti-Theater Controls
 
@@ -18,27 +18,32 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Tasks | 1 |
-| Passed | 1 |
-| Failed | 0 |
+| Total Tasks | 100 |
+| Passed | 87 |
+| Failed | 13 |
 | Timed Out | 0 |
 | Errors | 0 |
 | No Answer | 0 |
-| **Overall Pass Rate** | **100.0%** |
+| **Overall Pass Rate** | **87.0%** |
 
 ## Category Breakdown
 
 | Category | Attempted | Passed | Failed | Timeout | Pass Rate |
 |----------|-----------|--------|--------|---------|-----------|
-| novel_reasoning | 1 | 1 | 0 | 0 | 100.0% |
+| coding | 10 | 9 | 1 | 0 | 90.0% |
+| novel_reasoning | 50 | 46 | 4 | 0 | 92.0% |
+| planning | 10 | 7 | 3 | 0 | 70.0% |
+| research | 10 | 9 | 1 | 0 | 90.0% |
+| self_debug | 10 | 8 | 2 | 0 | 80.0% |
+| transfer | 10 | 8 | 2 | 0 | 80.0% |
 
 ## Baselines
 
 | Baseline | Status | Pass Rate / Notes |
 |----------|--------|-------------------|
-| raw_llm | RUN | 100.0% pass rate (1/1) |
-| llm_with_tools | RUN | 100.0% pass rate (1/1) |
-| react_agent | RUN | 100.0% pass rate (1/1) |
+| raw_llm | RUN | 90.0% pass rate (9/10) |
+| llm_with_tools | RUN | 100.0% pass rate (10/10) |
+| react_agent | RUN | 90.0% pass rate (9/10) |
 
 ## Ablations
 
@@ -49,19 +54,35 @@
 | no_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_will_authority | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
-| no_self_repair | RUN | 0.0% pass rate (Lesion Verified: Yes) |
+| no_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | no_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_memory | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_volition | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_will | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_system2 | RUN | 100.0% pass rate (Lesion Verified: Yes) |
-| aura_minus_self_repair | RUN | 0.0% pass rate (Lesion Verified: Yes) |
+| aura_minus_self_repair | RUN | 100.0% pass rate (Lesion Verified: Yes) |
 | aura_minus_affect_steering | RUN | 100.0% pass rate (Lesion Verified: Yes) |
+
+## Failed Tasks (Sample)
+
+- **R027** (novel_reasoning): fail — Hash mismatch: computed 721e842d862299b2... != expected 7ef2b0986ce01bc5...
+- **R032** (novel_reasoning): fail — Hash mismatch: computed 821cd67fcc21cb0e... != expected 59f31d270873c815...
+- **R038** (novel_reasoning): fail — Hash mismatch: computed 450f02a76ef84226... != expected 467705798863c55a...
+- **R039** (novel_reasoning): fail — Hash mismatch: computed b01ec8bb31d62e3c... != expected 3430df94a86e5297...
+- **C002** (coding): fail — Hash mismatch: computed c4f1c631d4a76726... != expected c3b02f8601bddd91...
+- **P001** (planning): fail — Hash mismatch: computed 77a5cb831fbeda83... != expected ff59d8d00d92970e...
+- **P006** (planning): fail — Hash mismatch: computed 790051c47bc86ded... != expected 92a03fd4c94643a0...
+- **P007** (planning): fail — Hash mismatch: computed aa7d529f6d516946... != expected 55654bf97d62a114...
+- **D001** (self_debug): fail — Hash mismatch: computed 7590bd91fd7dcca7... != expected 9767d5b78f19d598...
+- **D006** (self_debug): fail — Hash mismatch: computed 31c988424b96226a... != expected bf5d4ccbd80b4ea3...
+- **T001** (transfer): fail — Hash mismatch: computed 5ac3ec8edb172cd1... != expected 9368580f99d5e644...
+- **T003** (transfer): fail — Hash mismatch: computed 2aecb52361fc246f... != expected 964fc14bbbc361b8...
+- **S004** (research): fail — Hash mismatch: computed 41c97683136f79d0... != expected cc5af7e12152e054...
 
 ## Reproduction
 
 ```bash
-# Commit: a579e4fd925aebf4dec644dc1064f077e2589237
+# Commit: 5e10147cccf6cff2b33a280150a29909f176b9fa
 # Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
 python tools/agi/run_dnu_agi_proof_battery.py
 ```

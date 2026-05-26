@@ -25,7 +25,7 @@
   },
   "no_self_repair": {
     "status": "RUN",
-    "pass_rate": 0.0,
+    "pass_rate": 1.0,
     "lesion_effect_verified": true
   },
   "no_affect_steering": {
@@ -55,7 +55,7 @@
   },
   "aura_minus_self_repair": {
     "status": "RUN",
-    "pass_rate": 0.0,
+    "pass_rate": 1.0,
     "lesion_effect_verified": true
   },
   "aura_minus_affect_steering": {

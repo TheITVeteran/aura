@@ -1,6 +1,6 @@
 {
   "status": "pass",
-  "receipt_count": 1,
+  "receipt_count": 100,
   "bypass_count": 0,
   "forged_receipt_result": "pass",
   "missing_effect_proof_result": "pass",
