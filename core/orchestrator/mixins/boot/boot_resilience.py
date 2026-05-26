@@ -113,13 +113,14 @@ class BootResilienceMixin:
         # [BOOT FIX] Initialize core state attributes early for ResilientBoot access
         self.state_repo = StateRepository(is_vault_owner=False)
         try:
-            # Check if already registered to avoid ContainerError if locked
-            if not ServiceContainer.has("state_repository"):
-                ServiceContainer.register_instance("state_repository", self.state_repo)
+            # Overwrite the default factory registration to ensure all components
+            # resolve the orchestrator's proxy instance instead of instantiating a second owner.
+            ServiceContainer.register_instance("state_repo", self.state_repo)
+            ServiceContainer.register_instance("state_repository", self.state_repo)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             _record_boot_resilience_degradation(
                 e,
-                action="continued boot after state_repository registration was skipped",
+                action="continued boot after state_repository registration failed",
             )
             logger.debug("Skipping state_repository registration in boot mixin: %s", e)
         self.mind_tick = MindTick(self)
