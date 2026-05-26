@@ -888,9 +888,8 @@ class StateRepository:
             # race where the health contract evaluates before the event loop
             # has had a chance to run the consumer coroutine.
             return bool(status["db_connected"])
-        # For proxy/client repositories, we are initialized if the state is hydrated and available.
-        # This prevents transient startup delays in SHM/ActorBus registration from blocking HTTP health probes.
-        return True
+        # For proxy/client repositories, we check if the state is available AND we have at least one usable transport.
+        return bool(status["shm_attached"] or status["vault_transport_available"])
 
     async def repair_runtime(self) -> dict[str, Any]:
         actions: list[str] = []
