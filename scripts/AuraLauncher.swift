@@ -277,7 +277,7 @@ private final class GradientProgressBar: NSView {
     }
 }
 
-private final class LauncherChipLabel: NSTextField {
+private final class LauncherChipLabel: NSView {
     enum Tone {
         case cyan
         case violet
@@ -317,30 +317,38 @@ private final class LauncherChipLabel: NSTextField {
         }
     }
 
+    private let textField = NSTextField(labelWithString: "")
+
     init(_ text: String, tone: Tone) {
         super.init(frame: .zero)
-        stringValue = text.uppercased()
         translatesAutoresizingMaskIntoConstraints = false
-        font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-        alignment = .center
-        textColor = tone.foreground
         wantsLayer = true
         layer?.backgroundColor = tone.background.cgColor
         layer?.borderColor = tone.border.cgColor
-        layer?.borderWidth = 1
-        layer?.cornerRadius = 12
-        maximumNumberOfLines = 1
-        lineBreakMode = .byTruncatingTail
+        layer?.borderWidth = 1.0
+        layer?.cornerRadius = 8
+
+        textField.stringValue = text.uppercased()
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+        textField.textColor = tone.foreground
+        textField.alignment = .center
+        textField.drawsBackground = false
+        textField.isBordered = false
+        textField.isSelectable = false
+        addSubview(textField)
+
+        NSLayoutConstraint.activate([
+            textField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            textField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            textField.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            textField.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
+        ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    override var intrinsicContentSize: NSSize {
-        let base = super.intrinsicContentSize
-        return NSSize(width: base.width + 22, height: 24)
     }
 }
 
@@ -473,6 +481,87 @@ private final class CapsuleButton: NSButton {
                     .font: font,
                     .foregroundColor: NSColor(calibratedRed: 1.0, green: 0.87, blue: 0.91, alpha: 1.0),
                 ]
+            )
+        }
+    }
+}
+
+private final class CircleCloseButton: NSButton {
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
+
+    init(target: AnyObject?, action: Selector) {
+        super.init(frame: .zero)
+        self.target = target
+        self.action = action
+        isBordered = false
+        focusRingType = .none
+        wantsLayer = true
+        layer?.cornerRadius = 9
+        layer?.borderWidth = 1.2
+        updateAppearance()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 18, height: 18)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInActiveApp]
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.allowsImplicitAnimation = true
+            updateAppearance()
+        }, completionHandler: nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.allowsImplicitAnimation = true
+            updateAppearance()
+        }, completionHandler: nil)
+    }
+
+    private func updateAppearance() {
+        if isHovered {
+            layer?.backgroundColor = NSColor(calibratedRed: 0.92, green: 0.26, blue: 0.35, alpha: 1.0).cgColor
+            layer?.borderColor = NSColor(calibratedRed: 1.0, green: 0.45, blue: 0.55, alpha: 1.0).cgColor
+            layer?.shadowColor = NSColor(calibratedRed: 1.0, green: 0.26, blue: 0.35, alpha: 0.6).cgColor
+            layer?.shadowOpacity = 0.8
+            layer?.shadowRadius = 4
+            layer?.shadowOffset = .zero
+            attributedTitle = NSAttributedString(
+                string: "×",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 12, weight: .bold),
+                    .foregroundColor: NSColor(calibratedRed: 0.3, green: 0.0, blue: 0.05, alpha: 1.0),
+                ]
+            )
+        } else {
+            layer?.backgroundColor = NSColor(calibratedRed: 0.36, green: 0.11, blue: 0.15, alpha: 0.8).cgColor
+            layer?.borderColor = NSColor(calibratedRed: 0.66, green: 0.22, blue: 0.28, alpha: 0.4).cgColor
+            layer?.shadowOpacity = 0.0
+            attributedTitle = NSAttributedString(
+                string: "",
+                attributes: [:]
             )
         }
     }
@@ -667,6 +756,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         window.isMovableByWindowBackground = true
         window.backgroundColor = .clear
         window.isOpaque = false
+        window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
 
@@ -687,6 +777,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         contentCard.layer?.shadowRadius = 36
         contentCard.layer?.shadowOffset = .zero
         contentView.addSubview(contentCard)
+
+        let closeButton = CircleCloseButton(target: self, action: #selector(closeLauncher))
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        contentCard.addSubview(closeButton)
 
         let heroPanel = NSView()
         heroPanel.translatesAutoresizingMaskIntoConstraints = false
@@ -886,6 +980,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             contentCard.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -22),
             contentCard.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
             contentCard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
+
+            closeButton.leadingAnchor.constraint(equalTo: contentCard.leadingAnchor, constant: 18),
+            closeButton.topAnchor.constraint(equalTo: contentCard.topAnchor, constant: 18),
 
             heroPanel.leadingAnchor.constraint(equalTo: contentCard.leadingAnchor, constant: 24),
             heroPanel.trailingAnchor.constraint(equalTo: contentCard.trailingAnchor, constant: -24),

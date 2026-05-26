@@ -2806,14 +2806,89 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     animation-delay: 0.5s;
     border-color: rgba(0,229,255,0.15);
 }
-.splash-title {
-    font-family: var(--font-head);
-    font-size: 48px; font-weight: 800;
-    letter-spacing: 16px;
-    background: linear-gradient(135deg, var(--primary-bright), var(--accent));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 8px;
+/* Glowing Neon ASCII Logo */
+.ascii-logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    line-height: 1.1;
+    color: var(--accent);
+    text-shadow: 0 0 5px var(--accent), 0 0 10px var(--accent), 0 0 20px var(--primary);
+    white-space: pre;
+    display: inline-block;
+    text-align: left;
+    margin: 0 auto 20px;
+    animation: neonPulse 3s ease-in-out infinite;
+}
+
+@keyframes neonPulse {
+    0%, 100% { text-shadow: 0 0 5px var(--accent), 0 0 10px var(--accent), 0 0 20px var(--primary); opacity: 0.95; }
+    50% { text-shadow: 0 0 8px var(--accent), 0 0 16px var(--accent), 0 0 32px var(--primary-bright); opacity: 1; }
+}
+
+/* Neural wave top border */
+.aquarium-top-wave {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: rgba(0, 229, 255, 0.4);
+    text-shadow: 0 0 4px rgba(0, 229, 255, 0.3);
+    pointer-events: none;
+}
+
+/* Floating neuro bubbles */
+.neuro-bubble {
+    position: absolute;
+    bottom: -20px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--primary-bright);
+    opacity: 0;
+    pointer-events: none;
+    text-shadow: 0 0 6px var(--primary);
+}
+
+.bubble-1 { left: 10%; font-size: 12px; animation: floatUp 8s linear infinite; }
+.bubble-2 { left: 25%; font-size: 18px; animation: floatUp 12s linear infinite 2s; }
+.bubble-3 { left: 45%; font-size: 10px; color: var(--accent); animation: floatUp 6s linear infinite 1s; }
+.bubble-4 { left: 65%; font-size: 14px; animation: floatUp 10s linear infinite 4s; }
+.bubble-5 { left: 80%; font-size: 20px; color: var(--accent); animation: floatUp 14s linear infinite 3s; }
+.bubble-6 { left: 92%; font-size: 8px; animation: floatUp 7s linear infinite 5s; }
+
+@keyframes floatUp {
+    0% { transform: translateY(0) scale(0.8); opacity: 0; }
+    10% { opacity: 0.6; }
+    90% { opacity: 0.6; }
+    100% { transform: translateY(-110vh) scale(1.2); opacity: 0; }
+}
+
+/* Mycelium bottom */
+.aquarium-bottom-mycelium {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    pointer-events: none;
+}
+
+.ascii-mycelium {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.1;
+    color: rgba(0, 255, 163, 0.55);
+    text-shadow: 0 0 5px rgba(0, 255, 163, 0.4);
+    margin: 0;
+    animation: sway 6s ease-in-out infinite alternate;
+    transform-origin: bottom center;
+}
+
+@keyframes sway {
+    0% { transform: skewX(-1.5deg); }
+    100% { transform: skewX(1.5deg); }
 }
 .splash-subtitle {
     font-size: 11px; letter-spacing: 4px;
