@@ -4154,6 +4154,7 @@ function syncSplashState(payload) {
 function dismissSplash(finalStatus = 'Neural link established.') {
     const splash = $('splash-screen');
     const splashBar = $('splash-bar');
+    const startBtn = $('splash-start-btn');
     if (!splash || splash.classList.contains('hidden')) return;
 
     // Complete the progress bar
@@ -4168,12 +4169,22 @@ function dismissSplash(finalStatus = 'Neural link established.') {
     if (state._splashInterval) clearInterval(state._splashInterval);
     if (state._splashTimeout) clearTimeout(state._splashTimeout);
 
-    // Fade out after brief delay to show 100%
-    setTimeout(() => {
-        splash.classList.add('hidden');
-        // Remove from DOM after transition
-        setTimeout(() => splash.remove(), 1000);
-    }, 400);
+    // Show the START button and attach an onclick listener
+    if (startBtn) {
+        startBtn.style.display = 'inline-block';
+        startBtn.onclick = () => {
+            splash.classList.add('hidden');
+            setTimeout(() => {
+                splash.remove();
+            }, 1000);
+        };
+    } else {
+        // Fallback if button does not exist in DOM
+        setTimeout(() => {
+            splash.classList.add('hidden');
+            setTimeout(() => splash.remove(), 1000);
+        }, 400);
+    }
 }
 
 document.addEventListener('visibilitychange', () => {

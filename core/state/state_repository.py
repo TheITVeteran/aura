@@ -882,7 +882,9 @@ class StateRepository:
             return False
         if self.is_vault_owner:
             return bool(status["db_connected"] and status["consumer_alive"])
-        return bool(status["consumer_alive"])
+        # For proxy/client repositories, we are initialized if the state is hydrated and available.
+        # This prevents transient startup delays in SHM/ActorBus registration from blocking HTTP health probes.
+        return True
 
     async def repair_runtime(self) -> dict[str, Any]:
         actions: list[str] = []

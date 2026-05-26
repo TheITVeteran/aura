@@ -4865,7 +4865,14 @@ class InferenceGate:
         return None
 
     def is_alive(self) -> bool:
-        """Check if the MLX client is operational."""
-        if self._mlx_client and hasattr(self._mlx_client, "is_alive"):
-            return self._mlx_client.is_alive()
+        """Check if the InferenceGate and MLX client are operational."""
+        if not self._initialized:
+            return False
+        # If MLX client is alive, we are operational
+        if self._mlx_client and hasattr(self._mlx_client, "is_alive") and self._mlx_client.is_alive():
+            return True
+        # If we are in safe boot or deferred mode, the MLX worker starts on first request,
+        # so InferenceGate itself is operational even if the worker isn't running yet.
+        if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
+            return True
         return False

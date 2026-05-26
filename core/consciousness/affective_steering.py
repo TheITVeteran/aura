@@ -685,7 +685,7 @@ class SteeringVectorLibrary:
                 d_model=d_model,
             )
             derived_at = time.time()
-            tmp_path = cache_path.with_suffix(".tmp")
+            tmp_path = cache_path.with_suffix(".tmp.npz")
             np.savez(
                 tmp_path,
                 v=vec,
