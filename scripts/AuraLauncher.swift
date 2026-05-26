@@ -161,7 +161,9 @@ private final class LauncherBackgroundView: NSView {
         layer?.masksToBounds = true
         layer?.cornerRadius = 22
 
-        gradientLayer.colors = [NSColor.auraCanvasTop.cgColor, NSColor.auraCanvasBottom.cgColor]
+        let middleColor = NSColor(calibratedRed: 0.05, green: 0.05, blue: 0.12, alpha: 1.0)
+        gradientLayer.colors = [NSColor.auraCanvasTop.cgColor, middleColor.cgColor, NSColor.auraCanvasBottom.cgColor]
+        gradientLayer.locations = [0.0, 0.5, 1.0]
         gradientLayer.startPoint = CGPoint(x: 0.0, y: 1.0)
         gradientLayer.endPoint = CGPoint(x: 1.0, y: 0.0)
         layer?.addSublayer(gradientLayer)
@@ -243,6 +245,15 @@ private final class GradientProgressBar: NSView {
         fillGradientLayer.endPoint = CGPoint(x: 1.0, y: 0.5)
         fillGradientLayer.cornerRadius = 4
         layer?.addSublayer(fillGradientLayer)
+
+        let glowPulse = CABasicAnimation(keyPath: "shadowOpacity")
+        glowPulse.fromValue = 0.55
+        glowPulse.toValue = 0.95
+        glowPulse.duration = 1.8
+        glowPulse.autoreverses = true
+        glowPulse.repeatCount = .infinity
+        glowPulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        fillGlowLayer.add(glowPulse, forKey: "glowPulse")
     }
 
     @available(*, unavailable)
@@ -407,6 +418,10 @@ private final class CapsuleButton: NSButton {
             let borderAlpha: CGFloat = isHovered ? 0.66 : 0.44
             layer?.backgroundColor = NSColor.auraViolet.withAlphaComponent(bgAlpha).cgColor
             layer?.borderColor = NSColor.auraViolet.withAlphaComponent(borderAlpha).cgColor
+            layer?.shadowColor = NSColor.auraViolet.cgColor
+            layer?.shadowOpacity = isHovered ? 0.42 : 0.0
+            layer?.shadowRadius = isHovered ? 8 : 0
+            layer?.shadowOffset = .zero
             attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [
@@ -420,6 +435,10 @@ private final class CapsuleButton: NSButton {
             let textColor = isHovered ? NSColor.white : NSColor(calibratedWhite: 0.92, alpha: 1.0)
             layer?.backgroundColor = NSColor.white.withAlphaComponent(bgAlpha).cgColor
             layer?.borderColor = NSColor.white.withAlphaComponent(borderAlpha).cgColor
+            layer?.shadowColor = NSColor.white.cgColor
+            layer?.shadowOpacity = isHovered ? 0.15 : 0.0
+            layer?.shadowRadius = isHovered ? 6 : 0
+            layer?.shadowOffset = .zero
             attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [
@@ -444,6 +463,10 @@ private final class CapsuleButton: NSButton {
             let borderAlpha: CGFloat = isHovered ? 0.50 : 0.36
             layer?.backgroundColor = NSColor(calibratedRed: 0.46, green: 0.14, blue: 0.21, alpha: bgAlpha).cgColor
             layer?.borderColor = NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.67, alpha: borderAlpha).cgColor
+            layer?.shadowColor = NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.67, alpha: 1.0).cgColor
+            layer?.shadowOpacity = isHovered ? 0.40 : 0.0
+            layer?.shadowRadius = isHovered ? 8 : 0
+            layer?.shadowOffset = .zero
             attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [
@@ -712,6 +735,25 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         orbHalo.layer?.shadowOpacity = 0.80
         orbHalo.layer?.shadowRadius = 60
         orbHalo.layer?.shadowOffset = .zero
+
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 0.5
+        pulse.toValue = 0.95
+        pulse.duration = 2.8
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        orbHalo.layer?.add(pulse, forKey: "pulseOpacity")
+
+        let pulseScale = CABasicAnimation(keyPath: "transform.scale")
+        pulseScale.fromValue = 0.96
+        pulseScale.toValue = 1.04
+        pulseScale.duration = 2.8
+        pulseScale.autoreverses = true
+        pulseScale.repeatCount = .infinity
+        pulseScale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        orbHalo.layer?.add(pulseScale, forKey: "pulseScale")
+
         heroPanel.addSubview(orbHalo)
 
         let iconPlate = NSView()

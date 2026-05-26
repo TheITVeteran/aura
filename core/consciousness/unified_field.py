@@ -565,8 +565,7 @@ class UnifiedField:
             clip_abs, valid_clip = _finite_float(clip_abs, 1.0)
             clip_abs = abs(clip_abs) if valid_clip and clip_abs > 0.0 else 1.0
             clipped = np.clip(result, -clip_abs, clip_abs).astype(np.float32)
-            if not bool(np.array_equal(clipped, result)):
-                reasons.append(f"clipped:{clip_abs:g}")
+            # Perform bounding silently to prevent 20Hz false positive warning storms
             result = clipped
 
         if record and reasons:
