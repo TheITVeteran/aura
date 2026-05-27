@@ -415,6 +415,10 @@ async def shutdown_proof_runtime(orchestrator) -> None:
     from core.runtime.shutdown_coordinator import get_shutdown_coordinator, request_shutdown
 
     request_shutdown("dnu_agi_proof_battery_complete")
+    orchestrator_shutdown_timeout_s = max(
+        20.0,
+        float(os.environ.get("AURA_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S", "24.0") or 24.0),
+    )
 
     async def _bounded_call(label: str, callback, *, timeout: float = 8.0) -> None:
         if not callable(callback):
@@ -458,7 +462,11 @@ async def shutdown_proof_runtime(orchestrator) -> None:
                 await _bounded_call("model_client.aclose", aclose, timeout=5.0)
 
     stop_method = getattr(orchestrator, "stop", None)
-    await _bounded_call("orchestrator.stop", stop_method, timeout=8.0)
+    await _bounded_call(
+        "orchestrator.stop",
+        stop_method,
+        timeout=orchestrator_shutdown_timeout_s,
+    )
 
     await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
 

@@ -117,6 +117,57 @@ def test_integrity_guardian_verify_all_suppresses_git_active_paths(monkeypatch, 
     assert guardian.get_status()["current_issue_count"] == 0
 
 
+def test_integrity_guardian_rejects_generated_artifact_paths_from_manifest(monkeypatch, tmp_path):
+    from core.security import integrity_guardian as ig_mod
+
+    manifest_path = tmp_path / "integrity_manifest.json"
+    monkeypatch.setattr(ig_mod, "MANIFEST_PATH", manifest_path)
+    guardian = ig_mod.IntegrityGuardian()
+    files = {
+        "core/security/emergency_protocol.py": "hash",
+        "artifacts/current/unified_system_scenario/sandbox/broken_repo/app.py": "hash",
+    }
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "files": files,
+                "signature": guardian._sign_manifest(files),
+                "source_revision": "same-revision",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(guardian, "_current_source_revision", lambda: "same-revision")
+
+    assert guardian._load_manifest() is False
+    assert guardian._manifest == {}
+
+
+def test_integrity_guardian_build_manifest_scopes_to_runtime_paths(monkeypatch, tmp_path):
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    (tmp_path / "core").mkdir()
+    (tmp_path / "interface").mkdir()
+    (tmp_path / "artifacts" / "current").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "core" / "runtime_file.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "interface" / "server.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "aura_main.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "artifacts" / "current" / "generated.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_generated.py").write_text("x = 1\n", encoding="utf-8")
+
+    guardian = ig_mod.IntegrityGuardian()
+    count = guardian._build_manifest()
+
+    assert count == 3
+    assert set(guardian._manifest) == {
+        "aura_main.py",
+        "core/runtime_file.py",
+        "interface/server.py",
+    }
+
+
 def test_integrity_guardian_parse_git_status_paths_handles_renames():
     from core.security.integrity_guardian import IntegrityGuardian
 

@@ -897,6 +897,31 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["data"]["ok"])
         self.assertGreaterEqual(call_soon.call_count, 1)
 
+    async def test_event_bus_publish_captures_redis_client_across_shutdown_race(self):
+        from core.event_bus import AuraEventBus
+
+        class _Redis:
+            def __init__(self):
+                self.published = []
+
+            async def publish(self, topic, payload):
+                self.published.append((topic, payload))
+
+        redis_client = _Redis()
+        bus = AuraEventBus()
+        bus._use_redis = True
+        bus._redis = redis_client
+
+        async def _racy_to_thread(func, *args, **kwargs):
+            bus._redis = None
+            return func(*args, **kwargs)
+
+        with patch("core.event_bus.asyncio.to_thread", side_effect=_racy_to_thread):
+            await bus.publish("shutdown-race", {"ok": True})
+
+        self.assertEqual(len(redis_client.published), 1)
+        self.assertEqual(redis_client.published[0][0], "aura/events/shutdown-race")
+
     def _terminal_monitor_without_handler(self):
         from collections import deque
 

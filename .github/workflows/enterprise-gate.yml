@@ -32,6 +32,7 @@ jobs:
             pydantic pydantic-settings \
             pytest pytest-asyncio \
             numpy scipy \
+            requests httpx aiosqlite \
             pyyaml structlog pybreaker psutil tenacity \
             prometheus-client prometheus-fastapi-instrumentator
       - name: Run enterprise regression tests
@@ -40,6 +41,7 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           python -m pytest \
+            -p pytest_asyncio.plugin \
             tests/test_enterprise_hardening_fixes.py \
             tests/test_enterprise_static_contracts.py \
             -q --tb=short --disable-warnings

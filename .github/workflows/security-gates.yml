@@ -33,12 +33,12 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: |
-          pip install pip-audit osv-scanner
+          pip install pip-audit
           pip install -r requirements/core.txt
       - name: pip-audit
         run: pip-audit --strict --desc
       - name: OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
         with:
           scan-args: |-
             --lockfile=requirements_lock.txt

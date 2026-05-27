@@ -330,13 +330,19 @@ class AuraEventBus:
         if self._use_redis:
             if not self._redis:
                 await self._setup_redis()
-            
-            if self._redis:
+
+            redis_client = self._redis
+            if redis_client:
                 try:
                     # Offload JSON serialization to thread to avoid event loop lag
                     payload = await asyncio.to_thread(json.dumps, data)
+                    publish = getattr(redis_client, "publish", None)
+                    if not callable(publish):
+                        raise AttributeError(
+                            f"{type(redis_client).__name__} has no callable publish"
+                        )
                     # [STABILITY] Wrap Redis publish in a 2.0s timeout to prevent external stalls.
-                    await asyncio.wait_for(self._redis.publish(f"aura/events/{topic}", payload), timeout=2.0)
+                    await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
                 except asyncio.TimeoutError:
                     logger.debug("AuraEventBus: Redis publish STALLED (timeout).")
                 except (ImportError, AttributeError, RuntimeError) as e:

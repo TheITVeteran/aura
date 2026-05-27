@@ -117,6 +117,9 @@ class DreamingProcess:
         """Start the background dreaming loop."""
         if self._running:
             return
+        if self._background_block_reason() == "proof_run_active":
+            logger.info("Dreaming Process deferred during proof run.")
+            return
         self._running = True
         self._task = get_task_tracker().create_task(self._run_loop(), name="dreaming.process")
         logger.info("🌙 Dreaming Process active (Interval: %ds)", self.interval)
@@ -159,9 +162,34 @@ class DreamingProcess:
 
     def _should_dream(self) -> bool:
         """Determine if it's a good time to dream (Low Pulse)."""
+        if self._background_block_reason():
+            return False
+
         # Threshold: if last user interaction was > 2 minutes ago
         time_since_last_user = time.time() - getattr(self.orch, "_last_user_interaction_time", 0)
         return time_since_last_user > 120.0
+
+    def _background_block_reason(self) -> str:
+        """Return the shared background policy reason blocking autonomous dreaming."""
+        try:
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            return background_activity_reason(
+                self.orch,
+                profile=MAINTENANCE_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+        except _DREAMING_RECOVERABLE_ERRORS as exc:
+            _record_dreaming_degradation(
+                exc,
+                action="continued dream admission check without shared background policy",
+                severity="warning",
+            )
+            logger.debug("Dreaming background policy unavailable: %s", exc)
+            return ""
 
     @staticmethod
     def _compose_reflection(recent_events: str) -> str:

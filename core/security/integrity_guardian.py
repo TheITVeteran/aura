@@ -58,6 +58,34 @@ CRITICAL_CORE_FILES = [
 
 # Base directory (this file is at core/security/, so project root is 2 up)
 _BASE_DIR = Path(__file__).parent.parent.parent
+_MONITORED_ROOTS = frozenset({"core", "interface"})
+_MONITORED_TOP_LEVEL_FILES = frozenset({"aura_main.py", "main.py"})
+_IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "artifacts",
+        "archive",
+        "backups",
+        "build",
+        "data",
+        "dev_archive",
+        "dist",
+        "docs",
+        "logs",
+        "node_modules",
+        "proofs",
+        "research",
+        "scripts",
+        "tests",
+        "tmp",
+        "tools",
+    }
+)
 
 
 def _get_hmac_secret() -> bytes:
@@ -211,23 +239,45 @@ class IntegrityGuardian:
     # ── Core Logic ─────────────────────────────────────────────────────────
 
     def _build_manifest(self) -> int:
-        """Hash all Python files in core/ and interface/."""
+        """Hash production Python files that belong to the live runtime."""
         manifest = {}
         for root, dirs, files in os.walk(_BASE_DIR):
-            # Skip cache directories
-            dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in _IGNORED_DIRS
+            ]
             for fname in files:
                 if not fname.endswith(".py"):
                     continue
                 full = Path(root) / fname
                 try:
                     rel = str(full.relative_to(_BASE_DIR))
+                    if not self._is_monitored_path(rel):
+                        continue
                     manifest[rel] = self._hash_file(full)
                 except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     record_degradation('integrity_guardian', _exc)
                     logger.debug("Suppressed Exception: %s", _exc)
         self._manifest = manifest
         return len(manifest)
+
+    @staticmethod
+    def _is_monitored_path(path: str) -> bool:
+        rel = Path(str(path or "").lstrip("./")).as_posix()
+        if not rel or rel.endswith(".pyc") or "__pycache__" in rel:
+            return False
+        parts = rel.split("/")
+        if not parts:
+            return False
+        if parts[0] in _IGNORED_DIRS:
+            return False
+        if len(parts) == 1:
+            return rel in _MONITORED_TOP_LEVEL_FILES
+        return parts[0] in _MONITORED_ROOTS
+
+    def _manifest_scope_mismatch(self, files: Dict[str, str]) -> List[str]:
+        return [path for path in files if not self._is_monitored_path(path)]
 
     def _verify_all(self) -> List[str]:
         """Verify all files in manifest. Returns list of tampered paths."""
@@ -349,6 +399,14 @@ class IntegrityGuardian:
                     "IntegrityGuardian: source revision changed (%s → %s); rebuilding baseline.",
                     stored_revision[:12] or "legacy",
                     current_revision[:12],
+                )
+                return False
+
+            out_of_scope = self._manifest_scope_mismatch(files)
+            if out_of_scope:
+                logger.info(
+                    "IntegrityGuardian: manifest contains %d out-of-scope generated/test paths; rebuilding baseline.",
+                    len(out_of_scope),
                 )
                 return False
 

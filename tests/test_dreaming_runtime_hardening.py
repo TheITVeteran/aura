@@ -39,6 +39,18 @@ def test_dream_pattern_extraction_tolerates_bad_valence_and_caps_singletons():
 
 
 @pytest.mark.asyncio
+async def test_dreaming_process_does_not_start_background_loop_during_proof(monkeypatch):
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    dreamer = DreamingProcess(SimpleNamespace(_last_user_interaction_time=0), interval=0.01)
+
+    await dreamer.start()
+
+    assert dreamer._running is False
+    assert dreamer._task is None
+    assert dreamer._should_dream() is False
+
+
+@pytest.mark.asyncio
 async def test_dream_cycle_avoids_brain_think_on_event_loop(service_container):
     orchestrator = SimpleNamespace(_last_user_interaction_time=0)
     dreamer = DreamingProcess(orchestrator, interval=0.1)
