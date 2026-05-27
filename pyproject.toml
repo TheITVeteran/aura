@@ -3,7 +3,8 @@ name = "aura-zenith"
 version = "2026.4.20"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.0",
+    "fastapi>=0.136.3",
+    "starlette>=1.0.1",
     "uvicorn[standard]>=0.34.0",
     "mlx-lm==0.31.0",                    # March 7 2026: tensor parallelism
     "mlx>=0.22.0",
@@ -12,9 +13,10 @@ dependencies = [
     "faiss-cpu>=1.10.0",                 # unified memory friendly
     "httpx>=0.28.0",
     "requests>=2.32.0",
+    "idna>=3.15",
+    "urllib3>=2.7.0",
     "aiosqlite>=0.20.0",
     "prometheus-client>=0.21.0",
-    "prometheus-fastapi-instrumentator>=7.0.0",
     "psutil>=6.1.1",
     "numpy>=1.26,<3.0",
     "scipy>=1.13",

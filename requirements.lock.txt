@@ -20,7 +20,7 @@ cryptography==46.0.6
 ctranslate2==4.7.1
 Cython==3.2.4
 decorator==5.2.1
-fastapi==0.135.2
+fastapi==0.136.3
 faster-whisper==1.2.1
 filelock==3.25.2
 flatbuffers==25.12.19
@@ -35,7 +35,7 @@ httptools==0.7.1
 httpx==0.28.1
 httpx-sse==0.4.3
 huggingface_hub==1.7.2
-idna==3.11
+idna==3.16
 iniconfig==2.3.0
 isosurfaces==0.1.2
 Jinja2==3.1.6
@@ -71,7 +71,6 @@ pillow==12.1.1
 playwright==1.58.0
 playwright-stealth==2.0.3
 pluggy==1.6.0
-prometheus-fastapi-instrumentator==7.1.0
 prometheus_client==0.24.1
 propcache==0.4.1
 protobuf==7.34.1
@@ -126,7 +125,7 @@ skia-pathops==0.9.2
 soupsieve==2.8.3
 srt==3.5.3
 sse-starlette==3.4.1
-starlette==0.52.1
+starlette==1.1.0
 structlog==25.5.0
 svgelements==1.9.6
 sympy==1.14.0
@@ -139,7 +138,7 @@ transformers==5.3.0
 typer==0.24.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-urllib3==2.6.3
+urllib3==2.7.0
 uvicorn==0.42.0
 uvloop==0.22.1
 watchdog==6.0.0

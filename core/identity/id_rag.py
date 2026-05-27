@@ -44,6 +44,8 @@ RELATION_WEIGHTS = {
     "relationship": 0.9,
 }
 
+_ACCESS_QUEUE_STOP = object()
+
 
 def _tokenize(text: str) -> set[str]:
     return {t for t in _TOKEN_RE.findall(str(text).lower()) if len(t) > 2 and t not in _STOPWORDS}
@@ -122,11 +124,51 @@ class IdentityChronicle:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
-        
+
         # Async writer thread for mark_accessed to avoid read-path blocking
         self._access_queue = queue.Queue(maxsize=1000)
+        self._writer_stop = threading.Event()
+        self._closed = False
         self._writer_thread = threading.Thread(target=self._async_writer_loop, daemon=True, name="IDRAGWriter")
         self._writer_thread.start()
+
+    def __enter__(self) -> "IdentityChronicle":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    def close(self, timeout_s: float = 2.0) -> None:
+        """Stop the access writer deterministically.
+
+        SQLite WAL files are safe to delete only after the writer releases its
+        connection. CI surfaced this as TemporaryDirectory cleanup failures, and
+        the same lifecycle gap can keep runtime shutdown noisy on user machines.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._writer_stop.set()
+        try:
+            self._access_queue.put_nowait(_ACCESS_QUEUE_STOP)
+        except queue.Full:
+            try:
+                self._access_queue.get_nowait()
+                self._access_queue.put_nowait(_ACCESS_QUEUE_STOP)
+            except queue.Empty:
+                pass
+        if threading.current_thread() is self._writer_thread:
+            return
+        if self._writer_thread.is_alive():
+            self._writer_thread.join(timeout=max(0.0, float(timeout_s)))
+            if self._writer_thread.is_alive():
+                logger.warning("ID-RAG writer did not stop within %.2fs", timeout_s)
+
+    def on_stop(self) -> None:
+        self.close()
+
+    def cleanup(self) -> None:
+        self.close()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=5.0)
@@ -289,39 +331,54 @@ class IdentityChronicle:
         return max(item.score for item in retrieved)
 
     def _mark_accessed(self, fact_ids: list[str]) -> None:
+        if not fact_ids or self._closed or self._writer_stop.is_set():
+            return
         try:
             self._access_queue.put_nowait((time.time(), fact_ids))
         except queue.Full:
             pass # Backpressure: drop access marks if queue is full rather than blocking
 
+    def _write_access_batch(self, batch: list[tuple[float, list[str]]]) -> None:
+        updates = []
+        for now, fact_ids in batch:
+            updates.extend([(now, fact_id) for fact_id in fact_ids])
+        if not updates:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                "UPDATE identity_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                updates,
+            )
+
     def _async_writer_loop(self) -> None:
         """Background thread to process mark_accessed requests."""
-        while True:
+        while not self._writer_stop.is_set():
             try:
-                batch = []
-                # Block for up to 1 second waiting for the first item
-                batch.append(self._access_queue.get(timeout=1.0))
+                batch: list[tuple[float, list[str]]] = []
+                # Block briefly for the first item; close() wakes this with a sentinel.
+                item = self._access_queue.get(timeout=0.2)
+                if item is _ACCESS_QUEUE_STOP:
+                    break
+                batch.append(item)
                 # Drain the rest of the queue
-                while not self._access_queue.empty():
+                while True:
                     try:
-                        batch.append(self._access_queue.get_nowait())
+                        item = self._access_queue.get_nowait()
                     except queue.Empty:
                         break
-                
+                    if item is _ACCESS_QUEUE_STOP:
+                        self._writer_stop.set()
+                        break
+                    batch.append(item)
+
                 # Execute batch update
                 if batch:
-                    with self._connect() as conn:
-                        updates = []
-                        for now, fact_ids in batch:
-                            updates.extend([(now, fact_id) for fact_id in fact_ids])
-                        if updates:
-                            conn.executemany(
-                                "UPDATE identity_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-                                updates,
-                            )
+                    self._write_access_batch(batch)
             except queue.Empty:
                 continue
             except (OSError, ConnectionError, TimeoutError) as e:
+                if self._writer_stop.is_set():
+                    break
                 logger.debug("ID-RAG async writer error: %s", e)
                 time.sleep(1.0)
 

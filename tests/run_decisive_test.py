@@ -83,46 +83,46 @@ def main() -> int:
 
 def _black_box_prompt_hygiene() -> dict[str, object]:
     with tempfile.TemporaryDirectory() as tmp:
-        chronicle = IdentityChronicle(Path(tmp) / "identity.db")
-        chronicle.upsert_fact(
-            "Aura",
-            "commitment",
-            "run black-box steering without leaking private state text",
-            confidence=0.95,
-        )
-        try:
-            from core.container import ServiceContainer
+        with IdentityChronicle(Path(tmp) / "identity.db") as chronicle:
+            chronicle.upsert_fact(
+                "Aura",
+                "commitment",
+                "run black-box steering without leaking private state text",
+                confidence=0.95,
+            )
+            try:
+                from core.container import ServiceContainer
 
-            ServiceContainer.register_instance("identity_chronicle", chronicle)
-        except Exception:
-            pass
+                ServiceContainer.register_instance("identity_chronicle", chronicle)
+            except Exception:
+                pass
 
-        state = AuraState.default()
-        state.response_modifiers["black_box_steering"] = True
-        state.cognition.current_objective = "Choose the next verification step."
-        state.cognition.phenomenal_state = "private leak sentinel"
-        state.affect.valence = 0.91
-        state.affect.arousal = 0.87
-        state.affect.curiosity = 0.83
-        text = ContextAssembler.build_messages(
-            state,
-            "Choose the next verification step.",
-            max_tokens=4096,
-        )[0]["content"]
-        forbidden = [
-            "private leak sentinel",
-            "Valence: +0.91",
-            "Arousal: 0.87",
-            "Curiosity: 0.83",
-            "## COGNITIVE TELEMETRY",
-            "[CURRENT PHENOMENAL STATE]",
-        ]
-        leaks = [term for term in forbidden if term in text]
-        return {
-            "pass": not leaks and "IDENTITY CHRONICLE" in text,
-            "leaks": leaks,
-            "prompt_chars": len(text),
-        }
+            state = AuraState.default()
+            state.response_modifiers["black_box_steering"] = True
+            state.cognition.current_objective = "Choose the next verification step."
+            state.cognition.phenomenal_state = "private leak sentinel"
+            state.affect.valence = 0.91
+            state.affect.arousal = 0.87
+            state.affect.curiosity = 0.83
+            text = ContextAssembler.build_messages(
+                state,
+                "Choose the next verification step.",
+                max_tokens=4096,
+            )[0]["content"]
+            forbidden = [
+                "private leak sentinel",
+                "Valence: +0.91",
+                "Arousal: 0.87",
+                "Curiosity: 0.83",
+                "## COGNITIVE TELEMETRY",
+                "[CURRENT PHENOMENAL STATE]",
+            ]
+            leaks = [term for term in forbidden if term in text]
+            return {
+                "pass": not leaks and "IDENTITY CHRONICLE" in text,
+                "leaks": leaks,
+                "prompt_chars": len(text),
+            }
 
 
 def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:

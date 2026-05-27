@@ -1,0 +1,7 @@
+# Aggregate manifest for GitHub Dependency Graph and Dependabot.
+# Runtime/install flows continue to use the split manifests directly.
+-r core.txt
+-r dev.txt
+-r ml.txt
+-r senses.txt
+-r voice.txt

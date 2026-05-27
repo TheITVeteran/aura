@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,6 +44,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -52,7 +54,6 @@ try:
 except ImportError:
     ORJSONResponse = JSONResponse
 from fastapi.staticfiles import StaticFiles
-from prometheus_fastapi_instrumentator import Instrumentator
 
 try:
     import sounddevice as sd
@@ -88,6 +89,29 @@ _SERVER_BOUNDARY_ERRORS = (
     TypeError,
     ValueError,
 )
+
+_HTTP_REQUESTS_TOTAL = Counter(
+    "aura_http_requests_total",
+    "HTTP requests served by the Aura interface.",
+    ("method", "path", "status"),
+)
+_HTTP_REQUEST_LATENCY_SECONDS = Histogram(
+    "aura_http_request_latency_seconds",
+    "HTTP request latency for the Aura interface.",
+    ("method", "path"),
+)
+_HTTP_REQUESTS_IN_PROGRESS = Gauge(
+    "aura_http_requests_in_progress",
+    "HTTP requests currently being processed by the Aura interface.",
+)
+
+
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return request.url.path
 
 
 def _spawn_server_task(coro, *, name: str) -> asyncio.Task:
@@ -386,8 +410,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 0.1 Prometheus Instrumentation
-Instrumentator().instrument(app).expose(app)
+# 0.1 Prometheus instrumentation. Kept native to avoid Starlette-version
+# coupling in third-party middleware.
+@app.middleware("http")
+async def prometheus_metrics_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    status = 500
+    _HTTP_REQUESTS_IN_PROGRESS.inc()
+    try:
+        response = await call_next(request)
+        status = int(response.status_code)
+        return response
+    finally:
+        path = _route_template(request)
+        method = request.method
+        elapsed = max(0.0, time.perf_counter() - start)
+        _HTTP_REQUEST_LATENCY_SECONDS.labels(method=method, path=path).observe(elapsed)
+        _HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=str(status)).inc()
+        _HTTP_REQUESTS_IN_PROGRESS.dec()
+
+
+@app.get("/metrics", include_in_schema=False)
+@app.get("/metrics/prometheus", include_in_schema=False)
+async def prometheus_metrics_endpoint():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # 0.2 Correlation ID Middleware & Context
 
