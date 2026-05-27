@@ -487,7 +487,7 @@ class LocalPipeBus:
 
             except EOFError:
                 logger.info("🔌 Bus connection closed by peer.")
-                self._cancel_pending_requests(EOFError("Bus connection closed by peer"))
+                self._cancel_pending_requests(cancel=True)
                 break
             except (BrokenPipeError, OSError) as e:
                 logger.error("🛑 Bus read error: %s", e)

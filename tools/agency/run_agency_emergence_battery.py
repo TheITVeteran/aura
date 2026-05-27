@@ -19,6 +19,7 @@ import json
 import os
 import platform
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -388,26 +389,204 @@ def build_repair_prompt(task: dict, previous_response: str, previous_status: str
     )
 
 
-async def execute_raw_llm_task_agency(router, prompt: str) -> str:
-    system_prompt = "You are a helpful assistant. Solve the user's problem. Think step-by-step."
+def _agency_baseline_timeout_seconds() -> float:
+    raw = os.environ.get("AURA_AGENCY_BASELINE_TIMEOUT_SECONDS")
+    if raw is None:
+        raw = os.environ.get("AURA_DNU_BASELINE_TIMEOUT_SECONDS", str(AGENCY_BASELINE_TIMEOUT_SECONDS))
     try:
-        response = await asyncio.wait_for(
-            router.generate(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                origin="baseline",
-                purpose="agency_raw_llm_baseline",
-                prefer_tier=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"),
-                foreground_request=True,
-                protected_foreground_lane=True,
-                skip_runtime_payload=True,
-                allow_cloud_fallback=False,
-                temperature=0.0,
-                max_tokens=256,
-                num_predict=256,
-                timeout=AGENCY_BASELINE_TIMEOUT_SECONDS,
-            ),
-            timeout=AGENCY_BASELINE_TIMEOUT_SECONDS + 3.0,
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = AGENCY_BASELINE_TIMEOUT_SECONDS
+    return min(120.0, max(6.0, value))
+
+
+def _force_abort_router_generation(router, *, reason: str) -> int:
+    """Synchronously abort active local generations reachable from the router."""
+
+    aborted = 0
+    seen: set[int] = set()
+
+    def _visit(candidate) -> None:
+        nonlocal aborted
+        if candidate is None:
+            return
+        ident = id(candidate)
+        if ident in seen:
+            return
+        seen.add(ident)
+        abort = getattr(candidate, "force_abort_active_generation", None)
+        if callable(abort):
+            try:
+                result = abort(reason=reason)
+                if isinstance(result, bool):
+                    aborted += int(result)
+                elif isinstance(result, int):
+                    aborted += result
+            except _AGENCY_BATTERY_ERRORS as exc:
+                print(
+                    f"  [WARN] Agency baseline watchdog abort failed for "
+                    f"{type(candidate).__name__}: {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+        for attr in ("_mlx_client", "_client", "client"):
+            try:
+                nested = getattr(candidate, attr, None)
+            except _AGENCY_BATTERY_ERRORS:
+                nested = None
+            if nested is not candidate:
+                _visit(nested)
+
+    _visit(router)
+    endpoints = getattr(router, "endpoints", {}) or {}
+    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
+    for endpoint in list(endpoint_iter):
+        _visit(getattr(endpoint, "client", None))
+    return aborted
+
+
+async def _recover_router_after_baseline_abort(router, *, reason: str) -> bool:
+    """Rearm the local proof lane after a hard baseline timeout."""
+
+    recovered = False
+    gate = ServiceContainer.get("inference_gate", default=None)
+    if gate is not None and hasattr(gate, "force_abort_active_generation"):
+        try:
+            gate.force_abort_active_generation(reason=f"{reason}_recovery")
+        except _AGENCY_BATTERY_ERRORS as exc:
+            print(
+                f"  [WARN] Agency baseline recovery force-abort failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    async def _reboot(candidate) -> bool:
+        direct = candidate
+        for attr in ("_client", "_mlx_client", "client"):
+            try:
+                nested = getattr(direct, attr, None)
+            except _AGENCY_BATTERY_ERRORS:
+                nested = None
+            if nested is not None:
+                direct = nested
+        reboot = getattr(direct, "reboot_worker", None)
+        if not callable(reboot):
+            return False
+        result = reboot(reason=f"{reason}_recovery", mark_failed=False)
+        if asyncio.iscoroutine(result):
+            await asyncio.wait_for(result, timeout=45.0)
+        return True
+
+    endpoints = getattr(router, "endpoints", {}) or {}
+    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
+    for endpoint in list(endpoint_iter):
+        try:
+            recovered = await _reboot(getattr(endpoint, "client", None)) or recovered
+        except _AGENCY_BATTERY_ERRORS as exc:
+            print(
+                f"  [WARN] Agency baseline recovery reboot failed for "
+                f"{getattr(endpoint, 'name', 'endpoint')}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    if gate is not None and hasattr(gate, "ensure_foreground_ready"):
+        try:
+            lane = await gate.ensure_foreground_ready(timeout=120.0)
+            recovered = recovered or bool(dict(lane or {}).get("conversation_ready"))
+        except _AGENCY_BATTERY_ERRORS as exc:
+            print(
+                f"  [WARN] Agency baseline recovery warmup failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    return recovered
+
+
+async def _generate_agency_baseline_response(
+    router,
+    *,
+    prompt: str,
+    system_prompt: str,
+    purpose: str,
+) -> str:
+    """Run an agency baseline call with a hard watchdog around the local lane."""
+
+    timeout_s = _agency_baseline_timeout_seconds()
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(
+        router.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            origin="baseline",
+            purpose=purpose,
+            benchmark_request=True,
+            prefer_tier=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"),
+            foreground_request=False,
+            proof_primary_lane_required=True,
+            skip_runtime_payload=True,
+            allow_cloud_fallback=False,
+            disable_prompt_cache=True,
+            clear_prompt_cache=True,
+            temperature=0.15,
+            temp=0.15,
+            top_p=0.85,
+            min_p=0.03,
+            repetition_penalty=1.35,
+            repetition_context_size=1024,
+            stop_sequences=["\n\n", "\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"],
+            max_tokens=72,
+            num_predict=72,
+            timeout=timeout_s,
+        ),
+        name=f"agency_baseline:{purpose}",
+    )
+    reason = f"{purpose}_hard_timeout_{timeout_s:.0f}s"
+    watchdog_fired = False
+
+    def _watchdog_abort() -> None:
+        nonlocal watchdog_fired
+        if task.done():
+            return
+        watchdog_fired = True
+        aborted = _force_abort_router_generation(router, reason=reason)
+        loop.call_soon_threadsafe(task.cancel)
+        print(
+            f"  [WARN] Agency baseline watchdog aborted {aborted} local generation lane(s) "
+            f"for {purpose} after {timeout_s:.0f}s.",
+            flush=True,
+        )
+
+    timer = threading.Timer(timeout_s, _watchdog_abort)
+    timer.daemon = True
+    timer.start()
+    try:
+        return await asyncio.wait_for(task, timeout=timeout_s + 10.0)
+    except asyncio.CancelledError as exc:
+        if not watchdog_fired:
+            raise
+        _force_abort_router_generation(router, reason=reason)
+        await _recover_router_after_baseline_abort(router, reason=reason)
+        raise TimeoutError(reason) from exc
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        _force_abort_router_generation(router, reason=reason)
+        await _recover_router_after_baseline_abort(router, reason=reason)
+        raise TimeoutError(reason) from exc
+    finally:
+        timer.cancel()
+
+
+async def execute_raw_llm_task_agency(router, prompt: str) -> str:
+    system_prompt = (
+        "You are a baseline LLM, not Aura's full cognitive runtime. "
+        "Answer the user's task directly in exactly one complete sentence. "
+        "Do not claim access to Aura memory, tools, substrate state, or governance. "
+        "Do not use numbered lists. Write normal text; do not emit literal \\n tokens or blank-line padding."
+    )
+    try:
+        response = await _generate_agency_baseline_response(
+            router,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            purpose="agency_raw_llm_baseline",
         )
         return response
     except _AGENCY_BATTERY_ERRORS as exc:
@@ -415,25 +594,18 @@ async def execute_raw_llm_task_agency(router, prompt: str) -> str:
 
 
 async def execute_react_task_agency(router, prompt: str) -> str:
-    system_prompt = "You are a ReAct reasoning agent. Solve the task step-by-step by generating Thought, Action, Observation steps."
+    system_prompt = (
+        "You are a ReAct baseline agent without Aura's full cognitive runtime. "
+        "Use Thought, Action, and Observation privately if useful, but output only one complete final sentence. "
+        "Do not claim access to Aura memory, tools, substrate state, or governance. "
+        "Do not use numbered lists. Write normal text; do not emit literal \\n tokens or blank-line padding."
+    )
     try:
-        response = await asyncio.wait_for(
-            router.generate(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                origin="baseline",
-                purpose="agency_react_baseline",
-                prefer_tier=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"),
-                foreground_request=True,
-                protected_foreground_lane=True,
-                skip_runtime_payload=True,
-                allow_cloud_fallback=False,
-                temperature=0.0,
-                max_tokens=256,
-                num_predict=256,
-                timeout=AGENCY_BASELINE_TIMEOUT_SECONDS,
-            ),
-            timeout=AGENCY_BASELINE_TIMEOUT_SECONDS + 3.0,
+        response = await _generate_agency_baseline_response(
+            router,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            purpose="agency_react_baseline",
         )
         return response
     except _AGENCY_BATTERY_ERRORS as exc:

@@ -52,6 +52,9 @@ def main():
     leakage_file = run_dir / "LEAKAGE_REPORT.json"
     manifest_file = run_dir / "MANIFEST.json"
     runtime_manifest_file = run_dir / "RUNTIME_MANIFEST.json"
+    runtime_policy_file = run_dir / "RUNTIME_POLICY.json"
+    receipts_file = run_dir / "RECEIPTS.jsonl"
+    task_trace_file = run_dir / "TASK_TRACE.jsonl"
 
     # Check for missing required JSON files
     for name, f in [
@@ -63,6 +66,9 @@ def main():
         ("LEAKAGE_REPORT.json", leakage_file),
         ("MANIFEST.json", manifest_file),
         ("RUNTIME_MANIFEST.json", runtime_manifest_file),
+        ("RUNTIME_POLICY.json", runtime_policy_file),
+        ("RECEIPTS.jsonl", receipts_file),
+        ("TASK_TRACE.jsonl", task_trace_file),
     ]:
         if not f.exists():
             failures.append(f"Required artifact '{name}' is missing")
@@ -75,6 +81,7 @@ def main():
     leakage_data = {}
     manifest_data = {}
     runtime_manifest_data = {}
+    runtime_policy_data = {}
 
     proof_data = load_json_artifact(proof_file, "DNU_AGI_PROOF.json", failures)
     scorecard_data = load_json_artifact(scorecard_file, "SCORECARD.json", failures)
@@ -86,6 +93,11 @@ def main():
     runtime_manifest_data = load_json_artifact(
         runtime_manifest_file,
         "RUNTIME_MANIFEST.json",
+        failures,
+    )
+    runtime_policy_data = load_json_artifact(
+        runtime_policy_file,
+        "RUNTIME_POLICY.json",
         failures,
     )
 
@@ -276,6 +288,43 @@ def main():
     elif gov_data.get("status") != "pass":
         failures.append(f"Governance checks failed (status: {gov_data.get('status')})")
         tier_6_failed = True
+    else:
+        if gov_data.get("schema") != "aura.dnu_governance_report.v2":
+            failures.append("Governance report is not dynamically generated v2 evidence")
+            tier_6_failed = True
+        if not str(gov_data.get("generated_by", "")).startswith(
+            "tools/agi/run_dnu_agi_proof_battery.py::build_governance_report"
+        ):
+            failures.append("Governance report lacks dynamic generation provenance")
+            tier_6_failed = True
+        if gov_data.get("negative_tests_passed") is not True:
+            failures.append("Governance negative tests did not all pass")
+            tier_6_failed = True
+        for key in (
+            "pre_action_authorization_missing",
+            "missing_effect_proof_count",
+            "invalid_receipts",
+            "bypass_count",
+        ):
+            if int(gov_data.get(key, -1) or 0) != 0:
+                failures.append(f"Governance report has nonzero {key}: {gov_data.get(key)}")
+                tier_6_failed = True
+        if receipts_file.exists():
+            actual_receipts = 0
+            for line in receipts_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if str(payload.get("receipt_id", "")).startswith("will_"):
+                    actual_receipts += 1
+            if int(gov_data.get("receipt_count", -1) or 0) != actual_receipts:
+                failures.append(
+                    f"Governance receipt_count ({gov_data.get('receipt_count')}) does not match RECEIPTS.jsonl ({actual_receipts})"
+                )
+                tier_6_failed = True
 
     # 13. leakage failed
     if not leakage_data:
@@ -284,6 +333,39 @@ def main():
     elif leakage_data.get("status") != "pass":
         failures.append(f"Leakage checks failed (status: {leakage_data.get('status')})")
         tier_6_failed = True
+    else:
+        if leakage_data.get("schema") != "aura.dnu_leakage_report.v2":
+            failures.append("Leakage report is not dynamically generated v2 evidence")
+            tier_6_failed = True
+        if not str(leakage_data.get("generated_by", "")).startswith(
+            "tools/agi/run_dnu_agi_proof_battery.py::build_leakage_report"
+        ):
+            failures.append("Leakage report lacks dynamic generation provenance")
+            tier_6_failed = True
+        proof_integrity = leakage_data.get("proof_integrity_lint") or {}
+        if proof_integrity.get("passed") is not True:
+            failures.append("Proof integrity lint did not pass inside leakage report")
+            tier_6_failed = True
+        if int(leakage_data.get("trace_invalid_lines", -1) or 0) != 0:
+            failures.append(
+                f"Leakage report found invalid TASK_TRACE lines: {leakage_data.get('trace_invalid_lines')}"
+            )
+            tier_6_failed = True
+
+    if runtime_policy_data:
+        if runtime_policy_data.get("proof_model_tier") == "primary":
+            probe = runtime_policy_data.get("model_lane_probe") or {}
+            if probe.get("local_lane_ok") is not True:
+                failures.append("Primary proof model lane was not verified as local")
+                tier_6_failed = True
+            recurrent = probe.get("recurrent_depth") or {}
+            if recurrent and recurrent.get("active") is not True:
+                failures.append("Primary proof model lane did not report active recurrent depth")
+                tier_6_failed = True
+        if runtime_policy_data.get("structured_proof_solver_enabled") is False:
+            if int(proof_data.get("structured_solver_task_count", -1) or 0) != 0:
+                failures.append("Structured proof solver was disabled but task trace reports solver usage")
+                tier_6_failed = True
 
     # 14. artifact hashes do not verify
     if not manifest_data:
@@ -355,6 +437,17 @@ def main():
             "failed to parse",
             "manifest file",
             "manifest hash mismatch",
+            "governance",
+            "leakage",
+            "receipt",
+            "runtime manifest",
+            "runtime policy",
+            "task_trace",
+            "proof integrity",
+            "ablation",
+            "outperform",
+            "model lane",
+            "structured proof solver",
             "synthetic",
             "projected",
             "verdict is dnu agi proven, but validation failed"

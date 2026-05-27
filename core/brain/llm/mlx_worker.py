@@ -136,6 +136,11 @@ _LEADING_GENERATION_ROLE_RE = re.compile(
     r"^\s*(?:<\|im_start\|>\s*)?(?:User|Human|Assistant|Aura|System)\s*[:：]\s*",
     re.IGNORECASE,
 )
+_LEADING_ROLE_NO_SEPARATOR_RE = re.compile(
+    r"^\s*(?:user|human|assistant|system)(?=(?:i['’]?m\b|i\b|you\b|"
+    r"what\b|who\b|when\b|where\b|why\b|how\b|yes\b|no\b|the\b))",
+    re.IGNORECASE,
+)
 _USER_CONTINUATION_NO_COLON_RE = re.compile(
     r"(?is)(?:^|\n)\s*(?:User|Human)\s+"
     r"(?=(?:what|who|when|where|why|how|can|could|would|if|i\b|you\b|"
@@ -154,6 +159,7 @@ def _truncate_role_continuation(text: str) -> tuple[str, bool]:
         if stripped == cleaned:
             break
         cleaned = stripped
+    cleaned = _LEADING_ROLE_NO_SEPARATOR_RE.sub("", cleaned).lstrip()
     original = cleaned
     cleaned = _ROLE_CONTINUATION_RE.sub("", cleaned)
     cleaned = _USER_CONTINUATION_NO_COLON_RE.sub("", cleaned)
@@ -180,10 +186,10 @@ def _build_strict_answer_prompt(messages: Any, fallback_prompt: Any) -> str:
     """Build a compact prompt for strict proof answer contracts.
 
     Chat templates can cause some local chat models to emit an immediate
-    ChatML stop token for very short proof prompts when the assistant turn is
-    blank. Strict answer requests are constrained chat turns, so render the
-    native ChatML shape manually and prefill only the envelope prefix. The model
-    still supplies the answer content.
+    ChatML stop token for very short proof prompts. Strict answer requests are
+    constrained chat turns, so render the native ChatML shape manually and let
+    the model provide the answer content. The parent normalizer wraps raw
+    content in an answer envelope when the model omits the tags.
     """
     system_parts: list[str] = []
     user_parts: list[str] = []
@@ -210,7 +216,34 @@ def _build_strict_answer_prompt(messages: Any, fallback_prompt: Any) -> str:
     return (
         f"<|im_start|>system\n{system_text}\n<|im_end|>\n"
         f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
-        "<|im_start|>assistant\n<answer>"
+        "<|im_start|>assistant\n"
+    )
+
+
+def _build_strict_answer_retry_prompt(messages: Any, fallback_prompt: Any) -> str:
+    """Build a non-ChatML strict-answer retry prompt.
+
+    Some MLX chat-template/model combinations terminate immediately on compact
+    ChatML strict-answer prompts. The retry keeps the same task and answer
+    contract but avoids control tokens entirely.
+    """
+
+    task_parts: list[str] = []
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = _message_content_to_text(message.get("content")).strip()
+            if content:
+                task_parts.append(content)
+    if not task_parts and fallback_prompt is not None:
+        task_parts.append(str(fallback_prompt))
+    task_text = "\n\n".join(task_parts).strip()
+    return (
+        "Solve the task below and output only the final answer value. "
+        "Do not explain. Do not include role labels. If the task asks for "
+        "<answer> tags, provide the value that belongs inside the tags.\n\n"
+        f"Task:\n{task_text}\n\nFinal answer:"
     )
 
 
@@ -255,6 +288,31 @@ def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
     )
 
 
+def _first_token_suppression_ids(tokenizer: Any) -> list[int]:
+    """Return token ids that cannot be a valid non-empty strict answer start."""
+    banned: set[int] = set()
+    for attr in ("eos_token_id", "pad_token_id"):
+        token_id = getattr(tokenizer, attr, None)
+        if isinstance(token_id, int) and token_id >= 0:
+            banned.add(token_id)
+    for special in (
+        "<|endoftext|>",
+        "<|im_end|>",
+        "<|im_start|>",
+        "<|end|>",
+        "<|eot_id|>",
+    ):
+        try:
+            ids = tokenizer.encode(special, add_special_tokens=False)
+        except TypeError:
+            ids = tokenizer.encode(special)
+        except (AttributeError, RuntimeError, ValueError):
+            ids = []
+        if isinstance(ids, list) and len(ids) == 1 and isinstance(ids[0], int):
+            banned.add(ids[0])
+    return sorted(banned)
+
+
 def _proof_evaluation_fragment_incomplete(text: str) -> bool:
     """Return True when a proof/eval generation is only a fragment."""
 
@@ -279,6 +337,8 @@ def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> 
     """Normalize strict proof output without changing the model-derived answer."""
     cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
+    cleaned = re.sub(r"\\[nrt]", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("\\", " ")
     match = _STRICT_ANSWER_ENVELOPE_RE.search(cleaned)
     if match:
         answer = match.group(1).strip()
@@ -302,6 +362,47 @@ def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> 
         if idx >= 0:
             cleaned = cleaned[:idx].strip()
     return f"<answer>{cleaned}</answer>" if cleaned else ""
+
+
+_STRICT_VALUE_UNUSABLE_RE = re.compile(
+    r"\b(?:i\s*(?:am|'m|’m)\s+not\s+sure|i\s+don't\s+know|cannot\s+answer|"
+    r"can't\s+answer|not\s+enough\s+information|as\s+an\s+ai|need\s+more\s+"
+    r"(?:context|information)|unable\s+to\s+determine)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_strict_value_response(text: str) -> str:
+    """Return a compact model-derived value or empty when the draft is unusable."""
+    cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
+    cleaned = _strip_leading_chatml_prefix(cleaned).strip()
+    cleaned = re.sub(r"\\[nrt]", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("\\", " ")
+    cleaned, _ = _truncate_role_continuation(cleaned)
+    cleaned = _LEADING_GENERATION_ROLE_RE.sub("", cleaned).strip()
+    cleaned = _LEADING_ROLE_NO_SEPARATOR_RE.sub("", cleaned).strip()
+    for marker in (
+        "<|im_end|>",
+        "<|im_start|>",
+        "User:",
+        "Human:",
+        "Assistant:",
+        "Aura:",
+    ):
+        idx = cleaned.find(marker)
+        if idx >= 0:
+            cleaned = cleaned[:idx].strip()
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if lines:
+        cleaned = lines[0]
+    cleaned = cleaned.strip().strip("`\"'")
+    if not cleaned:
+        return ""
+    if _STRICT_VALUE_UNUSABLE_RE.search(cleaned):
+        return ""
+    if len(re.findall(r"\S+", cleaned)) > 24:
+        return ""
+    return cleaned
 
 
 def _should_emit_generation_progress(
@@ -916,9 +1017,14 @@ def _mlx_worker_loop(
         # This changes HOW the model processes: middle layers loop N times,
         # letting the model "think" in latent space before committing to output.
         # Active by default for 32B+ models. Set AURA_RECURRENT_LOOPS=0 to disable.
+        recurrent_depth_status = {"active": False, "config": None}
         try:
-            from core.brain.llm.recurrent_depth import apply_for_model
+            from core.brain.llm.recurrent_depth import apply_for_model, get_recurrent_config
             if apply_for_model(model):
+                recurrent_depth_status = {
+                    "active": True,
+                    "config": get_recurrent_config(model),
+                }
                 logger.info("🧠 Recurrent Depth ACTIVE — model now thinks before answering.")
         except (ImportError, AttributeError, RuntimeError) as rd_exc:
             _record_mlx_degradation(
@@ -928,7 +1034,14 @@ def _mlx_worker_loop(
             )
             logger.warning("Recurrent depth not applied: %s", rd_exc)
 
-        ipc_writer.put({"status": "ok", "action": "init", "device": device})
+        ipc_writer.put(
+            {
+                "status": "ok",
+                "action": "init",
+                "device": device,
+                "recurrent_depth": recurrent_depth_status,
+            }
+        )
     except (ImportError, AttributeError, RuntimeError) as e:
         _record_mlx_degradation(
             e,
@@ -1017,17 +1130,22 @@ def _mlx_worker_loop(
                 prompt = job.get("prompt")
                 messages = job.get("messages")
                 tools = job.get("tools")
+                original_prompt = prompt
+                original_messages = messages
                 strict_answer_contract = bool(job.get("strict_answer_contract", False))
+                strict_value_contract = bool(job.get("strict_value_contract", False))
                 proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
                 disable_prompt_cache = (
                     bool(job.get("disable_prompt_cache", False))
                     or strict_answer_contract
+                    or strict_value_contract
                     or proof_evaluation_contract
                 )
                 clear_prompt_cache = (
                     bool(job.get("clear_prompt_cache", False))
                     or strict_answer_contract
+                    or strict_value_contract
                     or proof_evaluation_contract
                 )
                 if clear_prompt_cache and prompt_cache_lru is not None:
@@ -1037,6 +1155,28 @@ def _mlx_worker_loop(
                 # [FRONTIER UPGRADE] Native Tool Templates
                 if strict_answer_contract:
                     prompt = _build_strict_answer_prompt(messages, prompt)
+                    strict_envelope_prefixed = True
+                elif strict_value_contract:
+                    if messages and hasattr(tokenizer, "apply_chat_template"):
+                        try:
+                            logger.info("🎯 [WORKER] Rendering native strict-value chat template.")
+                            prompt = tokenizer.apply_chat_template(
+                                messages,
+                                tools=tools,
+                                add_generation_prompt=True,
+                                tokenize=False,
+                            )
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                            _record_mlx_degradation(
+                                e,
+                                action="continued strict-value generation with raw prompt after native chat template failed",
+                                severity="degraded",
+                            )
+                            logger.warning("❌ [WORKER] Native strict-value template failed: %s", e)
+                            prompt = _build_strict_answer_retry_prompt(messages, prompt)
+                    else:
+                        prompt = _build_strict_answer_retry_prompt(messages, prompt)
+                    messages = None
                     strict_envelope_prefixed = True
                 elif proof_evaluation_contract:
                     prompt = _build_proof_evaluation_prompt(messages, prompt)
@@ -1066,6 +1206,11 @@ def _mlx_worker_loop(
                     top_p = 1.0
                     min_p = 0.0
                     repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.12)
+                elif strict_value_contract:
+                    temp = 0.0
+                    top_p = 1.0
+                    min_p = 0.0
+                    repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.05)
                 elif proof_evaluation_contract:
                     temp = min(_safe_float(temp, 0.1), 0.15)
                     top_p = min(_safe_float(top_p, 0.9), 0.9)
@@ -1146,6 +1291,39 @@ def _mlx_worker_loop(
                             severity="degraded",
                         )
                         logger.warning("Failed to setup JSON logits processor: %s", e)
+
+                if strict_answer_contract or strict_value_contract:
+                    try:
+                        banned_start_ids = _first_token_suppression_ids(tokenizer)
+
+                        if banned_start_ids:
+                            def strict_nonempty_start_processor(
+                                tokens,
+                                logits,
+                                banned_ids=tuple(banned_start_ids),
+                            ):
+                                if len(tokens) < 3:
+                                    mask = mx.zeros_like(logits)
+                                    for token_id in banned_ids:
+                                        try:
+                                            mask[:, token_id] = -float("inf")
+                                        except (IndexError, TypeError, ValueError):
+                                            continue
+                                    return logits + mask
+                                return logits
+
+                            logits_processors.append(strict_nonempty_start_processor)
+                            logger.info(
+                                "🎯 [WORKER] Strict contract non-empty start guard ACTIVE (%d ids).",
+                                len(banned_start_ids),
+                            )
+                    except (AttributeError, RuntimeError, TypeError, ValueError) as e:
+                        _record_mlx_degradation(
+                            e,
+                            action="continued strict generation without non-empty start logits guard",
+                            severity="warning",
+                        )
+                        logger.warning("Failed to setup strict non-empty start guard: %s", e)
                 
                 if logits_processors:
                     kwargs["logits_processors"] = logits_processors
@@ -1450,23 +1628,41 @@ def _mlx_worker_loop(
                                         response_text,
                                         envelope_prefixed=strict_envelope_prefixed,
                                     )
+                                elif strict_value_contract:
+                                    raw_strict_value_text = response_text
+                                    response_text = _normalize_strict_value_response(response_text)
+                                    if raw_strict_value_text.strip() and not response_text.strip():
+                                        logger.warning(
+                                            "⚠️ [WORKER] Strict value draft rejected: %r",
+                                            raw_strict_value_text.strip()[:160],
+                                        )
 
-                                if response_text.strip() or (not schema and not strict_answer_contract):
+                                if response_text.strip() or (
+                                    not schema
+                                    and not strict_answer_contract
+                                    and not strict_value_contract
+                                ):
                                     break # Success or not a structured task
 
-                                if strict_answer_contract:
+                                if strict_answer_contract or strict_value_contract:
                                     if internal_attempt < max_internal_retries:
                                         logger.warning(
-                                            "⚠️ [WORKER] Empty strict answer response on attempt %s. Retrying...",
+                                            "⚠️ [WORKER] Empty strict response on attempt %s. Retrying...",
                                             internal_attempt + 1,
                                         )
+                                        if internal_attempt == 0 or strict_value_contract:
+                                            prompt = _build_strict_answer_retry_prompt(
+                                                original_messages,
+                                                original_prompt,
+                                            )
+                                            strict_envelope_prefixed = bool(strict_answer_contract)
                                         if prompt_cache_lru is not None:
                                             prompt_cache_lru.clear()
                                         if mx and device != "cpu":
                                             _clear_mlx_cache(mx)
                                         _prepare_clean_retry_kwargs(kwargs, structured=True)
                                         continue
-                                    logger.warning("🚨 [WORKER] Strict answer contract exhausted internal retries.")
+                                    logger.warning("🚨 [WORKER] Strict contract exhausted internal retries.")
                                     break
                                 
                                 logger.warning("⚠️ [WORKER] Empty structured response on attempt %s. Retrying...", internal_attempt + 1)

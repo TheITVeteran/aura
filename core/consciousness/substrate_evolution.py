@@ -191,6 +191,20 @@ class SubstrateEvolution:
 
     async def _run_generation(self):
         """Execute one full evolutionary generation."""
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active(origin="substrate_evolution"):
+                logger.info("Substrate evolution generation deferred during proof_run_active.")
+                return
+        except _RECOVERABLE_EVOLUTION_ERRORS as exc:
+            record_degradation(
+                "substrate_evolution",
+                exc,
+                action="deferred full generation because proof context could not be verified",
+            )
+            return
+
         self._generation += 1
         gen = self._generation
         mutations = 0
@@ -428,6 +442,20 @@ class SubstrateEvolution:
           - "hedonic_negative": strong negative valence → explore alternatives
           - "novelty": novel stimulus → increase structural mutation rate
         """
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active():
+                logger.debug("Substrate micro-evolution deferred during proof_run_active.")
+                return
+        except _RECOVERABLE_EVOLUTION_ERRORS as exc:
+            record_degradation(
+                "substrate_evolution",
+                exc,
+                action="deferred micro-evolution because proof context could not be verified",
+            )
+            return
+
         if not self._running or self._mesh_ref is None:
             return
         if self._champion is None:

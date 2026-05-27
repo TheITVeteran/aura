@@ -142,9 +142,34 @@ class _QueueHandler(logging.Handler):
         "_qh_recursion_guard", default=False
     )
     _overflow_logged: bool = False
+    _dropped_count: int = 0
+    _last_overflow_warning_at: float = 0.0
+
+    @staticmethod
+    def _proof_logging_active() -> bool:
+        return any(os.environ.get(name) for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING"))
+
+    @classmethod
+    def _should_buffer_record(cls, record: logging.LogRecord) -> bool:
+        if cls._proof_logging_active() and record.levelno < logging.WARNING:
+            return False
+        return True
+
+    @staticmethod
+    def _entry_is_warning_or_worse(entry: Any) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        level = str(entry.get("level") or "").strip().lower()
+        return level in {"warning", "error", "critical", "fatal"}
+
+    @classmethod
+    def _should_warn_for_overflow(cls, record: logging.LogRecord, dropped_entry: Any) -> bool:
+        return record.levelno >= logging.WARNING or cls._entry_is_warning_or_worse(dropped_entry)
 
     def emit(self, record: logging.LogRecord) -> None:
         if self._recursion_guard.get():
+            return
+        if not self._should_buffer_record(record):
             return
         token = self._recursion_guard.set(True)
         try:
@@ -160,13 +185,21 @@ class _QueueHandler(logging.Handler):
                 "module": record.name
             }
 
+            queue_was_full = len(log_queue) >= log_queue.maxlen
+            dropped_entry = log_queue[0] if queue_was_full and log_queue else None
             log_queue.append(log_entry)
 
-            if not self._overflow_logged and len(log_queue) >= log_queue.maxlen:
-                logger.warning("Log buffer reached capacity: Circular buffer active (dropping oldest).")
-                self._overflow_logged = True
-            elif len(log_queue) < log_queue.maxlen:
-                self._overflow_logged = False
+            if queue_was_full:
+                self._dropped_count += 1
+                if self._should_warn_for_overflow(record, dropped_entry):
+                    last = self._last_overflow_warning_at
+                    if record.created - last >= 60.0:
+                        logger.warning(
+                            "Log buffer dropped warning/error records while at capacity; "
+                            "circular buffer preserved newest records (dropped=%d).",
+                            self._dropped_count,
+                        )
+                        self._last_overflow_warning_at = record.created
 
             if main_loop is not None and not main_loop.is_closed() and main_loop.is_running():
                 publish_coro = broadcast_bus.publish(log_entry)

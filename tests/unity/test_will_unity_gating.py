@@ -39,6 +39,42 @@ def test_low_unity_blocks_external_tool_action():
     assert decision.unity_level == "fragmented"
 
 
+def test_low_unity_blocks_all_consequential_external_surfaces():
+    will = _neutral_will()
+    unity_context = {
+        "level": "fragmented",
+        "unity_score": 0.2,
+        "fragmentation_score": 0.8,
+        "safe_to_act": False,
+        "safe_to_self_report": True,
+        "memory_commit_mode": "qualified",
+        "ownership_confidence": 0.9,
+        "causal_closure_score": 0.8,
+    }
+
+    with patch.object(will, "_consult_substrate", return_value=(0.8, 0.0, "receipt")):
+        with patch.object(will, "_read_affect_valence", return_value=0.0):
+            with patch.object(will, "_read_unity_context", return_value=unity_context):
+                for domain in (
+                    ActionDomain.EXTERNAL_ACTION,
+                    ActionDomain.NETWORK_CALL,
+                    ActionDomain.CLOUD_CALL,
+                    ActionDomain.CLOUD_FALLBACK,
+                    ActionDomain.FILE_WRITE,
+                    ActionDomain.CI_CD,
+                    ActionDomain.SELF_MODIFICATION,
+                    ActionDomain.SEMANTIC_WEIGHT_UPDATE,
+                    ActionDomain.BELIEF_UPDATE,
+                ):
+                    decision = will.decide(
+                        content=f"attempt {domain.value}",
+                        source="unity_negative_test",
+                        domain=domain,
+                    )
+                    assert decision.outcome == WillOutcome.REFUSE
+                    assert "unity_block" in decision.reason
+
+
 def test_low_unity_allows_stabilization():
     will = _neutral_will()
     with patch.object(will, "_consult_substrate", return_value=(0.8, 0.0, "receipt")):

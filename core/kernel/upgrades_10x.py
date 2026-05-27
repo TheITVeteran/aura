@@ -499,6 +499,143 @@ class GodModeToolPhase(Phase):
         )
 
     @staticmethod
+    def _extract_python_code_payload(objective: str) -> str:
+        text = str(objective or "")
+        for match in re.finditer(
+            r"```(?P<lang>python|py)\b\s*(?P<body>.*?)```",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            body = (match.group("body") or "").strip()
+            if body:
+                return body
+        for match in re.finditer(r"```\s*(?P<body>.*?)```", text, re.DOTALL):
+            body = (match.group("body") or "").strip()
+            if not body:
+                continue
+            first_token = body.split(None, 1)[0].strip().lower() if body.split(None, 1) else ""
+            if first_token in {"javascript", "js", "bash", "sh", "zsh", "shell"}:
+                continue
+            return body
+
+        prefix_match = re.match(
+            r"^\s*(?:python|code)\s*:\s*(?P<body>.+?)\s*$",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if prefix_match:
+            return prefix_match.group("body").strip()
+
+        direct_match = re.search(
+            r"\b(?:run|execute)\s+(?:this\s+)?(?:code|script|python)\s*:\s*(?P<body>.+?)\s*$",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if direct_match:
+            return direct_match.group("body").strip()
+
+        return ""
+
+    @staticmethod
+    def _extract_safe_arithmetic_expression(objective: str) -> str:
+        text = " ".join(str(objective or "").strip().split())
+        if not text:
+            return ""
+
+        match = re.match(
+            r"^(?:calculate|compute|what is|evaluate(?: this)?(?: expression| formula)?)"
+            r"\s*[:\-]?\s*(?P<expr>[-+*/%().,\d\s]+?)\s*[?.!]?$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return ""
+
+        expr = match.group("expr").strip().replace(",", "")
+        if not expr or not re.search(r"\d", expr) or not re.search(r"[+\-*/%]", expr):
+            return ""
+        if not re.fullmatch(r"[-+*/%().\d\s]+", expr):
+            return ""
+
+        try:
+            import ast
+
+            parsed = ast.parse(expr, mode="eval")
+        except (SyntaxError, ValueError):
+            return ""
+
+        allowed_nodes = (
+            ast.Expression,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.Constant,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.FloorDiv,
+            ast.Mod,
+            ast.Pow,
+            ast.USub,
+            ast.UAdd,
+            ast.Load,
+        )
+        if not all(isinstance(node, allowed_nodes) for node in ast.walk(parsed)):
+            return ""
+        return expr
+
+    @staticmethod
+    def _looks_like_direct_run_code_request(objective: str) -> bool:
+        text = str(objective or "")
+        lower = text.lower()
+        if GodModeToolPhase._extract_python_code_payload(text):
+            explicit_run = bool(
+                re.search(
+                    r"\b(?:run|execute)\s+(?:this\s+)?(?:code|script|python)\b",
+                    text,
+                    re.IGNORECASE,
+                )
+            )
+            execution_analysis_markers = (
+                "trace the execution",
+                "trace execution",
+                "trace the output",
+                "compute the printed output",
+                "determine the exact output",
+                "what is printed",
+                "what does this print",
+                "printed output",
+                "when executed",
+                "when it executes",
+                "when this executes",
+            )
+            exception_analysis_markers = (
+                "what exception",
+                "which exception",
+                "exception class",
+                "error class",
+                "class raised",
+                "exception raised",
+                "error raised",
+                "raises a",
+                "raised by",
+            )
+            return (
+                explicit_run
+                or any(marker in lower for marker in execution_analysis_markers)
+                or any(marker in lower for marker in exception_analysis_markers)
+            )
+        if GodModeToolPhase._extract_safe_arithmetic_expression(text):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:run|execute)\s+(?:this\s+)?(?:code|script|python)\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
     def _choose_best_skill(objective: str, matched_skills: list[str]) -> str:
         if not matched_skills:
             return ""
@@ -584,6 +721,10 @@ class GodModeToolPhase(Phase):
         ):
             return "memory_ops"
         remaining = [skill for skill in matched_skills if skill != "memory_ops"]
+        if "run_code" in remaining and not GodModeToolPhase._looks_like_direct_run_code_request(
+            objective
+        ):
+            remaining = [skill for skill in remaining if skill != "run_code"]
         return remaining[0] if remaining else ""
 
     @staticmethod
@@ -649,6 +790,17 @@ class GodModeToolPhase(Phase):
                 normalized.setdefault("query", objective)
             else:
                 normalized.setdefault("content", objective)
+
+        if skill_name == "run_code":
+            if not str(normalized.get("code") or "").strip():
+                code = GodModeToolPhase._extract_python_code_payload(objective)
+                if code:
+                    normalized["code"] = code
+                else:
+                    expression = GodModeToolPhase._extract_safe_arithmetic_expression(objective)
+                    if expression:
+                        normalized["code"] = f"print({expression})"
+                        normalized.setdefault("stateful", False)
 
         if skill_name in {
             "web_search",
@@ -764,6 +916,8 @@ class GodModeToolPhase(Phase):
             deterministic = self._normalize_skill_params(skill_name, objective, {})
             if deterministic and deterministic != {"query": objective}:
                 return deterministic
+            if skill_name == "run_code":
+                return {}
 
             # Build param schema hint
             schema = meta.schema_def
@@ -795,7 +949,7 @@ class GodModeToolPhase(Phase):
                     import json as _json
 
                     return _json.loads(m.group(0))
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, ValueError) as e:
             _record_upgrades_degradation(
                 e,
                 action="used objective text as fallback skill query parameters",
@@ -818,7 +972,7 @@ class GodModeToolPhase(Phase):
             if hasattr(validated, "model_dump"):
                 return True, validated.model_dump(), ""
             return True, dict(params), ""
-        except (RuntimeError, AttributeError, TypeError) as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             _record_upgrades_degradation(
                 exc,
                 action="blocked invalid skill execution and returned validation error",
@@ -897,6 +1051,15 @@ class GodModeToolPhase(Phase):
         intent_type = state.response_modifiers.get("intent_type", "CHAT")
         if intent_type not in ("SKILL", "TASK"):
             return state
+        try:
+            from core.runtime.proof_policy import is_strict_proof_answer_prompt
+
+            proof_eval_turn = is_strict_proof_answer_prompt(
+                objective,
+                origin=getattr(state.cognition, "current_origin", None),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            proof_eval_turn = False
         if intent_type == "TASK" and _looks_like_simple_dialogue_request(objective):
             state.response_modifiers["intent_type"] = "CHAT"
             state.response_modifiers.pop("matched_skills", None)
@@ -928,8 +1091,38 @@ class GodModeToolPhase(Phase):
                 )
                 logger.debug("GodMode: matched skill refresh skipped: %s", exc)
 
-        if intent_type == "SKILL" and looks_like_multi_step_skill_request(
-            skill_objective, matched_skill_hints
+        if proof_eval_turn and intent_type == "SKILL":
+            if "run_code" in matched_skill_hints and self._looks_like_direct_run_code_request(
+                objective
+            ):
+                state.response_modifiers["matched_skills"] = ["run_code"]
+                matched_skill_hints = ["run_code"]
+                logger.info("⚡ GodMode: strict proof skill kept foreground via run_code.")
+            else:
+                state.response_modifiers["intent_type"] = "CHAT"
+                state.response_modifiers.pop("matched_skills", None)
+                logger.info("⚡ GodMode: strict proof skill kept out of GodMode.")
+                return state
+
+        if proof_eval_turn and intent_type == "TASK":
+            if "run_code" in matched_skill_hints and self._looks_like_direct_run_code_request(
+                objective
+            ):
+                intent_type = "SKILL"
+                state.response_modifiers["intent_type"] = "SKILL"
+                state.response_modifiers["matched_skills"] = ["run_code"]
+                matched_skill_hints = ["run_code"]
+                logger.info("⚡ GodMode: strict proof task kept foreground via run_code.")
+            else:
+                state.response_modifiers["intent_type"] = "CHAT"
+                state.response_modifiers.pop("matched_skills", None)
+                logger.info("⚡ GodMode: strict proof task kept out of TaskEngine.")
+                return state
+
+        if (
+            intent_type == "SKILL"
+            and not proof_eval_turn
+            and looks_like_multi_step_skill_request(skill_objective, matched_skill_hints)
         ):
             intent_type = "TASK"
             state.response_modifiers["intent_type"] = "TASK"
@@ -1005,10 +1198,11 @@ class GodModeToolPhase(Phase):
             logger.info("⚡ GodMode: Dispatching '%s' for: %s", skill_name, objective[:60])
 
             # 4. Extract params
+            param_objective = objective if skill_name == "run_code" else skill_objective
             params = self._normalize_skill_params(
                 skill_name,
-                skill_objective,
-                await self._extract_params(skill_name, skill_objective, cap),
+                param_objective,
+                await self._extract_params(skill_name, param_objective, cap),
             )
             params_ok, params, params_error = self._validate_skill_params(skill_name, params, cap)
             if not params_ok:

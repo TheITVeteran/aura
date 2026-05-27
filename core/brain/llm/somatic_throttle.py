@@ -51,17 +51,17 @@ class SomaticComputeSentinel:
             logger.debug("Failed to retrieve hardware metrics: %s", e)
 
         # 3. Determine if systemic overload is present.
-        # Arousal alone is a reason to narrow sampling, not a reason to
-        # declare a critical hardware panic while RAM/CPU are healthy.
+        # Virtual arousal is an affective/context signal. It becomes a compute
+        # throttling signal only when it is coupled to real resource pressure.
+        arousal_resource_coupled = arousal > 0.9 and (ram_pct > 0.82 or cpu_load > 0.85)
         is_stressed = (
-            (arousal > 0.8)
+            arousal_resource_coupled
             or (ram_pct > 0.88)
             or (cpu_load > 0.9)
             or (gov_throttle <= 0.5)
         )
-        arousal_resource_coupled = arousal > 0.95 and (ram_pct > 0.82 or cpu_load > 0.85)
         is_critical = (
-            arousal_resource_coupled
+            (arousal > 0.97 and (ram_pct > 0.9 or cpu_load > 0.92))
             or (ram_pct > 0.93)
             or (cpu_load > 0.95)
             or (gov_throttle <= 0.2)

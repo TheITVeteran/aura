@@ -354,7 +354,7 @@ class TaskTracker:
         if not pending:
             return
 
-        logger.info("Shutting down TaskTracker[%s]: %s tasks pending.", self.name, len(pending))
+        logger.info("TaskTracker[%s]: cancelling %s tracked task(s) during shutdown.", self.name, len(pending))
 
         for task in pending:
             task.cancel()

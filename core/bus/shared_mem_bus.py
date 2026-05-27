@@ -94,12 +94,14 @@ class SharedMemoryTransport:
         try:
             shm.unlink()
             logger.debug("Shared Memory Segment Unlinked by finalizer: %s", name)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except FileNotFoundError as exc:
+            logger.debug("Finalizer unlink skipped for %s; segment already gone: %s", name, exc)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('shared_mem_bus', exc)
             logger.debug("Finalizer unlink skipped for %s: %s", name, exc)
         try:
             shm.close()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('shared_mem_bus', exc)
             logger.debug("Finalizer close skipped for %s: %s", name, exc)
 
@@ -434,10 +436,16 @@ class SharedMemoryTransport:
                     self._deregister_from_reaper(self.name)
                     shm.unlink()
                     logger.debug("Shared Memory Segment Unlinked: %s", self.name)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                except FileNotFoundError as e:
+                    logger.debug("Unlink skipped for %s; segment already gone: %s", self.name, e)
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
                     record_degradation('shared_mem_bus', e)
                     logger.debug("Unlink failed (already gone?): %s", e)
-            shm.close()
+            try:
+                shm.close()
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
+                record_degradation('shared_mem_bus', e)
+                logger.debug("Close failed (already gone?): %s", e)
             self.shm = None
 
     def __del__(self):

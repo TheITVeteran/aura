@@ -47,6 +47,13 @@ _REBASEABLE_ISOLATION_CAUSES = frozenset(
         "dnu_kernel_task_isolation",
     }
 )
+def _state_proxy_commit_timeout_seconds() -> float:
+    raw = os.getenv("AURA_STATE_PROXY_COMMIT_TIMEOUT_S", "15.0")
+    try:
+        return max(5.0, float(raw or "15.0"))
+    except (TypeError, ValueError):
+        logger.warning("Invalid AURA_STATE_PROXY_COMMIT_TIMEOUT_S override: %r", raw)
+        return 15.0
 
 
 def _is_rebaseable_isolation_commit(cause: str) -> bool:
@@ -420,7 +427,13 @@ class StateRepository:
         # Proxy to owner via shared bus
         transport = self._resolve_transport()
         if transport:
-            state_dict = await asyncio.to_thread(self._circular_safe_asdict, new_state)
+            if self._should_use_bounded_db_snapshot(new_state, cause):
+                serialized_state = await asyncio.to_thread(
+                    self._serialize_transport_snapshot, new_state
+                )
+                state_dict = json.loads(serialized_state)
+            else:
+                state_dict = await asyncio.to_thread(self._circular_safe_asdict, new_state)
             last_error: Exception | None = None
             for attempt in range(2):
                 try:
@@ -432,6 +445,7 @@ class StateRepository:
                             "cause": cause,
                             "trace_id": trace_id,
                         },
+                        timeout=_state_proxy_commit_timeout_seconds(),
                     )
                     return new_state
                 except (BrokenPipeError, ConnectionError) as e:

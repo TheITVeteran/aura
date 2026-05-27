@@ -322,4 +322,3 @@ async def test_capability_engine_execute_pydantic_recovery():
     result_fail = await engine.execute("dummy_skill", {"optional_field": "100"})
     assert result_fail.get("ok") is False
     assert "dummy" in result_fail.get("error", "").lower() or "validation" in result_fail.get("error", "").lower()
-

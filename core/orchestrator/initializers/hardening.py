@@ -207,8 +207,13 @@ async def init_hardening_layer(orchestrator: Any):
             "registered": True,
             "container_key": "event_loop_monitor",
             "threshold_s": monitor.threshold,
+            "active_threshold_s": monitor.active_threshold,
         }
-        logger.info("EventLoopMonitor active (threshold=%.2fs)", monitor.threshold)
+        logger.info(
+            "EventLoopMonitor active (threshold=%.2fs active_threshold=%.2fs)",
+            monitor.threshold,
+            monitor.active_threshold,
+        )
     except asyncio.CancelledError:
         raise
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:

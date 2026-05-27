@@ -115,11 +115,12 @@ class MetabolicMonitor:
     def _resolve_ram_threshold_mb(self, configured: int | None) -> int:
         """Choose a process-RSS threshold that matches the actual host.
 
-        Aura's primary local model lane can legitimately occupy more than 12 GB
-        RSS on large-memory Apple Silicon systems. A fixed 8 GB stress threshold
-        misclassifies healthy 32B startup as a critical resource incident. Keep
+        Aura's primary local model lane can legitimately occupy tens of GB RSS on
+        large-memory Apple Silicon systems. A fixed 8 GB stress threshold, or
+        even half of physical RAM, can misclassify healthy 32B runtime as
+        pressure and trigger repeated GC during proof/baseline runs. Keep
         explicit constructor/env overrides exact, and otherwise scale the default
-        to half of physical RAM with an 8 GB minimum.
+        to 70% of physical RAM while leaving at least 8 GB for the OS.
         """
         if configured is not None:
             return max(256, int(configured))
@@ -143,7 +144,7 @@ class MetabolicMonitor:
                 severity="warning",
             )
             total_ram_mb = 8192.0
-        return max(8192, int(total_ram_mb * 0.50))
+        return max(8192, int(min(total_ram_mb * 0.70, max(8192.0, total_ram_mb - 8192.0))))
 
     def start(self, interval: float = 5.0) -> None:
         """Start the background monitoring thread."""
@@ -373,6 +374,20 @@ class MetabolicMonitor:
             return "stressed"
         return "nominal"
 
+    def _eviction_pressure_present(self, snapshot: MetabolismSnapshot) -> bool:
+        """Return True when pressure can be relieved by eviction/GC.
+
+        CPU-only spikes are real pressure, but running GC in response to them
+        adds work and does not address the cause. Eviction is reserved for
+        memory, disk, or process-RSS pressure.
+        """
+
+        return (
+            snapshot.ram_percent >= 88.0
+            or snapshot.disk_usage_percent >= self.disk_threshold
+            or snapshot.ram_rss_mb >= self.ram_threshold_mb
+        )
+
     def _sync_registry(self, snapshot: MetabolismSnapshot) -> None:
         try:
             from core.state_registry import get_registry
@@ -392,6 +407,16 @@ class MetabolicMonitor:
 
     def _apply_pressure_controls(self, snapshot: MetabolismSnapshot) -> None:
         if snapshot.pressure_state == "nominal":
+            return
+        if not self._eviction_pressure_present(snapshot):
+            logger.debug(
+                "Metabolic pressure observed without eviction pressure: state=%s cpu=%.1f ram=%.1f rss=%.1f disk=%.1f",
+                snapshot.pressure_state,
+                snapshot.cpu_percent,
+                snapshot.ram_percent,
+                snapshot.ram_rss_mb,
+                snapshot.disk_usage_percent,
+            )
             return
         now = time.monotonic()
         if now - self._last_pressure_action_at < self._pressure_action_cooldown_s:

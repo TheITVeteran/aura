@@ -22,6 +22,7 @@ via collapse_decision() for weighted random selection.
 """
 
 from core.runtime.errors import record_degradation
+from collections import deque
 import logging
 import os
 import struct
@@ -54,6 +55,7 @@ class QuantumEntropyBridge:
 
     def __init__(self, pool_size: int = _POOL_SIZE):
         self._pool: bytearray = bytearray()
+        self._pool_sources: deque[tuple[int, str]] = deque()
         self._pool_size = pool_size
         self._lock = threading.Lock()
         self._last_refill_attempt: float = 0.0
@@ -65,8 +67,12 @@ class QuantumEntropyBridge:
 
         # Seed immediate fallback entropy so startup never blocks on the network.
         self._seed_fallback_pool(min(256, self._pool_size))
-        self._schedule_refill()
-        logger.info("Quantum Entropy Bridge initialized (pool=%d bytes)", len(self._pool))
+        if self._external_entropy_allowed():
+            self._schedule_refill()
+            source = "external-refill-enabled"
+        else:
+            source = "os-entropy-only"
+        logger.info("Quantum Entropy Bridge initialized (pool=%d bytes, source=%s)", len(self._pool), source)
 
     # ------------------------------------------------------------------
     # Public API
@@ -157,14 +163,19 @@ class QuantumEntropyBridge:
             needs_refill = available < max(n, _POOL_REFILL_THRESHOLD)
 
             if available >= n:
+                used = self._consume_source_segments_locked(n, fallback_added=0)
                 result = bytes(self._pool[:n])
                 del self._pool[:n]
-                self._quantum_reads += 1
             else:
+                fallback_needed = max(0, n - available)
+                used = self._consume_source_segments_locked(available, fallback_added=fallback_needed)
                 quantum_part = bytes(self._pool)
                 self._pool.clear()
-                self._fallback_reads += 1
                 result = quantum_part + os.urandom(max(0, n - len(quantum_part)))
+            if used.get("quantum", 0) > 0:
+                self._quantum_reads += 1
+            if used.get("fallback", 0) > 0:
+                self._fallback_reads += 1
 
         if needs_refill:
             self._schedule_refill()
@@ -176,9 +187,53 @@ class QuantumEntropyBridge:
         with self._lock:
             if not self._pool:
                 self._pool.extend(os.urandom(size))
+                self._pool_sources.append((size, "fallback"))
+
+    def _append_quantum_pool_locked(self, data: bytearray) -> None:
+        if not data:
+            return
+        self._pool.extend(data)
+        self._pool_sources.append((len(data), "quantum"))
+
+    def _source_segments_in_sync_locked(self) -> bool:
+        return sum(size for size, _source in self._pool_sources) == len(self._pool)
+
+    def _ensure_source_segments_locked(self) -> None:
+        if self._source_segments_in_sync_locked():
+            return
+        self._pool_sources.clear()
+        if self._pool:
+            self._pool_sources.append((len(self._pool), "fallback"))
+
+    def _consume_source_segments_locked(self, n: int, *, fallback_added: int = 0) -> dict[str, int]:
+        self._ensure_source_segments_locked()
+        used = {"quantum": 0, "fallback": max(0, int(fallback_added))}
+        remaining = max(0, int(n))
+        while remaining > 0 and self._pool_sources:
+            size, source = self._pool_sources.popleft()
+            take = min(size, remaining)
+            used[source if source in used else "fallback"] += take
+            remaining -= take
+            leftover = size - take
+            if leftover > 0:
+                self._pool_sources.appendleft((leftover, source))
+        return used
+
+    @staticmethod
+    def _external_entropy_allowed() -> bool:
+        if any(os.environ.get(name) for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING")):
+            return False
+        return str(os.environ.get("AURA_ALLOW_EXTERNAL_ENTROPY", "0")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _schedule_refill(self) -> None:
         """Start a background refill without blocking current work."""
+        if not self._external_entropy_allowed():
+            return
         now = time.time()
         with self._lock:
             if self._refill_in_flight:
@@ -217,7 +272,7 @@ class QuantumEntropyBridge:
             if data.get("success") and "data" in data:
                 new_bytes = bytearray(data["data"])
                 with self._lock:
-                    self._pool.extend(new_bytes)
+                    self._append_quantum_pool_locked(new_bytes)
                 self._initialized = True
                 logger.debug(
                     "Quantum pool refilled: +%d bytes (total: %d)",

@@ -126,6 +126,30 @@ class StateVaultActor:
             
         return res
 
+    def _preserve_cold_store_for_hot_payload(self, state_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Restore cold continuity when a proxy sends a bounded hot-state payload."""
+        if "cold" in state_data or self.repo._current is None:
+            return state_data
+
+        merged = dict(state_data)
+        try:
+            merged["cold"] = self.repo._circular_safe_asdict(self.repo._current.cold)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "vault",
+                exc,
+                action="continued hot state commit with default cold store after preservation failed",
+            )
+            logger.warning("Cold-store preservation failed for hot state commit: %s", exc)
+        return merged
+
+    async def _deserialize_commit_state(self, state_data: Dict[str, Any]) -> AuraState:
+        """Deserialize bus commit payloads without dropping durable cold state."""
+        if not isinstance(state_data, dict):
+            raise ValueError("state_vault commit payload must include a state dictionary")
+        normalized = self._preserve_cold_store_for_hot_payload(state_data)
+        return await asyncio.to_thread(lambda: self.repo._deserialize(json.dumps(normalized)))
+
     async def _process_commit_inner(self, payload: Dict[str, Any], trace_id: Optional[str]):
         """Atomically commit a state mutation (Core Logic)."""
         try:
@@ -133,9 +157,7 @@ class StateVaultActor:
             cause = payload.get("cause", "remote_update")
             
             # Offload heavy serialization/deserialization to thread
-            new_state = await asyncio.to_thread(
-                lambda: self.repo._deserialize(json.dumps(new_state_data))
-            )
+            new_state = await self._deserialize_commit_state(new_state_data)
 
             committed_state = await self.repo.commit(new_state, cause, trace_id)
 
@@ -184,10 +206,23 @@ def vault_process_entry(db_path: str, pipe):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
         logger.debug("Suppressed %s in core.state.vault: %s", type(_exc).__name__, _exc)
-    # Force basic logging to stderr so it shows up in main logs even if setup fails
+    # Force bounded logging to stderr so it shows up in main logs even if setup fails.
+    # DEBUG here is unsafe: aiosqlite logs full SQL parameter payloads, including
+    # large state snapshots, which can stall proof and live runtimes.
     import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, 
-                        format='[VAULT-PROC] %(levelname)s: %(message)s')
+    raw_level = os.getenv("AURA_VAULT_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, raw_level, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        stream=sys.stderr,
+        format='[VAULT-PROC] %(levelname)s: %(message)s',
+        force=True,
+    )
+    logging.getLogger().setLevel(level)
+    for inherited_debug_logger in ("Aura.Core", "core", "Bus.SharedMem"):
+        logging.getLogger(inherited_debug_logger).setLevel(max(level, logging.INFO))
+    for noisy_logger in ("aiosqlite", "aiosqlite.core"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     logger.info("Vault process entry started. DB Path: %s", db_path)
     try:
         logger.debug("StateVaultActor instantiating...")
@@ -197,6 +232,12 @@ def vault_process_entry(db_path: str, pipe):
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(actor.run(pipe))
+            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            if pending:
+                logger.info("StateVaultActor cancelling %d pending loop task(s) before asyncgen shutdown.", len(pending))
+                for task in pending:
+                    task.cancel()
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.run_until_complete(loop.shutdown_asyncgens())
         finally:
             asyncio.set_event_loop(None)

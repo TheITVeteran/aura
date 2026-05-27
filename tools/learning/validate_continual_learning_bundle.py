@@ -12,6 +12,10 @@ import json
 import sys
 from pathlib import Path
 
+
+AUTHORIZED_OUTCOMES = {"proceed", "constrain", "critical", "approved", "allow", "allowed"}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle_path", nargs="?", default="artifacts/current/continual_learning")
@@ -104,6 +108,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: Missing secure receipts for tasks: {missing_task_receipts}", file=sys.stderr)
             return 1
 
+        skill_receipts = [r for r in receipts if r.get("task_id") == "skill_registration"]
+        if len(skill_receipts) != 1:
+            print("Error: Expected exactly one skill_registration receipt.", file=sys.stderr)
+            return 1
+        skill_receipt = skill_receipts[0]
+        skill_outcome = str(skill_receipt.get("outcome", "")).lower()
+        if skill_outcome not in AUTHORIZED_OUTCOMES:
+            print(
+                f"Error: Skill registration receipt was not authorized: outcome={skill_outcome}",
+                file=sys.stderr,
+            )
+            return 1
+
         print("  [OK] Secure receipt matching verified.")
     except Exception as exc:
         print(f"Error validating receipts: {exc}", file=sys.stderr)
@@ -124,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         missing = [key for key in required_true if integrity.get(key) is not True]
         if missing:
             print(f"Error: Continual learning integrity checks failed: {missing}", file=sys.stderr)
+            return 1
+        if str(integrity.get("skill_registration_outcome", "")).lower() not in AUTHORIZED_OUTCOMES:
+            print("Error: Integrity record does not prove authorized skill registration.", file=sys.stderr)
+            return 1
+        if integrity.get("skill_registration_receipt_id") != skill_receipt.get("receipt_id"):
+            print("Error: Integrity receipt id does not match skill registration receipt.", file=sys.stderr)
             return 1
 
         ablations = json.loads(ablations_path.read_text(encoding="utf-8"))

@@ -11,6 +11,10 @@ from typing import Optional
 DB_FILE = "data/aura_memory.db"
 WEBHOOK_URL = os.environ.get("AURA_ALERTS_WEBHOOK")
 
+
+def _proof_logging_active() -> bool:
+    return any(os.environ.get(name) for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING"))
+
 class SQLiteMemoryHandler(logging.Handler):
     """
     Saves logs of INFO level and above to a persistent SQLite database.
@@ -93,7 +97,8 @@ def setup_enhanced_logging(logger_name: str = "Aura"):
     SQLite persistent memory (INFO+), and Webhook alerts (ERROR+).
     """
     logger = logging.getLogger(logger_name)
-    logger.setLevel(logging.DEBUG)
+    proof_logging = _proof_logging_active()
+    logger.setLevel(logging.INFO if proof_logging else logging.DEBUG)
     
     # Avoid duplicate handlers if setup is called multiple times
     if logger.handlers:
@@ -101,11 +106,15 @@ def setup_enhanced_logging(logger_name: str = "Aura"):
 
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    # 1. Console Handler (DEBUG+)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    # 1. Console Handler (DEBUG+ in dev, INFO+ in proof/eval runs).
+    # If root logging is already configured, let records propagate there.
+    # Adding a second child console handler produces duplicate live logs and
+    # can saturate the UI log ring during long proof/soak runs.
+    if not logging.getLogger().handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO if proof_logging else logging.DEBUG)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     # 2. SQLite Handler (INFO+)
     db_handler = SQLiteMemoryHandler()

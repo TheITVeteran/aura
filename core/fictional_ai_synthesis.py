@@ -800,17 +800,28 @@ class DistributedResilienceCore:
             status.last_error = ""
             status.last_checked_at = time.time()
 
+    @staticmethod
+    def _monitor_targets(service_container: Any) -> list[str]:
+        required_targets = ["orchestrator", "capability_engine", "memory_facade"]
+        optional_targets = ["server", "voice_engine", "live_learner"]
+        targets = list(required_targets)
+        for target in optional_targets:
+            try:
+                if service_container.has(target):
+                    targets.append(target)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+        return targets
+
     async def start_monitoring(self):
         if self._running:
             return
         self._running = True
         from core.container import ServiceContainer
         
-        # Core subsystems to track
-        core_targets = [
-            "orchestrator", "capability_engine", "server", 
-            "voice_engine", "live_learner", "memory_facade"
-        ]
+        # Required organs are always monitored. Optional surfaces are monitored
+        # only when their boot profile registered them.
+        core_targets = self._monitor_targets(ServiceContainer)
         for target in core_targets:
             self.register_subsystem(target)
 
@@ -830,6 +841,20 @@ class DistributedResilienceCore:
                     logger.debug("Skynet service lookup error for %s: %s", name, e)
                     continue
                 if service is None:
+                    try:
+                        from core.runtime.ablation_policy import service_intentionally_lesioned
+
+                        if service_intentionally_lesioned(name):
+                            logger.info(
+                                "Resilience monitor observed intentional ablation for subsystem '%s'; missing-service repair suppressed.",
+                                name,
+                            )
+                            continue
+                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                        _record_fictional_degradation(
+                            e,
+                            action=f"continued resilience monitoring without ablation marker for {name}",
+                        )
                     self.record_failure(name, "Service missing from container")
                     logger.warning("🛡️  Skynet: Subsystem '%s' is MISSING.", name)
                 else:

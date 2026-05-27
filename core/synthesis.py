@@ -139,6 +139,13 @@ def _format_number(value: float) -> str:
     return f"{value:.8g}"
 
 
+def _format_direct_answer(q: str, answer: str) -> str:
+    lower = q.lower()
+    if "<answer>" in lower or "answer tag" in lower or "answer tags" in lower:
+        return f"<answer>{answer}</answer>"
+    return answer
+
+
 def _direct_answer_floor(user_message: str) -> str:
     """Return a reliable answer for unambiguous tiny factual/math turns."""
     q = re.sub(r"\s+", " ", str(user_message or "").strip())
@@ -220,13 +227,25 @@ def _direct_answer_floor(user_message: str) -> str:
     if sqrt_match:
         import math
 
-        return _format_number(math.sqrt(int(sqrt_match.group(1))))
+        return _format_direct_answer(q, _format_number(math.sqrt(int(sqrt_match.group(1)))))
+
+    factorial_match = (
+        re.search(r"factorial\s+of\s+([0-9]+)", lower)
+        or re.search(r"([0-9]+)\s*factorial", lower)
+        or re.search(r"\b([0-9]+)\s*!", lower)
+    )
+    if factorial_match:
+        import math
+
+        n = int(factorial_match.group(1))
+        if 0 <= n <= 12:
+            return _format_direct_answer(q, str(math.factorial(n)))
 
     apple_match = re.search(r"have\s+([0-9]+)\s+apples?.*eat\s+([0-9]+)", lower)
     if apple_match:
         remaining = int(apple_match.group(1)) - int(apple_match.group(2))
         noun = "apple" if remaining == 1 else "apples"
-        return f"{remaining} {noun}."
+        return _format_direct_answer(q, f"{remaining} {noun}.")
 
     if "hamlet" in lower and "wrote" in lower:
         return "William Shakespeare."

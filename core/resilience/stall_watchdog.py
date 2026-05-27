@@ -76,6 +76,24 @@ class StallWatchdog(threading.Thread):
         self._consecutive_long_stalls: int = 0
         self._started_at: float = time.time()
         self._diagnostic_only_notice_logged: bool = False
+        self._last_boot_suppression_log_at: float = 0.0
+        self._last_foreground_suppression_log_at: float = 0.0
+
+    @staticmethod
+    def _suppression_log_interval_s() -> float:
+        try:
+            return max(5.0, float(os.getenv("AURA_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S", "60") or 60))
+        except (TypeError, ValueError):
+            return 60.0
+
+    def _log_suppression(self, attr_name: str, message: str, *args: object) -> None:
+        now = time.time()
+        last = float(getattr(self, attr_name, 0.0) or 0.0)
+        if now - last >= self._suppression_log_interval_s():
+            logger.info(message, *args)
+            setattr(self, attr_name, now)
+        else:
+            logger.debug(message, *args)
 
     def run(self):
         logger.info("🛡️ StallWatchdog: Monitoring loop (Threshold: %.1fs)", self.threshold)
@@ -165,7 +183,8 @@ class StallWatchdog(threading.Thread):
         except (TypeError, ValueError):
             boot_grace = 120.0
         if boot_grace > 0 and (time.time() - self._started_at) < boot_grace:
-            logger.info(
+            self._log_suppression(
+                "_last_boot_suppression_log_at",
                 "StallWatchdog: suppressing %.1fs launch stall during boot grace.",
                 elapsed,
             )
@@ -191,7 +210,8 @@ class StallWatchdog(threading.Thread):
                 or lane_state in {"spawning", "handshaking", "warming", "recovering"}
             )
             if foreground_active:
-                logger.info(
+                self._log_suppression(
+                    "_last_foreground_suppression_log_at",
                     "StallWatchdog: suppressing %.1fs foreground inference stall "
                     "(state=%s active=%s warmup=%s owner=%s).",
                     elapsed,

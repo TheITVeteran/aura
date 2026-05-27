@@ -70,8 +70,12 @@ class CapabilityMap:
             name="code_execute",
             description="Execute Python code for calculations or analysis",
             trigger_patterns=[
-                r"calculate|compute|math|equation",
-                r"run|execute|code|script",
+                r"```(?:py|python)?\s+",
+                r"(?:calculate|compute)\s+[-+*/%().,\d\s]+(?:$|[?.!])",
+                r"what is\s+[-+*/%().,\d\s]+(?:$|[?.!])",
+                r"(?:run|execute)\s+(?:this\s+)?(?:code|script|python)",
+                r"(?:python|code)\s*:",
+                r"equation|formula",
                 r"analyze|parse|process data",
                 r"\d+\s*[\+\-\*\/]\s*\d+",  # Math expression
             ]

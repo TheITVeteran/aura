@@ -299,9 +299,25 @@ class FlagshipDoctorDaemon:
         self.lag_threshold = lag_threshold
         self.ram_threshold = ram_threshold
         self._last_heartbeat = time.time()
+        try:
+            self.active_lag_threshold = max(
+                self.lag_threshold,
+                float(os.getenv("AURA_FLAGSHIP_DOCTOR_ACTIVE_LAG_THRESHOLD_S", "30.0")),
+            )
+        except (TypeError, ValueError):
+            self.active_lag_threshold = max(self.lag_threshold, 30.0)
+        try:
+            self.min_heal_interval = max(
+                1.0,
+                float(os.getenv("AURA_FLAGSHIP_DOCTOR_HEAL_COOLDOWN_S", "30.0")),
+            )
+        except (TypeError, ValueError):
+            self.min_heal_interval = 30.0
+        self._last_heal_at = 0.0
         self._running = False
         self._monitor_thread: threading.Thread | None = None
         self._loop: Any = None
+        self._heartbeat_task: Any = None
 
     def start(self, loop: Any = None) -> None:
         """Start the background monitoring thread and event-loop heartbeat updater."""
@@ -319,7 +335,7 @@ class FlagshipDoctorDaemon:
         
         # Schedule the heartbeat task on the event loop
         if self._loop and self._loop.is_running():
-            self._loop.create_task(self._heartbeat_updater())
+            self._heartbeat_task = self._loop.create_task(self._heartbeat_updater())
             
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop,
@@ -334,6 +350,13 @@ class FlagshipDoctorDaemon:
         if self._monitor_thread:
             self._monitor_thread.join(timeout=2.0)
             self._monitor_thread = None
+        task = self._heartbeat_task
+        self._heartbeat_task = None
+        if task is not None:
+            try:
+                task.cancel()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("FlagshipDoctorDaemon heartbeat cancellation skipped: %s", exc)
 
     async def _heartbeat_updater(self) -> None:
         """Async task that constantly updates the heartbeat timestamp on the event loop."""
@@ -344,6 +367,77 @@ class FlagshipDoctorDaemon:
                 await asyncio.sleep(0.5)
             except asyncio.CancelledError:
                 break
+
+    def _active_runtime_reason(self) -> str | None:
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active():
+                return "proof_run_active"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        try:
+            from core.runtime import foreground_guard
+
+            reason = foreground_guard.foreground_activity_reason()
+            if reason:
+                return str(reason)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            status_getter = getattr(gate, "get_conversation_status", None)
+            if callable(status_getter):
+                status = status_getter()
+                if bool(getattr(status, "active", False)):
+                    return "foreground_generation"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        return None
+
+    def _lag_threshold_for_context(self) -> tuple[float, str]:
+        reason = self._active_runtime_reason()
+        if reason:
+            return self.active_lag_threshold, reason
+        return self.lag_threshold, "idle"
+
+    def _should_self_heal(self, lag: float, ram_percent: float, *, now: float | None = None) -> tuple[bool, str, bool]:
+        now = float(now or time.time())
+        lag_threshold, lag_context = self._lag_threshold_for_context()
+        ram_pressure = ram_percent > 0.0 and ram_percent >= self.ram_threshold
+        lag_pressure = lag > lag_threshold
+        if not lag_pressure and not ram_pressure:
+            return False, lag_context, ram_pressure
+
+        if lag_context != "idle" and not ram_pressure:
+            logger.debug(
+                "FlagshipDoctorDaemon observed active-runtime lag without memory "
+                "pressure; treating as occupied runtime, not self-healing trigger "
+                "(lag=%.2fs context=%s threshold=%.2fs RAM=%.1f%%).",
+                lag,
+                lag_context,
+                lag_threshold,
+                ram_percent,
+            )
+            return False, lag_context, ram_pressure
+
+        if now - self._last_heal_at < self.min_heal_interval:
+            logger.debug(
+                "FlagshipDoctorDaemon self-heal cooldown active "
+                "(lag=%.2fs context=%s threshold=%.2fs RAM=%.1f%%).",
+                lag,
+                lag_context,
+                lag_threshold,
+                ram_percent,
+            )
+            return False, lag_context, ram_pressure
+
+        return True, lag_context, ram_pressure
 
     def _monitor_loop(self) -> None:
         """Standard thread loop running in the background to detect event-loop stalls or high memory."""
@@ -366,18 +460,37 @@ class FlagshipDoctorDaemon:
                 pass
                 
             # Trigger self-healing if limits are violated
-            if lag > self.lag_threshold or (ram_percent > 0.0 and ram_percent >= self.ram_threshold):
+            should_heal, lag_context, ram_pressure = self._should_self_heal(
+                lag,
+                ram_percent,
+            )
+            if should_heal:
                 logger.warning(
-                    "⚠️ [HEALTH DEGRADED] FlagshipDoctorDaemon triggered self-healing. Lag: %.2fs, RAM: %.1f%%",
+                    "⚠️ [HEALTH DEGRADED] FlagshipDoctorDaemon triggered self-healing. "
+                    "Lag: %.2fs (context=%s), RAM: %.1f%%",
                     lag,
+                    lag_context,
                     ram_percent
                 )
                 try:
-                    self._execute_self_healing(lag, ram_percent)
+                    self._last_heal_at = time.time()
+                    self._execute_self_healing(
+                        lag,
+                        ram_percent,
+                        lag_context=lag_context,
+                        ram_pressure=ram_pressure,
+                    )
                 except (RuntimeError, OSError, AttributeError, ValueError, TypeError, ImportError, sqlite3.Error) as e:
                     logger.error("FlagshipDoctorDaemon self-healing failed: %s", e)
 
-    def _execute_self_healing(self, lag: float, ram_percent: float) -> None:
+    def _execute_self_healing(
+        self,
+        lag: float,
+        ram_percent: float,
+        *,
+        lag_context: str = "idle",
+        ram_pressure: bool = False,
+    ) -> None:
         """Executes garbage collection and compacts SQLite databases under pressure."""
         # 1. Run CPU Garbage Collection
         logger.info("♻️ Reclaiming memory via gc.collect()...")
@@ -390,24 +503,31 @@ class FlagshipDoctorDaemon:
         ]
         
         compacted_count = 0
-        for db_path in db_paths:
-            if db_path.exists():
-                try:
-                    logger.info("🗄️ Compacting SQLite database: %s", db_path)
-                    conn = sqlite3.connect(str(db_path), timeout=5.0)
-                    conn.execute("VACUUM;")
-                    conn.close()
-                    compacted_count += 1
-                except (sqlite3.Error, OSError, RuntimeError, ValueError) as e:
-                    logger.error("Failed to compact DB %s: %s", db_path, e)
+        if ram_pressure or lag_context == "idle":
+            for db_path in db_paths:
+                if db_path.exists():
+                    try:
+                        logger.info("🗄️ Compacting SQLite database: %s", db_path)
+                        conn = sqlite3.connect(str(db_path), timeout=5.0)
+                        conn.execute("VACUUM;")
+                        conn.close()
+                        compacted_count += 1
+                    except (sqlite3.Error, OSError, RuntimeError, ValueError) as e:
+                        logger.error("Failed to compact DB %s: %s", db_path, e)
+        else:
+            logger.info(
+                "🗄️ Skipping database compaction for active-runtime lag context: %s",
+                lag_context,
+            )
                     
         # 3. Trigger global database maintenance if available
         try:
             from core.persistence.db_maintenance import get_db_maintenance
-            maint = get_db_maintenance()
-            logger.info("🗄️ Triggering global DatabaseMaintenance pass...")
-            maint.run_maintenance(force=True)
-            compacted_count += 1
+            if ram_pressure or lag_context == "idle":
+                maint = get_db_maintenance()
+                logger.info("🗄️ Triggering global DatabaseMaintenance pass...")
+                maint.run_maintenance(force=True)
+                compacted_count += 1
         except ImportError:
             pass
         except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as e:

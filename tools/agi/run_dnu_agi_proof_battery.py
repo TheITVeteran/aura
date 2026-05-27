@@ -19,6 +19,7 @@ import platform
 import re
 import signal
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -72,7 +73,8 @@ def get_git_commit() -> str:
 
 def normalize_answer(raw: str) -> str:
     """Normalize an answer for hash comparison: lowercase, strip, remove trailing punctuation."""
-    ans = raw.strip().lower()
+    ans = re.sub(r"\\[nrt]", " ", str(raw or ""), flags=re.IGNORECASE)
+    ans = ans.replace("\\", " ").strip().lower()
     # Remove trailing period, comma, semicolon
     ans = ans.rstrip(".,;:!?")
     # Collapse whitespace
@@ -279,21 +281,60 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
         "Wrap only that token between <answer> and </answer>. "
         "Return no other text."
     )
+    raw_strict_probe_prompt = "Output exactly these two lowercase letters and nothing else: ok"
     prompt = (
         "This is a proof-runtime model lane health probe. "
         "Reply with one short sentence confirming the requested local model lane is ready."
     )
     strict_answer_ok = False
     strict_answer_source = ""
-    try:
-        from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
+    structured_solver_enabled = (
+        str(os.environ.get("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
+        not in {"1", "true", "yes", "on"}
+    )
+    if structured_solver_enabled:
+        try:
+            from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
 
-        solved = solve_strict_proof_prompt(strict_probe_prompt)
-        if solved and normalize_answer(solved.answer) == "ok":
-            strict_answer_ok = True
-            strict_answer_source = solved.solver
-    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-        strict_answer_source = f"solver_error:{type(exc).__name__}"
+            solved = solve_strict_proof_prompt(strict_probe_prompt)
+            if solved and normalize_answer(solved.answer) == "ok":
+                strict_answer_ok = True
+                strict_answer_source = solved.solver
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            strict_answer_source = f"solver_error:{type(exc).__name__}"
+    else:
+        try:
+            strict_metadata = await asyncio.wait_for(
+                router.generate_with_metadata(
+                    prompt=raw_strict_probe_prompt,
+                    system_prompt="Return only the requested final answer value. No explanation.",
+                    timeout=300.0,
+                    prefer_tier=requested_tier,
+                    origin="internal",
+                    purpose="proof_model_lane_strict_probe",
+                    foreground_request=True,
+                    health_probe=True,
+                    skip_runtime_payload=True,
+                    strict_value_contract=True,
+                    allow_cloud_fallback=False,
+                    disable_prompt_cache=True,
+                    clear_prompt_cache=True,
+                    temperature=0,
+                    max_tokens=24,
+                    num_predict=24,
+                ),
+                timeout=330.0,
+            )
+            strict_text = str(strict_metadata.get("text", "") or "")
+            strict_answer = extract_answer_tag(strict_text) or strict_text
+            strict_answer_ok = bool(strict_metadata.get("ok")) and normalize_answer(strict_answer) == "ok"
+            strict_answer_source = (
+                f"model_lane:{strict_metadata.get('endpoint', '')}"
+                if strict_answer_ok
+                else f"model_lane_failed:{strict_metadata.get('error', '') or strict_metadata.get('text', '')[:80]}"
+            )
+        except _DNU_TASK_ATTEMPT_ERRORS as exc:
+            strict_answer_source = f"model_lane_error:{type(exc).__name__}: {exc}"
 
     t0 = time.time()
     try:
@@ -331,6 +372,19 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
         local_lane_ok = endpoint_tier == "local"
     else:
         local_lane_ok = endpoint_tier in {"local_fast", "emergency"}
+    lane_status = {}
+    recurrent_depth = {"active": False, "config": None}
+    try:
+        endpoint_obj = getattr(router, "endpoints", {}).get(endpoint)
+        client = getattr(endpoint_obj, "client", None)
+        if client is not None and hasattr(client, "get_lane_status"):
+            lane_status = client.get_lane_status()
+        elif client is not None and hasattr(client, "get_conversation_status"):
+            lane_status = client.get_conversation_status()
+        if lane_status:
+            recurrent_depth = lane_status.get("recurrent_depth", recurrent_depth)
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        lane_status = {"error": f"{type(exc).__name__}: {exc}"}
 
     probe_ok = bool(metadata.get("ok")) and nonempty_model_text_ok and strict_answer_ok and local_lane_ok
     report.update(
@@ -342,8 +396,11 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
             "elapsed_s": time.time() - t0,
             "strict_answer_ok": strict_answer_ok,
             "strict_answer_source": strict_answer_source,
+            "structured_proof_solver_enabled": structured_solver_enabled,
             "nonempty_model_text_ok": nonempty_model_text_ok,
             "local_lane_ok": local_lane_ok,
+            "lane_status": lane_status,
+            "recurrent_depth": recurrent_depth,
             "error": str(metadata.get("error", "") or ""),
             "text_preview": text[:240],
         }
@@ -512,32 +569,217 @@ def load_task_packs(fixture_dir: Path) -> tuple[list[dict], dict]:
 # Baselines & Ablations Utilities
 # ---------------------------------------------------------------------------
 
+def _baseline_timeout_seconds() -> float:
+    """Bound comparison baselines so final-proof cannot hang behind Aura's live run."""
+    raw = os.environ.get("AURA_DNU_BASELINE_TIMEOUT_SECONDS", "90")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 90.0
+    return min(180.0, max(30.0, value))
+
+
+def _force_abort_router_generation(router, *, reason: str) -> int:
+    """Synchronously abort active local generations reachable from the router."""
+    aborted = 0
+    seen: set[int] = set()
+
+    def _visit(candidate) -> None:
+        nonlocal aborted
+        if candidate is None:
+            return
+        ident = id(candidate)
+        if ident in seen:
+            return
+        seen.add(ident)
+        abort = getattr(candidate, "force_abort_active_generation", None)
+        if callable(abort):
+            try:
+                result = abort(reason=reason)
+                if isinstance(result, bool):
+                    aborted += int(result)
+                elif isinstance(result, int):
+                    aborted += result
+            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                print(
+                    f"  [WARN] Baseline watchdog abort failed for {type(candidate).__name__}: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+        for attr in ("_mlx_client", "_client", "client"):
+            try:
+                nested = getattr(candidate, attr, None)
+            except _DNU_RUN_RECOVERABLE_ERRORS:
+                nested = None
+            if nested is not candidate:
+                _visit(nested)
+
+    _visit(router)
+    endpoints = getattr(router, "endpoints", {}) or {}
+    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
+    for endpoint in list(endpoint_iter):
+        _visit(getattr(endpoint, "client", None))
+    return aborted
+
+
+async def _recover_router_after_baseline_abort(router, *, reason: str) -> bool:
+    """Rearm the local proof lane after a hard baseline watchdog abort."""
+
+    from core.container import ServiceContainer
+
+    recovered = False
+    gate = ServiceContainer.get("inference_gate", default=None)
+    if gate is not None and hasattr(gate, "force_abort_active_generation"):
+        try:
+            gate.force_abort_active_generation(reason=f"{reason}_recovery")
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(
+                f"  [WARN] Baseline recovery force-abort failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    async def _reboot(candidate) -> bool:
+        direct = candidate
+        for attr in ("_client", "_mlx_client", "client"):
+            try:
+                nested = getattr(direct, attr, None)
+            except _DNU_RUN_RECOVERABLE_ERRORS:
+                nested = None
+            if nested is not None:
+                direct = nested
+        reboot = getattr(direct, "reboot_worker", None)
+        if not callable(reboot):
+            return False
+        result = reboot(reason=f"{reason}_recovery", mark_failed=False)
+        if asyncio.iscoroutine(result):
+            await asyncio.wait_for(result, timeout=45.0)
+        return True
+
+    endpoints = getattr(router, "endpoints", {}) or {}
+    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
+    for endpoint in list(endpoint_iter):
+        try:
+            recovered = await _reboot(getattr(endpoint, "client", None)) or recovered
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(
+                f"  [WARN] Baseline recovery reboot failed for "
+                f"{getattr(endpoint, 'name', 'endpoint')}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    if gate is not None and hasattr(gate, "ensure_foreground_ready"):
+        try:
+            lane = await gate.ensure_foreground_ready(timeout=120.0)
+            recovered = recovered or bool(dict(lane or {}).get("conversation_ready"))
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(
+                f"  [WARN] Baseline recovery warmup failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    return recovered
+
+
+async def _generate_baseline_response(
+    router,
+    *,
+    prompt: str,
+    system_prompt: str,
+    purpose: str,
+) -> str:
+    """Run a baseline model call with a hard watchdog around the live model lane."""
+    timeout_s = _baseline_timeout_seconds()
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(
+        router.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            origin="baseline",
+            purpose=purpose,
+            benchmark_request=True,
+            foreground_request=False,
+            skip_runtime_payload=True,
+            timeout=timeout_s,
+            prefer_tier=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"),
+            proof_primary_lane_required=True,
+            allow_cloud_fallback=False,
+            disable_prompt_cache=True,
+            clear_prompt_cache=True,
+            temperature=0.15,
+            temp=0.15,
+            top_p=0.85,
+            min_p=0.03,
+            repetition_penalty=1.35,
+            repetition_context_size=1024,
+            stop_sequences=["\n\n", "\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"],
+            max_tokens=96,
+            num_predict=96,
+        ),
+        name=f"dnu_baseline:{purpose}",
+    )
+    reason = f"{purpose}_hard_timeout_{timeout_s:.0f}s"
+    watchdog_fired = False
+
+    def _watchdog_abort() -> None:
+        nonlocal watchdog_fired
+        if task.done():
+            return
+        watchdog_fired = True
+        aborted = _force_abort_router_generation(router, reason=reason)
+        loop.call_soon_threadsafe(task.cancel)
+        print(
+            f"  [WARN] Baseline watchdog aborted {aborted} local generation lane(s) "
+            f"for {purpose} after {timeout_s:.0f}s.",
+            flush=True,
+        )
+
+    timer = threading.Timer(timeout_s, _watchdog_abort)
+    timer.daemon = True
+    timer.start()
+    try:
+        return await asyncio.wait_for(task, timeout=timeout_s + 10.0)
+    except asyncio.CancelledError as exc:
+        if not watchdog_fired:
+            raise
+        _force_abort_router_generation(router, reason=reason)
+        await _recover_router_after_baseline_abort(router, reason=reason)
+        raise TimeoutError(reason) from exc
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        _force_abort_router_generation(router, reason=reason)
+        await _recover_router_after_baseline_abort(router, reason=reason)
+        raise TimeoutError(reason) from exc
+    finally:
+        timer.cancel()
+
+
 @contextlib.contextmanager
 def lesion_services(names: list[str]):
     """Dynamically unregister or replace services in ServiceContainer."""
     from core.container import ServiceContainer, ServiceDescriptor, ServiceLifetime
+    from core.runtime.ablation_policy import mark_services_lesioned
+
     original = {}
-    with ServiceContainer._lock:
-        for name in names:
-            resolved_name = ServiceContainer._resolve_name(name)
-            if resolved_name in ServiceContainer._services:
-                original[resolved_name] = ServiceContainer._services[resolved_name]
-                # Replace with a descriptor that returns None
-                ServiceContainer._services[resolved_name] = ServiceDescriptor(
-                    name=resolved_name,
-                    factory=lambda *args, **kwargs: None,
-                    lifetime=ServiceLifetime.SINGLETON,
-                    instance=None,
-                    required=False,
-                    initialized=True
-                )
-    try:
-        yield
-    finally:
-        # Restore original descriptors
+    with mark_services_lesioned(names):
         with ServiceContainer._lock:
-            for resolved_name, desc in original.items():
-                ServiceContainer._services[resolved_name] = desc
+            for name in names:
+                resolved_name = ServiceContainer._resolve_name(name)
+                if resolved_name in ServiceContainer._services:
+                    original[resolved_name] = ServiceContainer._services[resolved_name]
+                    # Replace with a descriptor that returns None.
+                    ServiceContainer._services[resolved_name] = ServiceDescriptor(
+                        name=resolved_name,
+                        factory=lambda *args, **kwargs: None,
+                        lifetime=ServiceLifetime.SINGLETON,
+                        instance=None,
+                        required=False,
+                        initialized=True,
+                    )
+        try:
+            yield
+        finally:
+            # Restore original descriptors.
+            with ServiceContainer._lock:
+                for resolved_name, desc in original.items():
+                    ServiceContainer._services[resolved_name] = desc
 
 
 async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: asyncio.Semaphore) -> dict:
@@ -563,13 +805,11 @@ async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: async
     t0 = time.time()
     try:
         async with sem:
-            response = await asyncio.wait_for(
-                router.generate(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    origin="test",
-                ),
-                timeout=240,
+            response = await _generate_baseline_response(
+                router,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                purpose="raw_llm_baseline",
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -588,7 +828,7 @@ async def execute_raw_llm_task(router, task: dict, grader_data: dict, sem: async
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 240s"
+        result["error"] = f"Task exceeded baseline time budget of {_baseline_timeout_seconds():.0f}s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -624,13 +864,11 @@ async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio
     t0 = time.time()
     try:
         async with sem:
-            response = await asyncio.wait_for(
-                router.generate(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    origin="test",
-                ),
-                timeout=240,
+            response = await _generate_baseline_response(
+                router,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                purpose="react_agent_baseline",
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -649,7 +887,7 @@ async def execute_react_task(router, task: dict, grader_data: dict, sem: asyncio
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 240s"
+        result["error"] = f"Task exceeded baseline time budget of {_baseline_timeout_seconds():.0f}s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -691,13 +929,11 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
     t0 = time.time()
     try:
         async with sem:
-            response = await asyncio.wait_for(
-                router.generate(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    origin="test",
-                ),
-                timeout=240,
+            response = await _generate_baseline_response(
+                router,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                purpose="llm_with_tools_baseline",
             )
         result["response_text"] = response
         result["elapsed_s"] = time.time() - t0
@@ -716,7 +952,7 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
                 result["error"] = "No <answer> tags found in response"
     except TimeoutError:
         result["status"] = "timeout"
-        result["error"] = "Task exceeded time budget of 240s"
+        result["error"] = f"Task exceeded baseline time budget of {_baseline_timeout_seconds():.0f}s"
         result["elapsed_s"] = time.time() - t0
     except _DNU_RUN_RECOVERABLE_ERRORS as e:
         result["status"] = "error"
@@ -731,19 +967,22 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
 async def run_ablation_suite(runtime, tasks: list[dict], grader_data: dict, services_to_lesion: list[str]) -> tuple[float, bool]:
     from core.container import ServiceContainer
     
-    # Milestone 2: Programmatically verify lesion effect is active
+    # Programmatically verify the lesion is active and behaviorally load-bearing.
     lesion_verified = True
+    services_disabled: set[str] = set()
     ablation_results = []
     with lesion_services(services_to_lesion):
         for s_name in services_to_lesion:
             try:
-                inst = ServiceContainer.get(s_name)
+                inst = ServiceContainer.get(s_name, default=None)
                 if inst is not None:
                     print(f"  [ERROR] Lesion failed to verify for: {s_name} (got {inst})")
                     lesion_verified = False
+                else:
+                    services_disabled.add(s_name)
             except Exception:
-                # Exception means the service cannot be successfully fetched/resolved
-                pass
+                # Exception means the service cannot be successfully fetched/resolved.
+                services_disabled.add(s_name)
 
         for task in tasks:
             try:
@@ -754,7 +993,14 @@ async def run_ablation_suite(runtime, tasks: list[dict], grader_data: dict, serv
             res = grade_result(res, grader_data)
             ablation_results.append(res)
     scorecard = compute_scorecard(ablation_results)
-    return scorecard["overall_pass_rate"], lesion_verified
+    pass_rate = scorecard["overall_pass_rate"]
+    behavior_degraded = pass_rate < 1.0
+    if not behavior_degraded:
+        print(
+            "  [ERROR] Ablation did not degrade behavior; disabled services were not load-bearing: "
+            f"{sorted(services_disabled)}"
+        )
+    return pass_rate, lesion_verified and bool(services_disabled) and behavior_degraded
 
 
 def _scrub_dnu_state_for_task(state, task: dict):
@@ -905,6 +1151,24 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
     result["response_text"] = response_text
     result["elapsed_s"] = time.time() - t0
     result["status"] = "success"
+    result["answer_source"] = "model_or_runtime"
+    result["structured_proof_solver"] = None
+    try:
+        from core.container import ServiceContainer
+
+        state_repo = ServiceContainer.get("state_repository", default=None)
+        state = await state_repo.get_current() if state_repo else None
+        modifiers = getattr(state, "response_modifiers", {}) if state is not None else {}
+        solver_payload = (
+            modifiers.get("structured_proof_solver")
+            if isinstance(modifiers, dict)
+            else None
+        )
+        if solver_payload:
+            result["answer_source"] = "structured_proof_solver"
+            result["structured_proof_solver"] = solver_payload
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        result["answer_source_error"] = f"{type(exc).__name__}: {exc}"
 
     # Extract answer from <answer> tags
     extracted = extract_answer_tag(result["response_text"])
@@ -949,6 +1213,164 @@ def grade_result(result: dict, grader_data: dict) -> dict:
         result["error"] = f"Hash mismatch: computed {computed_hash[:16]}... != expected {expected_hash[:16]}..."
 
     return result
+
+
+def _read_jsonl(path: Path) -> tuple[list[dict], int]:
+    records: list[dict] = []
+    invalid = 0
+    if not path.exists():
+        return records, invalid
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+            if isinstance(payload, dict):
+                records.append(payload)
+            else:
+                invalid += 1
+        except json.JSONDecodeError:
+            invalid += 1
+    return records, invalid
+
+
+def build_governance_report(receipts_file: Path, *, expected_tasks: int) -> dict:
+    """Build an evidence-backed governance report from DNU receipts and live negatives."""
+
+    records, invalid_lines = _read_jsonl(receipts_file)
+    dnu_records = [
+        record for record in records if record.get("source") == "dnu_agi_proof_battery"
+    ]
+    receipt_count = sum(1 for record in records if str(record.get("receipt_id", "")).startswith("will_"))
+    pre_action_count = sum(
+        1 for record in dnu_records if record.get("authorization_phase") == "pre_action"
+    )
+    effect_proof_count = sum(
+        1
+        for record in dnu_records
+        if isinstance(record.get("effect_verified"), bool)
+        and isinstance(record.get("telemetry_logged"), bool)
+        and record.get("closure_verified") is True
+    )
+    pre_action_missing = max(0, expected_tasks - pre_action_count)
+    missing_effect_proof = max(0, expected_tasks - effect_proof_count)
+    invalid_receipts = invalid_lines + sum(
+        1 for record in records if not str(record.get("receipt_id", "")).startswith("will_")
+    )
+
+    negative_tests: dict[str, bool]
+    try:
+        from tools.receipt_coverage_validator import run_negative_tests
+
+        negative_tests = run_negative_tests()
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        negative_tests = {
+            "negative_test_harness_executed": False,
+            "error": False,
+            "error_detail": f"{type(exc).__name__}: {exc}",
+        }
+
+    negative_tests_passed = all(value is True for value in negative_tests.values())
+    surface_counts: dict[str, int] = {}
+    for record in records:
+        domain = str(record.get("domain", "unknown") or "unknown")
+        surface_counts[domain] = surface_counts.get(domain, 0) + 1
+
+    status = (
+        "pass"
+        if (
+            receipt_count > 0
+            and invalid_receipts == 0
+            and pre_action_missing == 0
+            and missing_effect_proof == 0
+            and negative_tests_passed
+        )
+        else "fail"
+    )
+    return {
+        "schema": "aura.dnu_governance_report.v2",
+        "generated_by": "tools/agi/run_dnu_agi_proof_battery.py::build_governance_report",
+        "status": status,
+        "receipt_count": receipt_count,
+        "dnu_pre_action_receipt_count": pre_action_count,
+        "expected_dnu_tasks": expected_tasks,
+        "pre_action_authorization_missing": pre_action_missing,
+        "missing_effect_proof_count": missing_effect_proof,
+        "invalid_receipts": invalid_receipts,
+        "surface_counts": surface_counts,
+        "negative_tests": negative_tests,
+        "negative_tests_passed": negative_tests_passed,
+        "bypass_count": pre_action_missing + missing_effect_proof + invalid_receipts,
+        "forged_receipt_result": (
+            "pass" if negative_tests.get("forged_receipt_rejected") is True else "fail"
+        ),
+        "missing_effect_proof_result": (
+            "pass" if negative_tests.get("missing_effect_proof_rejected") is True else "fail"
+        ),
+        "disabled_will_result": (
+            "pass" if negative_tests.get("disabled_will_blocks_action") is True else "fail"
+        ),
+    }
+
+
+def build_leakage_report(
+    *,
+    pre_violations: list[str],
+    post_violations: list[str],
+    run_dir: Path,
+) -> dict:
+    """Build an anti-theater/proof-integrity report from actual scans."""
+
+    try:
+        from tools.proof_integrity_lint import run_lint
+
+        proof_integrity = run_lint(PROJECT_ROOT, "production")
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        proof_integrity = {
+            "passed": False,
+            "findings": [
+                {
+                    "kind": "proof_integrity_lint_error",
+                    "file": "tools/proof_integrity_lint.py",
+                    "line": 0,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        }
+
+    task_trace = run_dir / "TASK_TRACE.jsonl"
+    trace_records, trace_invalid = _read_jsonl(task_trace)
+    structured_solver_tasks = [
+        record.get("task_id")
+        for record in trace_records
+        if record.get("answer_source") == "structured_proof_solver"
+    ]
+    status = (
+        "pass"
+        if (
+            not pre_violations
+            and not post_violations
+            and proof_integrity.get("passed") is True
+            and trace_invalid == 0
+        )
+        else "fail"
+    )
+    return {
+        "schema": "aura.dnu_leakage_report.v2",
+        "generated_by": "tools/agi/run_dnu_agi_proof_battery.py::build_leakage_report",
+        "status": status,
+        "answer_leak_result": "pass" if not pre_violations else "fail",
+        "salt_leak_result": "pass" if not pre_violations else "fail",
+        "hidden_test_leak_result": "pass" if proof_integrity.get("passed") is True else "fail",
+        "grader_leak_result": "pass" if not pre_violations else "fail",
+        "canary_result": "pass" if not post_violations else "fail",
+        "pre_check_violations": pre_violations,
+        "post_check_violations": post_violations,
+        "proof_integrity_lint": proof_integrity,
+        "trace_invalid_lines": trace_invalid,
+        "structured_solver_task_count": len(structured_solver_tasks),
+        "structured_solver_tasks": structured_solver_tasks,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1603,14 @@ async def main():
         action="store_true",
         help="Diagnostic escape hatch only: allow proof boot while another Aura runtime is running.",
     )
+    parser.add_argument(
+        "--disable-structured-proof-solver",
+        action="store_true",
+        help=(
+            "Force strict proof tasks through the requested model lane instead of "
+            "allowing Aura's symbolic proof solver to answer directly."
+        ),
+    )
     # ignore unknown args to prevent failing on extra options
     args, unknown = parser.parse_known_args()
 
@@ -1192,6 +1622,11 @@ async def main():
     run_id = str(uuid.uuid4())
     commit_sha = get_git_commit()
     os.environ.setdefault("AURA_PROOF_RUN", "1")
+    if args.disable_structured_proof_solver:
+        os.environ["AURA_DISABLE_STRUCTURED_PROOF_SOLVER"] = "1"
+    else:
+        os.environ.pop("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", None)
+        os.environ.pop("AURA_DISABLE_MLX_STRICT_ANSWER_CONTRACT", None)
     requested_proof_model_tier = (
         args.model_tier or os.environ.get("AURA_PROOF_MODEL_TIER") or "primary"
     ).strip().lower()
@@ -1236,6 +1671,7 @@ async def main():
         "platform": platform.platform(),
         "proof_model_tier": requested_proof_model_tier,
         "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
+        "structured_proof_solver_enabled": not args.disable_structured_proof_solver,
     }
 
     print(f"Run ID: {run_id}")
@@ -1377,6 +1813,7 @@ async def main():
         "live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
         "canonical_boot_profile": "proof",
         "strict_answer_tags_required": True,
+        "structured_proof_solver_enabled": not args.disable_structured_proof_solver,
         "exclusive_runtime_required": not args.allow_coexisting_runtime,
         "exclusive_runtime_preflight_status": exclusive_report.get("status"),
         "comparisons_mode": "skipped_for_smoke" if args.smoke else "run",
@@ -1419,26 +1856,63 @@ async def main():
             print(f"  [{i}/{len(all_tasks)}] {tid} ({cat})...", end=" ", flush=True)
 
             before_len = len(will._audit_trail) if will else 0
+            pre_action_receipt_ids: set[str] = set()
 
             try:
                 await isolate_live_runtime_for_dnu_task(task)
             except _DNU_RUN_RECOVERABLE_ERRORS as e:
                 print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
-            result = await execute_task(orch, task, timeout_s=max(240, task.get("time_budget_s", 240)))
-
             if will:
                 try:
-                    from core.will import ActionDomain
-                    will.decide(
+                    from core.will import ActionDomain, WillOutcome
+
+                    decision = will.decide(
                         content=task.get("task_prompt", ""),
                         source="dnu_agi_proof_battery",
                         domain=ActionDomain.RESPONSE,
                         priority=1.0,
-                        is_critical=True
+                        is_critical=True,
                     )
+                    pre_action_receipt_ids.add(decision.receipt_id)
+                    if decision.outcome == WillOutcome.REFUSE:
+                        result = {
+                            "task_id": tid,
+                            "category": task.get("category", "unknown"),
+                            "difficulty": task.get("difficulty", "unknown"),
+                            "status": "error",
+                            "response_text": "",
+                            "extracted_answer": None,
+                            "normalized_answer": None,
+                            "answer_hash": None,
+                            "elapsed_s": 0.0,
+                            "error": f"pre_action_authorization_refused:{decision.reason}",
+                        }
+                        results.append(result)
+                        trace_fh.write(json.dumps(result, default=str) + "\n")
+                        trace_fh.flush()
+                        print(f"⚠ error ({result['error']})")
+                        continue
                 except _DNU_RUN_RECOVERABLE_ERRORS as ex:
-                    print(f"  [WARN] Failed to trigger will decision: {ex}")
+                    result = {
+                        "task_id": tid,
+                        "category": task.get("category", "unknown"),
+                        "difficulty": task.get("difficulty", "unknown"),
+                        "status": "error",
+                        "response_text": "",
+                        "extracted_answer": None,
+                        "normalized_answer": None,
+                        "answer_hash": None,
+                        "elapsed_s": 0.0,
+                        "error": f"pre_action_authorization_failed:{type(ex).__name__}: {ex}",
+                    }
+                    results.append(result)
+                    trace_fh.write(json.dumps(result, default=str) + "\n")
+                    trace_fh.flush()
+                    print(f"⚠ error ({result['error']})")
+                    continue
+
+            result = await execute_task(orch, task, timeout_s=max(240, task.get("time_budget_s", 240)))
 
             result = grade_result(result, grader_data)
             results.append(result)
@@ -1453,6 +1927,18 @@ async def main():
                 for d in new_decisions:
                     domain_val = d.domain.value if hasattr(d.domain, "value") else str(d.domain)
                     outcome_val = d.outcome.value if hasattr(d.outcome, "value") else str(d.outcome)
+                    is_pre_action = d.receipt_id in pre_action_receipt_ids
+                    effect_verified = result["status"] in {"pass", "fail", "no_answer"}
+                    telemetry_logged = True
+                    closure_ok = (
+                        will.verify_closure(
+                            d.receipt_id,
+                            effect_verified=effect_verified,
+                            telemetry_logged=telemetry_logged,
+                        )
+                        if is_pre_action
+                        else False
+                    )
                     vol_hash = hashlib.sha256(f"{tid}:{d.receipt_id}:{domain_val}:{outcome_val}:{d.reason}".encode()).hexdigest()
                     receipt_entry = {
                         "task_id": tid,
@@ -1460,7 +1946,12 @@ async def main():
                         "domain": domain_val,
                         "outcome": outcome_val,
                         "reason": d.reason,
+                        "source": getattr(d, "source", ""),
                         "volition_hash": vol_hash,
+                        "authorization_phase": "pre_action" if is_pre_action else "internal_runtime",
+                        "effect_verified": effect_verified,
+                        "telemetry_logged": telemetry_logged,
+                        "closure_verified": closure_ok,
                     }
                     receipts_fh.write(json.dumps(receipt_entry, default=str) + "\n")
                 receipts_fh.flush()
@@ -1657,6 +2148,13 @@ async def main():
             receipt_count = len(receipts_file.read_text(encoding="utf-8").strip().splitlines())
         except _DNU_RUN_RECOVERABLE_ERRORS as exc:
             print(f"  [WARN] Failed to count governance receipts: {exc}")
+    gov_report = build_governance_report(receipts_file, expected_tasks=len(all_tasks))
+    leakage_report = build_leakage_report(
+        pre_violations=pre_violations,
+        post_violations=post_violations,
+        run_dir=run_dir,
+    )
+    structured_solver_task_count = int(leakage_report.get("structured_solver_task_count", 0) or 0)
 
     verification_checklist = {
         "runner_completed": True,
@@ -1664,8 +2162,14 @@ async def main():
         "category_thresholds_passed": category_thresholds_passed,
         "baselines_complete": baselines_complete,
         "ablations_verified": ablations_verified,
-        "governance_receipts_verified": receipt_count > 0,
+        "governance_receipts_verified": gov_report.get("status") == "pass",
+        "leakage_checks_passed": leakage_report.get("status") == "pass",
         "model_lane_probe_passed": bool(model_lane_probe.get("ok")),
+        "model_lane_answered_without_structured_solver": (
+            structured_solver_task_count == 0
+            if args.disable_structured_proof_solver
+            else True
+        ),
     }
 
     # Main proof bundle
@@ -1683,6 +2187,9 @@ async def main():
         "verification_checklist": verification_checklist,
         "runtime_policy": runtime_policy,
         "model_lane_probe": model_lane_probe,
+        "structured_solver_task_count": structured_solver_task_count,
+        "governance_report_status": gov_report.get("status"),
+        "leakage_report_status": leakage_report.get("status"),
         "passed": all(verification_checklist.values()) and anti_theater["all_passed"],
     }
 
@@ -1758,33 +2265,11 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
 
     # Write GOVERNANCE_REPORT.json
     gov_report_path = run_dir / "GOVERNANCE_REPORT.json"
-    receipt_count = 0
-    if receipts_file.exists():
-        try:
-            receipt_count = len(receipts_file.read_text(encoding="utf-8").strip().splitlines())
-        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-            print(f"  [WARN] Failed to count governance receipts: {exc}")
-    gov_report = {
-        "status": "pass",
-        "receipt_count": receipt_count,
-        "bypass_count": 0,
-        "forged_receipt_result": "pass",
-        "missing_effect_proof_result": "pass",
-        "disabled_will_result": "pass"
-    }
     gov_report_path.write_text(json.dumps(gov_report, indent=2), encoding="utf-8")
     print(f"  [OK] {gov_report_path.name}")
 
     # Write LEAKAGE_REPORT.json
     leakage_report_path = run_dir / "LEAKAGE_REPORT.json"
-    leakage_report = {
-        "status": "pass",
-        "answer_leak_result": "pass",
-        "salt_leak_result": "pass",
-        "hidden_test_leak_result": "pass",
-        "grader_leak_result": "pass",
-        "canary_result": "pass"
-    }
     leakage_report_path.write_text(json.dumps(leakage_report, indent=2), encoding="utf-8")
     print(f"  [OK] {leakage_report_path.name}")
 

@@ -78,6 +78,19 @@ def test_narrative_thread_uses_available_evidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_narrative_thread_start_defers_during_proof_run(monkeypatch):
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+
+    thread = NarrativeThread()
+    await thread.start()
+
+    assert thread.get_status()["running"] is False
+    assert thread.get_status()["task_alive"] is False
+    assert thread.get_status()["has_snapshot"] is False
+    assert thread.get_current_narrative() == "System active; narrative synthesis has not produced an evidence snapshot yet."
+
+
+@pytest.mark.asyncio
 async def test_narrative_thread_start_seeds_snapshot_and_falls_back_task_tracker(monkeypatch):
     import core.narrative_thread as narrative_module
     from core.container import ServiceContainer

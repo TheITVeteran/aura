@@ -767,6 +767,18 @@ class ConsciousnessBridge:
         """Thread-safe dispatch of micro-evolution tasks."""
         if not self.substrate_evolution or not self._loop:
             return
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active():
+                if not getattr(self, "_micro_evolve_proof_skip_logged", False):
+                    logger.info("Micro-evolution deferred during proof_run_active.")
+                    self._micro_evolve_proof_skip_logged = True
+                return
+        except _RECOVERABLE_BRIDGE_ERRORS as exc:
+            record_degradation("consciousness_bridge", exc)
+            logger.debug("Proof-run micro-evolution check failed: %s", exc)
+            return
 
         def _submit():
             try:

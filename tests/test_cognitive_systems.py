@@ -545,6 +545,111 @@ class TestBrowserURLRouting:
         assert params["action"] == "open_url"
         assert params["target"] == "https://duckduckgo.com/?q=aliens"
 
+    def test_planning_word_problem_does_not_dispatch_as_run_code(self):
+        """Planning/eval prompts must not trip the code sandbox without executable code."""
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        prompt = (
+            "A routing protocol needs to find the shortest path through a computer network. "
+            "Apply Dijkstra's algorithm to compute the shortest path distance from A to D. "
+            "Output your final answer inside <answer>...</answer> tags."
+        )
+
+        assert not GodModeToolPhase._looks_like_direct_run_code_request(prompt)
+        assert GodModeToolPhase._choose_best_skill(prompt, ["run_code"]) == ""
+
+    def test_debug_patch_prompt_does_not_execute_buggy_snippet(self):
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        prompt = (
+            "Diagnose the boundary error and provide the exact Python expression that "
+            "`left` should be assigned to:\n```python\nleft = mid\n```"
+        )
+
+        assert not GodModeToolPhase._looks_like_direct_run_code_request(prompt)
+
+    def test_exception_question_can_execute_snippet_for_diagnostic_evidence(self):
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        prompt = (
+            "What is the exact exception class raised by this snippet?\n"
+            "```python\nd = {'a': 1}\nprint(d['c'])\n```"
+        )
+
+        assert GodModeToolPhase._looks_like_direct_run_code_request(prompt)
+
+    def test_fenced_python_payload_normalizes_into_run_code(self):
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        params = GodModeToolPhase._normalize_skill_params(
+            "run_code",
+            "Trace this:\n```python\nx = [1, 2, 3]\nprint(x[0])\n```",
+            {"query": "wrong"},
+        )
+
+        assert params["code"] == "x = [1, 2, 3]\nprint(x[0])"
+
+    def test_capability_engine_routes_python_fence_to_run_code(self):
+        from core.capability_engine import CapabilityEngine
+
+        engine = CapabilityEngine()
+
+        assert "run_code" in engine.detect_intent(
+            "Trace this:\n```python\nprint(1)\n```"
+        )
+
+    def test_simple_arithmetic_request_normalizes_into_sandbox_code(self):
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        params = GodModeToolPhase._normalize_skill_params(
+            "run_code",
+            "calculate 12 * (3 + 4)",
+            {},
+        )
+
+        assert params["code"] == "print(12 * (3 + 4))"
+        assert params["stateful"] is False
+
+    def test_invalid_run_code_params_are_blocked_without_throwing(self):
+        from types import SimpleNamespace
+
+        from core.kernel.upgrades_10x import GodModeToolPhase
+        from core.skills.active_coding import RunCodeParams
+
+        cap = SimpleNamespace(
+            skills={"run_code": SimpleNamespace(input_model=RunCodeParams)}
+        )
+
+        ok, params, error = GodModeToolPhase._validate_skill_params(
+            "run_code",
+            {"query": "natural language planning prompt"},
+            cap,
+        )
+
+        assert not ok
+        assert params == {"query": "natural language planning prompt"}
+        assert "code" in error
+
+    def test_run_code_param_extraction_does_not_invent_code_from_text(self):
+        from types import SimpleNamespace
+
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        cap = SimpleNamespace(
+            skills={"run_code": SimpleNamespace(schema_def={"properties": {"code": {}}})}
+        )
+        phase = GodModeToolPhase(kernel=SimpleNamespace())
+
+        params = asyncio.run(
+            phase._extract_params(
+                "run_code",
+                "What exception does this code raise? Output inside <answer> tags.",
+                cap,
+            )
+        )
+
+        assert params == {}
+
     def test_capability_engine_detects_visible_desktop_tab_request(self):
         from core.capability_engine import CapabilityEngine
 

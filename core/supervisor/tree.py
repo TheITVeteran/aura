@@ -196,18 +196,16 @@ class SupervisionTree:
         return parent_pipe
 
     def stop_actor(self, name: str):
-        """Gracefully stop an actor.
-        
-        PIPELINE HARDENING: No process.join() — it blocks the event loop for
-        up to 2s. We kill and let the OS reap. The process is daemon=True
-        so it will be cleaned up on main process exit regardless.
-        """
+        """Stop an actor and reap its process handle before shutdown returns."""
         with self._lock:
             actor = self._actors.get(name)
         if actor and actor.process:
             logger.info("🛑 Stopping Actor: %s", name)
             try:
                 actor.process.kill()  # Immediate kill, no graceful shutdown
+                actor.process.join(timeout=1.0)
+                if actor.process.is_alive():
+                    logger.warning("Actor %s did not exit after kill within timeout.", name)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('tree', e)
                 logger.debug("Error stopping actor %s: %s", name, e)

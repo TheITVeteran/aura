@@ -710,6 +710,7 @@ class MLXLocalClient:
         self._current_prompt_chars = 0
         self._current_requested_max_tokens = 0
         self._current_request_prompt_chars = 0
+        self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
 
         # The state repository's SharedMemoryTransport may be backed by mmap on
         # restricted/macOS paths. mmap handles are not picklable under the
@@ -1005,6 +1006,7 @@ class MLXLocalClient:
             "current_request_started_at": self._current_request_started_at,
             "current_first_token_at": self._current_first_token_at,
             "current_request_prompt_chars": self._current_request_prompt_chars,
+            "recurrent_depth": self._recurrent_depth_status,
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -1345,6 +1347,91 @@ class MLXLocalClient:
                     severity="error",
                 )
                 logger.warning("Error killing process: %s", e)
+
+    def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
+        """Thread-safe emergency abort for a wedged generation.
+
+        Normal cancellations should flow through ``reboot_worker``. This path is
+        intentionally synchronous so an external watchdog can break a stuck
+        proof or foreground request even when the caller's event loop is waiting
+        on an MLX future that failed to observe its deadline.
+        """
+        reason = str(reason or "hard_generation_deadline")
+        pending_futures = {
+            id(future): future
+            for future in list(self._pending_generations.values()) + [self._current_gen_future]
+            if future is not None and not future.done()
+        }
+        had_active_request = bool(
+            pending_futures
+            or self._active_generations > 0
+            or self._current_request_started_at > 0.0
+        )
+        process = self._process
+        had_process = bool(process is not None and process.is_alive())
+        if not had_active_request and not had_process:
+            return False
+
+        logger.error(
+            "🛑 [MLX] Force-aborting active generation for %s (%s).",
+            os.path.basename(self.model_path),
+            reason,
+        )
+        self._set_lane_state("recovering", reason)
+
+        acquired = self._lock.acquire(timeout=0.25)
+        try:
+            for future in pending_futures.values():
+                _cancel_shared_future(future)
+            self._pending_generations.clear()
+            self._current_gen_future = None
+            self._active_generations = 0
+            self._deferred_reboot_reason = None
+            self._warmup_in_flight = False
+            self._init_done = False
+            self._process = None
+            self._last_heartbeat = 0.0
+            self._last_progress_at = 0.0
+            self._last_token_progress_at = 0.0
+            self._last_generation_completed_at = 0.0
+            self._last_user_facing_completed_at = 0.0
+            self._process_started_at = 0.0
+            self._mark_generation_completed()
+            if self._init_future is not None:
+                _cancel_shared_future(self._init_future)
+            self._init_future = None
+
+            if self._listener_task is not None:
+                _cancel_task_threadsafe(self._listener_task)
+                self._listener_task = None
+
+            if process is not None and process.is_alive():
+                self._kill_and_join_blocking(process)
+
+            _safe_close_queue(self._req_q)
+            _safe_close_queue(self._res_q)
+            self._req_q = mp.Queue(maxsize=10)
+            self._res_q = mp.Queue(maxsize=10)
+            self._release_request_lock()
+            gc.collect()
+        finally:
+            if acquired:
+                try:
+                    self._lock.release()
+                except RuntimeError:
+                    logger.debug(
+                        "Loop-agnostic lifecycle lock for %s was already released.",
+                        os.path.basename(self.model_path),
+                    )
+
+        self._record_degraded_event(
+            "force_aborted_generation",
+            detail=f"{os.path.basename(self.model_path)}:{reason}",
+            severity="error",
+            foreground_request=True,
+        )
+        self._set_lane_state("cold", reason)
+        return True
 
     def _spawn_worker_blocking(self) -> mp.Process:
         """Isolated spawn logic for the MLX worker, run in a background thread."""
@@ -1956,6 +2043,9 @@ class MLXLocalClient:
                         self._last_ready_at = self._last_heartbeat
                         self._mark_progress()
                         self._set_lane_state("ready")
+                        recurrent_status = res.get("recurrent_depth")
+                        if isinstance(recurrent_status, dict):
+                            self._recurrent_depth_status = recurrent_status
                         if target_path in (primary_path, deep_path):
                             _GLOBAL_LAST_HEAVY_MODEL = target_path
                             _GLOBAL_LAST_SWAP_TIME = time.time()
@@ -2351,9 +2441,18 @@ class MLXLocalClient:
         deadline = kwargs.get("deadline")
         origin_label = str(kwargs.get("origin", "") or "")
         purpose_label = str(kwargs.get("purpose", "") or "")
+        benchmark_request = bool(kwargs.get("benchmark_request", False)) or (
+            origin_label.strip().lower() in {"baseline", "benchmark"}
+            or purpose_label.strip().lower() == "baseline"
+            or purpose_label.strip().lower().endswith("_baseline")
+            or "_baseline" in purpose_label.strip().lower()
+        )
+        if benchmark_request:
+            request_is_background = False
         if (
             not request_is_background
             and not foreground_request
+            and not benchmark_request
             and origin_label
             and not _origin_is_user_facing(origin_label)
             and purpose_label.strip().lower() not in _USER_FACING_PURPOSES
@@ -2600,6 +2699,7 @@ class MLXLocalClient:
             "schema": kwargs.get("schema"),
             "stop_sequences": list(kwargs.get("stop_sequences") or []),
             "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),
+            "strict_value_contract": bool(kwargs.get("strict_value_contract", False)),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
@@ -3201,7 +3301,8 @@ class MLXLocalClient:
                 0  # [STABILITY v53] Reset on reboot — prevents false recovery triggers
             )
         finally:
-            self._lock.release()
+            if acquired:
+                self._lock.release()
         self._set_lane_state("failed" if mark_failed else "cold", reason if mark_failed else "")
 
     def __del__(self):

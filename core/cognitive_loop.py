@@ -367,6 +367,23 @@ class CognitiveLoop:
             try:
                 comp = optional_service(key, default=None)
                 if comp is None:
+                    try:
+                        from core.runtime.ablation_policy import service_intentionally_lesioned
+
+                        if service_intentionally_lesioned(key):
+                            logger.info(
+                                "Ablation active for critical component '%s' (%s); repair suppressed for lesion validity.",
+                                name,
+                                key,
+                            )
+                            continue
+                    except _COGNITIVE_LOOP_RECOVERABLE_ERRORS as exc:
+                        _record_cognitive_loop_degradation(
+                            exc,
+                            action="continued coordinator health audit without ablation marker",
+                            severity="warning",
+                            extra={"component": key},
+                        )
                     logger.warning(
                         "🚨 [RECOVERY] Critical component '%s' (%s) missing from container. Triggering Orchestrator repair...",
                         name,

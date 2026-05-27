@@ -32,7 +32,7 @@ from core.learning.rule_induction import (
     infer_repeating_shift_rule,
 )
 from core.runtime.proof_policy import proof_model_tier
-from core.will import ActionDomain, get_will
+from core.will import ActionDomain, WillOutcome, get_will
 from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
 
 
@@ -110,6 +110,67 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def decision_outcome_value(decision: Any) -> str:
+    outcome = getattr(decision, "outcome", "")
+    return str(getattr(outcome, "value", outcome) or "")
+
+
+def skill_registration_authorized(decision: Any) -> bool:
+    return bool(getattr(decision, "receipt_id", "")) and decision_outcome_value(decision) in {
+        WillOutcome.PROCEED.value,
+        WillOutcome.CONSTRAIN.value,
+        WillOutcome.CRITICAL_PASS.value,
+    }
+
+
+async def verify_retention_no_regression(engine: Any, cap_engine: Any) -> dict[str, Any]:
+    """Verify an unrelated existing ability after learning through live runtime paths."""
+
+    retention_prompt = (
+        "Calculate the factorial of 5. Return the final number inside <answer> tags."
+    )
+    cognitive_text = ""
+    if engine is not None:
+        try:
+            thought = await asyncio.wait_for(
+                engine.think(objective=retention_prompt, origin="test"),
+                timeout=25.0,
+            )
+            cognitive_text = str(getattr(thought, "content", "") or "")
+        except (TimeoutError, RuntimeError, AttributeError, OSError, ConnectionError) as exc:
+            cognitive_text = f"ERROR:{type(exc).__name__}:{exc}"
+
+    capability_result: dict[str, Any] = {}
+    try:
+        capability_result = await asyncio.wait_for(
+            cap_engine.execute(
+                "run_code",
+                {"code": "import math\nprint(math.factorial(5))", "stateful": False},
+                {
+                    "origin": "test",
+                    "objective": "Verify existing arithmetic/tool ability after learning",
+                    "message": "continual learning retention probe",
+                },
+            ),
+            timeout=15.0,
+        )
+    except (TimeoutError, RuntimeError, AttributeError, OSError, ConnectionError) as exc:
+        capability_result = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
+
+    capability_stdout = str(capability_result.get("stdout", "") or "")
+    cognitive_passed = "120" in cognitive_text
+    capability_passed = bool(capability_result.get("ok")) and "120" in capability_stdout
+    return {
+        "passed": cognitive_passed and capability_passed,
+        "cognitive_passed": cognitive_passed,
+        "capability_passed": capability_passed,
+        "cognitive_response_hash": sha_text(cognitive_text),
+        "capability_stdout_hash": sha_text(capability_stdout),
+        "capability_exit_code": capability_result.get("exit_code"),
+        "capability_error": capability_result.get("error"),
+    }
+
+
 async def async_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Aura continual learning proof battery")
     parser.add_argument("--full", action="store_true")
@@ -156,11 +217,23 @@ async def async_main(argv: list[str] | None = None) -> int:
 
         rule = infer_repeating_shift_rule(TRAINING_EXAMPLES)
         learning_decision = will.decide(
-            content="Register learned repeating-shift decoder from observed examples",
+            content="Register governed runtime skill for learned repeating-shift decoder from observed examples",
             source="continual_learning_battery",
-            domain=ActionDomain.SEMANTIC_WEIGHT_UPDATE,
+            domain=ActionDomain.STATE_MUTATION,
             priority=0.9,
+            context={
+                "user_requested_action": True,
+                "learning_surface": "capability_registry",
+                "mutation_scope": "register_ephemeral_governed_skill",
+            },
         )
+        registration_authorized = skill_registration_authorized(learning_decision)
+        if not registration_authorized:
+            raise RuntimeError(
+                "Will refused learned skill registration: "
+                f"{decision_outcome_value(learning_decision)} "
+                f"{getattr(learning_decision, 'reason', '')}"
+            )
 
         skill = InducedTextTransformSkill(rule)
         cap_engine.register_skill(skill)
@@ -189,19 +262,9 @@ async def async_main(argv: list[str] | None = None) -> int:
         )
         restart_persistence_passed = loaded_rule.decode(HELD_OUT_TASKS[0]["ciphertext"]) == HELD_OUT_TASKS[0]["plaintext"]
 
-        retention_prompt = "Calculate the factorial of 5. Output only <answer>120</answer>."
         engine = ServiceContainer.get("cognitive_engine", default=None)
-        retention_text = ""
-        if engine is not None:
-            try:
-                thought = await asyncio.wait_for(
-                    engine.think(objective=retention_prompt, origin="test"),
-                    timeout=25.0,
-                )
-                retention_text = str(getattr(thought, "content", "") or "")
-            except (TimeoutError, RuntimeError, AttributeError, OSError, ConnectionError) as exc:
-                retention_text = f"ERROR:{type(exc).__name__}:{exc}"
-        retention_passed = "120" in retention_text
+        retention = await verify_retention_no_regression(engine, cap_engine)
+        retention_passed = bool(retention["passed"])
 
         tasks = [
             {
@@ -271,10 +334,13 @@ async def async_main(argv: list[str] | None = None) -> int:
             "rule_not_visible_in_prompt": True,
             "solution_code_not_embedded_in_runner": True,
             "held_out_examples_unseen": True,
-            "skill_provenance_receipt_exists": bool(getattr(learning_decision, "receipt_id", "")),
+            "skill_provenance_receipt_exists": registration_authorized,
             "skill_registration_receipt_id": getattr(learning_decision, "receipt_id", ""),
+            "skill_registration_domain": ActionDomain.STATE_MUTATION.value,
+            "skill_registration_outcome": decision_outcome_value(learning_decision),
             "restart_persistence_passed": restart_persistence_passed,
             "retention_passed": retention_passed,
+            "retention": retention,
             "no_learning_ablation_degraded": not baseline_passed,
             "rule": rule.to_manifest(),
             "training_example_hashes": [
@@ -291,8 +357,8 @@ async def async_main(argv: list[str] | None = None) -> int:
                     {
                         "task_id": "skill_registration",
                         "receipt_id": getattr(learning_decision, "receipt_id", ""),
-                        "domain": ActionDomain.SEMANTIC_WEIGHT_UPDATE.value,
-                        "outcome": getattr(getattr(learning_decision, "outcome", ""), "value", str(getattr(learning_decision, "outcome", ""))),
+                        "domain": ActionDomain.STATE_MUTATION.value,
+                        "outcome": decision_outcome_value(learning_decision),
                         "reason": getattr(learning_decision, "reason", ""),
                     },
                     sort_keys=True,
@@ -356,7 +422,15 @@ async def async_main(argv: list[str] | None = None) -> int:
         (dest_dir / "CONTINUAL_LEARNING_PROOF.md").write_text("\n".join(report_lines), encoding="utf-8")
 
         print(f"Continual learning battery complete. Pass Rate: {pass_rate:.1%}.")
-        return 0 if pass_rate >= 0.8 and held_out_passed and not baseline_passed else 1
+        return (
+            0
+            if pass_rate >= 1.0
+            and held_out_passed
+            and not baseline_passed
+            and registration_authorized
+            and retention_passed
+            else 1
+        )
     finally:
         await shutdown_proof_runtime(orch)
 

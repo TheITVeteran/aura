@@ -42,7 +42,6 @@ from __future__ import annotations
 from core.runtime.errors import record_degradation
 
 
-import copy
 import logging
 import os
 from typing import Optional
@@ -97,6 +96,33 @@ class CacheSnapshotError(RuntimeError):
     accumulate N copies of K/V into the cache, corrupting attention for
     future tokens. Fail loud so the operator sees the bug.
     """
+
+
+def _clear_recurrent_depth_attrs(inner) -> None:
+    for attr in (
+        "_recurrent_depth_original_call",
+        "_recurrent_depth_original_class",
+        "_recurrent_depth_config",
+        "_recurrent_depth_patch_scope",
+    ):
+        if hasattr(inner, attr):
+            delattr(inner, attr)
+
+
+def _restore_existing_patch(inner) -> bool:
+    original_class = getattr(inner, "_recurrent_depth_original_class", None)
+    if original_class is not None:
+        inner.__class__ = original_class
+        _clear_recurrent_depth_attrs(inner)
+        return True
+
+    original_call = getattr(inner, "_recurrent_depth_original_call", None)
+    if original_call is not None:
+        inner.__class__.__call__ = original_call
+        _clear_recurrent_depth_attrs(inner)
+        return True
+
+    return False
 
 
 def _snapshot_recurrent_caches(cache, start: int, end: int) -> list:
@@ -266,15 +292,10 @@ def apply_recurrent_depth(
     )
 
     # ── Remove existing patch if present ─────────────────────────────
-    if hasattr(inner, "_recurrent_depth_original_call"):
-        inner.__class__.__call__ = inner._recurrent_depth_original_call
-        del inner._recurrent_depth_original_call
-        if hasattr(inner, "_recurrent_depth_config"):
-            del inner._recurrent_depth_config
+    _restore_existing_patch(inner)
 
     # ── Save original ────────────────────────────────────────────────
-    original_call = inner.__class__.__call__
-    inner._recurrent_depth_original_call = original_call
+    original_class = inner.__class__
 
     # ── Build the patched forward pass ───────────────────────────────
     # Closure captures: prelude_end, coda_start, num_layers, n_loops,
@@ -339,7 +360,31 @@ def apply_recurrent_depth(
         return self.norm(h)
 
     # ── Apply the patch ──────────────────────────────────────────────
-    inner.__class__.__call__ = recurrent_forward
+    # Special methods such as __call__ are resolved on the class, not on the
+    # instance. Mutating inner.__class__.__call__ globally leaks recurrent-depth
+    # into every model instance of that class. Use a one-off dynamic subclass so
+    # this model lane is patched without contaminating the other MLX lanes.
+    patched_class = type(
+        f"{original_class.__name__}RecurrentDepth_{id(inner):x}",
+        (original_class,),
+        {
+            "__call__": recurrent_forward,
+            "__module__": original_class.__module__,
+            "__doc__": original_class.__doc__,
+        },
+    )
+    try:
+        inner.__class__ = patched_class
+    except TypeError as exc:
+        logger.error(
+            "🚫 Recurrent depth DISABLED: cannot install instance-scoped patch "
+            "on %s: %s",
+            original_class.__name__,
+            exc,
+        )
+        return False
+    inner._recurrent_depth_original_class = original_class
+    inner._recurrent_depth_patch_scope = "instance_subclass"
 
     # Store config for inspection and status APIs
     inner._recurrent_depth_config = {
@@ -351,6 +396,7 @@ def apply_recurrent_depth(
         "residual_alpha": residual_alpha,
         "prelude_frac": prelude_frac,
         "coda_frac": coda_frac,
+        "patch_scope": "instance_subclass",
     }
 
     logger.info(
@@ -369,14 +415,14 @@ def remove_recurrent_depth(model) -> bool:
     if inner is None:
         return False
 
-    if not hasattr(inner, "_recurrent_depth_original_call"):
+    if not (
+        hasattr(inner, "_recurrent_depth_original_class")
+        or hasattr(inner, "_recurrent_depth_original_call")
+    ):
         logger.debug("No recurrent depth patch found — nothing to remove")
         return False
 
-    inner.__class__.__call__ = inner._recurrent_depth_original_call
-    del inner._recurrent_depth_original_call
-    if hasattr(inner, "_recurrent_depth_config"):
-        del inner._recurrent_depth_config
+    _restore_existing_patch(inner)
 
     logger.info("Recurrent depth removed — standard forward pass restored")
     return True

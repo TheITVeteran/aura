@@ -1,10 +1,12 @@
 import asyncio
+import sys
 import time
 from types import SimpleNamespace
 
 import pytest
 
 from core.coordinators.metabolic_coordinator import MetabolicCoordinator
+from core.orchestrator.orchestrator_types import SystemStatus
 
 
 class _Tracker:
@@ -109,6 +111,64 @@ def test_bci_event_extraction_accepts_tuple_and_mapping_payloads():
     assert coord._extract_bci_event_data({"command": "right"}) == {"command": "right"}
     assert coord._extract_bci_event_data(("bad",)) is None
     assert coord._extract_bci_event_data("bad") is None
+
+
+def test_lockdown_resource_constraint_ignores_cpu_only_spikes(monkeypatch):
+    class _Psutil:
+        @staticmethod
+        def virtual_memory():
+            return SimpleNamespace(percent=67.0)
+
+        @staticmethod
+        def disk_usage(_path):
+            return SimpleNamespace(percent=40.0)
+
+        @staticmethod
+        def cpu_percent(interval=None):
+            return 100.0
+
+    monkeypatch.setitem(sys.modules, "psutil", _Psutil)
+
+    assert MetabolicCoordinator(orch=SimpleNamespace())._is_resource_constrained() is False
+
+
+def test_reflection_topic_accepts_canonical_system_status_without_legacy_state():
+    status = SystemStatus(
+        running=True,
+        healthy=True,
+        is_processing=False,
+        is_throttled=False,
+        cycle_count=42,
+        uptime=12.5,
+        message="Proof baseline active",
+    )
+
+    topic = MetabolicCoordinator._reflection_topic_for_status(status)
+
+    assert "Self-reflection on current runtime status" in topic
+    assert "Proof baseline active" in topic
+    assert "running=True" in topic
+    assert "healthy=True" in topic
+    assert "cycle_count=42" in topic
+
+
+def test_reflection_topic_prefers_legacy_state_when_present():
+    topic = MetabolicCoordinator._reflection_topic_for_status(
+        SimpleNamespace(state="legacy-idle", message="ignored")
+    )
+
+    assert topic == "Self-reflection on current state: legacy-idle"
+
+
+def test_reflection_topic_has_safe_fallback_for_missing_status_shape():
+    assert (
+        MetabolicCoordinator._reflection_topic_for_status(None)
+        == "Self-reflection on current runtime status: unavailable"
+    )
+    assert (
+        MetabolicCoordinator._reflection_topic_for_status(object())
+        == "Self-reflection on current runtime status: no structured status fields"
+    )
 
 
 @pytest.mark.asyncio

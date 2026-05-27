@@ -288,17 +288,47 @@ def test_metabolic_monitor_default_ram_threshold_scales_for_primary_model_lane(m
 
     monitor = metabolic_module.MetabolicMonitor()
 
-    assert monitor.ram_threshold_mb == 32768
+    assert monitor.ram_threshold_mb == 45875
     assert (
         monitor._classify_pressure(
             cpu_percent=20.0,
-            rss_mb=16384.0,
+            rss_mb=40960.0,
             ram_percent=62.0,
             disk_percent=50.0,
             health_score=0.90,
         )
         == "nominal"
     )
+
+
+def test_metabolic_monitor_cpu_only_pressure_does_not_dispatch_eviction(monkeypatch):
+    import core.ops.metabolic_monitor as metabolic_module
+    import core.resource.resource_governor as governor_module
+
+    actions = []
+
+    class _Governor:
+        def execute_eviction(self, tier) -> int:
+            actions.append(tier.value)
+            return 1
+
+    monkeypatch.setattr(governor_module, "get_resource_governor", lambda: _Governor())
+
+    monitor = metabolic_module.MetabolicMonitor(ram_threshold_mb=45_875, cpu_threshold=80.0)
+    snapshot = metabolic_module.MetabolismSnapshot(
+        cpu_percent=91.0,
+        ram_rss_mb=20.0,
+        ram_percent=68.0,
+        disk_usage_percent=3.0,
+        llm_latency_avg=0.5,
+        health_score=0.84,
+        pressure_state="stressed",
+    )
+
+    monitor._apply_pressure_controls(snapshot)
+
+    assert actions == []
+    assert monitor.get_status_report()["pressure_actions_total"] == 0
 
 
 def test_metabolic_monitor_explicit_ram_threshold_still_escalates(monkeypatch):

@@ -2124,6 +2124,25 @@ def test_loop_monitor_service_lookup_failure_records_structured_action(monkeypat
     assert recorded[0][1]["receipt_required"] is True
 
 
+def test_loop_monitor_ignores_intentionally_lesioned_affect_engine(monkeypatch):
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            if name == "qualia_synthesizer":
+                return types.SimpleNamespace(_tick=1)
+            if name == "affect_engine":
+                return None
+            return default
+
+    monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "affect_engine")
+    monitor = ConsciousnessLoopMonitor()
+    monkeypatch.setattr(monitor, "_get_service_container", lambda: _Container())
+
+    issues = asyncio.run(monitor._run_checks())
+
+    assert not any(issue.get("check") == "affect_engine_registered" for issue in issues)
+
+
 def test_loop_monitor_end_to_end_probe_awaits_async_bridge():
     class _Synth:
         _tick = 1

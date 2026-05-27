@@ -17,6 +17,32 @@ def register_memory_services(container):
         return SQLiteMemory(storage_file=str(db_path))
     container.register('memory', create_memory, lifetime=ServiceLifetime.SINGLETON, required=True)
 
+    def create_persistent_state():
+        try:
+            from core.db.orm import PersistentState
+
+            return PersistentState()
+        except ImportError as exc:
+            if "sqlalchemy" in str(exc).lower():
+                from core.db.sqlite_persistent_state import SQLitePersistentState
+
+                logger.info("SQLAlchemy unavailable; using stdlib SQLitePersistentState audit log.")
+                return SQLitePersistentState()
+            record_degradation("memory_provider", exc)
+            logger.warning("PersistentState audit log unavailable: %s", exc)
+            return None
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("memory_provider", exc)
+            logger.warning("PersistentState audit log unavailable: %s", exc)
+            return None
+
+    container.register(
+        'persistent_state',
+        create_persistent_state,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+
     # 8. Memory Manager
     def create_memory_manager():
         from core.managers.memory_manager import MemoryManager

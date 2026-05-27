@@ -500,6 +500,8 @@ async def test_shared_memory_transport_write_serialized_round_trip():
 async def test_shared_memory_transport_falls_back_to_file_backed_mmap(monkeypatch, tmp_path):
     class _DeniedSharedMemory:
         def __init__(self, *args, **kwargs):
+            self.requested_args = args
+            self.requested_kwargs = kwargs
             raise PermissionError(errno.EPERM, "Operation not permitted")
 
     monkeypatch.setenv("AURA_SHM_FALLBACK_DIR", str(tmp_path))
@@ -1254,6 +1256,7 @@ async def test_intent_classifier_queue_returns_passthrough_on_worker_failure(mon
     queue = IntentClassifierQueue(max_queue=2)
 
     async def _boom(_message, _context):
+        queue._last_worker_failure_probe = (_message, _context)
         raise RuntimeError("classification failed")
 
     monkeypatch.setattr(queue, "_classify_via_llm", _boom)
@@ -1275,6 +1278,7 @@ async def test_state_repository_owner_commit_avoids_deepcopy_hot_path(monkeypatc
     next_state.cognition.current_objective = "live handoff"
 
     def _unexpected_deepcopy(_obj, *_args, **_kwargs):
+        repo._unexpected_deepcopy_probe = _obj
         raise AssertionError("deepcopy should not run on owner commit path")
 
     monkeypatch.setattr("core.state.state_repository.copy.deepcopy", _unexpected_deepcopy)
@@ -1389,6 +1393,102 @@ async def test_state_repository_background_commit_prefers_bounded_snapshot_seria
     repo._commit_to_db.assert_awaited_once()
     payload = repo._commit_to_db.await_args.args[1]
     assert '"_transport_snapshot_kind": "hot"' in payload
+
+
+@pytest.mark.asyncio
+async def test_state_repository_proxy_commit_uses_bounded_payload_for_proof_origin(
+    monkeypatch, tmp_path
+):
+    repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
+    repo._current = AuraState()
+    captured = {}
+
+    class _Transport:
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def request(self, actor, msg_type, payload, timeout=5.0):
+            captured.update(
+                {
+                    "actor": actor,
+                    "msg_type": msg_type,
+                    "payload": payload,
+                    "timeout": timeout,
+                }
+            )
+            return {"ok": True}
+
+    def _unexpected_full_serialize(*_args, **_kwargs):
+        captured["unexpected_full_serialize_args"] = _args
+        raise AssertionError("proof/background proxy commits should not serialize full state")
+
+    repo._transport = _Transport()
+    monkeypatch.setattr(repo, "_serialize", _unexpected_full_serialize)
+    next_state = repo._current.derive("proof_task", origin="dnu_agi_proof_battery")
+    next_state.cold.long_term_memory.append("durable cold memory")
+
+    await repo.commit(next_state, "dnu_kernel_task_isolation", trace_id="proof-trace")
+
+    assert captured["actor"] == "state_vault"
+    assert captured["msg_type"] == "commit"
+    assert captured["timeout"] >= 5.0
+    sent_state = captured["payload"]["state"]
+    assert sent_state["_transport_snapshot_kind"] == "hot"
+    assert "cold" not in sent_state
+
+
+@pytest.mark.asyncio
+async def test_state_vault_hot_payload_preserves_existing_cold_store(tmp_path):
+    from core.state.vault import StateVaultActor
+
+    actor = StateVaultActor(db_path=str(tmp_path / "aura_state.db"))
+    actor.repo._current = AuraState()
+    actor.repo._current.cold.long_term_memory.append("durable cold memory")
+
+    hot_payload = actor.repo._circular_safe_asdict(actor.repo._current.snapshot_hot())
+    hot_payload.pop("cold", None)
+
+    decoded = await actor._deserialize_commit_state(hot_payload)
+
+    assert decoded.cold.long_term_memory == ["durable cold memory"]
+
+
+def test_shared_memory_transport_close_tolerates_missing_owner_segment(monkeypatch):
+    transport = SharedMemoryTransport("unit_test_missing_shm")
+    closed = False
+
+    class _Shm:
+        def unlink(self):
+            self.unlink_attempted = True
+            raise FileNotFoundError("already removed")
+
+        def close(self):
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(
+        "core.bus.shared_mem_bus.SharedMemoryTransport._deregister_from_reaper",
+        staticmethod(lambda _name: None),
+    )
+    transport.shm = _Shm()
+    transport._is_owner = True
+
+    transport.close()
+
+    assert closed is True
+    assert transport.shm is None
+
+
+@pytest.mark.asyncio
+async def test_local_pipe_bus_pending_requests_cancel_cleanly_on_shutdown():
+    bus = LocalPipeBus(start_reader=False)
+    future = asyncio.get_running_loop().create_future()
+    bus._pending_requests["pending"] = future
+
+    bus._cancel_pending_requests(cancel=True)
+
+    assert future.cancelled()
+    await bus.stop()
 
 
 @pytest.mark.asyncio
@@ -2887,6 +2987,7 @@ async def test_metabolic_coordinator_emit_telemetry_pulse_tracks_recovery(monkey
             return task
 
     def _publish_telemetry(_payload):
+        created["telemetry_payload"] = _payload
         raise RuntimeError("boom")
 
     orch = SimpleNamespace(
@@ -3938,8 +4039,10 @@ async def test_shutdown_coordinator_continues_on_handler_failure():
     from core.runtime.shutdown_coordinator import ShutdownCoordinator
 
     after_state = []
+    failure_probe = []
 
     def _bad():
+        failure_probe.append("bad-ran")
         raise RuntimeError("boom")
 
     def _good():
@@ -4135,8 +4238,10 @@ def test_atomic_writer_cleans_up_temp_on_failure(tmp_path, monkeypatch):
     from core.runtime import atomic_writer
 
     target = tmp_path / "boom.bin"
+    replace_calls = []
 
     def _kaboom(src, dst):
+        replace_calls.append((src, dst))
         raise OSError("simulated crash before rename")
 
     monkeypatch.setattr(atomic_writer.os, "replace", _kaboom)
@@ -4155,8 +4260,10 @@ def test_atomic_writer_keeps_old_state_when_rename_fails(tmp_path, monkeypatch):
 
     target = tmp_path / "preexisting.bin"
     target.write_bytes(b"survive")
+    replace_calls = []
 
     def _kaboom(src, dst):
+        replace_calls.append((src, dst))
         raise OSError("rename failure")
 
     monkeypatch.setattr(atomic_writer.os, "replace", _kaboom)
@@ -5768,6 +5875,7 @@ async def test_concrete_memory_write_gateway_governance_failure_denies_write(tmp
     from core.runtime.gateways import MemoryWriteRequest
 
     def _decide(**kwargs):
+        gateway._governance_failure_probe = kwargs
         raise RuntimeError("will down")
 
     gateway = ConcreteMemoryWriteGateway(root=tmp_path, governance_decide=_decide)
@@ -5806,6 +5914,7 @@ async def test_concrete_state_gateway_governance_failure_blocks_mutation(tmp_pat
     from core.state.state_gateway import ConcreteStateGateway
 
     def _decide(**kwargs):
+        gw._governance_failure_probe = kwargs
         raise RuntimeError("governance down")
 
     gw = ConcreteStateGateway(root=tmp_path, governance_decide=_decide)
@@ -6604,3 +6713,15 @@ def test_abstraction_validator_validation_scores_transfer():
     assert result.passed == 3
     assert result.failed == 1
     assert 0.7 < result.transfer_score <= 0.8
+
+
+def test_server_log_queue_proof_mode_buffers_only_warnings(monkeypatch):
+    import logging
+    import interface.server as server
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    info_record = logging.LogRecord("unit", logging.INFO, __file__, 1, "info", (), None)
+    warning_record = logging.LogRecord("unit", logging.WARNING, __file__, 1, "warning", (), None)
+
+    assert server._QueueHandler._should_buffer_record(info_record) is False
+    assert server._QueueHandler._should_buffer_record(warning_record) is True

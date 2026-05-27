@@ -8,7 +8,6 @@ import hashlib
 import inspect
 import logging
 import os
-import sys
 import time
 from typing import Any
 
@@ -587,10 +586,11 @@ class MessageHandlingMixin:
 
         # [REFLEX BYPASS] Somatic motor reflexes MUST NEVER block on the user input semaphore.
         # This prevents deadlocks when a heavy cognitive task is stalled.
-        print(
-            f"DEBUG: Priority input origin={origin}, contract={('[EMBODIED CONTROL CONTRACT]' in message)}"
+        logger.debug(
+            "Priority input origin=%s contract=%s",
+            origin,
+            "[EMBODIED CONTROL CONTRACT]" in message,
         )
-        sys.stdout.flush()
         if origin == "embodied_motor_reflex" or "[EMBODIED CONTROL CONTRACT]" in message:
             # Check for deterministic somatic reflexes first
             if "[EMBODIED CONTROL CONTRACT]" in message:
@@ -662,8 +662,7 @@ class MessageHandlingMixin:
 
     async def _process_user_input_core(self, message: str, origin: str = "user") -> str | None:
         """Actual processing logic — never calls itself, never recurses."""
-        print(f"\n--- ORCHESTRATOR INPUT: origin={origin}, len={len(message or '')} ---")
-        sys.stdout.flush()
+        logger.debug("Orchestrator input origin=%s len=%d", origin, len(message or ""))
         from ...container import ServiceContainer
 
         normalized_message = str(message or "").strip()
@@ -674,6 +673,26 @@ class MessageHandlingMixin:
                 logger.debug("🫥 Dropping empty internal message from origin=%s.", origin)
             return None
         message = normalized_message
+
+        try:
+            from ...runtime.proof_policy import (
+                active_proof_ablation_services,
+                proof_ablation_blocked_response,
+            )
+
+            blocked_response = proof_ablation_blocked_response(origin=origin)
+            if blocked_response is not None:
+                logger.warning(
+                    "Proof/evaluation turn blocked because required service lesion(s) are active: %s",
+                    ", ".join(active_proof_ablation_services(origin=origin)),
+                )
+                return blocked_response
+        except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as exc:
+            _record_message_degradation(
+                exc,
+                action="continued proof turn after ablation guard inspection failed",
+                severity="warning",
+            )
 
         # Somatic Reflex Bypass (Zero-Latency)
         # Bypasses the Unified Will and InferenceGate for deterministic UI prompts

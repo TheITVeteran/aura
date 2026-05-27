@@ -20,6 +20,7 @@ PRODUCTION_PATHS = (
     "core/memory",
     "core/orchestrator",
     "core/phases",
+    "core/reasoning",
     "core/runtime",
     "core/skills",
     "core/tools",

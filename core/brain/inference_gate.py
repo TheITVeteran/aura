@@ -43,6 +43,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
     is_strict_proof_answer_prompt,
+    mlx_strict_answer_contract_enabled,
     proof_model_tier,
 )
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -509,6 +510,43 @@ class InferenceGate:
             logger.debug("MLX client registry unavailable: %s", exc)
         return clients
 
+    def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> int:
+        """Abort any active local generation across managed inference clients.
+
+        This is a synchronous emergency boundary used by watchdogs that cannot
+        rely on the caller's event loop being healthy. Normal request handling
+        still uses cooperative deadlines; this path exists to prevent a wedged
+        model generation from holding the foreground lane indefinitely.
+        """
+        aborted = 0
+        candidates: list[Any] = []
+        if self._mlx_client is not None:
+            candidates.append(self._mlx_client)
+        candidates.extend(self._iter_local_clients().values())
+
+        seen: set[int] = set()
+        for client in candidates:
+            if client is None:
+                continue
+            ident = id(client)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            abort = getattr(client, "force_abort_active_generation", None)
+            if not callable(abort):
+                continue
+            try:
+                if abort(reason=reason):
+                    aborted += 1
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="continued force-aborting other local generation clients",
+                    severity="error",
+                )
+                logger.warning("Force-abort failed for local inference client: %s", exc)
+        return aborted
+
     async def _enforce_foreground_admission(
         self,
         requested_tier: str,
@@ -773,6 +811,16 @@ class InferenceGate:
             lane["current_request_started_at"] = float(
                 raw.get("current_request_started_at", 0.0) or 0.0
             )
+            for telemetry_key in (
+                "model_path",
+                "recurrent_depth",
+                "last_heartbeat",
+                "last_token_progress_at",
+                "last_generation_completed_at",
+                "process_started_at",
+            ):
+                if telemetry_key in raw:
+                    lane[telemetry_key] = raw.get(telemetry_key)
             if lane["conversation_ready"]:
                 lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         # [STABILITY v51] If the prewarm task completed (success or failure),
@@ -905,6 +953,10 @@ class InferenceGate:
                         )
                         logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         return lane
+
+    def get_lane_status(self) -> dict[str, Any]:
+        """Expose the live MLX lane contract for routers, probes, and audits."""
+        return self.get_conversation_status()
 
     def note_foreground_timeout(self, reason: str = "foreground_timeout") -> None:
         """Mark the conversation lane as degraded after a foreground timeout."""
@@ -2061,11 +2113,19 @@ class InferenceGate:
         if success and text and text.strip():
             cleaned = text.strip()
             proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
+            strict_output_contract = bool(
+                kwargs.get("strict_answer_contract", False)
+                or kwargs.get("strict_value_contract", False)
+            )
             is_user_visible = bool(
                 (foreground_request or self._origin_is_user_facing(origin))
                 and not bool(kwargs.get("health_probe", False))
                 and not proof_evaluation_contract
+                and not strict_output_contract
             )
+
+            if strict_output_contract:
+                return self._strip_silence(cleaned)
 
             # STABILITY v58: Extract actual user message to avoid false positives
             # from system prompts containing words like "cortex" or "conversation".
@@ -2083,10 +2143,24 @@ class InferenceGate:
             )
             if integrity.retryable:
                 integrity_reasons = set(integrity.reasons or ())
+                benchmark_integrity_context = bool(kwargs.get("benchmark_request", False)) or (
+                    str(origin or kwargs.get("origin", "") or "").lower() in {"baseline", "benchmark"}
+                    or str(kwargs.get("purpose", "") or "").lower().endswith("_baseline")
+                    or "_baseline" in str(kwargs.get("purpose", "") or "").lower()
+                )
                 if proof_evaluation_contract:
                     logger.warning(
                         "🛡️ %s produced repairable proof/evaluation draft (%s, len=%d). "
                         "Passing it to the proof contract repair layer.",
+                        label,
+                        ",".join(integrity.reasons) or "unknown",
+                        len(cleaned),
+                    )
+                    return self._strip_silence(cleaned)
+                if benchmark_integrity_context:
+                    logger.warning(
+                        "🛡️ %s produced malformed benchmark draft (%s, len=%d). "
+                        "Returning it for benchmark grading instead of tripping the live Cortex lane.",
                         label,
                         ",".join(integrity.reasons) or "unknown",
                         len(cleaned),
@@ -3271,14 +3345,28 @@ class InferenceGate:
         if context is None:
             context = {}
         state = context.get("state")
+        origin = str(context.get("origin", "") or "").lower()
+        purpose = str(context.get("purpose", "") or "").lower()
+        benchmark_request = bool(context.get("benchmark_request", False)) or (
+            origin in {"baseline", "benchmark"}
+            or purpose == "baseline"
+            or purpose.endswith("_baseline")
+            or "_baseline" in purpose
+        )
+        if benchmark_request:
+            context["benchmark_request"] = True
 
         # Organism-first path: try to answer from the substrate+state without
         # invoking the LLM. This is bounded on purpose — the mesh handles only
         # self-reports, acknowledgements, and resource-gated responses. When it
         # does handle a request, the LLM is never called for that turn.
-        proof_evaluation_contract = bool(context.get("proof_evaluation_contract", False))
-        if bool(context.get("allow_mesh_cognition", True)) and not proof_evaluation_contract and not bool(
-            context.get("is_background", False)
+        proof_evaluation_contract = bool(context.get("proof_evaluation_contract", False)) or (
+            not benchmark_request and is_proof_evaluation_purpose(purpose)
+        )
+        if bool(context.get("allow_mesh_cognition", True)) and not (
+            proof_evaluation_contract
+            or benchmark_request
+            or bool(context.get("is_background", False))
         ):
             try:
                 from core.consciousness.mesh_cognition import get_mesh_cognition
@@ -3294,10 +3382,10 @@ class InferenceGate:
             except _INFERENCE_RECOVERABLE_ERRORS as _mesh_exc:  # pragma: no cover - defensive
                 logger.debug("Mesh-only path declined: %s", _mesh_exc)
 
-        origin = str(context.get("origin", "") or "").lower()
-        purpose = str(context.get("purpose", "") or "").lower()
         health_probe = bool(context.get("health_probe", False)) or purpose == "proof_model_lane_probe"
-        proof_evaluation_contract = proof_evaluation_contract or is_proof_evaluation_purpose(purpose)
+        proof_evaluation_contract = proof_evaluation_contract or (
+            not benchmark_request and is_proof_evaluation_purpose(purpose)
+        )
         if proof_evaluation_contract:
             context["proof_evaluation_contract"] = True
         requested_tier = self._normalize_tier(context.get("prefer_tier"))
@@ -3323,7 +3411,7 @@ class InferenceGate:
         is_background = bool(context.get("is_background", False))
         if explicit_foreground:
             is_background = False
-        elif not is_background:
+        elif not is_background and not explicit_background:
             if origin:
                 is_background = not self._origin_is_user_facing(origin)
             elif purpose in {"reply", "expression", "chat", "conversation", "user_response"}:
@@ -3571,7 +3659,9 @@ class InferenceGate:
         # loop for 3-5+ seconds on large prompts.  Fix: offload to thread
         # pool, and skip entirely for background/autonomous requests.
         _trust_guidance = ""
-        strict_proof_answer_request = is_strict_proof_answer_prompt(prompt, origin=origin)
+        strict_proof_answer_request = (
+            not benchmark_request and is_strict_proof_answer_prompt(prompt, origin=origin)
+        )
         # Use the fully resolved routing classification, not merely whether the
         # caller explicitly stamped `is_background`. Origin-derived background
         # work such as `origin="system"` must not pay the foreground trust-gate
@@ -3580,7 +3670,7 @@ class InferenceGate:
         if strict_proof_answer_request:
             context["allow_tools"] = False
             context["trust_gate_skipped"] = "strict_proof_answer"
-            context["strict_answer_contract"] = True
+            context["strict_answer_contract"] = mlx_strict_answer_contract_enabled(origin=origin)
             context["disable_prompt_cache"] = True
             context["clear_prompt_cache"] = True
             context.setdefault("temperature", 0.0)
@@ -3660,7 +3750,10 @@ class InferenceGate:
                 logger.warning("Trust gate error (passphrase check may have failed): %s", _te_exc)
 
         strict_answer_contract = bool(context.get("strict_answer_contract", False))
-        isolated_generation_contract = bool(strict_answer_contract or proof_evaluation_contract)
+        strict_value_contract = bool(context.get("strict_value_contract", False))
+        isolated_generation_contract = bool(
+            strict_answer_contract or strict_value_contract or proof_evaluation_contract
+        )
         # not bool(context.get("strict_answer_contract", False))
         strict_max_token_cap = 128
         if strict_answer_contract:
@@ -3861,7 +3954,10 @@ class InferenceGate:
             "presence_penalty",
             "stop_sequences",
             "schema",
+            "benchmark_request",
+            "purpose",
             "strict_answer_contract",
+            "strict_value_contract",
             "proof_evaluation_contract",
             "disable_prompt_cache",
             "clear_prompt_cache",
@@ -4101,6 +4197,15 @@ class InferenceGate:
             max_tokens = max(1, min(max_tokens, requested_cap_int, 64))
             context["max_tokens"] = max_tokens
 
+        if benchmark_request:
+            requested_cap = context.get("max_tokens", max_tokens)
+            try:
+                requested_cap_int = max(1, int(requested_cap))
+            except (TypeError, ValueError):
+                requested_cap_int = 96
+            max_tokens = max(1, min(max_tokens, requested_cap_int))
+            context["max_tokens"] = max_tokens
+
         # Build the prompt only after routing intent is known so we can choose
         # a compact user-facing path instead of always constructing the richest stack.
         brief = context.get("brief", "")
@@ -4135,6 +4240,24 @@ class InferenceGate:
             provided_messages = [
                 {"role": "system", "content": strict_system_prompt},
                 {"role": "user", "content": strict_user_prompt},
+            ]
+        elif strict_value_contract:
+            strict_value_system_prompt = (
+                "You are Aura's local reasoning lane. Solve the task and return only "
+                "the final answer value. Do not explain, do not add role labels, and "
+                "do not include XML tags."
+            )
+            strict_value_user_prompt = str(prompt or "")
+            if provided_messages is not None:
+                for msg in reversed(provided_messages):
+                    if not isinstance(msg, dict):
+                        continue
+                    if str(msg.get("role", "") or "").strip().lower() == "user":
+                        strict_value_user_prompt = str(msg.get("content", "") or strict_value_user_prompt)
+                        break
+            provided_messages = [
+                {"role": "system", "content": strict_value_system_prompt},
+                {"role": "user", "content": strict_value_user_prompt},
             ]
         if provided_messages is not None:
             system_prompt = ""
@@ -4195,7 +4318,8 @@ class InferenceGate:
                 logger.debug("Suppressed Exception: %s", _exc)
 
         prompt_user_facing = bool(
-            not is_background
+            not benchmark_request
+            and not is_background
             and (
                 self._origin_is_user_facing(origin)
                 or explicit_foreground
@@ -4230,7 +4354,7 @@ class InferenceGate:
                 logger.debug("ArchIndex injection skipped: %s", _ae)
             system_prompt = f"{system_prompt}\n\n{conversation_reliability_system_block(prompt)}"
         history = context.get("history", [])
-        use_rich_context = False if isolated_generation_contract else bool(
+        use_rich_context = False if isolated_generation_contract or benchmark_request else bool(
             context.get(
                 "rich_context",
                 self._should_use_rich_context(
@@ -4294,8 +4418,15 @@ class InferenceGate:
             max_tokens,
         )
 
-        _is_user_facing = (self._origin_is_user_facing(origin) or requested_tier == "primary") and not health_probe
-        client_foreground_request = bool(_is_user_facing or explicit_foreground) and not is_background
+        _is_user_facing = (
+            not benchmark_request
+            and (self._origin_is_user_facing(origin) or requested_tier == "primary")
+            and not health_probe
+            and not proof_evaluation_contract
+        )
+        client_foreground_request = (
+            bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request
+        )
         protected_deep_fallback = False
 
         # 1. Try the selected local brain.
@@ -4456,6 +4587,11 @@ class InferenceGate:
                         logger.warning(
                             "🧠 %s proof health probe returned no text; refusing local fallback for lane certification.",
                             local_label,
+                        )
+                        return None
+                    if proof_evaluation_contract or strict_primary_proof_lane:
+                        logger.warning(
+                            "🧠 Proof/evaluation request requires a valid Cortex response; refusing retry/fallback cascade after no text."
                         )
                         return None
 
@@ -5076,8 +5212,12 @@ class InferenceGate:
             "purpose",
             "is_background",
             "foreground_request",
+            "benchmark_request",
             "protected_foreground_lane",
+            "proof_primary_lane_required",
+            "proof_model_tier",
             "strict_answer_contract",
+            "strict_value_contract",
             "proof_evaluation_contract",
             "disable_prompt_cache",
             "clear_prompt_cache",

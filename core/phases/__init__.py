@@ -1,5 +1,8 @@
 # ruff: noqa: N999
 from collections.abc import Awaitable, Callable
+import importlib
+import importlib.util
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,9 +52,16 @@ _PHASE_EXPORTS = {
 def __getattr__(name: str):
     """Lazy phase exports keep lightweight submodule imports dependency-light."""
     if name not in _PHASE_EXPORTS:
+        qualified_module = f"{__name__}.{name}"
+        existing = sys.modules.get(qualified_module)
+        if existing is not None:
+            globals()[name] = existing
+            return existing
+        if importlib.util.find_spec(qualified_module) is not None:
+            module = importlib.import_module(qualified_module)
+            globals()[name] = module
+            return module
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-    import importlib
 
     module_name, attr_name = _PHASE_EXPORTS[name]
     module = importlib.import_module(module_name, __name__)

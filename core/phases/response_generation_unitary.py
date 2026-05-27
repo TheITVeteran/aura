@@ -45,9 +45,11 @@ from core.runtime import background_policy, response_policy
 from core.runtime.errors import record_degradation
 from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
+    mlx_strict_answer_contract_enabled,
     proof_persistent_objective,
     proof_model_tier,
     proof_run_active,
+    structured_proof_solver_enabled,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.state.aura_state import AuraState
@@ -118,6 +120,8 @@ class UnitaryResponsePhase(Phase):
         text = re.sub(r"<\|[^>]+?\|>", "", text)
         text = re.sub(r"</?(?:user|assistant|system|answer|im_start|im_end)!?\s*>?", "", text, flags=re.IGNORECASE)
         text = re.sub(r"</?[^>\s]+!?\s*>?", "", text)
+        text = re.sub(r"\\[nrt]", " ", text, flags=re.IGNORECASE)
+        text = text.replace("\\", " ")
         text = re.sub(r"\s+", " ", text).strip()
 
         assessment_prefix = re.compile(
@@ -173,6 +177,172 @@ class UnitaryResponsePhase(Phase):
         if not cleaned:
             return ""
         return f"<answer>{cleaned}</answer>"
+
+    @staticmethod
+    def _strict_answer_value_from_envelope(text: Any) -> str:
+        match = re.search(
+            r"<answer>\s*(.*?)\s*</answer>",
+            str(text or ""),
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else str(text or "").strip()
+
+    @classmethod
+    def _strict_answer_value_allowed(
+        cls,
+        objective: Any,
+        answer_value: Any,
+        *,
+        option_values: list[str] | None = None,
+    ) -> bool:
+        value = cls._clean_strict_answer_payload(answer_value)
+        if not value:
+            return False
+        normalized_value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+        objective_text = str(objective or "").lower()
+        value_lower = value.lower()
+        if any(
+            marker in value_lower
+            for marker in (
+                "i'm not sure",
+                "i am not sure",
+                "not sure",
+                "cannot determine",
+                "can't determine",
+                "unknown",
+                "insufficient information",
+            )
+        ):
+            return False
+        if re.search(r"\b(?:next number|sequence|what number)\b", objective_text) and not re.search(
+            r"-?\d+(?:\.\d+)?",
+            value,
+        ):
+            return False
+        if option_values:
+            return any(
+                re.fullmatch(
+                    rf".*\b{re.escape(option.strip().lower())}\b.*",
+                    normalized_value,
+                )
+                for option in option_values
+                if option.strip()
+            )
+        asks_binary = bool(
+            re.search(r"\b(?:yes\s+or\s+no|true\s+or\s+false|is\s+it|are\s+they)\b", objective_text)
+        )
+        meta_values = {
+            "yes",
+            "yes!",
+            "no",
+            "true",
+            "false",
+            "correct",
+            "incorrect",
+            "right",
+            "wrong",
+        }
+        if not asks_binary and normalized_value in meta_values:
+            return False
+        if re.search(r"\bwho\b", objective_text) and normalized_value in meta_values:
+            return False
+        return True
+
+    @classmethod
+    def _canonicalize_strict_answer_value(
+        cls,
+        objective: Any,
+        answer_value: Any,
+        *,
+        option_values: list[str] | None = None,
+    ) -> str:
+        value = cls._clean_strict_answer_payload(answer_value)
+        if not value:
+            return ""
+        objective_text = str(objective or "").lower()
+        value_lower = value.lower()
+        if option_values:
+            for option in option_values:
+                option_clean = option.strip(" \t\r\n\"'`.,;:")
+                if option_clean and re.search(
+                    rf"\b{re.escape(option_clean.lower())}\b",
+                    value_lower,
+                    flags=re.IGNORECASE,
+                ):
+                    return option_clean
+            return value
+        if re.search(r"\b(?:next number|sequence|what number)\b", objective_text):
+            numeric_values = re.findall(r"-?\d+(?:\.\d+)?", value)
+            if len(numeric_values) == 1:
+                return numeric_values[0]
+        if re.search(r"\bwho\b", objective_text):
+            owner_match = re.match(
+                r"^([A-Za-z][A-Za-z0-9_' -]{0,80}?)\s+"
+                r"(?:owns?|has|holds|keeps|possesses|is|was|are|were)\b",
+                value,
+                flags=re.IGNORECASE,
+            )
+            if owner_match:
+                subject = owner_match.group(1).strip(" \t\r\n\"'`.,;:")
+                if subject and subject.lower() not in {"the answer", "answer", "it", "they"}:
+                    return subject
+            passive_match = re.search(
+                r"\bby\s+([A-Za-z][A-Za-z0-9_' -]{0,80})\b",
+                value,
+                flags=re.IGNORECASE,
+            )
+            if passive_match:
+                subject = passive_match.group(1).strip(" \t\r\n\"'`.,;:")
+                if subject:
+                    return subject
+        return value
+
+    @classmethod
+    def _canonicalize_strict_answer_envelope(
+        cls,
+        objective: Any,
+        envelope: Any,
+        *,
+        option_values: list[str] | None = None,
+    ) -> str:
+        value = cls._strict_answer_value_from_envelope(envelope)
+        canonical = cls._canonicalize_strict_answer_value(
+            objective,
+            value,
+            option_values=option_values,
+        )
+        if not canonical:
+            return ""
+        return f"<answer>{canonical}</answer>"
+
+    @staticmethod
+    def _strip_answer_envelope_instruction(text: Any) -> str:
+        """Remove XML-envelope formatting instructions before raw model solving.
+
+        The response phase still enforces the final envelope. This is used when
+        the low-level MLX strict-answer micro-prompt is disabled for proof runs.
+        """
+
+        cleaned = str(text or "")
+        cleaned = re.sub(
+            r"\s*Output your final answer inside\s+<answer>\.\.\.</answer>\s+tags\.?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\s*Wrap (?:only )?.*?between\s+<answer>\s+and\s+</answer>\.?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        cleaned = re.sub(
+            r"\s*Return (?:no other text|only .*?<answer>.*?</answer>.*?)\.?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return cleaned.strip() or str(text or "").strip()
 
     @classmethod
     def _resolve_skill_name(cls, skill_name: Any) -> str:
@@ -3410,7 +3580,7 @@ class UnitaryResponsePhase(Phase):
                     logger.debug(
                         "UnitaryResponse direct self-reflection path skipped: %s", self_report_exc
                     )
-            if strict_proof_answer_request:
+            if strict_proof_answer_request and structured_proof_solver_enabled(origin=routing_origin):
                 try:
                     from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
 
@@ -4004,7 +4174,7 @@ class UnitaryResponsePhase(Phase):
                     )
                     return self._commit_response(new_state, idle_trace_answer)
 
-            if strict_proof_answer_request:
+            if strict_proof_answer_request and structured_proof_solver_enabled(origin=routing_origin):
                 try:
                     from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
 
@@ -4095,6 +4265,11 @@ class UnitaryResponsePhase(Phase):
                 or "[sensory feed" in objective.lower()
                 or "[environmental context" in objective.lower()
             )
+            worker_strict_answer_contract = (
+                mlx_strict_answer_contract_enabled(origin=routing_origin)
+                if strict_proof_answer_request
+                else False
+            )
             if _is_system_directive:
                 # For instruct-tuned models, providing ONLY a system prompt causes
                 # them to continue generating the prompt itself. We must provide
@@ -4109,14 +4284,31 @@ class UnitaryResponsePhase(Phase):
                     len(system_prompt),
                 )
             elif strict_proof_answer_request:
+                strict_user_objective = (
+                    objective
+                    if worker_strict_answer_contract
+                    else self._strip_answer_envelope_instruction(objective)
+                )
                 system_prompt = (
-                    "You are Aura's governed proof-answer lane. Solve the user's task. "
+                    "You are Aura's governed proof-answer lane. Solve the user's task exactly. "
+                    "Reason privately before answering: for constraint or truth-teller puzzles, test each assignment and reject contradictions; "
+                    "for sequences, compare differences and infer the generating rule; "
+                    "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
+                    if worker_strict_answer_contract
+                    else "You are Aura's governed proof-answer lane. Solve the user's task exactly. "
+                    "Reason privately before answering: for constraint or truth-teller puzzles, test each assignment and reject contradictions; "
+                    "for sequences, compare differences and infer the generating rule; "
+                    "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
+                )
+                system_prompt += (
                     "Output the final answer strictly inside <answer>...</answer> tags. "
                     "Keep the tag content minimal and do not include chat filler."
+                    if worker_strict_answer_contract
+                    else "Return only the final answer value. Do not explain, do not add role labels, and do not include XML tags."
                 )
                 messages = [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": objective},
+                    {"role": "user", "content": strict_user_objective},
                 ]
                 logger.info("🧠 [ZENITH] Strict proof fast-path: minimal live-path prompt.")
             elif proof_evaluation_turn:
@@ -4361,7 +4553,8 @@ class UnitaryResponsePhase(Phase):
                 llm_kwargs.update(
                     {
                         "purpose": "strict_proof_answer",
-                        "strict_answer_contract": True,
+                        "strict_answer_contract": worker_strict_answer_contract,
+                        "strict_value_contract": not worker_strict_answer_contract,
                         "skip_runtime_payload": True,
                         "disable_prompt_cache": True,
                         "clear_prompt_cache": True,
@@ -4487,7 +4680,12 @@ class UnitaryResponsePhase(Phase):
                                 is_background=False,
                                 foreground_request=True,
                                 protected_foreground_lane=True,
-                                strict_answer_contract=True,
+                                strict_answer_contract=mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
+                                strict_value_contract=not mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
                                 skip_runtime_payload=True,
                                 disable_prompt_cache=True,
                                 clear_prompt_cache=True,
@@ -4511,6 +4709,195 @@ class UnitaryResponsePhase(Phase):
                         repaired = repaired.get("content") or repaired.get("response") or ""
                     strict_envelope = self._coerce_strict_answer_envelope(repaired)
                 if strict_envelope:
+                    candidate_match = re.search(
+                        r"<answer>\s*(.*?)\s*</answer>",
+                        strict_envelope,
+                        flags=re.DOTALL | re.IGNORECASE,
+                    )
+                    candidate_answer = candidate_match.group(1).strip() if candidate_match else strict_envelope
+                    verify_system_prompt = (
+                        "You are Aura's governed proof-answer verifier. Check the candidate "
+                        "against the original task before final emission. Reason privately. "
+                        "For constraint or truth-teller puzzles, test each assignment and reject contradictions; "
+                        "for sequences, compare differences and infer the generating rule; "
+                        "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
+                        "If the candidate is correct, return the same final answer value. "
+                        "If it is wrong, return the corrected final answer value. "
+                        "Return only the final answer value, with no explanation and no XML tags."
+                    )
+                    verify_messages = [
+                        {"role": "system", "content": verify_system_prompt},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Original task:\n{objective}\n\n"
+                                f"Candidate final answer:\n{candidate_answer}\n\n"
+                                "Return only the verified final answer value."
+                            ),
+                        },
+                    ]
+                    try:
+                        verified = await asyncio.wait_for(
+                            llm.think(
+                                objective,
+                                messages=verify_messages,
+                                system_prompt=verify_system_prompt,
+                                prefer_tier=model_tier,
+                                deep_handoff=False,
+                                allow_cloud_fallback=False,
+                                origin=routing_origin,
+                                purpose="strict_proof_answer_verify",
+                                is_background=False,
+                                foreground_request=True,
+                                protected_foreground_lane=True,
+                                strict_answer_contract=mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
+                                strict_value_contract=not mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
+                                skip_runtime_payload=True,
+                                disable_prompt_cache=True,
+                                clear_prompt_cache=True,
+                                temperature=0.0,
+                                max_tokens=96,
+                                num_predict=96,
+                                timeout=min(request_timeout, 90.0),
+                                state=new_state,
+                            ),
+                            timeout=min(request_timeout, 90.0) + 5.0,
+                        )
+                    except _RESPONSE_RECOVERABLE_ERRORS as verify_exc:
+                        _record_response_degradation(
+                            verify_exc,
+                            "UnitaryResponse: strict proof verification retry failed: %s",
+                            action="returned unverified strict proof response after verifier failed",
+                            severity="warning",
+                        )
+                        verified = ""
+                    if isinstance(verified, dict):
+                        verified = verified.get("content") or verified.get("response") or ""
+                    verified_envelope = self._coerce_strict_answer_envelope(verified)
+                    if verified_envelope and self._strict_answer_value_allowed(
+                        objective,
+                        self._strict_answer_value_from_envelope(verified_envelope),
+                    ):
+                        strict_envelope = verified_envelope
+                    elif verified_envelope:
+                        logger.warning(
+                            "UnitaryResponse: rejected strict proof verifier meta-answer: %r",
+                            self._strict_answer_value_from_envelope(verified_envelope),
+                        )
+                    strict_option_values: list[str] | None = None
+                    option_match = re.search(
+                        r"\(([^()]{1,100}\bor\b[^()]{1,100})\)",
+                        str(objective or ""),
+                        flags=re.IGNORECASE,
+                    )
+                    if option_match:
+                        option_values = [
+                            part.strip(" \t\r\n\"'`.,;:")
+                            for part in re.split(r"\s+or\s+|[,/]", option_match.group(1), flags=re.IGNORECASE)
+                            if part.strip(" \t\r\n\"'`.,;:")
+                        ]
+                        strict_option_values = option_values
+                        final_match = re.search(
+                            r"<answer>\s*(.*?)\s*</answer>",
+                            strict_envelope,
+                            flags=re.DOTALL | re.IGNORECASE,
+                        )
+                        final_answer = final_match.group(1).strip() if final_match else strict_envelope
+                        option_present = any(
+                            re.search(rf"\b{re.escape(option)}\b", final_answer, flags=re.IGNORECASE)
+                            for option in option_values
+                        )
+                        if option_values and not option_present:
+                            option_system_prompt = (
+                                f"{verify_system_prompt} The original task provides answer options. "
+                                f"You must choose exactly one of these option values: {', '.join(option_values)}. "
+                                "Do not return the subject label or variable name."
+                            )
+                            option_messages = [
+                                {"role": "system", "content": option_system_prompt},
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"Original task:\n{objective}\n\n"
+                                        f"Invalid candidate answer:\n{final_answer}\n\n"
+                                        f"Choose exactly one option value from: {', '.join(option_values)}"
+                                    ),
+                                },
+                            ]
+                            try:
+                                option_verified = await asyncio.wait_for(
+                                    llm.think(
+                                        objective,
+                                        messages=option_messages,
+                                        system_prompt=option_system_prompt,
+                                        prefer_tier=model_tier,
+                                        deep_handoff=False,
+                                        allow_cloud_fallback=False,
+                                        origin=routing_origin,
+                                        purpose="strict_proof_answer_option_verify",
+                                        is_background=False,
+                                        foreground_request=True,
+                                        protected_foreground_lane=True,
+                                        strict_answer_contract=mlx_strict_answer_contract_enabled(
+                                            origin=routing_origin
+                                        ),
+                                        strict_value_contract=not mlx_strict_answer_contract_enabled(
+                                            origin=routing_origin
+                                        ),
+                                        skip_runtime_payload=True,
+                                        disable_prompt_cache=True,
+                                        clear_prompt_cache=True,
+                                        temperature=0.0,
+                                        max_tokens=64,
+                                        num_predict=64,
+                                        timeout=min(request_timeout, 90.0),
+                                        state=new_state,
+                                    ),
+                                    timeout=min(request_timeout, 90.0) + 5.0,
+                                )
+                            except _RESPONSE_RECOVERABLE_ERRORS as option_verify_exc:
+                                _record_response_degradation(
+                                    option_verify_exc,
+                                    "UnitaryResponse: strict proof option verification retry failed: %s",
+                                    action="returned unverified option-shaped strict proof response after verifier failed",
+                                    severity="warning",
+                                )
+                                option_verified = ""
+                            if isinstance(option_verified, dict):
+                                option_verified = (
+                                    option_verified.get("content")
+                                    or option_verified.get("response")
+                                    or ""
+                                )
+                            option_envelope = self._coerce_strict_answer_envelope(option_verified)
+                            if option_envelope and self._strict_answer_value_allowed(
+                                objective,
+                                self._strict_answer_value_from_envelope(option_envelope),
+                                option_values=option_values,
+                            ):
+                                strict_envelope = option_envelope
+                            elif option_envelope:
+                                logger.warning(
+                                    "UnitaryResponse: rejected strict proof option verifier non-option: %r",
+                                    self._strict_answer_value_from_envelope(option_envelope),
+                                )
+                            if not self._strict_answer_value_allowed(
+                                objective,
+                                self._strict_answer_value_from_envelope(strict_envelope),
+                                option_values=option_values,
+                            ):
+                                raise RuntimeError("strict_proof_option_contract_unmet")
+                    strict_envelope = self._canonicalize_strict_answer_envelope(
+                        objective,
+                        strict_envelope,
+                        option_values=strict_option_values,
+                    )
+                    if not strict_envelope:
+                        raise RuntimeError("strict_proof_answer_contract_unmet")
                     logger.info("🧠 UnitaryResponse: strict proof answered through exact envelope lane.")
                     return self._commit_response(new_state, strict_envelope)
 
@@ -4616,7 +5003,6 @@ class UnitaryResponsePhase(Phase):
             lower_objective = objective.lower() if objective else ""
             lower_response = response_text.lower() if response_text else ""
             if ("<answer>" in lower_objective or "answer_format" in kwargs) and response_text and not "<answer>" in lower_response:
-                import re
                 extracted_ans = None
                 
                 # 1. Look for markdown bolded final answer (e.g. **Answer**: 5 or **Final Answer**: Alice)

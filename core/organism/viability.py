@@ -40,7 +40,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -135,6 +135,7 @@ class ViabilityEngine:
         self._on_transition: list[Callable[[ViabilityState, ViabilityState], None]] = []
         self._task: asyncio.Task | None = None
         self._running = False
+        self._cpu_pressure_first_seen_at: float = 0.0
 
     # -------- score / classify ---------------------------------------------
 
@@ -192,6 +193,64 @@ class ViabilityEngine:
 
         return ViabilityState.HEALTHY
 
+    def _classify_with_temporal_guards(
+        self,
+        sample: ViabilitySample,
+        proposed: ViabilityState,
+    ) -> tuple[ViabilityState, str]:
+        """Suppress one-sample CPU-only flaps without masking sustained pressure."""
+
+        if sample.cpu_pct <= 95.0 or proposed != ViabilityState.DEGRADED:
+            self._cpu_pressure_first_seen_at = 0.0
+            return proposed, ""
+
+        without_cpu = self._classify(replace(sample, cpu_pct=0.0))
+        if self._severity_rank(without_cpu) >= self._severity_rank(ViabilityState.DEGRADED):
+            self._cpu_pressure_first_seen_at = 0.0
+            return proposed, ""
+
+        now = time.time()
+        if self._cpu_pressure_first_seen_at <= 0.0:
+            self._cpu_pressure_first_seen_at = now
+        try:
+            grace_s = max(0.0, float(os.getenv("AURA_VIABILITY_CPU_PRESSURE_GRACE_S", "30")))
+        except (TypeError, ValueError):
+            grace_s = 30.0
+        observed_for = max(0.0, now - self._cpu_pressure_first_seen_at)
+        if observed_for < grace_s:
+            return without_cpu, f"cpu_only_pressure_observed_for={observed_for:.1f}s"
+        return proposed, f"cpu_only_pressure_sustained_for={observed_for:.1f}s"
+
+    @staticmethod
+    def _transition_reason(
+        sample: ViabilitySample,
+        proposed: ViabilityState,
+        *,
+        guard_detail: str = "",
+    ) -> str:
+        triggers: list[str] = []
+        if sample.ram_pct > 92.0:
+            triggers.append(f"ram={sample.ram_pct:.1f}%")
+        if sample.cpu_pct > 95.0:
+            triggers.append(f"cpu={sample.cpu_pct:.1f}%")
+        if sample.disk_pct > 97.0:
+            triggers.append(f"disk={sample.disk_pct:.1f}%")
+        if sample.error_rate_per_min > 4.0:
+            triggers.append(f"errors_per_min={sample.error_rate_per_min:.1f}")
+        if sample.failed_tool_loops:
+            triggers.append(f"failed_tool_loops={sample.failed_tool_loops}")
+        if sample.unresolved_goals:
+            triggers.append(f"unresolved_goals={sample.unresolved_goals}")
+        if sample.incoherent_beliefs:
+            triggers.append(f"incoherent_beliefs={sample.incoherent_beliefs}")
+        if sample.broken_subsystems:
+            triggers.append(f"broken_subsystems={sample.broken_subsystems}")
+        if guard_detail:
+            triggers.append(guard_detail)
+        if not triggers:
+            triggers.append("nominal")
+        return f"tick: target={proposed.value}; " + ", ".join(triggers)
+
     # -------- public API ---------------------------------------------------
 
     def behavior(self) -> StateBehavior:
@@ -216,13 +275,17 @@ class ViabilityEngine:
 
     def tick(self) -> ViabilityState:
         sample = self._sampler()
-        proposed = self._classify(sample)
+        raw_proposed = self._classify(sample)
+        proposed, guard_detail = self._classify_with_temporal_guards(sample, raw_proposed)
         # Hysteresis: do not move into a *less severe* state until enough
         # time has passed since the last transition, to avoid flap.
         if self._severity_rank(proposed) < self._severity_rank(self.state):
             if time.time() - self.last_transition_at < self.HYSTERESIS_S:
                 return self.state
-        self.transition_to(proposed, reason="tick")
+        self.transition_to(
+            proposed,
+            reason=self._transition_reason(sample, raw_proposed, guard_detail=guard_detail),
+        )
         return self.state
 
     @staticmethod
@@ -340,7 +403,16 @@ def _sample_from_container() -> ViabilitySample:
         if guardian is not None:
             r = getattr(guardian, "last_report", None)
             if r is not None:
-                broken = sum(1 for c in getattr(r, "checks", []) if not getattr(c, "healthy", True))
+                try:
+                    from core.runtime.ablation_policy import service_intentionally_lesioned
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                    service_intentionally_lesioned = lambda _name: False
+                broken = sum(
+                    1
+                    for c in getattr(r, "checks", [])
+                    if not getattr(c, "healthy", True)
+                    and not service_intentionally_lesioned(getattr(c, "name", ""))
+                )
         goal_engine = ServiceContainer.get("goal_engine", default=None) or ServiceContainer.get("goals", default=None)
         if goal_engine is not None and hasattr(goal_engine, "open_goal_count"):
             unresolved = int(goal_engine.open_goal_count() or 0)

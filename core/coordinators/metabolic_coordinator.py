@@ -149,18 +149,51 @@ class MetabolicCoordinator:
         data = payload.get("data")
         return data if data is not None else payload
 
+    @staticmethod
+    def _reflection_topic_for_status(status) -> str:
+        """Build a bounded reflection prompt from the canonical runtime status."""
+        if status is None:
+            return "Self-reflection on current runtime status: unavailable"
+
+        legacy_state = getattr(status, "state", None)
+        if legacy_state:
+            return f"Self-reflection on current state: {str(legacy_state)[:160]}"
+
+        message = getattr(status, "message", None)
+        fields = []
+        for name in (
+            "running",
+            "healthy",
+            "is_processing",
+            "is_throttled",
+            "cycle_count",
+            "uptime",
+        ):
+            if hasattr(status, name):
+                fields.append(f"{name}={getattr(status, name)}")
+
+        details = ", ".join(fields) if fields else "no structured status fields"
+        if message:
+            return f"Self-reflection on current runtime status: {str(message)[:120]} ({details})"
+        return f"Self-reflection on current runtime status: {details[:200]}"
+
     # ------------------------------------------------------------------
     # Main Tick
     # ------------------------------------------------------------------
 
     def _is_resource_constrained(self) -> bool:
-        """v31 Hardening: Monitor system load and memory pressure."""
+        """Return True only for resource pressure that background throttling can relieve.
+
+        CPU bursts during local model generation are expected foreground work.
+        Treating a single CPU sample as lockdown pressure creates false sleeps
+        in the live/proof path without fixing the underlying load.
+        """
         try:
             import psutil
             mem = psutil.virtual_memory().percent
-            cpu = psutil.cpu_percent(interval=None)
-            return mem > 90 or cpu > 95
-        except ImportError:
+            disk = psutil.disk_usage("/").percent
+            return mem > 90 or disk > 95
+        except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError):
             return False
 
     @property
@@ -448,7 +481,7 @@ class MetabolicCoordinator:
                     await asyncio.wait_for(
                         orch.execute_tool(
                             "swarm_debate",
-                            {"topic": f"Self-reflection on current state: {orch.status.state}"},
+                            {"topic": self._reflection_topic_for_status(getattr(orch, "status", None))},
                             is_background=True,
                         ),
                         timeout=_AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS,

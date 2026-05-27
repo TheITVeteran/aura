@@ -868,10 +868,19 @@ class UnifiedWill:
             moment = ServiceContainer.get("mind_moment", default=None) if ServiceContainer.has("mind_moment") else None
             if moment is not None:
                 context["mind_moment_id"] = str(getattr(moment, "moment_id", "") or context.get("mind_moment_id", ""))
-                context["causal_closure_score"] = float(
+                moment_score = float(
                     getattr(moment, "closure_score", context.get("causal_closure_score", 1.0)) or 1.0
                 )
-                context["closure_missing"] = list(getattr(moment, "closure_missing", context.get("closure_missing", [])) or [])
+                context["causal_closure_score"] = min(
+                    float(context.get("causal_closure_score", 1.0) or 1.0),
+                    moment_score,
+                )
+                context["closure_missing"] = sorted(
+                    {
+                        *[str(item) for item in list(context.get("closure_missing", []) or [])],
+                        *[str(item) for item in list(getattr(moment, "closure_missing", []) or [])],
+                    }
+                )
                 context["active_subsystems"] = list(getattr(moment, "active_subsystems", context.get("active_subsystems", [])) or [])
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
@@ -1042,6 +1051,7 @@ class UnifiedWill:
             ActionDomain.FILE_WRITE,
             ActionDomain.NETWORK_CALL,
             ActionDomain.CLOUD_CALL,
+            ActionDomain.CLOUD_FALLBACK,
             ActionDomain.CI_CD,
             ActionDomain.SELF_MODIFICATION,
             ActionDomain.ENVIRONMENT_ACTION,
@@ -1098,6 +1108,11 @@ class UnifiedWill:
                 else:
                     reasons.append("unity_block: external action blocked until repair completes")
                     return WillOutcome.REFUSE, "; ".join(reasons), constraints
+            elif domain in consequential_domains:
+                reasons.append(
+                    "unity_block: consequential action blocked until repair completes"
+                )
+                return WillOutcome.REFUSE, "; ".join(reasons), constraints
             elif domain in {ActionDomain.INITIATIVE, ActionDomain.EXPLORATION}:
                 if catatonia_relief:
                     constraints.append(f"unity_initiative_relief:{unity_level}")

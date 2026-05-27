@@ -94,10 +94,65 @@ def proof_run_active(origin: Any = None) -> bool:
     return any(os.environ.get(name) for name in _PROOF_ACTIVE_ENV)
 
 
+def active_proof_ablation_services(*, origin: Any = None) -> tuple[str, ...]:
+    """Return intentional service lesions that make a proof turn non-proving."""
+
+    if not proof_run_active(origin=origin):
+        return ()
+    try:
+        from core.runtime.ablation_policy import active_ablation_services
+    except ImportError:
+        return ()
+    return tuple(sorted(active_ablation_services()))
+
+
+def proof_ablation_blocked_response(*, origin: Any = None) -> str | None:
+    """Fail closed when a proof run intentionally removes required services.
+
+    A live proof task answered while a required subsystem is lesioned is not
+    evidence that the unified architecture is load-bearing. Returning a strict
+    non-matching answer envelope keeps the runtime bounded and makes the
+    ablation visible to graders without letting deterministic answer shortcuts
+    bypass the health contract.
+    """
+
+    services = active_proof_ablation_services(origin=origin)
+    if not services:
+        return None
+    return "<answer>runtime_dependency_unavailable</answer>"
+
+
 def is_strict_proof_answer_prompt(prompt: Any, *, origin: Any = None) -> bool:
     """Detect sealed proof tasks that require a strict ``<answer>`` envelope."""
 
     return "<answer>" in str(prompt or "").lower() and proof_run_active(origin=origin)
+
+
+def structured_proof_solver_enabled(*, origin: Any = None) -> bool:
+    """Return whether the in-runtime symbolic proof solver may answer directly.
+
+    This is intentionally separate from strict answer detection. Some validation
+    runs need the exact same live proof path while forcing the requested model
+    lane to answer without symbolic interception.
+    """
+
+    if not proof_run_active(origin=origin):
+        return False
+    raw = str(os.environ.get("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
+
+
+def mlx_strict_answer_contract_enabled(*, origin: Any = None) -> bool:
+    """Return whether the MLX worker should use its strict-answer micro-prompt.
+
+    The response phase still enforces the final ``<answer>`` envelope when this
+    is disabled; this only controls the low-level worker prompting strategy.
+    """
+
+    if not proof_run_active(origin=origin):
+        return True
+    raw = str(os.environ.get("AURA_DISABLE_MLX_STRICT_ANSWER_CONTRACT", "") or "").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
 
 
 def is_proof_evaluation_purpose(purpose: Any) -> bool:

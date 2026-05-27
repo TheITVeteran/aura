@@ -364,6 +364,13 @@ class EventLoopMonitor:
             self.threshold = float(os.getenv("AURA_EVENT_LOOP_MONITOR_THRESHOLD_S", str(threshold)))
         except (TypeError, ValueError):
             self.threshold = float(threshold)
+        try:
+            self.active_threshold = max(
+                self.threshold,
+                float(os.getenv("AURA_EVENT_LOOP_MONITOR_ACTIVE_THRESHOLD_S", "5.0")),
+            )
+        except (TypeError, ValueError):
+            self.active_threshold = max(self.threshold, 5.0)
         self.interval = interval
         try:
             self.startup_grace = float(
@@ -379,6 +386,44 @@ class EventLoopMonitor:
         self._last_lag: float = 0.0
         self._consecutive_breaches: int = 0
         self._started_at: float = 0.0
+
+    def _active_runtime_reason(self) -> str | None:
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active():
+                return "proof_run_active"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        try:
+            from core.runtime import foreground_guard
+
+            reason = foreground_guard.foreground_activity_reason()
+            if reason:
+                return str(reason)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            status_getter = getattr(gate, "get_conversation_status", None)
+            if callable(status_getter):
+                status = status_getter()
+                if bool(getattr(status, "active", False)):
+                    return "foreground_generation"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+        return None
+
+    def _lag_threshold_for_context(self) -> tuple[float, str]:
+        reason = self._active_runtime_reason()
+        if reason:
+            return self.active_threshold, reason
+        return self.threshold, "idle"
 
     def start(self):
         """Starts the monitor in a background task."""
@@ -421,22 +466,24 @@ class EventLoopMonitor:
             end_time = time.perf_counter()
             actual_elapsed = end_time - start_time
             lag = actual_elapsed - self.interval
+            threshold, context = self._lag_threshold_for_context()
             in_startup_grace = (
                 self.startup_grace > 0
                 and self._started_at > 0
                 and (end_time - self._started_at) < self.startup_grace
             )
 
-            if lag > self.threshold and not in_startup_grace:
+            if lag > threshold and not in_startup_grace:
                 self._last_lag = lag
                 self._consecutive_breaches += 1
-                severe = lag >= max(self.threshold * 3.0, 0.50)
+                severe = lag >= max(threshold * 3.0, 0.50)
                 if severe or self._consecutive_breaches >= 5:
                     logger.warning(
-                        "🚨 EVENT LOOP LAG DETECTED: %.4fs (threshold=%.2fs, streak=%d). "
+                        "🚨 EVENT LOOP LAG DETECTED: %.4fs (context=%s threshold=%.2fs, streak=%d). "
                         "Something is blocking the event loop!",
                         lag,
-                        self.threshold,
+                        context,
+                        threshold,
                         self._consecutive_breaches,
                     )
                     try:
@@ -446,7 +493,7 @@ class EventLoopMonitor:
                             "event_loop_monitor",
                             "EventLoopLag",
                             (
-                                f"lag={lag:.4f}s threshold={self.threshold:.2f}s "
+                                f"lag={lag:.4f}s context={context} threshold={threshold:.2f}s "
                                 f"streak={self._consecutive_breaches}"
                             ),
                         )
@@ -456,9 +503,10 @@ class EventLoopMonitor:
                         )
                 elif self.log_transient_lag:
                     logger.debug(
-                        "EventLoopMonitor: transient lag %.4fs observed (threshold=%.2fs).",
+                        "EventLoopMonitor: transient lag %.4fs observed (context=%s threshold=%.2fs).",
                         lag,
-                        self.threshold,
+                        context,
+                        threshold,
                     )
             else:
                 self._consecutive_breaches = 0

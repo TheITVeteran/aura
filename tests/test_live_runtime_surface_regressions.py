@@ -111,6 +111,79 @@ def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     assert reason == "proof_run_active"
 
 
+def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
+    from core.utils.concurrency import EventLoopMonitor
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monitor = EventLoopMonitor(threshold=0.5)
+
+    threshold, reason = monitor._lag_threshold_for_context()
+
+    assert threshold >= 5.0
+    assert reason == "proof_run_active"
+
+
+@pytest.mark.asyncio
+async def test_substrate_micro_evolution_is_deferred_during_proof(monkeypatch):
+    from core.consciousness.substrate_evolution import Genome, SubstrateEvolution
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    evolution = SubstrateEvolution()
+    weights = np.zeros((2, 2), dtype=np.float32)
+    evolution._running = True
+    evolution._mesh_ref = SimpleNamespace(_inter_W=weights.copy())
+    evolution._champion = Genome(id=1, inter_weights=weights.copy(), fitness=0.5)
+
+    await evolution.micro_evolve("phi_drop", 0.7)
+
+    assert not hasattr(evolution, "_last_micro_evolution")
+    np.testing.assert_array_equal(evolution._mesh_ref._inter_W, weights)
+
+
+@pytest.mark.asyncio
+async def test_cognitive_loop_suppresses_repair_for_intentional_ablation(monkeypatch):
+    import core.cognitive_loop as cognitive_loop_module
+    from core.cognitive_loop import CognitiveLoop
+    from core.runtime.ablation_policy import mark_services_lesioned
+
+    repairs = []
+
+    async def retry_cognitive_connection():
+        repairs.append("repair")
+
+    monkeypatch.setattr(
+        cognitive_loop_module,
+        "optional_service",
+        lambda name, **_kwargs: None if name == "memory_coordinator" else object(),
+    )
+
+    loop = CognitiveLoop(SimpleNamespace(retry_cognitive_connection=retry_cognitive_connection))
+    with mark_services_lesioned(["memory_coordinator"]):
+        await loop._check_coordinators_health()
+
+    assert repairs == []
+
+
+def test_resilience_monitor_only_tracks_registered_optional_services():
+    from core.fictional_ai_synthesis import DistributedResilienceCore
+
+    registered = {"voice_engine"}
+
+    class _Container:
+        @staticmethod
+        def has(name: str) -> bool:
+            return name in registered
+
+    targets = DistributedResilienceCore._monitor_targets(_Container)
+
+    assert "orchestrator" in targets
+    assert "capability_engine" in targets
+    assert "memory_facade" in targets
+    assert "voice_engine" in targets
+    assert "server" not in targets
+    assert "live_learner" not in targets
+
+
 def test_sensory_motor_idle_volition_respects_background_boot_grace(monkeypatch):
     from core.sensory_motor_cortex import SensoryMotorCortex
 
@@ -154,6 +227,124 @@ def test_viability_boot_grace_does_not_starve_from_no_interaction(monkeypatch):
     )
 
     assert ViabilityEngine._classify(sample) == ViabilityState.HEALTHY
+
+
+def test_viability_ignores_intentional_ablation_missing_services(monkeypatch):
+    from core.container import ServiceContainer
+    from core.organism.viability import _sample_from_container
+
+    monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "affect_engine")
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(
+            lambda cls, name, default=None: (
+                SimpleNamespace(
+                    last_report=SimpleNamespace(
+                        checks=[
+                            SimpleNamespace(name="Affect Engine", healthy=False),
+                            SimpleNamespace(name="Memory Facade", healthy=True),
+                        ]
+                    )
+                )
+                if name == "stability_guardian"
+                else default
+            )
+        ),
+    )
+
+    assert _sample_from_container().broken_subsystems == 0
+
+
+def test_viability_ignores_will_authority_ablation_aliases(monkeypatch):
+    from core.container import ServiceContainer
+    from core.organism.viability import _sample_from_container
+
+    monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "unified_will")
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(
+            lambda cls, name, default=None: (
+                SimpleNamespace(
+                    last_report=SimpleNamespace(
+                        checks=[
+                            SimpleNamespace(name="Authority Gateway", healthy=False),
+                            SimpleNamespace(name="UnifiedWill", healthy=False),
+                            SimpleNamespace(name="Memory Facade", healthy=True),
+                        ]
+                    )
+                )
+                if name == "stability_guardian"
+                else default
+            )
+        ),
+    )
+
+    assert _sample_from_container().broken_subsystems == 0
+
+
+def test_viability_tick_filters_transient_cpu_only_pressure(monkeypatch):
+    from core.organism.viability import ViabilityEngine, ViabilitySample, ViabilityState
+
+    monkeypatch.setenv("AURA_VIABILITY_CPU_PRESSURE_GRACE_S", "30")
+    engine = ViabilityEngine(
+        sampler=lambda: ViabilitySample(
+            cpu_pct=99.0,
+            ram_pct=50.0,
+            disk_pct=10.0,
+            error_rate_per_min=0.0,
+            failed_tool_loops=0,
+            unresolved_goals=0,
+            successful_goals_last_hour=1,
+            user_interactions_last_hour=1,
+            incoherent_beliefs=0,
+            broken_subsystems=0,
+            runtime_uptime_s=900.0,
+        )
+    )
+
+    assert engine.tick() == ViabilityState.HEALTHY
+
+
+def test_viability_tick_degrades_sustained_cpu_only_pressure(monkeypatch):
+    from core.organism.viability import ViabilityEngine, ViabilitySample, ViabilityState
+
+    monkeypatch.setenv("AURA_VIABILITY_CPU_PRESSURE_GRACE_S", "30")
+    engine = ViabilityEngine(
+        sampler=lambda: ViabilitySample(
+            cpu_pct=99.0,
+            ram_pct=50.0,
+            disk_pct=10.0,
+            error_rate_per_min=0.0,
+            failed_tool_loops=0,
+            unresolved_goals=0,
+            successful_goals_last_hour=1,
+            user_interactions_last_hour=1,
+            incoherent_beliefs=0,
+            broken_subsystems=0,
+            runtime_uptime_s=900.0,
+        )
+    )
+    engine._cpu_pressure_first_seen_at = time.time() - 31.0
+
+    assert engine.tick() == ViabilityState.DEGRADED
+
+
+def test_hedonic_gradient_does_not_learn_distress_from_proof_runs(monkeypatch, caplog):
+    import logging
+    from core.consciousness.hedonic_gradient import HedoniGradientEngine
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    engine = HedoniGradientEngine()
+
+    with caplog.at_level(logging.WARNING, logger="Aura.HedoniGradient"):
+        for _ in range(8):
+            allocation = engine.update(valence=-1.0, arousal=0.5, curiosity=0.1, energy=0.1)
+
+    assert allocation.hedonic_score >= 0.5
+    assert engine.is_distressed is False
+    assert "Sustained distress detected" not in caplog.text
 
 
 def test_background_enqueue_defers_stale_autonomy_during_boot(monkeypatch):
@@ -341,6 +532,22 @@ def test_stall_watchdog_suppresses_boot_grace_stalls(monkeypatch):
     watchdog._started_at = time.time()
 
     assert watchdog._should_suppress_stall(15.0) is True
+
+
+def test_stall_watchdog_rate_limits_boot_grace_suppression_logs(monkeypatch, caplog):
+    import logging
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "120")
+    monkeypatch.setenv("AURA_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S", "60")
+    watchdog = StallWatchdog(SimpleNamespace(is_closed=lambda: False), threshold=1.0)
+    watchdog._started_at = time.time()
+
+    with caplog.at_level(logging.INFO, logger="Aura.Resilience.Watchdog"):
+        assert watchdog._should_suppress_stall(15.0) is True
+        assert watchdog._should_suppress_stall(15.0) is True
+
+    assert sum("launch stall during boot grace" in record.message for record in caplog.records) == 1
 
 
 def test_stall_watchdog_suppresses_foreground_inference_grace_stalls(monkeypatch):

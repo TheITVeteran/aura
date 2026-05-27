@@ -90,6 +90,11 @@ class MemoryGovernor:
             "recent_cleanup_events": list(self._cleanup_events[-10:]),
         }
 
+    async def check(self) -> dict[str, Any]:
+        """Run one bounded memory-policy check and return the current health snapshot."""
+        await self._enforce_policy()
+        return self.health_snapshot()
+
     def _remember_cleanup_event(self, action: str, status: str, detail: str = "") -> None:
         self._cleanup_events.append(
             {

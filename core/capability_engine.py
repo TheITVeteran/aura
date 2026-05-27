@@ -961,14 +961,15 @@ class CapabilityEngine(AuraBaseModule):
             ],
             # ── Code / Compute ────────────────────────────────────────
             "run_code": [
-                r"calculate",
-                r"run (?:this )?code",
-                r"math(?:ematics)?",
-                r"compute",
+                r"```(?:py|python)?\s+",
+                r"run (?:this )?(?:code|script|python)",
+                r"python\s*:",
+                r"code\s*:",
                 r"evaluate (?:this )?(?:expression|code|formula)",
-                r"what is \d+",
-                r"solve (?:this )?(?:equation|problem|formula)",
-                r"execute (?:this )?(?:code|script|python|javascript)",
+                r"(?:calculate|compute)\s+[-+*/%().,\d\s]+(?:$|[?.!])",
+                r"what is\s+[-+*/%().,\d\s]+(?:$|[?.!])",
+                r"solve (?:this )?(?:equation|formula)",
+                r"execute (?:this )?(?:code|script|python)",
             ],
             "coding_skill": [
                 r"write (?:a |the )?(?:function|class|script|program|module|code)",
@@ -2058,8 +2059,12 @@ class CapabilityEngine(AuraBaseModule):
         ctx = context or {}
         for key in ("intent_source", "request_origin", "origin", "source"):
             candidate = self._normalize_context_origin(ctx.get(key))
+            if candidate in {"test", "proof", "eval", "evaluation", "benchmark"}:
+                return "system"
             if self._is_user_facing_origin(candidate):
                 return candidate or "user"
+        if bool(ctx.get("proof_run") or ctx.get("proof_validation") or ctx.get("sealed_validation")):
+            return "system"
         if any(
             bool(ctx.get(key))
             for key in ("user_facing", "is_user_facing", "foreground_request", "priority")
@@ -2652,11 +2657,24 @@ class CapabilityEngine(AuraBaseModule):
             from core.runtime import CoreRuntime
 
             try:
-                rt = CoreRuntime.get_sync()
+                try:
+                    rt = CoreRuntime.get_sync()
+                except RuntimeError as exc:
+                    if "CoreRuntime not initialized" not in str(exc):
+                        raise
+                    rt = await CoreRuntime.get()
                 gov = rt.container.get("memory_governor")
                 if gov:
-                    gov.check()
-                orm = rt.container.get("persistent_state")
+                    import inspect
+
+                    check = getattr(gov, "check", None)
+                    if callable(check):
+                        check_result = check()
+                        if inspect.isawaitable(check_result):
+                            await check_result
+                    elif hasattr(gov, "_enforce_policy"):
+                        await gov._enforce_policy()
+                orm = rt.container.get("persistent_state", default=None)
             except (RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
                 _record_capability_degradation(
                     exc,

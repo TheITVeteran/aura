@@ -7,7 +7,9 @@ into the cache — far worse than leaving recurrent depth off.
 """
 from __future__ import annotations
 
+import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -25,9 +27,25 @@ from core.brain.llm.recurrent_depth import (  # noqa: E402
     resolve_loops_for_model,
 )
 
+_RUN_NATIVE_MLX_HARDWARE_TESTS = os.getenv("AURA_RUN_MLX_HARDWARE_TESTS") == "1"
 
+
+def _require_native_mlx_hardware() -> None:
+    if _RUN_NATIVE_MLX_HARDWARE_TESTS:
+        return
+    pytest.importorskip(
+        "_aura_native_mlx_hardware_tests_enabled",
+        reason=(
+            "native MLX/Metal cache tests require AURA_RUN_MLX_HARDWARE_TESTS=1; "
+            "the final proof validates recurrent depth on the live 32B lane"
+        ),
+    )
+
+
+@pytest.mark.hardware
 def test_self_test_cache_snapshot_passes_on_installed_mlx_lm():
     """If this fails, mlx_lm's cache contract changed and we must not patch."""
+    _require_native_mlx_hardware()
     _self_test_cache_snapshot()
 
 
@@ -65,8 +83,10 @@ def test_resolve_loops_honors_72b_lane_override(monkeypatch):
     assert resolve_loops_for_model(_Model()) == 2
 
 
+@pytest.mark.hardware
 def test_restore_rewinds_mlx_cache():
     """Direct end-to-end proof the snapshot/restore actually works."""
+    _require_native_mlx_hardware()
     import mlx.core as mx
     from mlx_lm.models.cache import KVCache
 
@@ -80,3 +100,102 @@ def test_restore_rewinds_mlx_cache():
 
     _restore_recurrent_caches([c], 0, 1, snap)
     assert c.offset == pre_offset, f"Restore failed: {pre_offset} → {c.offset}"
+
+
+def _install_fake_mlx_modules(monkeypatch):
+    mlx_pkg = types.ModuleType("mlx")
+    mlx_core = types.ModuleType("mlx.core")
+    mlx_pkg.core = mlx_core
+    monkeypatch.setitem(sys.modules, "mlx", mlx_pkg)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core)
+
+    mlx_lm = types.ModuleType("mlx_lm")
+    mlx_lm_models = types.ModuleType("mlx_lm.models")
+    mlx_lm_base = types.ModuleType("mlx_lm.models.base")
+    mlx_lm_base.create_attention_mask = lambda _h, _cache: None
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models", mlx_lm_models)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.base", mlx_lm_base)
+
+
+def test_apply_recurrent_depth_is_instance_scoped(monkeypatch):
+    import core.brain.llm.recurrent_depth as rd
+
+    _install_fake_mlx_modules(monkeypatch)
+    monkeypatch.setattr(rd, "_self_test_cache_snapshot", lambda: None)
+
+    class _Inner:
+        def __init__(self):
+            self.layers = [object()] * 64
+
+        def __call__(self, *_args, **_kwargs):
+            return "original"
+
+    class _Model:
+        def __init__(self):
+            self.model = _Inner()
+
+    first = _Model()
+    second = _Model()
+    original_class = second.model.__class__
+
+    assert rd.apply_recurrent_depth(first, n_loops=2) is True
+
+    assert first.model.__class__ is not original_class
+    assert second.model.__class__ is original_class
+    assert second.model("prompt") == "original"
+
+    assert rd.remove_recurrent_depth(first) is True
+    assert first.model.__class__ is original_class
+
+
+def test_recurrent_forward_executes_middle_block_multiple_times(monkeypatch):
+    import core.brain.llm.recurrent_depth as rd
+
+    _install_fake_mlx_modules(monkeypatch)
+    monkeypatch.setattr(rd, "_self_test_cache_snapshot", lambda: None)
+
+    class _Layer:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, h, _mask, _cache):
+            self.calls += 1
+            return h + 1
+
+    class _Inner:
+        def __init__(self):
+            self.layers = [_Layer() for _ in range(64)]
+
+        def embed_tokens(self, inputs):
+            return inputs
+
+        def norm(self, h):
+            return h
+
+        def __call__(self, inputs, cache=None, input_embeddings=None):
+            return inputs
+
+    class _Model:
+        def __init__(self):
+            self.model = _Inner()
+
+    model = _Model()
+
+    assert rd.apply_recurrent_depth(
+        model,
+        n_loops=2,
+        prelude_frac=0.20,
+        coda_frac=0.20,
+        residual_alpha=0.0,
+    ) is True
+
+    result = model.model(1, cache=[None] * 64)
+    config = rd.get_recurrent_config(model)
+
+    assert config["prelude_end"] == 12
+    assert config["coda_start"] == 52
+    assert result == 105
+    assert all(layer.calls == 1 for layer in model.model.layers[:12])
+    assert all(layer.calls == 2 for layer in model.model.layers[12:52])
+    assert all(layer.calls == 1 for layer in model.model.layers[52:])

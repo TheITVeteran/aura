@@ -68,7 +68,11 @@ class SelfHealing:
         self._deep_repairs: dict[str, asyncio.Task] = {}
         self._task: asyncio.Task | None = None
         self._running = False
-        self._ledger_write_timeout_s = 1.0
+        try:
+            configured_timeout = float(os.environ.get("AURA_SELF_HEALING_LEDGER_TIMEOUT_S", "5.0"))
+        except (TypeError, ValueError):
+            configured_timeout = 5.0
+        self._ledger_write_timeout_s = min(30.0, max(1.0, configured_timeout))
 
     def watch(
         self,

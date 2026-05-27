@@ -31,6 +31,7 @@ class TestQuantumEntropyBridge:
     def test_init_seeds_fallback_pool_and_schedules_async_refill(self, monkeypatch):
         from core.consciousness.quantum_entropy import QuantumEntropyBridge
 
+        monkeypatch.setenv("AURA_ALLOW_EXTERNAL_ENTROPY", "1")
         scheduled = []
         monkeypatch.setattr(
             QuantumEntropyBridge,
@@ -42,6 +43,11 @@ class TestQuantumEntropyBridge:
 
         assert len(bridge._pool) > 0
         assert scheduled == [True]
+
+    def test_external_entropy_is_opt_in_by_default(self):
+        from core.consciousness.quantum_entropy import QuantumEntropyBridge
+
+        assert QuantumEntropyBridge._external_entropy_allowed() is False
 
     def test_get_quantum_float_returns_valid_range(self):
         from core.consciousness.quantum_entropy import QuantumEntropyBridge
@@ -138,6 +144,20 @@ class TestQuantumEntropyBridge:
         assert calls == []
         assert bridge.get_stats()["api_failures"] == 1
         assert len(bridge._pool) > 0
+
+    def test_proof_mode_entropy_does_not_attempt_external_refill(self, monkeypatch):
+        from core.consciousness.quantum_entropy import QuantumEntropyBridge
+
+        monkeypatch.setenv("AURA_PROOF_RUN", "1")
+
+        bridge = QuantumEntropyBridge(pool_size=32)
+        bridge._pool.clear()
+        bridge._pool_sources.clear()
+        bridge.get_quantum_bytes(8)
+
+        stats = bridge.get_stats()
+        assert stats["api_failures"] == 0
+        assert stats["fallback_reads"] >= 1
 
 # =========================================================================
 # 2. RIIU (IIT Φ Surrogate)

@@ -37,6 +37,26 @@ def get_sandbox():
 
 logger = logging.getLogger("Skills.RunCode")
 
+
+def _diagnostic_failure_is_expected(context: Dict[str, Any] | None) -> bool:
+    text = " ".join(
+        str((context or {}).get(key) or "")
+        for key in ("objective", "message", "prompt")
+    ).lower()
+    markers = (
+        "what exception",
+        "which exception",
+        "exception class",
+        "error class",
+        "class raised",
+        "exception raised",
+        "error raised",
+        "raises a",
+        "raised by",
+        "traceback",
+    )
+    return any(marker in text for marker in markers)
+
 class RunCodeParams(BaseModel):
     code: str = Field(..., description="Python code to execute.")
     stateful: bool = Field(True, description="Keep variables and functions in memory for the next run.")
@@ -82,18 +102,33 @@ class RunCodeSkill(BaseSkill):
                 out_str = out_str[:2500] + "\n... [TRUNCATED] ...\n" + out_str[-2500:]
             if len(err_str) > 5000:
                 err_str = err_str[:2500] + "\n... [TRUNCATED] ...\n" + err_str[-2500:]
+
+            diagnostic_failure = result.exit_code != 0 and _diagnostic_failure_is_expected(context)
+            error_text = None
+            if result.exit_code != 0 and not diagnostic_failure:
+                error_text = self._first_signal_line(err_str) or f"Python exited with {result.exit_code}"
             
             return {
-                "ok": result.exit_code == 0,
+                "ok": result.exit_code == 0 or diagnostic_failure,
                 "stdout": out_str,
                 "stderr": err_str,
                 "exit_code": result.exit_code,
                 "stateful": params.stateful,
+                "diagnostic_failure_observed": diagnostic_failure,
+                "error": error_text,
                 "summary": self._build_summary(out_str, err_str, result.exit_code, params.stateful),
             }
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('active_coding', e)
             return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def _first_signal_line(text: str) -> str:
+        for raw_line in str(text or "").splitlines():
+            line = " ".join(raw_line.split())
+            if line:
+                return line[:240]
+        return ""
 
     @staticmethod
     def _build_summary(stdout: str, stderr: str, exit_code: int, stateful: bool) -> str:

@@ -254,18 +254,24 @@ class ConsciousnessLoopMonitor:
         # ── Check 3: affect_engine is registered ──────────────────────────────
         affect = self._get(sc, "affect_engine")
         if affect is None:
-            issues.append(
-                {
-                    "check": "affect_engine_registered",
-                    "message": "ServiceContainer['affect_engine'] is None — "
-                    "AffectEngineV2 not registered. receive_qualia_echo() "
-                    "can never be called.",
-                    "fix": "Ensure AffectEngineV2 is registered as 'affect_engine' "
-                    "in the ServiceContainer before the qualia loop starts.",
-                    "fix_attempted": False,
-                    "timestamp": time.time(),
-                }
-            )
+            try:
+                from core.runtime.ablation_policy import service_intentionally_lesioned
+                intentionally_lesioned = service_intentionally_lesioned("affect_engine")
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                intentionally_lesioned = False
+            if not intentionally_lesioned:
+                issues.append(
+                    {
+                        "check": "affect_engine_registered",
+                        "message": "ServiceContainer['affect_engine'] is None — "
+                        "AffectEngineV2 not registered. receive_qualia_echo() "
+                        "can never be called.",
+                        "fix": "Ensure AffectEngineV2 is registered as 'affect_engine' "
+                        "in the ServiceContainer before the qualia loop starts.",
+                        "fix_attempted": False,
+                        "timestamp": time.time(),
+                    }
+                )
         elif not hasattr(affect, "receive_qualia_echo"):
             issues.append(
                 {

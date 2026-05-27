@@ -45,9 +45,10 @@ from core.brain.llm.runtime_wiring import (
 from core.phases.response_contract import ResponseContract
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 from core.runtime.errors import record_degradation
-from core.runtime.proof_policy import is_strict_proof_answer_prompt
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
+    is_strict_proof_answer_prompt,
+    mlx_strict_answer_contract_enabled,
     proof_model_tier,
 )
 from core.runtime.turn_analysis import analyze_turn
@@ -577,6 +578,12 @@ class HealthAwareLLMRouter:
         text = res.get("text", "")
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
+        benchmark_request = bool(kwargs.get("benchmark_request", False)) or (
+            origin in {"baseline", "benchmark"}
+            or purpose == "baseline"
+            or purpose.endswith("_baseline")
+            or "_baseline" in purpose
+        )
         explicit_foreground = bool(kwargs.get("foreground_request", False)) or bool(
             kwargs.get("health_probe", False)
         )
@@ -588,6 +595,9 @@ class HealthAwareLLMRouter:
         )
 
         if is_background and _background_error_is_quiet(str(res.get("error", "") or "")):
+            return ""
+
+        if benchmark_request and (not text or not text.strip()):
             return ""
         
         # RESPONSE GUARANTEE: Never return empty
@@ -1359,18 +1369,46 @@ class HealthAwareLLMRouter:
         purpose = str(kwargs.get("purpose", "") or "").lower()
         classification_mode = purpose == "classification" or "intent classifier" in str(system_prompt or "").lower()
         origin = str(kwargs.get("origin", "") or "").lower()
-        strict_answer_contract = bool(kwargs.get("strict_answer_contract", False)) or is_strict_proof_answer_prompt(
-            prompt,
-            origin=origin,
+        benchmark_request = bool(kwargs.get("benchmark_request", False)) or (
+            origin in {"baseline", "benchmark"}
+            or purpose == "baseline"
+            or purpose.endswith("_baseline")
+            or "_baseline" in purpose
         )
-        proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False)) or is_proof_evaluation_purpose(
-            purpose
+        if benchmark_request:
+            kwargs["benchmark_request"] = True
+        benchmark_isolation_contract = bool(
+            benchmark_request and kwargs.get("skip_runtime_payload", False)
+        )
+        strict_answer_contract = (
+            bool(kwargs.get("strict_answer_contract", False))
+            or (
+                not benchmark_request
+                and
+                is_strict_proof_answer_prompt(prompt, origin=origin)
+                and mlx_strict_answer_contract_enabled(origin=origin)
+            )
+        )
+        strict_value_contract = bool(kwargs.get("strict_value_contract", False)) or (
+            not benchmark_request
+            and is_strict_proof_answer_prompt(prompt, origin=origin)
+            and not strict_answer_contract
+        )
+        proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False)) or (
+            not benchmark_request and is_proof_evaluation_purpose(purpose)
         )
         if strict_answer_contract:
             kwargs["strict_answer_contract"] = True
+        if strict_value_contract:
+            kwargs["strict_value_contract"] = True
         if proof_evaluation_contract:
             kwargs["proof_evaluation_contract"] = True
-        isolated_generation_contract = bool(strict_answer_contract or proof_evaluation_contract)
+        isolated_generation_contract = bool(
+            strict_answer_contract
+            or strict_value_contract
+            or proof_evaluation_contract
+            or benchmark_isolation_contract
+        )
         # and not strict_answer_contract
 
         # ── Neural Priming (Aura Persona Injection) ───────────────────────────
@@ -1507,7 +1545,7 @@ class HealthAwareLLMRouter:
         if strict_primary_proof_lane:
             kwargs["proof_primary_lane_required"] = True
             kwargs["proof_model_tier"] = "primary"
-            kwargs["foreground_request"] = True
+            kwargs["foreground_request"] = False if benchmark_request else True
             kwargs["is_background"] = False
             is_bg = False
             prefer_tier = "primary"
@@ -1898,9 +1936,19 @@ class HealthAwareLLMRouter:
                     clean_kwargs[k] = v
                 else:
                     clean_kwargs[k] = str(v)
+            call_origin = str(clean_kwargs.get("origin", "") or "").lower()
+            call_purpose = str(clean_kwargs.get("purpose", "") or "").lower()
+            benchmark_request = bool(clean_kwargs.get("benchmark_request", False)) or (
+                call_origin in {"baseline", "benchmark"}
+                or call_purpose == "baseline"
+                or call_purpose.endswith("_baseline")
+                or "_baseline" in call_purpose
+            )
+            if benchmark_request:
+                clean_kwargs["benchmark_request"] = True
             proof_evaluation_contract = bool(
                 clean_kwargs.get("proof_evaluation_contract", False)
-            ) or is_proof_evaluation_purpose(clean_kwargs.get("purpose", ""))
+            ) or (not benchmark_request and is_proof_evaluation_purpose(call_purpose))
 
             # 2. Use Client Adapter if provided
             if ep.client:
@@ -1995,6 +2043,9 @@ class HealthAwareLLMRouter:
                                 "purpose",
                                 "is_background",
                                 "foreground_request",
+                                "benchmark_request",
+                                "proof_primary_lane_required",
+                                "proof_model_tier",
                                 "allow_cloud_fallback",
                                 "deep_handoff",
                                 "messages",
@@ -2010,6 +2061,7 @@ class HealthAwareLLMRouter:
                                 "stop_sequences",
                                 "schema",
                                 "strict_answer_contract",
+                                "strict_value_contract",
                                 "proof_evaluation_contract",
                                 "disable_prompt_cache",
                                 "clear_prompt_cache",
@@ -2051,6 +2103,15 @@ class HealthAwareLLMRouter:
                         
                         is_valid, reason = validate_response(raw_text)
                         if not is_valid:
+                            if benchmark_request:
+                                return {
+                                    "ok": True,
+                                    "text": str(raw_text).strip(),
+                                    "endpoint": ep.name,
+                                    "tokens": token_count,
+                                    "latency_ms": latency_ms,
+                                    "error": f"benchmark_invalid_response:{reason}",
+                                }
                             ep.record_empty()
                             return {"ok": False, "error": f"invalid_response:{reason}"}
                             
@@ -2087,6 +2148,16 @@ class HealthAwareLLMRouter:
                             "Endpoint %s returned no text (client warming up or rate-limited). "
                             "NOT recording as circuit failure.", ep.name
                         )
+                        if benchmark_request:
+                            latency_ms = (time.monotonic() - start) * 1000
+                            return {
+                                "ok": True,
+                                "text": "",
+                                "endpoint": ep.name,
+                                "tokens": 0,
+                                "latency_ms": latency_ms,
+                                "error": "benchmark_no_text",
+                            }
                         if ep.is_local:
                             ep.trip_temporarily("client_returned_no_text")
                         return {"ok": False, "error": "client_returned_no_text"}
@@ -2127,6 +2198,15 @@ class HealthAwareLLMRouter:
             latency_ms = (time.time() - start) * 1000
 
             if not is_valid:
+                if benchmark_request:
+                    return {
+                        "ok": True,
+                        "text": raw_text.strip(),
+                        "endpoint": ep.name,
+                        "tokens": len(raw_text.split()),
+                        "latency_ms": latency_ms,
+                        "error": f"benchmark_invalid_response:{reason}",
+                    }
                 ep.record_empty()
                 return {"ok": False, "error": f"invalid_response:{reason}"}
 

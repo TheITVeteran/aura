@@ -454,6 +454,28 @@ async def test_executive_allows_safe_autonomous_tools_under_temporal_obligation(
 
 
 @pytest.mark.asyncio
+async def test_executive_allows_system_validation_tool_under_temporal_obligation(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = "Protect continuity"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    _, record = await executive.prepare_tool_intent(
+        "run_code",
+        {"code": "print(120)", "stateful": False},
+        source="system",
+    )
+
+    assert record.outcome == executive_core_module.DecisionOutcome.APPROVED
+    assert record.reason == "approved"
+
+
+@pytest.mark.asyncio
 async def test_executive_temporal_anchor_prefers_actionable_pending_work(service_container):
     reset_constitutional_singletons()
     clear_degraded_events()

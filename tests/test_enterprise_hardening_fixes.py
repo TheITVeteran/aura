@@ -84,6 +84,60 @@ def test_flagship_doctor_daemon_honors_global_shutdown(monkeypatch, tmp_path: Pa
         clear_shutdown_request()
 
 
+def test_flagship_doctor_defers_lag_only_healing_during_proof(monkeypatch, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=5.0)
+    assert daemon.active_lag_threshold >= 30.0
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=daemon.active_lag_threshold + 30.0,
+        ram_percent=50.0,
+        now=time.time(),
+    )
+
+    assert should_heal is False
+    assert context == "proof_run_active"
+    assert ram_pressure is False
+
+
+def test_flagship_doctor_still_heals_ram_pressure_during_proof(monkeypatch, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=5.0, ram_threshold=80.0)
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=1.0,
+        ram_percent=91.0,
+        now=time.time(),
+    )
+
+    assert should_heal is True
+    assert context == "proof_run_active"
+    assert ram_pressure is True
+
+
+def test_flagship_doctor_self_healing_has_cooldown(monkeypatch, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=5.0)
+    now = time.time()
+    daemon._last_heal_at = now - 1.0
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=12.0,
+        ram_percent=50.0,
+        now=now,
+    )
+
+    assert should_heal is False
+    assert context == "idle"
+    assert ram_pressure is False
+
+
 def test_integrity_guard_does_not_abort_when_process_parent_scan_is_denied(monkeypatch):
     import psutil
 
@@ -451,6 +505,124 @@ def test_capability_engine_instance_registration_is_executable_metadata():
     assert meta.skill_class is RuntimeSkill
     assert meta.class_name == "RuntimeSkill"
     assert meta.module_path == RuntimeSkill.__module__
+
+
+def test_capability_engine_bootstraps_core_runtime_for_skill_governance():
+    import inspect
+
+    from core.capability_engine import CapabilityEngine
+
+    source = inspect.getsource(CapabilityEngine.execute)
+
+    assert "CoreRuntime.get_sync()" in source
+    assert "await CoreRuntime.get()" in source
+    assert "CoreRuntime not initialized" in source
+    assert "inspect.isawaitable" in source
+    assert "getattr(gov, \"check\", None)" in source
+
+
+def test_godmode_keeps_strict_proof_tasks_out_of_background_task_engine():
+    source = (Path("core/kernel/upgrades_10x.py")).read_text(encoding="utf-8")
+
+    assert "is_strict_proof_answer_prompt" in source
+    assert "strict proof skill kept out of GodMode" in source
+    assert "strict proof task kept out of TaskEngine" in source
+    assert "strict proof task kept foreground via run_code" in source
+
+
+def test_resilience_memory_governor_exposes_async_check_contract():
+    import inspect
+
+    from core.resilience.memory_governor import MemoryGovernor
+
+    assert inspect.iscoroutinefunction(MemoryGovernor.check)
+
+
+def test_memory_provider_registers_persistent_state_audit_log():
+    source = (Path("core/providers/memory_provider.py")).read_text(encoding="utf-8")
+
+    assert "PersistentState" in source
+    assert "SQLitePersistentState" in source
+    assert "'persistent_state'" in source
+    assert "required=False" in source
+
+
+def test_sqlite_persistent_state_logs_execution_without_sqlalchemy(tmp_path: Path):
+    import sqlite3
+
+    from core.db.sqlite_persistent_state import SQLitePersistentState
+
+    db_path = tmp_path / "audit.sqlite3"
+    state = SQLitePersistentState(db_path)
+
+    state.log_execution(
+        skill_name="run_code",
+        params={"code": "print(1)"},
+        status="SUCCESS",
+        duration_ms=12.5,
+        result={"ok": True, "stdout": "1\n"},
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT skill_name, status, result FROM skill_execution_logs"
+        ).fetchone()
+
+    assert row[0] == "run_code"
+    assert row[1] == "SUCCESS"
+    assert '"stdout": "1\\n"' in row[2]
+
+
+def test_run_code_skill_treats_expected_exception_as_diagnostic_observation(monkeypatch):
+    from core.skills import active_coding
+
+    class FakeResult:
+        stdout = ""
+        stderr = "KeyError: 'c'\n"
+        exit_code = 1
+
+    class FakeSandbox:
+        async def run_stateful_code(self, code):
+            return FakeResult()
+
+    monkeypatch.setattr(active_coding, "get_sandbox", lambda: FakeSandbox())
+
+    result = asyncio.run(
+        active_coding.RunCodeSkill().execute(
+            active_coding.RunCodeParams(code="print({'a': 1}['c'])"),
+            {"objective": "What is the exact exception class raised by this snippet?"},
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["diagnostic_failure_observed"] is True
+    assert result["exit_code"] == 1
+
+
+def test_run_code_skill_keeps_unexpected_execution_failure_failed(monkeypatch):
+    from core.skills import active_coding
+
+    class FakeResult:
+        stdout = ""
+        stderr = "SyntaxError: invalid syntax\n"
+        exit_code = 1
+
+    class FakeSandbox:
+        async def run_stateful_code(self, code):
+            return FakeResult()
+
+    monkeypatch.setattr(active_coding, "get_sandbox", lambda: FakeSandbox())
+
+    result = asyncio.run(
+        active_coding.RunCodeSkill().execute(
+            active_coding.RunCodeParams(code="broken code"),
+            {"objective": "Run this code."},
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["diagnostic_failure_observed"] is False
+    assert "SyntaxError" in result["error"]
 
 
 def test_api_adapter_container_shutdown_closes_http_session():
@@ -998,13 +1170,17 @@ def test_dnu_runner_uses_live_message_path_for_full_aura_tasks():
     assert "dnu_kernel_task_isolation" in source
     assert "strict_answer_source" in source
     assert "nonempty_model_text_ok" in source
+    assert "get_conversation_status" in source
+    assert '"recurrent_depth"' in source
     assert "solve_strict_proof_prompt(strict_probe_prompt)" in source
     assert 'origin="internal"' in source
     assert "foreground_request=True" in source
     assert "health_probe=True" in source
     assert "def extract_exact_answer_envelope" in source
     assert "Return the lowercase two-letter token formed by joining" in source
+    assert "Output exactly these two lowercase letters and nothing else: ok" in source
     assert "confirming the requested local model lane is ready" in source
+    assert 'os.environ["AURA_DISABLE_MLX_STRICT_ANSWER_CONTRACT"] = "1"' not in source
     assert 'result["error"] = "No <answer> tags found in response"' in source
     assert "SKIPPED_SMOKE" in source
     assert '"comparisons_mode": "skipped_for_smoke" if args.smoke else "run"' in source
@@ -1014,7 +1190,8 @@ def test_health_router_preserves_inference_gate_context_for_direct_generate():
     root = Path(__file__).resolve().parents[1]
     source = (root / "core" / "brain" / "llm_health_router.py").read_text(encoding="utf-8")
 
-    assert 'from core.runtime.proof_policy import is_strict_proof_answer_prompt' in source
+    assert "is_strict_proof_answer_prompt," in source
+    assert "mlx_strict_answer_contract_enabled," in source
     assert 'and not strict_answer_contract' in source
     assert 'kwargs["strict_answer_contract"] = True' in source
     assert 'cloud_fallback_explicit = "allow_cloud_fallback" in kwargs' in source
@@ -1031,18 +1208,23 @@ def test_health_router_preserves_inference_gate_context_for_direct_generate():
     assert 'context_payload["foreground_request"] = True' in source
     assert '"max_tokens"' in source
     assert '"strict_answer_contract"' in source
+    assert '"strict_value_contract"' in source
     assert '"disable_prompt_cache"' in source
 
 
 def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     root = Path(__file__).resolve().parents[1]
     gate_source = (root / "core" / "brain" / "inference_gate.py").read_text(encoding="utf-8")
+    mlx_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(
+        encoding="utf-8"
+    )
     client_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(encoding="utf-8")
     worker_source = (root / "core" / "brain" / "llm" / "mlx_worker.py").read_text(encoding="utf-8")
 
-    assert 'context["strict_answer_contract"] = True' in gate_source
+    assert 'context["strict_answer_contract"] = mlx_strict_answer_contract_enabled(origin=origin)' in gate_source
     assert 'context["disable_prompt_cache"] = True' in gate_source
     assert '"strict_answer_contract",' in gate_source
+    assert '"strict_value_contract",' in gate_source
     assert '"disable_prompt_cache",' in gate_source
     assert '"clear_prompt_cache",' in gate_source
     assert 'if token_mult < 0.95 and not strict_answer_contract and not health_probe:' in gate_source
@@ -1055,8 +1237,11 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert 'if proof_run_active(origin=origin):' in gate_source
     assert 'return "proof_foreground_reserved"' in gate_source
     assert 'health_probe = bool(context.get("health_probe", False))' in gate_source
-    assert 'client_foreground_request = bool(_is_user_facing or explicit_foreground) and not is_background' in gate_source
+    assert "client_foreground_request = (" in gate_source
+    assert "bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request" in gate_source
     assert 'foreground_request=client_foreground_request' in gate_source
+    assert "strict_output_contract = bool(" in gate_source
+    assert "and not strict_output_contract" in gate_source
     assert '"health_probe",' in gate_source
     assert "refusing local fallback for lane certification" in gate_source
     assert 'and not health_probe' in gate_source
@@ -1065,9 +1250,17 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert 'context.setdefault("temperature", 0.0)' in gate_source
     assert 'not bool(context.get("strict_answer_contract", False))' in gate_source
     assert '"strict_answer_contract": bool(kwargs.get("strict_answer_contract", False))' in client_source
+    assert '"strict_value_contract": bool(kwargs.get("strict_value_contract", False))' in client_source
+    assert 'def get_lane_status(self) -> dict[str, Any]:' in gate_source
+    assert '"recurrent_depth",' in gate_source
     assert 'and foreground_request and not strict_answer_contract' in client_source
     assert 'disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract' in worker_source
     assert 'prompt = _build_strict_answer_prompt(messages, prompt)' in worker_source
+    assert "def _first_token_suppression_ids" in worker_source
+    assert "def _normalize_strict_value_response" in worker_source
+    assert "_STRICT_VALUE_UNUSABLE_RE" in worker_source
+    assert "Rendering native strict-value chat template" in worker_source
+    assert "Strict contract non-empty start guard ACTIVE" in worker_source
     assert 'response_text = _normalize_strict_answer_response(' in worker_source
     assert 'envelope_prefixed=strict_envelope_prefixed' in worker_source
     assert 'if prompt_cache_lru is not None and not disable_prompt_cache:' in worker_source
@@ -1090,10 +1283,14 @@ def test_canonical_proof_boot_activates_proof_runtime_policy(monkeypatch):
     monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
     monkeypatch.delenv("AURA_PROOF_MODEL_TIER", raising=False)
 
-    aura_main._activate_proof_runtime_policy("proof", "Proof-External")
+    try:
+        aura_main._activate_proof_runtime_policy("proof", "Proof-External")
 
-    assert os.environ["AURA_PROOF_RUN"] == "1"
-    assert os.environ["AURA_PROOF_MODEL_TIER"] == "primary"
+        assert os.environ["AURA_PROOF_RUN"] == "1"
+        assert os.environ["AURA_PROOF_MODEL_TIER"] == "primary"
+    finally:
+        os.environ.pop("AURA_PROOF_RUN", None)
+        os.environ.pop("AURA_PROOF_MODEL_TIER", None)
 
 
 def test_primary_proof_boot_skips_non_primary_llm_tiers_without_degradation():
@@ -1107,6 +1304,217 @@ def test_primary_proof_boot_skips_non_primary_llm_tiers_without_degradation():
     assert "allow_non_primary_tiers and brainstem_model_path" in source
     assert "allow_non_primary_tiers and fallback_model" in source
     assert "Proof-primary boot failed closed: no primary LLM endpoint registered" in source
+
+
+def test_dnu_baselines_are_bounded_and_marked_as_benchmark_calls():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(
+        encoding="utf-8"
+    )
+    baseline_block = source[
+        source.index("async def _generate_baseline_response("):
+        source.index("async def execute_raw_llm_task(")
+    ]
+
+    assert "def _baseline_timeout_seconds()" in source
+    assert 'origin="baseline"' in baseline_block
+    assert 'purpose="raw_llm_baseline"' in source
+    assert 'purpose="llm_with_tools_baseline"' in source
+    assert 'purpose="react_agent_baseline"' in source
+    assert "skip_runtime_payload=True" in baseline_block
+    assert "def _generate_baseline_response" in source
+    assert "threading.Timer(timeout_s, _watchdog_abort)" in baseline_block
+    assert "proof_primary_lane_required=True" in baseline_block
+    assert "benchmark_request=True" in baseline_block
+    assert "foreground_request=False" in baseline_block
+    assert "strict_value_contract=True" not in baseline_block
+    assert "proof_evaluation_contract=True" not in baseline_block
+    assert "repetition_penalty=1.35" in baseline_block
+    assert "max_tokens=96" in baseline_block
+    assert "_force_abort_router_generation" in source
+    assert "_recover_router_after_baseline_abort" in source
+
+
+def test_dnu_baseline_watchdog_accepts_dict_and_list_endpoint_maps():
+    from tools.agi.run_dnu_agi_proof_battery import _force_abort_router_generation
+
+    class Abortable:
+        def __init__(self):
+            self.calls = 0
+
+        def force_abort_active_generation(self, *, reason: str):
+            assert reason == "unit_test_timeout"
+            self.calls += 1
+            return True
+
+    abortable_a = Abortable()
+    abortable_b = Abortable()
+    dict_router = SimpleNamespace(
+        endpoints={"primary": SimpleNamespace(client=abortable_a)}
+    )
+    list_router = SimpleNamespace(
+        endpoints=[SimpleNamespace(client=abortable_b)]
+    )
+
+    assert _force_abort_router_generation(dict_router, reason="unit_test_timeout") == 1
+    assert _force_abort_router_generation(list_router, reason="unit_test_timeout") == 1
+    assert abortable_a.calls == 1
+    assert abortable_b.calls == 1
+
+
+def test_agency_baselines_are_bounded_and_marked_as_benchmark_calls():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "tools" / "agency" / "run_agency_emergence_battery.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "def _agency_baseline_timeout_seconds()" in source
+    assert "def _generate_agency_baseline_response" in source
+    assert "threading.Timer(timeout_s, _watchdog_abort)" in source
+    assert 'origin="baseline"' in source
+    assert 'purpose="agency_raw_llm_baseline"' in source
+    assert 'purpose="agency_react_baseline"' in source
+    assert "benchmark_request=True" in source
+    assert "foreground_request=False" in source
+    assert "proof_primary_lane_required=True" in source
+    assert 'stop_sequences=["\\n\\n", "\\\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"]' in source
+    assert "repetition_penalty=1.35" in source
+    assert "max_tokens=72" in source
+    assert "exactly one complete sentence" in source
+    assert "literal \\\\n tokens or blank-line padding" in source
+    assert "disable_prompt_cache=True" in source
+    assert "_force_abort_router_generation" in source
+    assert "_recover_router_after_baseline_abort" in source
+    assert "not Aura's full cognitive runtime" in source
+
+
+def test_primary_benchmark_lane_does_not_become_user_facing_chat():
+    root = Path(__file__).resolve().parents[1]
+    router_source = (root / "core" / "brain" / "llm_health_router.py").read_text(
+        encoding="utf-8"
+    )
+    gate_source = (root / "core" / "brain" / "inference_gate.py").read_text(encoding="utf-8")
+    mlx_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "benchmark_request = bool(kwargs.get(\"benchmark_request\", False))" in router_source
+    assert "benchmark_isolation_contract = bool(" in router_source
+    assert "not benchmark_request" in router_source
+    assert 'kwargs["foreground_request"] = False if benchmark_request else True' in router_source
+    assert '"benchmark_request",' in router_source
+    assert "benchmark_request = bool(context.get(\"benchmark_request\", False))" in gate_source
+    assert "or benchmark_request" in gate_source
+    assert "strict_proof_answer_request = (" in gate_source
+    assert "not benchmark_request and is_strict_proof_answer_prompt" in gate_source
+    assert "malformed benchmark draft" in gate_source
+    assert "instead of tripping the live Cortex lane" in gate_source
+    assert "elif not is_background and not explicit_background:" in gate_source
+    assert "use_rich_context = False if isolated_generation_contract or benchmark_request" in gate_source
+    assert "if benchmark_request:" in gate_source
+    assert "requested_cap_int = max(1, int(requested_cap))" in gate_source
+    assert '"purpose",' in gate_source
+    assert '"proof_primary_lane_required",' in router_source
+    assert '"proof_primary_lane_required",' in gate_source
+    assert '"benchmark_no_text"' in router_source
+    assert "benchmark_invalid_response" in router_source
+    assert "benchmark_request = bool(kwargs.get(\"benchmark_request\", False))" in mlx_source
+    assert "request_is_background = False" in mlx_source
+    assert "and not benchmark_request" in mlx_source
+    assert "not benchmark_request" in gate_source
+
+
+def test_benchmark_no_text_does_not_trip_primary_circuit():
+    from core.brain.llm_health_router import (
+        CircuitState,
+        EndpointHealth,
+        HealthAwareLLMRouter,
+        PRIMARY_ENDPOINT,
+    )
+
+    seen_kwargs = {}
+
+    class EmptyBenchmarkClient:
+        async def generate_text_async(self, prompt, **kwargs):
+            seen_kwargs.update(kwargs)
+            return ""
+
+    async def scenario():
+        router = HealthAwareLLMRouter()
+        endpoint = EndpointHealth(
+            name=PRIMARY_ENDPOINT,
+            url="internal",
+            model="unit-test",
+            is_local=True,
+            tier="local",
+            client=EmptyBenchmarkClient(),
+        )
+
+        result = await router._call_endpoint(
+            endpoint,
+            "solve this",
+            None,
+            1.0,
+            origin="baseline",
+            purpose="raw_llm_baseline",
+            benchmark_request=True,
+        )
+
+        assert result["ok"] is True
+        assert result["text"] == ""
+        assert result["error"] == "benchmark_no_text"
+        assert seen_kwargs["benchmark_request"] is True
+        assert endpoint.state is CircuitState.CLOSED
+        assert endpoint.failure_count == 0
+        assert endpoint.empty_responses == 0
+
+    asyncio.run(scenario())
+
+
+def test_agency_baseline_watchdog_accepts_dict_and_list_endpoint_maps():
+    from tools.agency.run_agency_emergence_battery import _force_abort_router_generation
+
+    class Abortable:
+        def __init__(self):
+            self.calls = 0
+
+        def force_abort_active_generation(self, *, reason: str):
+            assert reason == "unit_test_timeout"
+            self.calls += 1
+            return True
+
+    abortable_a = Abortable()
+    abortable_b = Abortable()
+    dict_router = SimpleNamespace(
+        endpoints={"primary": SimpleNamespace(client=abortable_a)}
+    )
+    list_router = SimpleNamespace(
+        endpoints=[SimpleNamespace(client=abortable_b)]
+    )
+
+    assert _force_abort_router_generation(dict_router, reason="unit_test_timeout") == 1
+    assert _force_abort_router_generation(list_router, reason="unit_test_timeout") == 1
+    assert abortable_a.calls == 1
+    assert abortable_b.calls == 1
+
+
+def test_full_substrate_evolution_defers_during_proof_runs():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "core" / "consciousness" / "substrate_evolution.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'proof_run_active(origin="substrate_evolution")' in source
+    assert "Substrate evolution generation deferred during proof_run_active." in source
+    assert "Applied champion genome to live mesh" in source
+
+
+def test_self_healing_ledger_timeout_is_configurable_for_loaded_runtime():
+    from core.runtime.self_healing import SelfHealing
+
+    healer = SelfHealing()
+
+    assert healer._ledger_write_timeout_s >= 5.0
 
 
 def test_metrics_collector_exposes_runtime_gauge_alias():
@@ -1298,11 +1706,17 @@ async def test_cognitive_engine_does_not_fast_floor_live_api_planning(monkeypatc
 def test_mlx_baseline_cancellation_and_loop_sentinel_are_classified_as_recoverable():
     root = Path(__file__).resolve().parents[1]
     client_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(encoding="utf-8")
+    gate_source = (root / "core" / "brain" / "inference_gate.py").read_text(encoding="utf-8")
     sentinel_source = (root / "core" / "brain" / "llm" / "token_sentinel.py").read_text(encoding="utf-8")
 
     assert "benchmark_baseline_cancel" in client_source
     assert "Baseline generation cancelled" in client_source
     assert "not benchmark_baseline_cancel" in client_source
+    assert "def force_abort_active_generation" in client_source
+    assert "force_aborted_generation" in client_source
+    assert "def force_abort_active_generation" in gate_source
+    assert "and not proof_evaluation_contract" in gate_source
+    assert "refusing retry/fallback cascade after no text" in gate_source
     assert "logger.warning(" in sentinel_source
     assert "logger.error(\"🚨 SENTINEL: Mathematical loop detected" not in sentinel_source
 
@@ -1313,8 +1727,16 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     solver_source = (root / "core" / "reasoning" / "proof_answer_solver.py").read_text(encoding="utf-8")
 
     assert "def _coerce_strict_answer_envelope" in unitary_source
-    assert '"strict_answer_contract": True' in unitary_source
+    assert '"strict_answer_contract": worker_strict_answer_contract' in unitary_source
+    assert "mlx_strict_answer_contract_enabled" in unitary_source
     assert '"strict_proof_answer_repair"' in unitary_source
+    assert "test each assignment and reject contradictions" in unitary_source
+    assert "compare differences and infer the generating rule" in unitary_source
+    assert "return one of those option values, not the subject label" in unitary_source
+    assert '"strict_proof_answer_verify"' in unitary_source
+    assert '"strict_proof_answer_option_verify"' in unitary_source
+    assert "choose exactly one of these option values" in unitary_source
+    assert "Candidate final answer" in unitary_source
     assert "No explanation, no assessment, no copied prompt text." in unitary_source
     assert "return self._commit_response(new_state, strict_envelope)" in unitary_source
     assert "and not strict_proof_answer_request" in unitary_source
@@ -1329,6 +1751,51 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "_solve_transfer_prompt" in solver_source
 
     from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from tools.agi.run_dnu_agi_proof_battery import normalize_answer
+
+    assert UnitaryResponsePhase._coerce_strict_answer_envelope("<answer>42 \\n \\n \\</answer>") == "<answer>42</answer>"
+    assert normalize_answer("42 \\n \\n \\") == "42"
+    assert not UnitaryResponsePhase._strict_answer_value_allowed(
+        "Who owns the dog? Output your final answer inside <answer>...</answer> tags.",
+        "YES!",
+    )
+    assert UnitaryResponsePhase._strict_answer_value_allowed(
+        "Who is B (knight or knave)? Output your final answer inside <answer>...</answer> tags.",
+        "knave",
+        option_values=["knight", "knave"],
+    )
+    assert not UnitaryResponsePhase._strict_answer_value_allowed(
+        "Who is B (knight or knave)? Output your final answer inside <answer>...</answer> tags.",
+        "B",
+        option_values=["knight", "knave"],
+    )
+    assert (
+        UnitaryResponsePhase._canonicalize_strict_answer_envelope(
+            "Who owns the dog? Output your final answer inside <answer>...</answer> tags.",
+            "<answer>Alice owns the dog.</answer>",
+        )
+        == "<answer>Alice</answer>"
+    )
+    assert (
+        UnitaryResponsePhase._canonicalize_strict_answer_envelope(
+            "Who is B (knight or knave)? Output your final answer inside <answer>...</answer> tags.",
+            "<answer>B is a knave.</answer>",
+            option_values=["knight", "knave"],
+        )
+        == "<answer>knave</answer>"
+    )
+    assert (
+        UnitaryResponsePhase._canonicalize_strict_answer_envelope(
+            "What is the next number in the sequence? Output your final answer inside <answer>...</answer> tags.",
+            "<answer>The next number is 42.</answer>",
+        )
+        == "<answer>42</answer>"
+    )
+    assert not UnitaryResponsePhase._strict_answer_value_allowed(
+        "What is the next number in the sequence? Output your final answer inside <answer>...</answer> tags.",
+        "I'm not sure I'd call them disappearings",
+    )
 
     island = (
         "You meet two inhabitants of an island, A and B. A says: 'At least one of us is a "
@@ -1402,3 +1869,39 @@ def test_runtime_boot_noise_regressions_are_closed():
     assert "async def shutdown(cls, *, hook_timeout_s: float = 1.5, total_timeout_s: float = 12.0)" in container_source
     assert "bounded {hook_name} timeout" in container_source
     assert "ServiceContainer.shutdown(hook_timeout_s=1.5, total_timeout_s=12.0)" in shutdown_source
+
+
+def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyPatch):
+    from core.runtime.proof_policy import (
+        active_proof_ablation_services,
+        proof_ablation_blocked_response,
+    )
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "memory_facade,unified_will")
+
+    assert active_proof_ablation_services(origin="api") == ()
+    assert proof_ablation_blocked_response(origin="api") is None
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+
+    active = set(active_proof_ablation_services(origin="api"))
+    assert "memory_facade" in active
+    assert "unified_will" in active
+    assert proof_ablation_blocked_response(origin="api") == "<answer>runtime_dependency_unavailable</answer>"
+
+
+def test_dnu_ablation_validation_rejects_equal_performance_lesions():
+    root = Path(__file__).resolve().parents[1]
+    runner_source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
+    validator_source = (root / "tools" / "agi" / "validate_dnu_final_bundle.py").read_text(encoding="utf-8")
+    message_source = (root / "core" / "orchestrator" / "mixins" / "message_handling.py").read_text(encoding="utf-8")
+
+    assert "behavior_degraded = pass_rate < 1.0" in runner_source
+    assert "and behavior_degraded" in runner_source
+    assert '"ablation",' in validator_source
+    assert '"outperform",' in validator_source
+    assert "proof_ablation_blocked_response(origin=origin)" in message_source
+    assert "runtime_dependency_unavailable" in (root / "core" / "runtime" / "proof_policy.py").read_text(encoding="utf-8")

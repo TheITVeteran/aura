@@ -71,6 +71,20 @@ def _safe_fragment(value: object, *, max_chars: int = 500) -> str:
     return " ".join(text.replace("\x00", "").split())[:max_chars]
 
 
+def _proof_run_active() -> bool:
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        return bool(proof_run_active(origin="narrative_thread"))
+    except _RECOVERABLE_NARRATIVE_ERRORS as exc:
+        _record_narrative_degradation(
+            exc,
+            action="continued narrative lifecycle without proof-run signal",
+            severity="warning",
+        )
+        return False
+
+
 @dataclass
 class NarrativeSnapshot:
     """A point-in-time snapshot of Aura's self-narrative."""
@@ -100,6 +114,9 @@ class NarrativeThread:
     async def start(self):
         """Start the autonomous refresh loop."""
         if self._is_running:
+            return
+        if _proof_run_active():
+            logger.info("NarrativeThread auto-refresh deferred during proof_run_active.")
             return
         self._is_running = True
         try:
@@ -146,6 +163,10 @@ class NarrativeThread:
         await asyncio.sleep(_INITIAL_REFRESH_DELAY_S)
         while self._is_running:
             try:
+                if _proof_run_active():
+                    logger.info("NarrativeThread refresh loop stopped during proof_run_active.")
+                    self._is_running = False
+                    return
                 await self.generate_narrative()
                 self._consecutive_refresh_failures = 0
                 await asyncio.sleep(random.randint(_REFRESH_MIN_S, _REFRESH_MAX_S))

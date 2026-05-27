@@ -1429,7 +1429,7 @@ function connect() {
     }
     const ws = new WebSocket(`${proto}//${hostname}${port}/ws`);
     state.ws = ws;
-    
+
     state.lastPong = Date.now();
 
     // Application-layer heartbeat to prevent silent disconnects
@@ -1497,7 +1497,7 @@ function connect() {
         const surfacePaused = !!(document.hidden || state.surfaceSuspended || state.resumeInProgress || navigator.onLine === false);
         showConnToast(surfacePaused ? 'paused' : true);
         setConnectionVisual('reconnecting', surfacePaused ? 'surface paused' : '');
-        
+
         // ZENITH: Infinite Reconnect with Exponential Backoff + Jitter
         if (!state.retryCount) state.retryCount = 0;
         state.retryCount++;
@@ -1565,7 +1565,7 @@ class VoiceStreamPlayer {
         this.evtSource = null;
         this.startTime = 0;
     }
-    
+
     async init() {
         if (this.evtSource) return;
         // VoiceStreamPlayer init
@@ -1597,7 +1597,7 @@ class VoiceStreamPlayer {
         for (let i = 0; i < bytes.length; i++) {
             bytes[i] = (binary.charCodeAt(i*2) & 0xFF) | (binary.charCodeAt(i*2+1) << 8);
         }
-        
+
         const floatData = new Float32Array(bytes.length);
         for (let i = 0; i < bytes.length; i++) {
             floatData[i] = bytes[i] / 32768.0;
@@ -1609,14 +1609,14 @@ class VoiceStreamPlayer {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
-        
+
         // Scheduling for seamless playback
         if (this.startTime < ctx.currentTime) {
             this.startTime = ctx.currentTime + 0.05;
         }
         source.start(this.startTime);
         this.startTime += buffer.duration;
-        
+
         // Visual feedback
         triggerVoiceOrb('speaking');
     }
@@ -1658,11 +1658,11 @@ function handleWsEvent(data) {
         const { tool, result, metadata } = data;
         const isAutonomic = metadata && metadata.autonomic;
         const badge = isAutonomic ? '<span class="badge badge-autonomic">[Autonomic]</span> ' : '';
-        
+
         // Phase 36: Check for image display at both levels (result and data)
         const displayType = (result && result.display_type) || data.display_type;
         const imageUrl = (result && result.url) || data.url;
-        
+
         if (displayType === 'image' && imageUrl) {
             const saveBtn = `<button class="gen-save-btn" onclick="saveImageToDevice('${imageUrl}')">MANIFEST TO DESKTOP</button>`;
             const html = `${badge}<div class="gen-image-wrap"><div class="gen-image-loading" id="img-loading-${Date.now()}">Manifesting visualization...</div><img src="${imageUrl}" alt="Generated Image" class="gen-image" onload="this.previousElementSibling.style.display='none';" onerror="this.previousElementSibling.textContent='Image loading... please wait'; var self=this; setTimeout(function(){self.src=self.src.split('&retry')[0]+'&retry='+Date.now()},5000);" onclick="window.open('${imageUrl}', '_blank')">${saveBtn}</div>`;
@@ -1682,7 +1682,7 @@ function handleWsEvent(data) {
             if (meta.autonomic) badge = '<span class="badge badge-autonomic">[Autonomic]</span> ';
             if (meta.reflex) badge = '<span class="badge badge-reflex">[Reflex]</span> ';
             if (meta.diagnostic) badge = '<span class="badge badge-diagnostic">⚠️</span> ';
-            
+
             // ZENITH: Content-based deduplication.
             // Use content-only fingerprint — the same response can arrive
             // via HTTP and via WebSocket with different IDs.
@@ -1944,11 +1944,11 @@ function coalesceThoughtQueueItem(item) {
 function saveImageToDevice(url) {
     if (!url) return;
     // Manifesting image to desktop
-    
+
     // We send a specific command that the Sovereign Scanner or StateMachine can catch
     // Using a clear intent prefix "Manifest:"
     const msg = `Manifest: Save this image to my desktop: ${url}`;
-    
+
     // Inject into chat as if it was a user message but we can also do it silently
     // For now, let's make it a visible request so the user knows Aura is acting
     const input = $('chat-input');
@@ -2191,7 +2191,7 @@ function setHudRamUsage(value, { source = 'telemetry' } = {}) {
 function updateTelemetry(data) {
     if (!data) return;
     const t = DOM.telemetry;
-    
+
     // ZENITH: Normalize keys to lowercase for robustness
     const normalized = {};
     for (const k in data) normalized[k.toLowerCase()] = data[k];
@@ -2213,7 +2213,7 @@ function updateTelemetry(data) {
     setGauge('curiosity', normalized.curiosity, t.curiosity, t.cVal);
     setGauge('frustration', normalized.frustration, t.frustration, t.fVal);
     setGauge('confidence', normalized.confidence, t.confidence, t.confVal);
-    
+
     if (normalized.gwt_winner && t.gwt) t.gwt.textContent = normalized.gwt_winner;
     if (normalized.coherence != null && t.coherence) t.coherence.textContent = normalized.coherence;
     if (normalized.vitality != null && t.vitality) t.vitality.textContent = normalized.vitality;
@@ -2401,14 +2401,14 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
     const messages = DOM.messages || $('messages');
     const div = document.createElement('div');
     div.className = `msg ${role} typing`;
-    
+
     // Add Badge if metadata present
     if (metadata.reflex) {
         div.innerHTML = `<span class="aura-badge reflex">Reflex</span>`;
     } else if (metadata.autonomic) {
         div.innerHTML = `<span class="aura-badge autonomic">Autonomic</span>`;
     }
-    
+
     messages.appendChild(div);
 
     // THE FIX: Prune old DOM nodes to keep the UI buttery smooth indefinitely
@@ -2566,18 +2566,18 @@ function startStreamMsg(role) {
 function appendStreamChunk(chunk) {
     if (!activeStreamDiv) return;
     activeStreamContentRaw += chunk;
-    
+
     let renderText = activeStreamContentRaw;
-    
+
     // 1. Auto-close unclosed markdown blocks to prevent UI thrash during streaming
     const codeBlockCount = (renderText.match(/```/g) || []).length;
     if (codeBlockCount % 2 !== 0) {
         renderText += '\n```\n';
     }
-    
+
     // Render streaming content with markdown support
     let h = escHtml(renderText);
-    
+
     // 2. Handle max_tokens hook seamlessly
     h = h.replace(/\[MAX_TOKENS_REACHED\]/g, '<button class="regenerate-btn" style="display:block;margin-top:10px" onclick="sendMessage(\'Please continue exactly where you left off.\')">Continue Generating</button>');
     // Code blocks with copy button
@@ -2590,7 +2590,7 @@ function appendStreamChunk(chunk) {
     h = h.replace(/\*(.*?)\*/g, '<em>$1</em>');
     h = h.replace(/`(.*?)`/g, '<code>$1</code>');
     h = h.replace(/\n/g, '<br>');
-    
+
     if (activeStreamDiv.className.includes('aura')) {
         activeStreamDiv.innerHTML = `<div class="aura-avatar"></div>` + h;
     } else {
@@ -2602,7 +2602,7 @@ function appendStreamChunk(chunk) {
 
 function finishStreamMsg() {
     activeStreamDiv = null;
-    
+
     // NEW FIX: Ensure typing indicator is ALWAYS cleared when a stream ends,
     // even if it was short or errored out.
     const typingInd = $('typing-ind');
@@ -2895,7 +2895,7 @@ async function pollHealth() {
             const uptimeEl = $('hud-uptime');
             if (uptimeEl) uptimeEl.textContent = fmtUptime(d.uptime);
         }
-        
+
         if (d.version) {
             const verEl = $('ui-ver');
             if (verEl) verEl.textContent = d.version;
@@ -2903,9 +2903,9 @@ async function pollHealth() {
 
         const cpuEl = $('hud-cpu');
         if (cpuEl) cpuEl.textContent = Math.round(d.cpu_usage || 0) + '%';
-        
+
         setHudRamUsage(d.ram_usage, { source: 'health' });
-        
+
         const pcoreEl = $('hud-pcore');
         const pcoreVal = d.cortex ? d.cortex.p_core_usage : 0;
         if (pcoreEl) pcoreEl.textContent = Math.round(pcoreVal || 0) + '%';
@@ -3184,7 +3184,7 @@ async function pollHealth() {
         if (d.runtime) {
             updateTelemetry(d.runtime);
         }
-        
+
         // Fallback or explicit mapping for CPU/RAM metrics to the UI
         if (d.cpu_usage != null) {
             const cpuEl = $('hud-cpu');
@@ -3270,7 +3270,7 @@ async function togglePrivacy(type, currentEnabled, btn) {
                 btn.innerHTML = type === 'microphone' ? '<span>● MUTED</span>' : '<span>● CAM OFF</span>';
             }
         }
-        const res = await fetch(`/api/privacy/${type}`, { 
+        const res = await fetch(`/api/privacy/${type}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: next })
@@ -3513,6 +3513,68 @@ async function loadMemory(type) {
 
 // ── Belief Graph ─────────────────────────────────────────
 let graphNetwork = null;
+function updateBeliefGraphTheme(theme, accent) {
+    if (!graphNetwork) return;
+    const isLight = theme === 'light';
+    const isHighContrast = theme === 'high-contrast';
+    const isMidnight = theme === 'midnight';
+
+    let fontColor = '#e0e0e0';
+    let strokeColor = '#05030a';
+    let borderColor = '#00e5ff';
+    let bgColor = '#8a2be2';
+    let edgeColor = 'rgba(138, 43, 226, 0.5)';
+    let highlightBorder = '#ff00ff';
+    let highlightBg = '#ffffff';
+
+    if (isLight) {
+        fontColor = '#14111c';
+        strokeColor = '#f4ede4';
+        borderColor = '#8a2be2';
+        bgColor = '#b1a4ff';
+        edgeColor = 'rgba(138, 43, 226, 0.25)';
+        highlightBorder = '#8a2be2';
+        highlightBg = '#ffffff';
+    } else if (isHighContrast) {
+        fontColor = '#ffffff';
+        strokeColor = '#000000';
+        borderColor = '#ffd400';
+        bgColor = '#161616';
+        edgeColor = '#4f4f4f';
+        highlightBorder = '#ffffff';
+        highlightBg = '#ffd400';
+    } else if (isMidnight) {
+        fontColor = '#d8d4e8';
+        strokeColor = '#030005';
+        borderColor = '#00e5ff';
+        bgColor = '#5b46c8';
+        edgeColor = 'rgba(0, 229, 255, 0.3)';
+    }
+
+    graphNetwork.setOptions({
+        nodes: {
+            font: {
+                color: fontColor,
+                strokeColor: strokeColor
+            },
+            color: {
+                border: borderColor,
+                background: bgColor,
+                highlight: {
+                    border: highlightBorder,
+                    background: highlightBg
+                }
+            }
+        },
+        edges: {
+            color: {
+                color: edgeColor,
+                highlight: borderColor
+            }
+        }
+    });
+}
+
 function initBeliefGraph() {
     if (state.beliefGraphInit) return;
     state.beliefGraphInit = true;
@@ -3563,6 +3625,9 @@ function initBeliefGraph() {
     };
     graphNetwork = new vis.Network(container, data, options);
     refreshKnowledgeGraph();
+    if (typeof settings !== 'undefined') {
+        updateBeliefGraphTheme(settings.theme, settings.accent);
+    }
 }
 
 async function refreshKnowledgeGraph() {
@@ -3776,10 +3841,49 @@ async function toggleVoice() {
                 }
             };
 
+            // Web Audio AnalyserNode integration for interactive pulsing
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 64;
+            source.connect(analyser);
+
             source.connect(voiceNode);
             voiceNode.connect(audioContext.destination);
             state.audioStream = stream;
             state.voiceNode = voiceNode;
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            function updateVoiceOrbPulse() {
+                if (!state.voiceActive) {
+                    const voiceOrb = $('voice-orb');
+                    if (voiceOrb) {
+                        voiceOrb.style.transform = '';
+                        voiceOrb.style.boxShadow = '';
+                    }
+                    return;
+                }
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    sum += dataArray[i];
+                }
+                const avg = sum / bufferLength;
+
+                // dynamic biological scale and shadow glow
+                const scale = 1.0 + (avg / 255.0) * 0.38;
+                const glow = 40 + (avg / 255.0) * 55;
+
+                const voiceOrb = $('voice-orb');
+                if (voiceOrb) {
+                    voiceOrb.style.transform = `scale(${scale})`;
+                    voiceOrb.style.boxShadow = `0 0 ${glow}px var(--border-glow), 0 0 ${glow * 2}px rgba(138, 43, 226, 0.22), inset 0 0 20px rgba(255, 255, 255, 0.4)`;
+                }
+                requestAnimationFrame(updateVoiceOrbPulse);
+            }
+
+            requestAnimationFrame(updateVoiceOrbPulse);
+
         } catch (err) {
             console.error('Voice capture failed:', err);
             appendMsg('aura', '⚠ I couldn\'t access your microphone.');
@@ -3787,9 +3891,19 @@ async function toggleVoice() {
             $('voice-orb-wrap').classList.remove('active');
             orb.className = 'voice-orb';
             $('mic-btn').textContent = '🎙';
+            const voiceOrb = $('voice-orb');
+            if (voiceOrb) {
+                voiceOrb.style.transform = '';
+                voiceOrb.style.boxShadow = '';
+            }
         }
     } else {
         orb.className = 'voice-orb';
+        const voiceOrb = $('voice-orb');
+        if (voiceOrb) {
+            voiceOrb.style.transform = '';
+            voiceOrb.style.boxShadow = '';
+        }
         flushVoiceSignal();
         if (state.audioStream) {
             state.audioStream.getTracks().forEach(t => t.stop());
@@ -3926,6 +4040,9 @@ function applySettings(s) {
     syncNeuralFeedMode();
     if (!state.neuralFeedPaused && state.thoughtQueue.length > 0 && !state.pacingActive) {
         processThoughtQueue();
+    }
+    if (graphNetwork) {
+        updateBeliefGraphTheme(s.theme, s.accent);
     }
 }
 

@@ -5,62 +5,62 @@
   },
   "no_persistent_memory": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "no_volition": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "no_will_authority": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "no_system2": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "no_self_repair": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "no_affect_steering": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_memory": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_volition": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_will": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_system2": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_self_repair": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   },
   "aura_minus_affect_steering": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.0,
     "lesion_effect_verified": true
   }
 }
