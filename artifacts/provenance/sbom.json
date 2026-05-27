@@ -61,6 +61,16 @@
       "specifier": ">=6.1.1"
     },
     {
+      "name": "numpy",
+      "source": "pyproject",
+      "specifier": ">=1.26,<3.0"
+    },
+    {
+      "name": "scipy",
+      "source": "pyproject",
+      "specifier": ">=1.13"
+    },
+    {
       "name": "pydantic",
       "source": "pyproject",
       "specifier": ">=2.10.0"
@@ -381,7 +391,7 @@
       "specifier": ">=1.44           # Browser-based STT fallback"
     }
   ],
-  "dependency_count": 76,
-  "generated_at": 1778214999.916042,
+  "dependency_count": 78,
+  "generated_at": 1779848850.009533,
   "schema": "aura-lightweight-sbom/v1"
 }

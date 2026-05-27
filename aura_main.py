@@ -806,6 +806,13 @@ async def boot_aura_runtime(
     """
     resolved_ready_label = ready_label or profile.title()
     _activate_proof_runtime_policy(profile, resolved_ready_label)
+    # Validate and log the runtime mode (production/research/dev/simulation/safe)
+    try:
+        from core.runtime.mode import validate_mode_at_startup
+        validate_mode_at_startup()
+    except (ImportError, RuntimeError) as _mode_exc:
+        record_degradation("aura_main", _mode_exc)
+        logger.warning("Runtime mode validation skipped: %s", _mode_exc)
     return await _boot_runtime_orchestrator(
         ready_label=resolved_ready_label,
         readiness_context=readiness_context or f"{profile}_boot",

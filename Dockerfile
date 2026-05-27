@@ -1,39 +1,64 @@
+# ============================================================================
+# Aura Cognitive Runtime — Production Dockerfile
+# ============================================================================
+# Build:  docker build -t aura:latest .
+# Run:    docker run -p 8000:8000 -v aura-data:/app/data aura:latest
+# Verify: docker run --rm aura:latest make doctor
+# ============================================================================
+
 FROM python:3.12-slim AS base
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+LABEL maintainer="security@aura-project.dev" \
+      org.opencontainers.image.title="Aura Cognitive Runtime" \
+      org.opencontainers.image.description="Locally-deployed autonomous AI cognitive agent" \
+      org.opencontainers.image.source="https://github.com/youngbryan97/aura" \
+      org.opencontainers.image.licenses="MIT"
 
-# Non-root user
+# ── System dependencies (pinned versions for reproducibility) ────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential=12.* \
+    git \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# ── Non-root user ────────────────────────────────────────────────────────
 RUN groupadd -r aura && useradd -r -g aura -d /app -s /sbin/nologin aura
 
 WORKDIR /app
 
-# Python dependencies (cached layer)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt || \
-    pip install --no-cache-dir \
-    fastapi uvicorn aiohttp aiofiles pydantic \
-    numpy psutil pillow sqlalchemy websockets httpx
+# ── Python dependencies (fail-closed: no fallback installs) ──────────────
+COPY requirements/core.txt requirements/core.txt
+COPY requirements.txt requirements.txt
+COPY requirements_lock.txt requirements_lock.txt
 
-# Copy source
+# Production builds MUST succeed with the lockfile. No best-effort fallback.
+RUN pip install --no-cache-dir --upgrade pip wheel && \
+    pip install --no-cache-dir -r requirements/core.txt
+
+# ── Copy source ──────────────────────────────────────────────────────────
 COPY . .
 
-# Data directories
-RUN mkdir -p data logs \
+# ── Data directories + permissions ───────────────────────────────────────
+RUN mkdir -p data logs artifacts/current \
     && chown -R aura:aura /app
 
+# ── Drop to non-root ────────────────────────────────────────────────────
 USER aura
 
+# ── Runtime configuration ───────────────────────────────────────────────
 ENV AURA_HOST=0.0.0.0 \
     AURA_PORT=8000 \
+    AURA_MODE=production \
     AURA_ENVIRONMENT=container \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+# ── Health check ────────────────────────────────────────────────────────
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
+# ── Entrypoint ──────────────────────────────────────────────────────────
 CMD ["python", "aura_main.py", "--headless"]

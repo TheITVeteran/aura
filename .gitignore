@@ -157,3 +157,6 @@ tests/long_run_autonomy_state/
 tests/test_projects.db
 aura/knowledge/pending-chat-queue.jsonl
 .claude/worktrees/
+
+# Life trial sqlite files
+tests/life_trial/*.sqlite3

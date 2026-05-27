@@ -17,6 +17,9 @@ Writes:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import builtins
+import inspect
 import json
 import random
 import signal
@@ -29,6 +32,33 @@ from typing import Any, Dict, List, Optional
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Fallbacks for task tracker and storage gateway outside pytest conftest
+if not hasattr(builtins, "get_task_tracker"):
+    class _FallbackTaskTracker:
+        def create_task(self, awaitable, *args, **kwargs):
+            if not inspect.isawaitable(awaitable):
+                return awaitable
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(awaitable)
+            return loop.create_task(awaitable, name=kwargs.get("name"))
+    
+    def get_task_tracker():
+        return _FallbackTaskTracker()
+else:
+    get_task_tracker = builtins.get_task_tracker
+
+if not hasattr(builtins, "get_storage_gateway"):
+    class _FallbackStorageGateway:
+        def create_dir(self, path, *, cause: str = "default"):
+            Path(path).mkdir(parents=True, exist_ok=True)
+    
+    def get_storage_gateway():
+        return _FallbackStorageGateway()
+else:
+    get_storage_gateway = builtins.get_storage_gateway
 
 from core.autonomic.resource_stakes import ResourceStakesLedger  # noqa: E402
 from core.goals.emergent_goals import EmergentGoalEngine  # noqa: E402

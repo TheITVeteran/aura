@@ -1,13 +1,13 @@
 {
   "builder": "tools/build_provenance.py",
-  "generated_at": 1778214999.918463,
-  "git_commit": "aaf26f48790a5c40e8e16ec9ddbae2bc95c11b9b",
+  "generated_at": 1779848850.011574,
+  "git_commit": "f6abd61501dacd2d7313342b69ece9b9532abec9",
   "git_dirty": null,
   "git_status_short": "unavailable_without_git_subprocess",
   "materials": [
     {
       "path": "pyproject.toml",
-      "sha256": "66fc6dd2549027a84bd36f23aca5d86303cdb5b65200fedc4c0f6c3e15ee9702"
+      "sha256": "04120520f6abd44ed391e2026af0f725282c90b0016d9be7b17fe902cbdd8e6f"
     },
     {
       "path": "requirements/core.txt",
@@ -19,15 +19,15 @@
     },
     {
       "path": "Makefile",
-      "sha256": "4347870f0b3736acf4abf5487d505c38812d87bdcdf05af7991d394b06665a5f"
+      "sha256": "6c41b1b5720d2d60a18e951441664c08c0bcb8bee2ea5f3b1395d4fc7c48be7a"
     },
     {
       "path": ".github/workflows/enterprise-gate.yml",
-      "sha256": "9f5207c7a37de3b3c9232b2b45eee2fd618f10ac1d303ae7e3ab76a0ac89b04a"
+      "sha256": "3149361ff7d223a811de60d97380edfd7f0ae3765c9973fb2e70ca016bd1dda6"
     },
     {
       "path": ".github/workflows/production-readiness.yml",
-      "sha256": "a2d02078623991b24adb5a85ea0a1033cbd85292d5bcd6284d62d6e04ede91ad"
+      "sha256": "de096ba75b06327d09eb528c3c40b6bf10f7e3b5293f802438acdf5c6ee61089"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -35,11 +35,11 @@
     },
     {
       "path": "tools/aura_enterprise_gate.py",
-      "sha256": "124eb94451d1734d13b990998c57ed4383edb884119cd9945ef291e009894fcb"
+      "sha256": "1ae955abdd5761b0f00a4abe09b76a818933ec79fa7609447e2fa606baf240f0"
     },
     {
       "path": "tools/aura_production_readiness_gate.py",
-      "sha256": "6605fd9e933cff42a06ef1dc1d5f9dbf429fdeb35f188af496160b820937e28b"
+      "sha256": "d3c92ad09153ef5d6e928453b739342ab127c305f51a42c1b6f478518658b559"
     },
     {
       "path": "tools/security_scan.py",
@@ -47,11 +47,11 @@
     },
     {
       "path": "tools/proof_bundle.py",
-      "sha256": "3d39fa7e20ccea083989ad9e3e935c529b812a3925896ac37cefd620bb91b1af"
+      "sha256": "f4fc6a8c832c18407b8772a3efc99757a1efeea8312f57763bc5a54e213ecc9d"
     },
     {
       "path": "docs/PRODUCTION_READINESS_STANDARD.md",
-      "sha256": "0559be783da03fb08b5882a4087dbfb5aa8f97619cf20f46044d6f9d64ea8e19"
+      "sha256": "31810d467b32bdbf1d890378b2225bd5476cbfbba1268c384da12a84bf2df2f1"
     },
     {
       "path": "docs/DATA_RETENTION_DELETION_POLICY.md",
