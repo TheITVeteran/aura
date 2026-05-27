@@ -667,6 +667,16 @@ class ServiceContainer:
         with cls._lock:
             names = list(reversed(list(cls._services.keys())))
             descriptors = [(n, cls._services.get(n)) for n in names]
+            # Runtime hygiene observes threads/processes owned by other
+            # services. Stop it after owners have had their own shutdown hooks
+            # so it audits true leftovers instead of racing live subsystems.
+            runtime_hygiene_descriptors = [
+                item for item in descriptors if item[0] == "runtime_hygiene"
+            ]
+            if runtime_hygiene_descriptors:
+                descriptors = [
+                    item for item in descriptors if item[0] != "runtime_hygiene"
+                ] + runtime_hygiene_descriptors
 
         shutdown_started = time.monotonic()
         for name, desc in descriptors:

@@ -20,14 +20,17 @@ TMP_ROOT = Path(tempfile.gettempdir())
 @pytest.mark.asyncio
 async def test_task_tracker_loop_hygiene_observes_raw_asyncio_tasks():
     tracker = TaskTracker(name="RuntimeHygieneTest")
-    tracker.install_loop_hygiene(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
+    previous_factory = loop.get_task_factory()
+    loop.set_task_factory(None)
+    tracker.install_loop_hygiene(loop)
     release = asyncio.Event()
 
     async def _hold():
         await release.wait()
 
     try:
-        task = asyncio.create_task(_hold(), name="runtime_hygiene.implicit")
+        task = loop.create_task(_hold(), name="runtime_hygiene.implicit")
         await asyncio.sleep(0)
 
         stats = tracker.get_stats()
@@ -37,7 +40,8 @@ async def test_task_tracker_loop_hygiene_observes_raw_asyncio_tasks():
     finally:
         release.set()
         await asyncio.sleep(0)
-        tracker.restore_loop_hygiene()
+        tracker.restore_loop_hygiene(loop)
+        loop.set_task_factory(previous_factory)
 
 
 @pytest.mark.asyncio

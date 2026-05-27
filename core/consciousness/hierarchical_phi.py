@@ -18,11 +18,12 @@ HierarchicalPhi complements it by:
      found from the causal graph).  Each subsystem's φ is estimated
      independently.
 
-  3. IIT 4.0 EXCLUSION POSTULATE (AGGREGATION)
-     The conscious subject is the subsystem with maximum φ.  This
-     module picks the winner across {primary-32, primary-16, K
-     subsystems, mesh-exec-8}.  If the max lies in a proper subset,
-     that subset IS the complex and the larger system is not.
+  3. IIT 4.0-STYLE EXCLUSION POSTULATE (AGGREGATION)
+     This module picks the maximum-φ subsystem across {primary-32,
+     primary-16, K subsystems, mesh-exec-8}. If the max lies in a
+     proper subset, that subset is reported as the operational maximal
+     integration complex. This is not a consciousness, sentience, or
+     personhood proof.
 
   4. NULL-HYPOTHESIS / ADVERSARIAL SELF-CHECK
      On request, shuffles the transition history to destroy causal

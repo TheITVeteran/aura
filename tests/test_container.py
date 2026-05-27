@@ -3,6 +3,8 @@
 """
 Unit tests for core.container.ServiceContainer.
 """
+import asyncio
+
 import pytest
 from core.container import ServiceContainer, ServiceLifetime
 
@@ -109,6 +111,27 @@ class TestValidation:
         assert report["status"] == "degraded"
         assert report["sovereignty_seal"]["present"] is True
         assert report["sovereignty_seal"]["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_stops_runtime_hygiene_after_owned_services(self, clean_container):
+        """Runtime hygiene should audit after thread/process owners have stopped."""
+        order = []
+
+        class OwnedService:
+            def on_stop(self):
+                order.append("owned")
+
+        class RuntimeHygiene:
+            async def on_stop_async(self):
+                await asyncio.sleep(0)
+                order.append("runtime_hygiene")
+
+        clean_container.register_instance("runtime_hygiene", RuntimeHygiene())
+        clean_container.register_instance("owned_service", OwnedService())
+
+        await clean_container.shutdown()
+
+        assert order == ["owned", "runtime_hygiene"]
 
 
 ##

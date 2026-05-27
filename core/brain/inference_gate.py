@@ -2158,9 +2158,9 @@ class InferenceGate:
                     )
                     return self._strip_silence(cleaned)
                 if benchmark_integrity_context:
-                    logger.warning(
-                        "🛡️ %s produced malformed benchmark draft (%s, len=%d). "
-                        "Returning it for benchmark grading instead of tripping the live Cortex lane.",
+                    logger.info(
+                        "🛡️ %s produced non-conforming benchmark draft (%s, len=%d). "
+                        "Scoring it as-is for benchmark evidence without treating the live Cortex lane as failed.",
                         label,
                         ",".join(integrity.reasons) or "unknown",
                         len(cleaned),

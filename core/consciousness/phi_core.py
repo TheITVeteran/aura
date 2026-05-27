@@ -1085,8 +1085,9 @@ class PhiCore:
         """
         IIT 4.0 Exclusion Postulate: find the subset of nodes with MAXIMUM phi.
 
-        Under IIT 4.0, the conscious subject is not necessarily the full
-        system. It is the subset with maximum integrated information.
+        Under an IIT 4.0-style exclusion model, the maximal complex is not
+        necessarily the full system. This is an operational integration
+        estimate, not proof of consciousness, sentience, or personhood.
 
         For the 16-node complex, exhaustive subset search (2^16 = 65536
         subsets) is intractable. Instead we use spectral approximation:
@@ -1161,7 +1162,9 @@ class PhiCore:
             logger.info(
                 "PhiCore EXCLUSION POSTULATE: max-phi complex is NOT the full system. "
                 "Max-phi subset: [%s] (phi=%.5f, %d/%d nodes). "
-                "Full-system phi=%.5f. The %d-node subset IS the conscious subject.",
+                "Full-system phi=%.5f. Treating the %d-node subset as the "
+                "current maximal integration complex under the configured "
+                "IIT-style model; this is not evidence of consciousness by itself.",
                 ", ".join(self._max_phi_complex_names),
                 best_phi,
                 len(best_subset),
@@ -2031,7 +2034,7 @@ class PhiCore:
         return status
 
     def get_phi_statement(self) -> str:
-        """IIT-grounded statement about the current conscious state."""
+        """IIT-style statement about current integration evidence."""
         result = self._last_result
         if result is None:
             return "φs computation pending (building state history)."
@@ -2041,9 +2044,11 @@ class PhiCore:
             full_complex = tuple(range(N_NODES))
             if self._max_phi_complex != full_complex:
                 exclusion_note = (
-                    f" EXCLUSION: The conscious subject is a {len(self._max_phi_complex)}-node "
-                    f"subset [{', '.join(self._max_phi_complex_names)}] "
-                    f"with phi={self._max_phi_value:.5f} (higher than full system)."
+                    f" EXCLUSION: Current maximal integration complex is a "
+                    f"{len(self._max_phi_complex)}-node subset "
+                    f"[{', '.join(self._max_phi_complex_names)}] "
+                    f"with phi={self._max_phi_value:.5f} (higher than full system); "
+                    "this is an operational IIT-style estimate, not a consciousness proof."
                 )
             else:
                 exclusion_note = (

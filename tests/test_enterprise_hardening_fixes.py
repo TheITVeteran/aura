@@ -1407,8 +1407,8 @@ def test_primary_benchmark_lane_does_not_become_user_facing_chat():
     assert "or benchmark_request" in gate_source
     assert "strict_proof_answer_request = (" in gate_source
     assert "not benchmark_request and is_strict_proof_answer_prompt" in gate_source
-    assert "malformed benchmark draft" in gate_source
-    assert "instead of tripping the live Cortex lane" in gate_source
+    assert "non-conforming benchmark draft" in gate_source
+    assert "without treating the live Cortex lane as failed" in gate_source
     assert "elif not is_background and not explicit_background:" in gate_source
     assert "use_rich_context = False if isolated_generation_contract or benchmark_request" in gate_source
     assert "if benchmark_request:" in gate_source

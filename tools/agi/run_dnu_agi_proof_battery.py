@@ -416,8 +416,8 @@ async def shutdown_proof_runtime(orchestrator) -> None:
 
     request_shutdown("dnu_agi_proof_battery_complete")
     orchestrator_shutdown_timeout_s = max(
-        20.0,
-        float(os.environ.get("AURA_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S", "24.0") or 24.0),
+        60.0,
+        float(os.environ.get("AURA_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S", "60.0") or 60.0),
     )
 
     async def _bounded_call(label: str, callback, *, timeout: float = 8.0) -> None:
