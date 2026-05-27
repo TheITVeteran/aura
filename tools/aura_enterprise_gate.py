@@ -608,13 +608,21 @@ def run_gate(
 
 
 def make_baseline(report: GateReport) -> dict:
-    payload = report.to_json_dict()
+    inventory_findings = [
+        finding for finding in report.findings if finding.kind != "baseline_regression"
+    ]
+    counts: dict[str, int] = {}
+    for finding in inventory_findings:
+        counts[finding.kind] = counts.get(finding.kind, 0) + 1
+    high_or_critical_count = sum(
+        1 for finding in inventory_findings if finding.severity in {"high", "critical"}
+    )
     return {
         "description": "Aura enterprise gate debt baseline. Reduce counts over time; do not raise them.",
-        "generated_at_unix": payload["generated_at_unix"],
-        "python_files": payload["python_files"],
-        "max_counts": payload["counts"],
-        "max_high_or_critical_count": payload["high_or_critical_count"],
+        "generated_at_unix": report.generated_at_unix,
+        "python_files": report.python_files,
+        "max_counts": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "max_high_or_critical_count": high_or_critical_count,
     }
 
 

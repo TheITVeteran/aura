@@ -40,6 +40,18 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("Aura.CognitiveLedger")
 
+_SQLITE_CORRUPTION_MARKERS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "database schema is corrupt",
+    "malformed database",
+)
+
+
+def _is_sqlite_corruption(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _SQLITE_CORRUPTION_MARKERS)
+
 
 class TransitionType(str, Enum):
     PERCEPT = "percept"
@@ -167,7 +179,7 @@ class CognitiveLedger:
             from core.config import config
             self._db_path = config.paths.data_dir / "memory" / "cognitive_ledger.db"
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         self._transition_count = 0
         self._last_transition_id: Optional[str] = None
@@ -192,9 +204,62 @@ class CognitiveLedger:
                 self._transition_count, self._db_path,
             )
         except (sqlite3.Error, OSError) as e:
+            if _is_sqlite_corruption(e) and self.recover_storage(e):
+                return
             record_degradation('cognitive_ledger', e)
             logger.error("CognitiveLedger initialization failed: %s", e)
             self._conn = None
+
+    def recover_storage(self, reason: BaseException | str) -> bool:
+        """Quarantine a corrupt ledger database and rebuild an empty ledger.
+
+        The ledger is append-only evidence. If SQLite reports corruption, the
+        safe production behavior is to preserve the damaged files for forensics
+        and bring a fresh ledger online instead of crashing supervision.
+        """
+        timestamp = int(time.time())
+        quarantine_dir = self._db_path.parent / "quarantine"
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+        reason_label = type(reason).__name__ if isinstance(reason, BaseException) else "reason"
+
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except sqlite3.Error as exc:
+                    logger.debug("CognitiveLedger: close during recovery failed: %s", exc)
+                self._conn = None
+
+            moved = []
+            for source in (
+                self._db_path,
+                Path(f"{self._db_path}-wal"),
+                Path(f"{self._db_path}-shm"),
+            ):
+                if not source.exists():
+                    continue
+                target = quarantine_dir / f"{source.name}.corrupt.{timestamp}"
+                try:
+                    source.replace(target)
+                    moved.append(str(target))
+                except OSError as exc:
+                    logger.warning("CognitiveLedger: could not quarantine corrupt file %s: %s", source, exc)
+
+            self._transition_count = 0
+            self._last_transition_id = None
+
+        logger.warning(
+            "CognitiveLedger recovered from corrupt storage (%s). Quarantined files: %s",
+            reason_label,
+            moved or "none",
+        )
+        try:
+            self._initialize()
+        except (sqlite3.Error, OSError) as exc:
+            record_degradation("cognitive_ledger", exc)
+            logger.error("CognitiveLedger recovery reinitialize failed: %s", exc)
+            self._conn = None
+        return self._conn is not None
 
     # ── Core operations ──────────────────────────────────────────────────
 

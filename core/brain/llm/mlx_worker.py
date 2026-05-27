@@ -88,9 +88,16 @@ def _sanitize_telemetry_leakage(text: str) -> str | None:
     if not text:
         return text
     
-    # 1) If the text contains more than 15 forward slashes not in a URL, it's a telemetry path hallucination.
-    if text.count('/') > 15 and "http" not in text:
-        return None
+    # 1) Reject telemetry-path walls without blocking legitimate code, regex,
+    # filesystem, or proof output. The old slash-count heuristic rejected any
+    # answer with more than 15 "/" characters, which is common in live coding
+    # tasks and path-aware proof/eval runs.
+    slash_count = text.count("/")
+    if slash_count > 30 and "http" not in text.lower():
+        path_like = re.findall(r"(?:/[A-Za-z0-9._-]+){3,}", text)
+        path_chars = sum(len(path) for path in path_like)
+        if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
+            return None
             
     # 3) Extreme numeric sequences. If a single word/number has more than 20 digits, it's a hallucination.
     if re.search(r'\d{20,}', text):
@@ -121,19 +128,22 @@ def _strip_leading_chatml_prefix(text: str) -> str:
 
 
 _ROLE_CONTINUATION_RE = re.compile(
-    r"(?is)(?<=\S)(?:\s+|<\|im_end\|>\s*|<\|im_start\|>\s*)"
-    r"(?:User|Human|System|Assistant)\s*[:：]?.*$"
+    r"(?is)(?:<\|im_end\|>\s*)?<\|im_start\|>\s*"
+    r"(?:user|human|system|assistant)\b.*$"
+    r"|(?:^|\n)\s*(?:User|Human|System|Assistant)\s*[:：].*$"
 )
 _LEADING_GENERATION_ROLE_RE = re.compile(
-    r"^\s*(?:User|Human|Assistant|Aura|System)\s*[:：]?\s*",
+    r"^\s*(?:<\|im_start\|>\s*)?(?:User|Human|Assistant|Aura|System)\s*[:：]\s*",
     re.IGNORECASE,
 )
 _USER_CONTINUATION_NO_COLON_RE = re.compile(
-    r"(?is)(?<=\S)\s+(?:User|Human)\s+"
+    r"(?is)(?:^|\n)\s*(?:User|Human)\s+"
     r"(?=(?:what|who|when|where|why|how|can|could|would|if|i\b|you\b|"
     r"yes\b|no\b|tell\b|translate\b|name\b|write\b|hello\b|hi\b|[\"'0-9])).*$"
 )
 _ROLE_SUFFIX_RE = re.compile(r"(?is)_user\b.*$")
+_STRICT_ANSWER_ENVELOPE_RE = re.compile(r"(?is)<answer>\s*(.*?)\s*</answer>")
+_CHAT_CONTROL_TOKEN_RE = re.compile(r"(?is)<\|im_(?:start|end)\|>\s*(?:assistant|user|system)?\s*")
 
 
 def _truncate_role_continuation(text: str) -> tuple[str, bool]:
@@ -149,6 +159,149 @@ def _truncate_role_continuation(text: str) -> tuple[str, bool]:
     cleaned = _USER_CONTINUATION_NO_COLON_RE.sub("", cleaned)
     cleaned = _ROLE_SUFFIX_RE.sub("", cleaned)
     return cleaned.strip(), cleaned != original
+
+
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, list):
+        fragments: list[str] = []
+        for fragment in content:
+            if isinstance(fragment, dict):
+                if fragment.get("type") == "text":
+                    fragments.append(str(fragment.get("text") or ""))
+                continue
+            fragments.append(str(fragment))
+        return "".join(fragments)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _build_strict_answer_prompt(messages: Any, fallback_prompt: Any) -> str:
+    """Build a compact prompt for strict proof answer contracts.
+
+    Chat templates can cause some local chat models to emit an immediate
+    ChatML stop token for very short proof prompts when the assistant turn is
+    blank. Strict answer requests are constrained chat turns, so render the
+    native ChatML shape manually and prefill only the envelope prefix. The model
+    still supplies the answer content.
+    """
+    system_parts: list[str] = []
+    user_parts: list[str] = []
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "user").lower()
+            content = _message_content_to_text(message.get("content")).strip()
+            if not content:
+                continue
+            if role == "system":
+                system_parts.append(content)
+            else:
+                user_parts.append(content)
+    if not user_parts and fallback_prompt is not None:
+        user_parts.append(str(fallback_prompt))
+
+    system_text = "\n".join(system_parts).strip() or (
+        "Return the final answer now. Output exactly one XML envelope and no "
+        "other text. Continue after the prefix with non-empty answer content."
+    )
+    user_text = "\n".join(user_parts).strip()
+    return (
+        f"<|im_start|>system\n{system_text}\n<|im_end|>\n"
+        f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
+        "<|im_start|>assistant\n<answer>"
+    )
+
+
+def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
+    """Build a stable manual prompt for non-atomic proof/eval answers.
+
+    Some local chat-template renderings can terminate a sealed evaluation turn
+    after a single fragment by drifting into the next role. Proof/evaluation
+    turns need the same live model lane, but with a deterministic assistant
+    prefill that makes the expected shape explicit.
+    """
+
+    system_parts: list[str] = []
+    user_parts: list[str] = []
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "user").lower()
+            content = _message_content_to_text(message.get("content")).strip()
+            if not content:
+                continue
+            if role == "system":
+                system_parts.append(content)
+            else:
+                user_parts.append(content)
+    if not user_parts and fallback_prompt is not None:
+        user_parts.append(str(fallback_prompt))
+
+    system_text = "\n".join(system_parts).strip() or (
+        "Answer the sealed proof/evaluation task directly and completely."
+    )
+    user_text = "\n".join(user_parts).strip()
+    return (
+        f"<|im_start|>system\n{system_text}\n"
+        "The assistant response must be a complete final answer in 3-6 complete sentences "
+        "for explanatory, planning, or analysis tasks. Do not emit role labels or start a "
+        "new user turn. Do not use a numbered list unless the task explicitly "
+        "requires ordered steps. Finish after the final sentence.\n<|im_end|>\n"
+        f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
+        "<|im_start|>assistant\nComplete answer:\n"
+    )
+
+
+def _proof_evaluation_fragment_incomplete(text: str) -> bool:
+    """Return True when a proof/eval generation is only a fragment."""
+
+    stripped = str(text or "").strip()
+    if len(stripped) < 80:
+        return True
+    words = re.findall(r"[A-Za-z0-9_'-]+", stripped)
+    if len(words) < 18:
+        return True
+    if stripped[-1] not in ".!?)]}>\"'":
+        return True
+    if re.search(
+        r"\b(?:a|an|the|of|to|for|with|between|into|from|that|which|any|and|or|but)$",
+        stripped,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> str:
+    """Normalize strict proof output without changing the model-derived answer."""
+    cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
+    cleaned = _strip_leading_chatml_prefix(cleaned).strip()
+    match = _STRICT_ANSWER_ENVELOPE_RE.search(cleaned)
+    if match:
+        answer = match.group(1).strip()
+        return f"<answer>{answer}</answer>" if answer else ""
+
+    if not envelope_prefixed:
+        return cleaned
+
+    cleaned = re.sub(r"(?is)^\s*<answer>\s*", "", cleaned).strip()
+    if "</answer>" in cleaned:
+        cleaned = cleaned.split("</answer>", 1)[0].strip()
+    for marker in (
+        "<|im_end|>",
+        "<|im_start|>",
+        "User:",
+        "Human:",
+        "Assistant:",
+        "Aura:",
+    ):
+        idx = cleaned.find(marker)
+        if idx >= 0:
+            cleaned = cleaned[:idx].strip()
+    return f"<answer>{cleaned}</answer>" if cleaned else ""
 
 
 def _should_emit_generation_progress(
@@ -205,7 +358,7 @@ class IPCWriterThread(threading.Thread):
                     # Never silently drop init/generation/error messages; bypass
                     # the local buffer when it is saturated with telemetry.
                     self.mp_queue.put(item, block=True, timeout=5.0)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
+                except (queue.Full, RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                     _record_mlx_degradation(
                         _exc,
                         action="dropped essential IPC message after parent queue write failed",
@@ -228,9 +381,19 @@ class IPCWriterThread(threading.Thread):
                 self.mp_queue.put(item, block=True, timeout=5.0)
             except queue.Empty:
                 continue
+            except queue.Full as exc:
+                # Queue saturated by parent-side backpressure. Drop telemetry
+                # first; report if an essential message also could not drain.
+                if not self._stop_event.is_set() and self._is_essential(item):
+                    _record_mlx_degradation(
+                        exc,
+                        action="dropped essential IPC message after parent queue stayed full",
+                        severity="critical",
+                    )
+                continue
             except (OSError, ConnectionError, TimeoutError):
-                # Queue full or broken — drop the item and continue rather
-                # than blocking the entire IPC pipeline.
+                # Queue broken or unavailable — drop the item and continue
+                # rather than blocking the entire IPC pipeline.
                 if not self._stop_event.is_set():
                     continue
                 break
@@ -854,9 +1017,30 @@ def _mlx_worker_loop(
                 prompt = job.get("prompt")
                 messages = job.get("messages")
                 tools = job.get("tools")
-                
+                strict_answer_contract = bool(job.get("strict_answer_contract", False))
+                proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
+                # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
+                disable_prompt_cache = (
+                    bool(job.get("disable_prompt_cache", False))
+                    or strict_answer_contract
+                    or proof_evaluation_contract
+                )
+                clear_prompt_cache = (
+                    bool(job.get("clear_prompt_cache", False))
+                    or strict_answer_contract
+                    or proof_evaluation_contract
+                )
+                if clear_prompt_cache and prompt_cache_lru is not None:
+                    prompt_cache_lru.clear()
+
+                strict_envelope_prefixed = False
                 # [FRONTIER UPGRADE] Native Tool Templates
-                if messages and hasattr(tokenizer, "apply_chat_template"):
+                if strict_answer_contract:
+                    prompt = _build_strict_answer_prompt(messages, prompt)
+                    strict_envelope_prefixed = True
+                elif proof_evaluation_contract:
+                    prompt = _build_proof_evaluation_prompt(messages, prompt)
+                elif messages and hasattr(tokenizer, "apply_chat_template"):
                     try:
                         logger.info("🎯 [WORKER] Rendering native chat/tool template.")
                         prompt = tokenizer.apply_chat_template(
@@ -875,6 +1059,18 @@ def _mlx_worker_loop(
 
                 temp = job.get("temp", 0.7)
                 top_p = job.get("top_p", 0.9)
+                min_p = job.get("min_p", 0.05)
+                repetition_penalty = job.get("repetition_penalty", 1.15)
+                if strict_answer_contract:
+                    temp = 0.0
+                    top_p = 1.0
+                    min_p = 0.0
+                    repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.12)
+                elif proof_evaluation_contract:
+                    temp = min(_safe_float(temp, 0.1), 0.15)
+                    top_p = min(_safe_float(top_p, 0.9), 0.9)
+                    min_p = min(_safe_float(min_p, 0.05), 0.05)
+                    repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.08)
                 try:
                     max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
                 except (TypeError, ValueError):
@@ -894,8 +1090,6 @@ def _mlx_worker_loop(
                 # halved. 1.2 is still well below the 1.5+ range that hurts
                 # natural prose; targets the token-level "something is shifting
                 # / something is moving" loops directly.
-                min_p = job.get("min_p", 0.05)
-                repetition_penalty = job.get("repetition_penalty", 1.15)
                 kwargs = {"max_tokens": max_tokens, "temperature": temp, "top_p": top_p, "repetition_penalty": repetition_penalty}
                 if make_sampler:
                     sampler_kwargs = {"temp": temp, "top_p": top_p}
@@ -994,7 +1188,7 @@ def _mlx_worker_loop(
 
                         # [v11.5 HARDENING] Internal Worker Retries for Structured Leaks & Loops
                         # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
-                        max_internal_retries = 2
+                        max_internal_retries = 0 if proof_evaluation_contract else 2
                         
                         for internal_attempt in range(max_internal_retries + 1):
                             watchdog.start_job()
@@ -1044,7 +1238,7 @@ def _mlx_worker_loop(
                                 model_key = id(model)
                                 cache = None
                                 remaining_tokens = tokens
-                                if prompt_cache_lru is not None:
+                                if prompt_cache_lru is not None and not disable_prompt_cache:
                                     cache, remaining_tokens = prompt_cache_lru.fetch_nearest_cache(
                                         model_key, tokens,
                                         can_trim_prompt_cache=_can_trim,
@@ -1090,6 +1284,7 @@ def _mlx_worker_loop(
                                     # Snag the prompt cache from the response if supported to save for next turn
                                     if (
                                         prompt_cache_lru is not None
+                                        and not disable_prompt_cache
                                         and hasattr(response, "prompt_cache")
                                         and response.prompt_cache is not None
                                     ):
@@ -1188,6 +1383,26 @@ def _mlx_worker_loop(
 
                                 response_text = current_response
                                 total_generated_tokens = token_count
+
+                                if proof_evaluation_contract and _proof_evaluation_fragment_incomplete(response_text):
+                                    if internal_attempt < max_internal_retries:
+                                        logger.warning(
+                                            "⚠️ [WORKER] Incomplete proof/evaluation response on attempt %s "
+                                            "(tokens=%d, chars=%d, role_stop=%s). Retrying with stricter prompt.",
+                                            internal_attempt + 1,
+                                            token_count,
+                                            len(response_text or ""),
+                                            role_continuation_hit,
+                                        )
+                                        if prompt_cache_lru is not None:
+                                            prompt_cache_lru.clear()
+                                        if mx and device != "cpu":
+                                            _clear_mlx_cache(mx)
+                                        _prepare_clean_retry_kwargs(kwargs, structured=False)
+                                        continue
+                                    logger.warning(
+                                        "🚨 [WORKER] Proof/evaluation response remained incomplete after retries."
+                                    )
                                 
                                 if sentinel_loop_aborted:
                                     if internal_attempt < max_internal_retries:
@@ -1226,11 +1441,33 @@ def _mlx_worker_loop(
                                     logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
                                     response_text = ""
                                     break
+                                    # ipc_writer.put({
 
                                 response_text = sanitized_text
 
-                                if response_text.strip() or not schema:
+                                if strict_answer_contract:
+                                    response_text = _normalize_strict_answer_response(
+                                        response_text,
+                                        envelope_prefixed=strict_envelope_prefixed,
+                                    )
+
+                                if response_text.strip() or (not schema and not strict_answer_contract):
                                     break # Success or not a structured task
+
+                                if strict_answer_contract:
+                                    if internal_attempt < max_internal_retries:
+                                        logger.warning(
+                                            "⚠️ [WORKER] Empty strict answer response on attempt %s. Retrying...",
+                                            internal_attempt + 1,
+                                        )
+                                        if prompt_cache_lru is not None:
+                                            prompt_cache_lru.clear()
+                                        if mx and device != "cpu":
+                                            _clear_mlx_cache(mx)
+                                        _prepare_clean_retry_kwargs(kwargs, structured=True)
+                                        continue
+                                    logger.warning("🚨 [WORKER] Strict answer contract exhausted internal retries.")
+                                    break
                                 
                                 logger.warning("⚠️ [WORKER] Empty structured response on attempt %s. Retrying...", internal_attempt + 1)
                             finally:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time
@@ -67,6 +68,47 @@ def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
 
     assert background_activity_reason(orch) == "boot_grace_42s"
+
+
+def test_background_policy_defers_work_during_proof_runs(monkeypatch):
+    from core.runtime.background_policy import background_activity_reason
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+
+    assert background_activity_reason(None, allow_no_user_anchor=True) == "proof_run_active"
+
+
+def test_dream_coordinator_defers_dream_work_during_proof_runs(monkeypatch):
+    from core.maintenance.dream_coordinator import DreamCoordinator
+
+    async def scenario():
+        ran = False
+
+        async def dream_job():
+            nonlocal ran
+            ran = True
+
+        monkeypatch.setenv("AURA_PROOF_RUN", "1")
+        coordinator = DreamCoordinator()
+
+        result = await coordinator.run_if_due("biological_sleep", dream_job, 0)
+
+        assert result is False
+        assert ran is False
+
+    asyncio.run(scenario())
+
+
+def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
+    from core.ops.hypervisor import Hypervisor
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    hypervisor = Hypervisor(lag_threshold_s=0.5)
+
+    threshold, reason = hypervisor._lag_threshold_for_context()
+
+    assert threshold >= 5.0
+    assert reason == "proof_run_active"
 
 
 def test_sensory_motor_idle_volition_respects_background_boot_grace(monkeypatch):

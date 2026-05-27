@@ -77,3 +77,26 @@ def test_somatic_throttle_critical():
         assert adjusted["max_tokens"] == 128
         assert adjusted["temperature"] == 0.15
         assert adjusted["recurrent_lane_depth"] == 0.2
+
+
+def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical():
+    with (
+        patch("core.brain.llm.somatic_throttle.resolve_affect_engine") as mock_resolve,
+        patch("psutil.cpu_percent", return_value=12.0),
+        patch("psutil.virtual_memory") as mock_vm,
+    ):
+        mock_affect = MagicMock()
+        mock_affect.current = SimpleNamespace(arousal=0.97)
+        mock_resolve.return_value = mock_affect
+
+        mock_vm_obj = MagicMock()
+        mock_vm_obj.percent = 60.0
+        mock_vm.return_value = mock_vm_obj
+
+        sentinel = SomaticComputeSentinel()
+        opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
+        adjusted = sentinel.adjust_generation_options(opts.copy())
+
+        assert adjusted["max_tokens"] == 256
+        assert adjusted["temperature"] == 0.3
+        assert adjusted["recurrent_depth"] == 0.4

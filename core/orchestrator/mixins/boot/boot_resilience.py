@@ -794,8 +794,15 @@ class BootResilienceMixin:
         container.register_instance("health_monitor", self.health_monitor)
 
         if hasattr(self, "swarm"):
-            container.register_instance("agent_delegator", self.swarm)
+            container.register_instance("swarm_protocol", self.swarm)
             container.register_instance("swarm", self.swarm)  # Legacy alias
+            delegator = container.get("agent_delegator", default=None)
+            if delegator is None or delegator is self.swarm:
+                from core.collective.delegator import AgentDelegator
+
+                delegator = AgentDelegator(orchestrator=self)
+                container.register_instance("agent_delegator", delegator)
+            self.agent_delegator = delegator
 
         if getattr(self, "vector_memory", None):
             container.register_instance("vector_memory", self.vector_memory)

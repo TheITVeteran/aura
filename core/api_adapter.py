@@ -101,9 +101,10 @@ class APIAdapter:
         """Initialize clients from environment / Aura config."""
         # ISSUE #29 - Create shared HTTP session to prevent connection pooling exhaustion
         import aiohttp
-        self._http_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=100, keepalive_timeout=60)
-        )
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(limit=100, keepalive_timeout=60)
+            )
 
         # Load config from Aura's config system
         gemini_key    = None
@@ -172,10 +173,17 @@ class APIAdapter:
             logger.error("❌ [BOOT] AgencyFacade registration error: %s", e)
 
     async def stop(self):
-        if self._http_session:
-            await self._http_session.close()
+        if self._http_session and not self._http_session.closed:
+            try:
+                await self._http_session.close()
+            finally:
+                self._http_session = None
         logger.info("APIAdapter stopped. Calls: %s | Tokens: %d",
                     self._call_count, self._total_tokens)
+
+    async def on_stop_async(self) -> None:
+        """ServiceContainer shutdown hook for the shared HTTP session."""
+        await self.stop()
 
     # ─── Main API ────────────────────────────────────────────────────────────
 

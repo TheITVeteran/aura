@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.phases.affect_update import AffectUpdatePhase
+from core.phases.cognitive_integration_phase import CognitiveIntegrationPhase
 from core.phases.cognitive_routing import CognitiveRoutingPhase
 from core.phases.consciousness_phase import ConsciousnessPhase
 from core.phases.executive_closure import ExecutiveClosurePhase
@@ -31,6 +32,11 @@ _LEGACY_PIPELINE_PREFIX: tuple[PhaseSpec, ...] = (
     PhaseSpec("sensory_ingestion", "sensory_ingestion_phase", SensoryIngestionPhase),
     PhaseSpec("memory_retrieval", "memory_retrieval_phase", MemoryRetrievalPhase),
     PhaseSpec("affect_update", "affect_phase", AffectUpdatePhase),
+    PhaseSpec(
+        "cognitive_integration",
+        "cognitive_integration_phase",
+        CognitiveIntegrationPhase,
+    ),
 )
 
 _LEGACY_PIPELINE_SUFFIX: tuple[PhaseSpec, ...] = (

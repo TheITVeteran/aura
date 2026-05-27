@@ -92,6 +92,10 @@ class MetricsCollector:
     def set_gauge(self, name: str, value: float) -> None:
         self._custom_gauges[name] = value
 
+    def gauge(self, name: str, value: float) -> None:
+        """Compatibility alias for runtime services that emit gauge samples."""
+        self.set_gauge(name, value)
+
     def increment_counter(self, name: str, amount: int = 1) -> None:
         self._custom_counters[name] = self._custom_counters.get(name, 0) + amount
 

@@ -1165,6 +1165,12 @@ class CapabilityEngine(AuraBaseModule):
                 if re.search(pattern, msg):
                     triggered.append(name)
                     break
+        if self._looks_like_reasoning_time_problem(msg):
+            triggered = [
+                name
+                for name in triggered
+                if self.resolve_skill_name(name) != "clock"
+            ]
 
         def _promote(skill_name: str) -> None:
             if skill_name not in self.skills:
@@ -1196,6 +1202,42 @@ class CapabilityEngine(AuraBaseModule):
         if re.search(r"\bresearch\s+(?:about|on)\b", msg) and not skip_web_search:
             _promote("web_search")
         return triggered
+
+    @staticmethod
+    def _looks_like_reasoning_time_problem(message: str) -> bool:
+        """Return True for time/clock wording used as a reasoning task, not live time I/O."""
+        msg = normalize_memory_intent_text(message)
+        if not msg:
+            return False
+        realtime_markers = (
+            "what time is it",
+            "what's the time",
+            "current time",
+            "current date",
+            "today's date",
+            "what day is it",
+            "my timezone",
+            "current timezone",
+        )
+        if any(marker in msg for marker in realtime_markers):
+            return False
+        reasoning_markers = (
+            "<answer>",
+            "solve",
+            "calculate",
+            "compute",
+            "word problem",
+            "logic puzzle",
+            "riddle",
+            "final answer",
+            "how many seconds",
+            "how many minutes",
+            "how many hours",
+            "clock strikes",
+            "clock strike",
+            "take to strike",
+        )
+        return any(marker in msg for marker in reasoning_markers)
 
     def _rank_tool_candidates(
         self,
@@ -1257,7 +1299,10 @@ class CapabilityEngine(AuraBaseModule):
                 ("web_search", "search_web", "free_search", "grounded_search"),
             ),
             (("remember", "recall", "memory", "future sessions"), ("memory_ops", "memory_sync")),
-            (("time", "clock", "date"), ("clock",)),
+            (
+                ("time", "clock", "date"),
+                tuple() if self._looks_like_reasoning_time_problem(objective_lower) else ("clock",),
+            ),
             (("browser", "website", "navigate", "open url", "webpage"), ("sovereign_browser",)),
             (
                 ("open tab", "new tab", "on my computer", "on my screen"),
@@ -1306,10 +1351,16 @@ class CapabilityEngine(AuraBaseModule):
             _push(name)
 
         if not ordered:
-            for fallback_name in ("web_search", "memory_ops", "clock"):
+            fallback_names = (
+                ("web_search", "memory_ops")
+                if self._looks_like_reasoning_time_problem(objective_lower)
+                else ("web_search", "memory_ops", "clock")
+            )
+            for fallback_name in fallback_names:
                 _push(fallback_name)
 
         if len(ordered) < max_tools:
+            skip_realtime_clock = self._looks_like_reasoning_time_problem(objective_lower)
             for name, meta in sorted(
                 self.skills.items(),
                 key=lambda item: (item[1].metabolic_cost, item[0]),
@@ -1317,6 +1368,8 @@ class CapabilityEngine(AuraBaseModule):
                 if len(ordered) >= max_tools:
                     break
                 if name in ordered:
+                    continue
+                if skip_realtime_clock and self.resolve_skill_name(name) == "clock":
                     continue
                 if getattr(meta, "metabolic_cost", 1) > 2:
                     continue
@@ -1458,10 +1511,10 @@ class CapabilityEngine(AuraBaseModule):
                                     module_path=f"{module_prefix}.{filename[:-3]}",
                                     class_name=node.name,
                                 )
-                except OSError as e:
+                except (OSError, SyntaxError, UnicodeDecodeError) as e:
                     _record_capability_degradation(
                         e,
-                        action="skipped unreadable skill file during AST discovery",
+                        action="skipped unreadable or invalid skill file during AST discovery",
                     )
                     self.logger.error("AST fail for %s: %s", filename, e)
 
@@ -1519,8 +1572,11 @@ class CapabilityEngine(AuraBaseModule):
         self.skills[skill_name] = SkillMetadata(
             name=skill_name,
             description=description,
+            skill_class=skill_class,
             requirements=requirements,
             input_model=input_model,
+            module_path=getattr(skill_class, "__module__", None),
+            class_name=getattr(skill_class, "__name__", None),
             instance=instance,
             metabolic_cost=metabolic_cost,
             is_core_personality=is_core,
@@ -1543,10 +1599,11 @@ class CapabilityEngine(AuraBaseModule):
             return
 
         import ast
+        import textwrap
 
         try:
             # Basic name/import validation
-            source = inspect.getsource(meta.instance.__class__)
+            source = textwrap.dedent(inspect.getsource(meta.instance.__class__))
             tree = ast.parse(source)
             defined_names = set()
             accessed_names = set()

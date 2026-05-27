@@ -68,6 +68,18 @@ def test_keep_awake_stop_terminates_active_assertion():
     assert process.kill_calls == 0
 
 
+def test_keep_awake_on_stop_releases_active_assertion():
+    process = _Process(("caffeinate", "-i", "-m", "-s"))
+    controller = _darwin_controller(lambda command: process)
+
+    controller.start()
+    controller.on_stop()
+
+    assert controller.is_active() is False
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 0
+
+
 def test_keep_awake_stop_kills_after_timeout():
     process = _Process(("caffeinate", "-i", "-m", "-s"), wait_timeout_once=True)
     controller = _darwin_controller(lambda command: process)

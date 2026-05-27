@@ -1,9 +1,15 @@
+import asyncio
 import logging
 import re
 import time
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.proof_policy import (
+    is_strict_proof_answer_prompt,
+    proof_model_tier,
+    proof_run_active,
+)
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
     looks_like_multi_step_skill_request,
@@ -230,9 +236,39 @@ class CognitiveRoutingPhase(BasePhase):
                 extra={"origin": routing_origin, "mode": mode},
             )
 
-    def _spawn_parallel_branch(self, input_text: str, memory_slice: str) -> None:
+    def _spawn_parallel_branch(
+        self,
+        input_text: str,
+        memory_slice: str,
+        *,
+        proof_turn: bool = False,
+        strict_proof_answer_request: bool = False,
+    ) -> None:
+        if proof_turn or strict_proof_answer_request:
+            logger.info(
+                "🧭 Routing: skipping parallel branch for proof/evaluation turn to keep the foreground model lane exclusive."
+            )
+            return
+
+        async def _deferred_branch():
+            # Let the foreground response phase claim the MLX foreground lane
+            # before optional background hypotheses start. This preserves normal
+            # deliberative richness without making user-facing generation wait
+            # behind speculative background work.
+            await asyncio.sleep(0.75)
+            try:
+                return await self.parallel_stream.branch(input_text, memory_slice)
+            except _ROUTING_RECOVERABLE_ERRORS as exc:
+                _record_routing_degradation(
+                    exc,
+                    action="recorded parallel thought branch failure without altering foreground route",
+                    severity="warning",
+                    stage="parallel_branch.run",
+                )
+                return []
+
         try:
-            branch = self.parallel_stream.branch(input_text, memory_slice)
+            branch = _deferred_branch()
             task = get_task_tracker().create_task(branch, name="cognitive_routing.parallel_branch")
 
             def _observe(done_task):
@@ -524,8 +560,7 @@ class CognitiveRoutingPhase(BasePhase):
             cognitive_mode = CognitiveMode.REACTIVE
 
         # Force DELIBERATE mode for AGI test battery runs (origin "test" or battery env vars active)
-        import os
-        if routing_origin == "test" or os.environ.get("AURA_AGI_MAX_TASKS") or os.environ.get("AURA_TESTING"):
+        if proof_run_active(origin=routing_origin):
             logger.info("🧭 Routing: AGI Battery/Test mode detected. Forcing DELIBERATE mode.")
             cognitive_mode = CognitiveMode.DELIBERATE
 
@@ -619,7 +654,15 @@ class CognitiveRoutingPhase(BasePhase):
 
         # 5. Parallel Thought Stream for Deliberate Reasoning
         if cognitive_mode == CognitiveMode.DELIBERATE:
-            self._spawn_parallel_branch(input_text, str(state.cognition.working_memory[-2:]))
+            self._spawn_parallel_branch(
+                input_text,
+                str(state.cognition.working_memory[-2:]),
+                proof_turn=proof_run_active(origin=routing_origin),
+                strict_proof_answer_request=is_strict_proof_answer_prompt(
+                    input_text,
+                    origin=routing_origin,
+                ),
+            )
 
         return new_state
 
@@ -640,6 +683,10 @@ class CognitiveRoutingPhase(BasePhase):
         # Autonomous background tasks → brainstem (7B) to save resources
         if is_autonomous:
             return "tertiary"
+
+        origin = str(getattr(state.cognition, "current_origin", "") or "").lower()
+        if is_strict_proof_answer_prompt(input_text, origin=origin):
+            return proof_model_tier()
 
         # All user-facing work starts on the 32B brain by default.
         return "primary"

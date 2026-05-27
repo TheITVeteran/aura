@@ -63,7 +63,11 @@ class AppleSiliconMemoryMonitor:
                 # see a shell command or psutil hiccup as a global stall.
                 self._pressure = await asyncio.to_thread(self._get_pressure_sysctl)
                 if self._pressure >= self.threshold:
-                    logger.warning("⚠️ HIGH MEMORY PRESSURE: %s% (Threshold: %s%)", self._pressure, self.threshold)
+                    logger.warning(
+                        "⚠️ HIGH MEMORY PRESSURE: %s%% (Threshold: %s%%)",
+                        self._pressure,
+                        self.threshold,
+                    )
                     import time as _time
                     now = _time.monotonic()
                     # Run a generational gc once per minute when pressure is up.

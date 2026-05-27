@@ -316,7 +316,12 @@ class OrchestratorBootMixin(
         from core.utils.concurrency import RobustLock
 
         if not hasattr(self, "_boot_lock"):
-            self._boot_lock = RobustLock()
+            self._boot_lock = RobustLock(
+                "Orchestrator.AsyncBootLock",
+                watchdog_threshold_s=900.0,
+                force_release_on_stall=False,
+                timeout_s=900.0,
+            )
 
         async with self._boot_lock:
             t1_s = time.perf_counter()
@@ -781,6 +786,57 @@ class OrchestratorBootMixin(
                 mycelium.setup()
 
                 logger.info("🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.")
+
+                # Bring health-contract important services online before the
+                # formal boot verdict is emitted. These are not decorative:
+                # compute allocation, reaping, hypervision, and loop-lag
+                # monitoring define whether Aura can survive a long run.
+                try:
+                    from core.agency.compute_orchestrator import get_compute_orchestrator
+
+                    self.compute_orchestrator = get_compute_orchestrator()
+                    ServiceContainer.register_instance(
+                        "compute_orchestrator",
+                        self.compute_orchestrator,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_boot_degradation(
+                        exc,
+                        action="left compute orchestrator unavailable so health contract can fail honestly",
+                        severity="critical",
+                    )
+                    logger.error("ComputeOrchestrator boot failed: %s", exc)
+
+                try:
+                    from core.orchestrator.initializers.hardening import init_hardening_layer
+
+                    await init_hardening_layer(self)
+                except asyncio.CancelledError:
+                    raise
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_boot_degradation(
+                        exc,
+                        action="left hardening supervisors unavailable so health contract can fail honestly",
+                        severity="critical",
+                    )
+                    logger.error("Hardening supervisors failed to start: %s", exc)
+
+                try:
+                    delegator = ServiceContainer.get("agent_delegator", default=None)
+                    if delegator and hasattr(delegator, "start"):
+                        start_result = delegator.start()
+                        if asyncio.iscoroutine(start_result):
+                            await asyncio.wait_for(start_result, timeout=15.0)
+                        self.agent_delegator = delegator
+                except asyncio.CancelledError:
+                    raise
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+                    _record_boot_degradation(
+                        exc,
+                        action="continued boot with agent delegator unavailable; optional health check will report it",
+                        severity="warning",
+                    )
+                    logger.warning("AgentDelegator early start failed: %s", exc)
 
                 # Swarm Protocol start moved to proactive systems (v26.3 Unified)
 

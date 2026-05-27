@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sqlite3
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field

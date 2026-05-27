@@ -40,6 +40,11 @@ from core.conversation.response_reliability import (
 )
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 from core.runtime.errors import record_degradation
+from core.runtime.proof_policy import (
+    is_proof_evaluation_purpose,
+    is_strict_proof_answer_prompt,
+    proof_model_tier,
+)
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.deadlines import Deadline, get_deadline
@@ -287,7 +292,7 @@ class InferenceGate:
 
             if total_gb >= 60.0:
                 default_max_pressure = 72.0
-                default_min_available = 32.0
+                default_min_available = 28.0 if context_key == "FOREGROUND" else 32.0
             else:
                 default_max_pressure = 64.0
                 default_min_available = 22.0
@@ -1398,25 +1403,36 @@ class InferenceGate:
 
         # Brainstem
         try:
-            from core.brain.llm.mlx_client import get_mlx_client
-            from core.brain.llm.model_registry import get_brainstem_path
-
-            brainstem = get_mlx_client(model_path=str(get_brainstem_path()))
-            if brainstem and hasattr(brainstem, "is_alive"):
-                lane_state = getattr(brainstem, "_lane_state", "cold")
-
-                if brainstem.is_alive():
-                    statuses["brainstem"] = "alive"
-                elif lane_state in ("spawning", "handshaking", "warming", "recovering"):
-                    statuses["brainstem"] = "recovering"
-                else:
-                    statuses["brainstem"] = "dead"
-                    # Try to warm up brainstem
-                    if hasattr(brainstem, "warmup"):
-                        get_task_tracker().create_task(brainstem.warmup())
-                        statuses["brainstem"] = "recovering"
+            deferral_reason = self._background_local_deferral_reason(origin="tier_health")
+            warm_local_tiers = os.environ.get("AURA_HEALTH_WARM_LOCAL_TIERS", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            if deferral_reason:
+                statuses["brainstem"] = f"deferred:{deferral_reason}"
             else:
-                statuses["brainstem"] = "not_initialized"
+                from core.brain.llm.mlx_client import get_mlx_client
+                from core.brain.llm.model_registry import get_brainstem_path
+
+                brainstem = get_mlx_client(model_path=str(get_brainstem_path()))
+                if brainstem and hasattr(brainstem, "is_alive"):
+                    lane_state = getattr(brainstem, "_lane_state", "cold")
+
+                    if brainstem.is_alive():
+                        statuses["brainstem"] = "alive"
+                    elif lane_state in ("spawning", "handshaking", "warming", "recovering"):
+                        statuses["brainstem"] = "recovering"
+                    else:
+                        statuses["brainstem"] = "dead"
+                        # Tier health sweeps are observability by default. They
+                        # must not spawn a background 7B worker while a foreground
+                        # Cortex turn or proof run owns the local runtime.
+                        if warm_local_tiers and hasattr(brainstem, "warmup"):
+                            get_task_tracker().create_task(brainstem.warmup())
+                            statuses["brainstem"] = "recovering"
+                else:
+                    statuses["brainstem"] = "not_initialized"
         except _INFERENCE_RECOVERABLE_ERRORS as e:
             _record_inference_degradation(
                 e,
@@ -1552,6 +1568,17 @@ class InferenceGate:
             return False
 
     def _background_local_deferral_reason(self, *, origin: str | None = None) -> str | None:
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active(origin=origin):
+                return "proof_foreground_reserved"
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+            _record_inference_degradation(
+                _exc,
+                action="kept background local deferral conservative after proof policy probe failed",
+            )
+            logger.debug("Suppressed Exception: %s", _exc)
         if self._foreground_user_turn_active() or self._foreground_owner_active():
             return "foreground_reserved"
         if self._foreground_headroom_reserved("primary"):
@@ -2033,7 +2060,12 @@ class InferenceGate:
 
         if success and text and text.strip():
             cleaned = text.strip()
-            is_user_visible = bool(foreground_request or self._origin_is_user_facing(origin))
+            proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
+            is_user_visible = bool(
+                (foreground_request or self._origin_is_user_facing(origin))
+                and not bool(kwargs.get("health_probe", False))
+                and not proof_evaluation_contract
+            )
 
             # STABILITY v58: Extract actual user message to avoid false positives
             # from system prompts containing words like "cortex" or "conversation".
@@ -2051,6 +2083,15 @@ class InferenceGate:
             )
             if integrity.retryable:
                 integrity_reasons = set(integrity.reasons or ())
+                if proof_evaluation_contract:
+                    logger.warning(
+                        "🛡️ %s produced repairable proof/evaluation draft (%s, len=%d). "
+                        "Passing it to the proof contract repair layer.",
+                        label,
+                        ",".join(integrity.reasons) or "unknown",
+                        len(cleaned),
+                    )
+                    return self._strip_silence(cleaned)
                 if is_user_visible and _should_pass_user_facing_draft_downstream(
                     cleaned,
                     integrity_reasons,
@@ -3235,7 +3276,8 @@ class InferenceGate:
         # invoking the LLM. This is bounded on purpose — the mesh handles only
         # self-reports, acknowledgements, and resource-gated responses. When it
         # does handle a request, the LLM is never called for that turn.
-        if bool(context.get("allow_mesh_cognition", True)) and not bool(
+        proof_evaluation_contract = bool(context.get("proof_evaluation_contract", False))
+        if bool(context.get("allow_mesh_cognition", True)) and not proof_evaluation_contract and not bool(
             context.get("is_background", False)
         ):
             try:
@@ -3254,6 +3296,10 @@ class InferenceGate:
 
         origin = str(context.get("origin", "") or "").lower()
         purpose = str(context.get("purpose", "") or "").lower()
+        health_probe = bool(context.get("health_probe", False)) or purpose == "proof_model_lane_probe"
+        proof_evaluation_contract = proof_evaluation_contract or is_proof_evaluation_purpose(purpose)
+        if proof_evaluation_contract:
+            context["proof_evaluation_contract"] = True
         requested_tier = self._normalize_tier(context.get("prefer_tier"))
         explicit_background = "is_background" in context
         explicit_foreground = bool(context.get("foreground_request", False))
@@ -3294,6 +3340,42 @@ class InferenceGate:
             # Explicit deep handoffs are foreground reasoning requests even if
             # the caller forgot to stamp a user-facing origin.
             is_background = False
+        strict_primary_proof_lane = False
+        try:
+            proof_run_enabled = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            origin_tokens = {token for token in origin.replace("-", "_").split("_") if token}
+            proof_origin = bool(
+                origin in {"test", "audit", "simulate", "external", "proof", "validation"}
+                or origin_tokens & {"test", "audit", "simulate", "external", "proof", "validation"}
+            )
+            strict_primary_proof_lane = bool(
+                context.get("proof_primary_lane_required", False)
+                or (
+                    proof_run_enabled
+                    and proof_model_tier() == "primary"
+                    and (
+                        proof_evaluation_contract
+                        or health_probe
+                        or proof_origin
+                        or purpose.startswith("proof")
+                    )
+                )
+            )
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            strict_primary_proof_lane = False
+        if strict_primary_proof_lane:
+            context["proof_primary_lane_required"] = True
+            context["proof_model_tier"] = "primary"
+            requested_tier = "primary"
+            deep_handoff = False
+            is_background = False
+            allow_cloud_fallback = False
+            protected_foreground_lane = True
         if is_background:
             requested_tier = "tertiary"
             deep_handoff = False
@@ -3379,6 +3461,11 @@ class InferenceGate:
                 inline_deferral = self._cortex_warmup_deferral_reason("foreground")
                 if inline_deferral:
                     self._log_cortex_warmup_deferral(inline_deferral, context="foreground")
+                    if strict_primary_proof_lane or protected_foreground_lane:
+                        logger.warning(
+                            "🧠 Cortex inline recovery was deferred, but this turn requires the primary lane; refusing lower-lane fallback."
+                        )
+                        return None
                     logger.warning(
                         "🧠 Cortex inline recovery skipped by RAM admission; routing foreground turn to Brainstem."
                     )
@@ -3484,12 +3571,31 @@ class InferenceGate:
         # loop for 3-5+ seconds on large prompts.  Fix: offload to thread
         # pool, and skip entirely for background/autonomous requests.
         _trust_guidance = ""
+        strict_proof_answer_request = is_strict_proof_answer_prompt(prompt, origin=origin)
         # Use the fully resolved routing classification, not merely whether the
         # caller explicitly stamped `is_background`. Origin-derived background
         # work such as `origin="system"` must not pay the foreground trust-gate
         # cost or get re-promoted back into the protected Cortex lane.
         _is_bg_request = bool(is_background)
-        if deep_probe_request and not _is_bg_request:
+        if strict_proof_answer_request:
+            context["allow_tools"] = False
+            context["trust_gate_skipped"] = "strict_proof_answer"
+            context["strict_answer_contract"] = True
+            context["disable_prompt_cache"] = True
+            context["clear_prompt_cache"] = True
+            context.setdefault("temperature", 0.0)
+            context.setdefault("top_p", 1.0)
+            context.setdefault("min_p", 0.0)
+            context.setdefault("repetition_penalty", 1.12)
+            strict_proof_tier = proof_model_tier()
+            context["proof_model_tier"] = strict_proof_tier
+            if strict_proof_tier == "tertiary":
+                protected_foreground_lane = False
+                requested_tier = "tertiary"
+            else:
+                protected_foreground_lane = True
+                requested_tier = "primary"
+        elif deep_probe_request and not _is_bg_request:
             # Deep self-report probes are foreground conversation checks, not
             # authentication attempts or tool requests.  Running the PBKDF2
             # passphrase recognizer here adds CPU contention right before the
@@ -3552,6 +3658,16 @@ class InferenceGate:
                     action="disabled tool use and continued without trust guidance",
                 )
                 logger.warning("Trust gate error (passphrase check may have failed): %s", _te_exc)
+
+        strict_answer_contract = bool(context.get("strict_answer_contract", False))
+        isolated_generation_contract = bool(strict_answer_contract or proof_evaluation_contract)
+        # not bool(context.get("strict_answer_contract", False))
+        strict_max_token_cap = 128
+        if strict_answer_contract:
+            try:
+                strict_max_token_cap = max(1, int(context.get("max_tokens") or 128))
+            except (TypeError, ValueError, OverflowError):
+                strict_max_token_cap = 128
 
         timeout_val = timeout or self._default_timeout_for_request(
             origin,
@@ -3662,7 +3778,7 @@ class InferenceGate:
             from core.consciousness.resource_stakes import get_resource_stakes
 
             token_mult = get_resource_stakes().get_token_budget_multiplier()
-            if token_mult < 0.95:
+            if token_mult < 0.95 and not strict_answer_contract and not health_probe:
                 max_tokens = max(384, int(max_tokens * token_mult))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation(
@@ -3717,7 +3833,7 @@ class InferenceGate:
             # When Φ is high (highly integrated thought), we allow maximum token budget.
             # When Φ is low (< 0.8), the budget is dynamically scaled down (min 20%).
             # This forces the model to be extremely concise and structured when integration is compromised.
-            if phi_val < 0.8:
+            if phi_val < 0.8 and not strict_answer_contract and not health_probe:
                 phi_scale = 0.2 + 0.8 * (phi_val / 0.8)
                 max_tokens = max(256, int(max_tokens * phi_scale))
                 logger.info("🧠 [PHI CONTROL] Integration Φ=%.3f -> scaling token budget by %.2f (max_tokens=%d)", 
@@ -3730,7 +3846,34 @@ class InferenceGate:
         # run at fixed params to avoid thermal feedback loops.
         somatic_temperature: float | None = None
         morpho_kwargs: dict[str, Any] = {}
-        if not is_background and self._origin_is_user_facing(origin):
+        caller_temperature = context.get("temperature", context.get("temp"))
+        if caller_temperature is not None:
+            try:
+                somatic_temperature = max(0.0, min(2.0, float(caller_temperature)))
+            except (TypeError, ValueError):
+                somatic_temperature = None
+        for _gen_key in (
+            "top_p",
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            "repetition_context_size",
+            "presence_penalty",
+            "stop_sequences",
+            "schema",
+            "strict_answer_contract",
+            "proof_evaluation_contract",
+            "disable_prompt_cache",
+            "clear_prompt_cache",
+            "health_probe",
+        ):
+            if _gen_key in context:
+                morpho_kwargs[_gen_key] = context[_gen_key]
+        if (
+            not is_background
+            and self._origin_is_user_facing(origin)
+            and not isolated_generation_contract
+        ):
             try:
                 from core.affect.affective_circumplex import get_circumplex
 
@@ -3923,6 +4066,8 @@ class InferenceGate:
             and "max_tokens" not in context
             and not bool(context.get("resource_stakes_blocked", False))
             and not deep_probe_request
+            and not isolated_generation_contract
+            and not health_probe
         ):
             foreground_floor = max(
                 384,
@@ -3943,6 +4088,19 @@ class InferenceGate:
             context["max_tokens"] = max_tokens
             context["allow_tools"] = False
 
+        if strict_answer_contract:
+            max_tokens = max(1, min(max_tokens, strict_max_token_cap))
+            context["max_tokens"] = max_tokens
+
+        if health_probe:
+            requested_cap = context.get("max_tokens", max_tokens)
+            try:
+                requested_cap_int = max(1, int(requested_cap))
+            except (TypeError, ValueError):
+                requested_cap_int = 32
+            max_tokens = max(1, min(max_tokens, requested_cap_int, 64))
+            context["max_tokens"] = max_tokens
+
         # Build the prompt only after routing intent is known so we can choose
         # a compact user-facing path instead of always constructing the richest stack.
         brief = context.get("brief", "")
@@ -3959,6 +4117,25 @@ class InferenceGate:
         provided_messages = context.get("messages")
         if not isinstance(provided_messages, list):
             provided_messages = None
+        if strict_answer_contract:
+            strict_system_prompt = (
+                "You are Aura's local reasoning lane, a persistent local cognitive runtime. "
+                "Follow the user's exact output contract. "
+                "When the user requests <answer>...</answer>, return only that final answer envelope. "
+                "Do not copy instructions, role labels, or explanatory text."
+            )
+            strict_user_prompt = str(prompt or "")
+            if provided_messages is not None:
+                for msg in reversed(provided_messages):
+                    if not isinstance(msg, dict):
+                        continue
+                    if str(msg.get("role", "") or "").strip().lower() == "user":
+                        strict_user_prompt = str(msg.get("content", "") or strict_user_prompt)
+                        break
+            provided_messages = [
+                {"role": "system", "content": strict_system_prompt},
+                {"role": "user", "content": strict_user_prompt},
+            ]
         if provided_messages is not None:
             system_prompt = ""
             for msg in provided_messages:
@@ -3968,7 +4145,11 @@ class InferenceGate:
                     system_prompt = str(msg.get("content", "") or "").strip()
                     break
             living_mind_context = ""
-            if not is_background and self._origin_is_user_facing(origin):
+            if (
+                not isolated_generation_contract
+                and not is_background
+                and self._origin_is_user_facing(origin)
+            ):
                 living_mind_context = await self._build_compact_living_mind_context(prompt, origin)
         elif use_compact_foreground_context:
             system_prompt = self._build_compact_system_prompt(brief)
@@ -3997,7 +4178,7 @@ class InferenceGate:
         # instead of assuming 128k+ headroom on the primary Qwen lane.
 
         # ── Somatic narrative: brief felt-state line in the system prompt ────────
-        if somatic_temperature is not None:
+        if somatic_temperature is not None and not isolated_generation_contract:
             try:
                 from core.affect.affective_circumplex import get_circumplex
 
@@ -4024,7 +4205,7 @@ class InferenceGate:
 
         # ── Architecture Self-Awareness: inject relevant subsystem context ──────
         # Only for user-facing requests that mention architecture/code keywords.
-        if prompt_user_facing:
+        if prompt_user_facing and not isolated_generation_contract:
             try:
                 import re as _re
 
@@ -4049,7 +4230,7 @@ class InferenceGate:
                 logger.debug("ArchIndex injection skipped: %s", _ae)
             system_prompt = f"{system_prompt}\n\n{conversation_reliability_system_block(prompt)}"
         history = context.get("history", [])
-        use_rich_context = bool(
+        use_rich_context = False if isolated_generation_contract else bool(
             context.get(
                 "rich_context",
                 self._should_use_rich_context(
@@ -4062,7 +4243,7 @@ class InferenceGate:
         )
         if provided_messages is not None:
             messages = [dict(msg) for msg in provided_messages if isinstance(msg, dict)]
-            if prompt_user_facing or living_mind_context:
+            if not isolated_generation_contract and (prompt_user_facing or living_mind_context):
                 reliability_block = conversation_reliability_system_block(prompt)
                 inserted = False
                 for msg in messages:
@@ -4113,7 +4294,8 @@ class InferenceGate:
             max_tokens,
         )
 
-        _is_user_facing = self._origin_is_user_facing(origin) or requested_tier == "primary"
+        _is_user_facing = (self._origin_is_user_facing(origin) or requested_tier == "primary") and not health_probe
+        client_foreground_request = bool(_is_user_facing or explicit_foreground) and not is_background
         protected_deep_fallback = False
 
         # 1. Try the selected local brain.
@@ -4130,25 +4312,34 @@ class InferenceGate:
 
                 local_client = self._mlx_client
                 local_label = PRIMARY_ENDPOINT
-                fallback_client = get_mlx_client(model_path=str(get_brainstem_path()))
+                fallback_client = None
+                fallback_model_path = str(get_brainstem_path())
+                fallback_kwargs: dict[str, Any] = {}
                 fallback_label = BRAINSTEM_ENDPOINT
                 restore_primary = False
+
+                def _ensure_fallback_client():
+                    nonlocal fallback_client
+                    if fallback_client is None:
+                        fallback_client = get_mlx_client(
+                            model_path=fallback_model_path,
+                            **fallback_kwargs,
+                        )
+                    return fallback_client
 
                 primary_restored_inline = False
                 try:
                     if requested_tier == "tertiary":
                         local_client = get_mlx_client(model_path=str(get_brainstem_path()))
                         local_label = BRAINSTEM_ENDPOINT
-                        fallback_client = get_mlx_client(
-                            model_path=str(get_fallback_path()), device="cpu"
-                        )
+                        fallback_model_path = str(get_fallback_path())
+                        fallback_kwargs = {"device": "cpu"}
                         fallback_label = FALLBACK_ENDPOINT
                     elif deep_handoff:
                         local_client = get_mlx_client(model_path=str(get_deep_model_path()))
                         local_label = DEEP_ENDPOINT
-                        fallback_client = get_mlx_client(
-                            model_path=str(get_runtime_model_path(ACTIVE_MODEL))
-                        )
+                        fallback_model_path = str(get_runtime_model_path(ACTIVE_MODEL))
+                        fallback_kwargs = {}
                         fallback_label = PRIMARY_ENDPOINT
                         restore_primary = True
 
@@ -4159,7 +4350,8 @@ class InferenceGate:
                         and requested_tier == "primary"
                     )
                     if protected_deep_fallback:
-                        fallback_client = get_mlx_client(model_path=str(get_deep_model_path()))
+                        fallback_model_path = str(get_deep_model_path())
+                        fallback_kwargs = {}
                         fallback_label = DEEP_ENDPOINT
                     skip_initial_primary_attempt = False
                     primary_warmup_memory_deferred = False
@@ -4210,10 +4402,16 @@ class InferenceGate:
                                     lane_status.get("state", "unknown"),
                                 )
                     if primary_warmup_memory_deferred:
+                        if proof_evaluation_contract or strict_primary_proof_lane:
+                            logger.warning(
+                                "🧠 Proof/evaluation request requires Cortex; refusing Brainstem fallback after primary warmup deferral."
+                            )
+                            return None
                         logger.warning(
                             "🧠 Cortex cold-load deferred by RAM admission; routing this foreground turn to %s.",
                             fallback_label,
                         )
+                        fallback_client = _ensure_fallback_client()
                         local_client = fallback_client
                         local_label = fallback_label
                         skip_initial_primary_attempt = False
@@ -4229,7 +4427,7 @@ class InferenceGate:
                     else:
                         async with self._resource_context(
                             enabled=local_label != FALLBACK_ENDPOINT,
-                            priority=_is_user_facing,
+                            priority=client_foreground_request,
                             worker=local_label,
                             timeout_s=primary_deadline.remaining or primary_timeout,
                         ):
@@ -4245,7 +4443,7 @@ class InferenceGate:
                                 temperature=somatic_temperature,
                                 origin=origin,
                                 is_background=is_background,
-                                foreground_request=_is_user_facing,
+                                foreground_request=client_foreground_request,
                                 **morpho_kwargs,
                             )
                     if text:
@@ -4254,6 +4452,12 @@ class InferenceGate:
                             prompt,
                             is_user_facing=_is_user_facing,
                         )
+                    if health_probe:
+                        logger.warning(
+                            "🧠 %s proof health probe returned no text; refusing local fallback for lane certification.",
+                            local_label,
+                        )
+                        return None
 
                     # ── CORTEX RETRY: For user-facing requests, retry the primary model
                     # The stall detector reboots the worker, so we wait for recovery.
@@ -4350,6 +4554,11 @@ class InferenceGate:
                                 )
 
                         logger.warning("🧠 %s all retries failed.", local_label)
+                        if proof_evaluation_contract or strict_primary_proof_lane:
+                            logger.warning(
+                                "🧠 Proof/evaluation request requires a valid Cortex response; refusing lower-lane fallback."
+                            )
+                            return None
                         # For user-facing requests, skip brainstem — go straight to cloud
                         if allow_cloud_fallback:
                             logger.warning(
@@ -4391,9 +4600,10 @@ class InferenceGate:
                     # brainstem is an acceptable degradation. For user-facing requests
                     # that reach here (cloud disabled), it's the last local resort.
                     fallback_deadline = get_deadline(fallback_timeout)
+                    fallback_client = _ensure_fallback_client()
                     async with self._resource_context(
                         enabled=fallback_label != FALLBACK_ENDPOINT,
-                        priority=_is_user_facing,
+                        priority=client_foreground_request,
                         worker=fallback_label,
                         timeout_s=fallback_deadline.remaining or fallback_timeout,
                     ):
@@ -4414,7 +4624,7 @@ class InferenceGate:
                             temperature=somatic_temperature,
                             origin=origin,
                             is_background=is_background,
-                            foreground_request=_is_user_facing,
+                            foreground_request=client_foreground_request,
                             **morpho_kwargs,
                         )
                     if brainstem_text:
@@ -4457,7 +4667,12 @@ class InferenceGate:
         # If Cortex AND Brainstem both failed for a user-facing request, the 1.5B Reflex
         # model can still produce SOMETHING so the user isn't left hanging.
         # [STABILITY v54] Never run the 1.5B reflex if we are in a protected 32B foreground lane.
-        if _is_user_facing and not is_background and not protected_deep_fallback:
+        if (
+            _is_user_facing
+            and not is_background
+            and not protected_deep_fallback
+            and not proof_evaluation_contract
+        ):
             try:
                 from core.brain.llm.mlx_client import get_mlx_client
                 from core.brain.llm.model_registry import get_fallback_path
@@ -4506,6 +4721,9 @@ class InferenceGate:
         # 2. Optional cloud fallback.
         if not allow_cloud_fallback:
             logger.error("Local inference paths exhausted. Cloud fallback disabled.")
+            if proof_evaluation_contract:
+                logger.error("Proof/evaluation contract exhausted Cortex without valid text.")
+                return None
             # STABILITY FIX: For user-facing requests, trigger immediate cortex recovery
             # and return a genuine acknowledgment instead of None (which causes "I'm having trouble")
             if _is_user_facing:
@@ -4843,6 +5061,13 @@ class InferenceGate:
             "max_tokens",
             "temperature",
             "temp",
+            "top_p",
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            "repetition_context_size",
+            "presence_penalty",
+            "stop_sequences",
             "schema",
             "deep_handoff",
             "allow_cloud_fallback",
@@ -4852,6 +5077,12 @@ class InferenceGate:
             "is_background",
             "foreground_request",
             "protected_foreground_lane",
+            "strict_answer_contract",
+            "proof_evaluation_contract",
+            "disable_prompt_cache",
+            "clear_prompt_cache",
+            "health_probe",
+            "allow_tools",
             "state",
             "skip_runtime_payload",
         ):

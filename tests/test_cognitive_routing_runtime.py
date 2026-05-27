@@ -132,10 +132,16 @@ def test_executive_receipt_failure_preserves_user_response_lane(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_parallel_branch_failure_keeps_deliberate_route_foreground():
+def test_parallel_branch_failure_keeps_deliberate_route_foreground(monkeypatch):
     async def scenario():
+        original_sleep = asyncio.sleep
+
+        async def no_delay(_seconds):
+            await original_sleep(0)
+
         tracker = get_degradation_tracker()
         tracker.reset()
+        monkeypatch.setattr(routing_module.asyncio, "sleep", no_delay)
         phase = CognitiveRoutingPhase(RouteContainer())
         phase.parallel_stream = ParallelStreamFails()
 
@@ -145,14 +151,38 @@ def test_parallel_branch_failure_keeps_deliberate_route_foreground():
                 "trace the root cause, and propose a durable fix across the routing path."
             )
         )
+        for _ in range(3):
+            await original_sleep(0)
+            if phase.parallel_stream.calls:
+                break
 
         assert phase.parallel_stream.calls == 1
         assert result.cognition.current_mode == CognitiveMode.DELIBERATE
         assert any(
-            "without spawning parallel thought branch" in record.action
+            "parallel thought branch failure" in record.action
             for record in tracker.recent(subsystem="cognitive_routing")
         )
         tracker.reset()
+
+    asyncio.run(scenario())
+
+
+def test_parallel_branch_is_skipped_for_strict_proof_turn(monkeypatch):
+    async def scenario():
+        monkeypatch.setenv("AURA_PROOF_RUN", "1")
+        phase = CognitiveRoutingPhase(RouteContainer())
+        phase.parallel_stream = ParallelStreamFails()
+
+        result = await phase.execute(
+            _state_with_user_text(
+                "What is 6 * 7? Output your final answer inside <answer>...</answer> tags."
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert phase.parallel_stream.calls == 0
+        assert result.cognition.current_mode == CognitiveMode.DELIBERATE
+        assert result.response_modifiers["model_tier"] == "primary"
 
     asyncio.run(scenario())
 

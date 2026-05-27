@@ -248,6 +248,7 @@ class UnifiedWill:
         self._state = WillState()
         self._audit_trail: deque[WillDecision] = deque(maxlen=self._MAX_AUDIT_TRAIL)
         self._started = False
+        self._fail_closed_when_stopped = False
         self._boot_time = time.time()
 
         # Identity anchors (loaded from CanonicalSelf)
@@ -259,6 +260,15 @@ class UnifiedWill:
 
     async def start(self) -> None:
         """Initialize references and register in ServiceContainer."""
+        self.ensure_started()
+
+    def ensure_started(self) -> None:
+        """Synchronously activate the runtime Will singleton.
+
+        Detached test instances may exercise decision composition without
+        registering globally.  The runtime singleton, once activated, fails
+        closed if later marked stopped.
+        """
         if self._started:
             return
 
@@ -269,6 +279,7 @@ class UnifiedWill:
         self._refresh_identity()
 
         self._started = True
+        self._fail_closed_when_stopped = True
         logger.info("UnifiedWill ONLINE -- single locus of decision authority active")
 
     def propose_constitutional_amendment(self, patch: dict[str, Any], proposer: str, rationale: str) -> WillDecision:
@@ -388,6 +399,26 @@ class UnifiedWill:
                 latency_ms=(time.time() - t0) * 1000,
             )
             self._record(decision)
+            return decision
+
+        # If the Will has not been explicitly started, every non-critical
+        # action fails closed.  This preserves the core runtime invariant that
+        # consequential behavior cannot proceed through a dormant governor.
+        if self._fail_closed_when_stopped and not self._started:
+            decision = WillDecision(
+                receipt_id=receipt_id,
+                outcome=WillOutcome.REFUSE,
+                domain=domain,
+                reason="unified_will_not_started",
+                constraints=["will_offline_fail_closed"],
+                source=source,
+                content_hash=content_hash,
+                timestamp=time.time(),
+                latency_ms=(time.time() - t0) * 1000,
+            )
+            self._update_will_state(decision)
+            self._record(decision)
+            logger.info("WILL REFUSED: %s/%s -- unified_will_not_started", source, domain.value)
             return decision
 
         # ── 1. IDENTITY CHECK: Does this align with who I am? ───────
@@ -1325,4 +1356,5 @@ def get_will() -> UnifiedWill:
     global _will_instance
     if _will_instance is None:
         _will_instance = UnifiedWill()
+    _will_instance.ensure_started()
     return _will_instance

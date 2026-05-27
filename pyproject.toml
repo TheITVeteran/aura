@@ -85,9 +85,12 @@ filterwarnings = [
 ]
 markers = [
     "asyncio: marks async tests that require pytest-asyncio when executed",
+    "live: marks tests that require live Aura runtime/model/hardware access",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks full-pipeline integration tests",
     "stress: marks load/stress tests",
     "online: test requires live internet access (skip with '-m \"not online\"')",
+    "hardware: marks tests that require local hardware, OS, or device access",
+    "external: marks tests that call external services or APIs",
     "property: marks invariant/property tests",
 ]

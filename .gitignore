@@ -147,6 +147,8 @@ training/adapters/
 *.plist
 training/fused-model/
 integration/
+!tools/integration/
+!tools/integration/*.py
 skills/malware_analysis.py
 core/skills/malware_analysis.py
 

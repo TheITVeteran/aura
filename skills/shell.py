@@ -204,7 +204,7 @@ class ShellSkill(BaseSkill):
                         exc,
                         severity="warning",
                         action="returned shell timeout result after process cleanup failed",
-                        extra={"command": command[:240], "timeout_s": timeout},
+                        extra={"command": cmd_str[:240], "timeout_s": timeout},
                     )
                     logger.debug("Shell timed-out process cleanup failed: %s", exc)
                 return {"ok": False, "error": f"Command timed out after {timeout}s."}

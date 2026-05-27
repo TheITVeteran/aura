@@ -195,9 +195,7 @@ class PhantomBrowser:
             try:
                 from core.utils.resource_lock import get_resource_lock
                 self._resource_lock = get_resource_lock()
-                self._resource_lock._browser_sessions += 1
-                self._resource_lock._total_browser_sessions += 1
-                self._resource_lock._browser_idle.clear()
+                self._resource_lock.begin_browser_session()
             except (ImportError, AttributeError, RuntimeError) as lock_exc:
                 _record_browser_degradation(
                     lock_exc,
@@ -645,9 +643,8 @@ class PhantomBrowser:
         """Release the resource lock so background tasks can resume."""
         lock = getattr(self, '_resource_lock', None)
         if lock:
-            lock._browser_sessions = max(0, lock._browser_sessions - 1)
-            if lock._browser_sessions <= 0:
-                lock._browser_idle.set()
+            lock.end_browser_session()
+            self._resource_lock = None
 
     async def _human_delay(self, min_s=0.5, max_s=1.5):
         """Random delay to simulate human pause, modulated by homeostasis."""

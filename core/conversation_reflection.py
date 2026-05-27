@@ -341,7 +341,7 @@ class ConversationReflector:
                     if _arr_match:
                         try:
                             sg_items = _json.loads(_arr_match.group(0))
-                        except (json.JSONDecodeError, TypeError, ValueError):
+                        except (_json.JSONDecodeError, TypeError, ValueError):
                             sg_items = None
                     if isinstance(sg_items, list):
                         from core.memory.shared_ground import get_shared_ground

@@ -10,6 +10,7 @@ H-04 FIX: Thread-safe synchronous wrappers using threading.Lock.
 
 from core.runtime.errors import record_degradation
 import asyncio
+import sqlite3
 import json
 import logging
 import time

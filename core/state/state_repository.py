@@ -41,6 +41,21 @@ _STATE_BOUNDARY_ERRORS = (
     ValueError,
     asyncio.InvalidStateError,
 )
+_REBASEABLE_ISOLATION_CAUSES = frozenset(
+    {
+        "task_isolation_reset",
+        "dnu_kernel_task_isolation",
+    }
+)
+
+
+def _is_rebaseable_isolation_commit(cause: str) -> bool:
+    normalized = str(cause or "")
+    return (
+        normalized in _REBASEABLE_ISOLATION_CAUSES
+        or normalized.startswith("agency_task_isolation")
+        or normalized.startswith("agency_kernel_task_isolation")
+    )
 
 
 def _record_state_degradation(
@@ -727,7 +742,16 @@ class StateRepository:
             )
             # Atomic Version Guard
             if current and new_state.version <= current.version:
-                if cause != "bootstrap":
+                if _is_rebaseable_isolation_commit(cause):
+                    logger.debug(
+                        "[STATE] Rebased isolation commit: Version %d <= current %d (Cause: %s)",
+                        new_state.version,
+                        self._current.version,
+                        cause,
+                    )
+                    new_state.version = current.version + 1
+                    new_state.parent_state_id = current.state_id
+                elif cause != "bootstrap":
                     logger.debug(
                         "[STATE] Atomic Guard Reject: Version %d <= current %d (Cause: %s)",
                         new_state.version,

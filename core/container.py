@@ -1,3 +1,4 @@
+import asyncio
 import contextvars
 import functools
 import hashlib
@@ -631,29 +632,77 @@ class ServiceContainer:
                 cls._wake_lock.release()
 
     @classmethod
-    async def shutdown(cls) -> None:
-        """Cleanup all singleton services in reverse order."""
+    async def shutdown(cls, *, hook_timeout_s: float = 1.5, total_timeout_s: float = 12.0) -> None:
+        """Cleanup all singleton services in reverse order with bounded hooks."""
         def _resolve_hook(instance: Any, hook_name: str) -> Callable[..., Any] | None:
             return _callable_attr(instance, hook_name)
+
+        async def _await_bounded(
+            name: str,
+            hook_name: str,
+            result: Any,
+            remaining: float,
+            *,
+            hook_timeout_override_s: float | None = None,
+        ) -> None:
+            if not inspect.isawaitable(result):
+                if result is not None:
+                    logger.debug("%s for %s returned non-awaitable %r", hook_name, name, type(result).__name__)
+                return
+            effective_hook_timeout_s = hook_timeout_s
+            if hook_timeout_override_s is not None:
+                effective_hook_timeout_s = max(float(hook_timeout_override_s), float(hook_timeout_s))
+            timeout_s = max(0.05, min(float(effective_hook_timeout_s), remaining))
+            try:
+                await asyncio.wait_for(result, timeout=timeout_s)
+            except TimeoutError as exc:
+                record_degradation(
+                    "container",
+                    exc,
+                    action=f"bounded {hook_name} timeout for service '{name}' during shutdown",
+                    severity="degraded",
+                )
+                logger.warning("%s timed out for %s after %.2fs", hook_name, name, timeout_s)
 
         with cls._lock:
             names = list(reversed(list(cls._services.keys())))
             descriptors = [(n, cls._services.get(n)) for n in names]
 
+        shutdown_started = time.monotonic()
         for name, desc in descriptors:
             if not desc or not desc.instance:
                 continue
+            remaining_total = total_timeout_s - (time.monotonic() - shutdown_started)
+            if remaining_total <= 0:
+                record_degradation(
+                    "container",
+                    TimeoutError("ServiceContainer shutdown budget exhausted"),
+                    action="stopped container shutdown after bounded total budget was exhausted",
+                    severity="degraded",
+                )
+                logger.warning("ServiceContainer shutdown budget exhausted; remaining services left cold by process exit.")
+                break
             instance = desc.instance
+            service_shutdown_timeout_s = hook_timeout_s
+            timeout_attr = getattr(instance, "shutdown_timeout_s", None)
+            if timeout_attr is not None:
+                try:
+                    service_shutdown_timeout_s = max(float(timeout_attr), float(hook_timeout_s))
+                except (TypeError, ValueError):
+                    service_shutdown_timeout_s = hook_timeout_s
             
             # Async stop
             hook = _resolve_hook(instance, "on_stop_async")
             if hook is not None:
                 try:
                     result = hook()
-                    if inspect.isawaitable(result):
-                        await result
-                    elif result is not None:
-                        logger.debug("on_stop_async for %s returned non-awaitable %r", name, type(result).__name__)
+                    await _await_bounded(
+                        name,
+                        "on_stop_async",
+                        result,
+                        remaining_total,
+                        hook_timeout_override_s=service_shutdown_timeout_s,
+                    )
                 except _SERVICE_INIT_ERRORS as e:
                     record_degradation('container', e)
                     logger.error("on_stop_async failed for %s: %s", name, e)
@@ -664,8 +713,16 @@ class ServiceContainer:
                 if hook_fn is not None:
                     try:
                         result = hook_fn()
-                        if inspect.isawaitable(result):
-                            await result
+                        remaining_total = total_timeout_s - (time.monotonic() - shutdown_started)
+                        if remaining_total <= 0:
+                            break
+                        await _await_bounded(
+                            name,
+                            hook,
+                            result,
+                            remaining_total,
+                            hook_timeout_override_s=service_shutdown_timeout_s,
+                        )
                     except _SERVICE_INIT_ERRORS as e:
                         record_degradation('container', e)
                         logger.error("%s failed for %s: %s", hook, name, e)

@@ -365,6 +365,29 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         record_degradation('context_assembler_patch', _e)
         logger.debug('Ignored Exception in context_assembler_patch.py: %s', _e)
 
+    # Tool affordance block
+    try:
+        from core.container import ServiceContainer
+        cap_engine = ServiceContainer.get("capability_engine", default=None)
+        if cap_engine and hasattr(cap_engine, "build_tool_affordance_block"):
+            matched_skills = getattr(state, "response_modifiers", {}).get("matched_skills", []) or []
+            skills_summary = cap_engine.build_tool_affordance_block(
+                objective=objective,
+                matched_skills=matched_skills,
+                max_available=4 if is_casual else 6,
+                max_unavailable=2 if objective else 0,
+                compact=True,
+            )
+            if skills_summary:
+                skills_summary += (
+                    "\n- If a task is genuinely multi-step, execute it instead of only describing a plan.\n"
+                    "- If a needed tool is unavailable, say so plainly instead of pretending.\n"
+                )
+                base += f"\n{skills_summary}\n"
+    except Exception as _e:
+        record_degradation('context_assembler_patch', _e)
+        logger.debug('Tool affordance injection failed: %s', _e)
+
     if is_casual:
         base += "\nSTAY PUNCHY. NO PADDING.\n"
     elif is_test_run:

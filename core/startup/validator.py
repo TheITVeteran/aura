@@ -220,6 +220,23 @@ def check_data_directories() -> List[ValidationResult]:
 @validator.check
 def check_audio_device() -> ValidationResult:
     try:
+        from core.senses.sensory_registry import get_capabilities
+
+        hearing_enabled = bool(get_capabilities().hearing_enabled)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("Audio capability probe unavailable: %s", exc)
+        hearing_enabled = False
+
+    voice_required = os.environ.get("AURA_REQUIRE_VOICE_INPUT", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if not hearing_enabled and not voice_required:
+        return ValidationResult(
+            name="Audio input device",
+            passed=True,
+            message="Voice input disabled by capability flags",
+            severity="warn",
+        )
+
+    try:
         import pyaudio
         p = pyaudio.PyAudio()
         count = p.get_device_count()
@@ -238,7 +255,8 @@ def check_audio_device() -> ValidationResult:
             message=f"{count} audio device(s) found",
         )
     except (ImportError, AttributeError, RuntimeError) as e:
-        record_degradation('validator', e)
+        if voice_required:
+            record_degradation('validator', e)
         return ValidationResult(
             name="Audio input device",
             passed=False,

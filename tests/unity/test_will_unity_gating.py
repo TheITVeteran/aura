@@ -7,6 +7,7 @@ from core.will import ActionDomain, UnifiedWill, WillOutcome
 
 def _neutral_will() -> UnifiedWill:
     will = UnifiedWill()
+    will._started = True
     return will
 
 

@@ -232,6 +232,21 @@ class WorldState:
         """Record a salient environment event."""
         self._add_event(description, source, salience, ttl, metadata)
 
+    def push_event(
+        self,
+        description: str,
+        *,
+        source: str = "system",
+        salience: float = 0.5,
+        ttl: float = 3600.0,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra_metadata: Any,
+    ) -> None:
+        """Compatibility event ingress for motor/somatic reflex producers."""
+        payload = dict(metadata or {})
+        payload.update(extra_metadata)
+        self._add_event(description, source, salience, ttl, payload)
+
     def _add_event(self, description: str, source: str,
                    salience: float = 0.5, ttl: float = 3600.0,
                    metadata: Optional[Dict] = None) -> None:

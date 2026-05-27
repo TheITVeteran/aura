@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -56,6 +57,36 @@ def test_steering_vector_library_rejects_wrong_d_model_cache(tmp_path):
     assert library._resolve_cached_path("valence_positive", 25, d_model=4) is None
 
 
+def test_steering_vector_library_discovers_sources_with_explicit_runtime_cache(
+    tmp_path,
+    monkeypatch,
+):
+    from core.consciousness.affective_steering import AFFECTIVE_DIMENSIONS, SteeringVectorLibrary
+
+    runtime_cache = tmp_path / "runtime_cache"
+    source_dir = tmp_path / "packaged_vectors"
+    for dim in AFFECTIVE_DIMENSIONS:
+        _write_vector(
+            source_dir / f"{dim['key']}_layer25.npz",
+            [1.0, 0.0, 0.0, 0.0],
+            source="packaged_caa",
+        )
+
+    monkeypatch.setenv("AURA_STEERING_DIR", str(source_dir))
+    library = SteeringVectorLibrary(cache_dir=runtime_cache)
+
+    resolved = library.load_or_derive(
+        model=object(),
+        tokenizer=object(),
+        target_layers=[25],
+        d_model=4,
+        force_rederive=False,
+    )
+
+    assert all(vector.source == "packaged_caa" for vector in resolved[25].values())
+    assert all(Path(vector.file_path).parent == source_dir for vector in resolved[25].values())
+
+
 def test_affective_steering_runtime_cache_is_partitioned_by_geometry():
     from core.consciousness.affective_steering import AffectiveSteeringEngine
 
@@ -65,6 +96,37 @@ def test_affective_steering_runtime_cache_is_partitioned_by_geometry():
     assert small != large
     assert "dmodel_2368_layers_28" in str(small)
     assert "dmodel_4096_layers_64" in str(large)
+
+
+def test_affective_steering_geometry_falls_back_to_packaged_vector_dim(
+    tmp_path,
+    monkeypatch,
+):
+    from core.consciousness.affective_steering import AFFECTIVE_DIMENSIONS, AffectiveSteeringEngine
+
+    source_dir = tmp_path / "packaged_vectors"
+    for dim in AFFECTIVE_DIMENSIONS:
+        _write_vector(
+            source_dir / f"{dim['key']}_layer25.npz",
+            [1.0] + [0.0] * 512,
+            source="packaged_caa",
+        )
+        _write_vector(
+            source_dir / f"{dim['key']}_layer30.npz",
+            [1.0] + [0.0] * 512,
+            source="packaged_caa",
+        )
+        _write_vector(
+            source_dir / f"{dim['key']}_layer35.npz",
+            [1.0] + [0.0] * 512,
+            source="packaged_caa",
+        )
+    monkeypatch.setenv("AURA_STEERING_DIR", str(source_dir))
+
+    model = SimpleNamespace(layers=[object() for _ in range(64)])
+    engine = AffectiveSteeringEngine()
+
+    assert engine._discover_model_geometry(model) == (64, 513)
 
 
 def test_production_caa_adapts_alpha_and_detects_collapse(tmp_path):

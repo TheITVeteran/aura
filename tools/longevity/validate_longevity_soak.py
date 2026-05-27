@@ -7,8 +7,8 @@ Ensures no linear memory growth or queue growth regressions occur in the soak da
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -25,8 +25,27 @@ def main(argv: list[str] | None = None) -> int:
     soak_metrics_path = bundle_dir / "SOAK_METRICS.json"
     manifest_path = bundle_dir / "MANIFEST.json"
 
-    if not soak_metrics_path.exists() or not manifest_path.exists():
+    receipts_path = bundle_dir / "RECEIPTS.jsonl"
+    if not soak_metrics_path.exists() or not manifest_path.exists() or not receipts_path.exists():
         print(f"Error: Missing required files in bundle: {bundle_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != "longevity_soak_manifest":
+            print("Error: Invalid longevity manifest schema.", file=sys.stderr)
+            return 1
+        for rel_path, expected in manifest.get("sha256", {}).items():
+            path = bundle_dir / rel_path
+            if not path.exists():
+                print(f"Error: Manifest references missing file: {rel_path}", file=sys.stderr)
+                return 1
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual != expected:
+                print(f"Error: Manifest hash mismatch for {rel_path}", file=sys.stderr)
+                return 1
+    except Exception as exc:
+        print(f"Error validating manifest: {exc}", file=sys.stderr)
         return 1
 
     try:
@@ -37,8 +56,21 @@ def main(argv: list[str] | None = None) -> int:
         if report.get("iterations_completed", 0) == 0:
             print("Error: Soak contains 0 completed iterations.", file=sys.stderr)
             return 1
+        if report.get("queue_growth_stable") is not True:
+            print("Error: Queue growth was not stable in soak run.", file=sys.stderr)
+            return 1
+        if report.get("event_loop_lag_normal") is not True:
+            print("Error: Event loop lag exceeded proof profile threshold.", file=sys.stderr)
+            return 1
+        if not report.get("metrics"):
+            print("Error: Soak metrics are empty.", file=sys.stderr)
+            return 1
     except Exception as exc:
         print(f"Error reading metrics: {exc}", file=sys.stderr)
+        return 1
+
+    if not receipts_path.read_text(encoding="utf-8").strip():
+        print("Error: Soak receipts are empty.", file=sys.stderr)
         return 1
 
     print("Longevity Soak Validation: PASS")

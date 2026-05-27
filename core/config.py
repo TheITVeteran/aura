@@ -69,7 +69,7 @@ class Paths(BaseModel):
             probe.unlink(missing_ok=True)
             self.__class__._runtime_home_cache = candidate
             return candidate
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             record_degradation('config', exc)
             fallback = self.project_root / ".aura_runtime"
             fallback.mkdir(parents=True, exist_ok=True)

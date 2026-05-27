@@ -96,6 +96,10 @@ class RuntimeHygieneManager:
         self.stale_task_age_s = 900.0
         self.process_shutdown_timeout_s = 1.0
         self.thread_join_timeout_s = 0.2
+        self.shutdown_timeout_s = max(
+            1.5,
+            float(os.getenv("AURA_RUNTIME_HYGIENE_SHUTDOWN_TIMEOUT_S", "4.0") or 4.0),
+        )
         self.tracemalloc_enabled = str(
             os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC", "0") or "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -339,7 +343,7 @@ class RuntimeHygieneManager:
             return
         try:
             children = list(self._proc.children(recursive=True))
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: existing child adoption skipped: %s", exc)
             return
@@ -563,7 +567,7 @@ class RuntimeHygieneManager:
         if self._proc is not None:
             try:
                 active_children = list(self._proc.children(recursive=True))
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
                 active_children = []
@@ -669,21 +673,31 @@ class RuntimeHygieneManager:
             return 0
         try:
             return len(self._proc.children(recursive=True))
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
             return 0
 
     async def _cleanup_child_processes(self) -> None:
-        for proc in list(self._process_refs.values()):
+        async def _cleanup_one(proc: Any) -> None:
             if hasattr(proc, "poll"):
                 try:
                     if proc.poll() is None:
                         proc.terminate()
                         try:
-                            await asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s)
-                        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
+                            await asyncio.wait_for(
+                                asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s),
+                                timeout=self.process_shutdown_timeout_s + 0.25,
+                            )
+                        except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired):
                             proc.kill()
+                            try:
+                                await asyncio.wait_for(
+                                    asyncio.to_thread(proc.wait, 0.2),
+                                    timeout=0.3,
+                                )
+                            except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired):
+                                pass
                 except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: subprocess cleanup failed: %s", exc)
@@ -691,14 +705,38 @@ class RuntimeHygieneManager:
                 try:
                     if proc.is_alive():
                         proc.terminate()
-                        await asyncio.to_thread(proc.join, self.process_shutdown_timeout_s)
+                        await asyncio.wait_for(
+                            asyncio.to_thread(proc.join, self.process_shutdown_timeout_s),
+                            timeout=self.process_shutdown_timeout_s + 0.25,
+                        )
                         if proc.is_alive():
                             proc.kill()
+                            try:
+                                await asyncio.wait_for(asyncio.to_thread(proc.join, 0.2), timeout=0.3)
+                            except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
+                                pass
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: multiprocessing cleanup failed: %s", exc)
 
+        cleanup_coros = [_cleanup_one(proc) for proc in list(self._process_refs.values())]
+        if not cleanup_coros:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*cleanup_coros, return_exceptions=True),
+                timeout=max(1.0, self.process_shutdown_timeout_s + 0.75),
+            )
+        except TimeoutError as exc:
+            record_degradation(
+                "runtime_hygiene",
+                exc,
+                severity="degraded",
+                action="continued shutdown after bounded concurrent child-process cleanup timed out",
+            )
+
     async def _join_non_daemon_threads(self) -> None:
+        join_coros = []
         for thread in list(self._thread_refs.values()):
             if thread.daemon:
                 continue
@@ -706,11 +744,28 @@ class RuntimeHygieneManager:
                 continue
             if thread.ident == threading.get_ident():
                 continue
-            try:
-                await asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('runtime_hygiene', exc)
-                logger.debug("RuntimeHygiene: thread join failed: %s", exc)
+            join_coros.append(
+                asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
+            )
+        if not join_coros:
+            return
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*join_coros, return_exceptions=True),
+                timeout=max(0.5, self.thread_join_timeout_s + 0.3),
+            )
+        except TimeoutError as exc:
+            record_degradation(
+                "runtime_hygiene",
+                exc,
+                severity="degraded",
+                action="continued shutdown after bounded concurrent thread join timed out",
+            )
+            return
+        for result in results:
+            if isinstance(result, (RuntimeError, AttributeError, TypeError, ValueError)):
+                record_degradation('runtime_hygiene', result)
+                logger.debug("RuntimeHygiene: thread join failed: %s", result)
 
     @staticmethod
     def _join_thread_if_not_current(thread: threading.Thread, timeout_s: float) -> None:

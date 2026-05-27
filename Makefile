@@ -1,4 +1,4 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev run demo-autonomy report bench courtroom baselines longevity longevity-24h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench
+.PHONY: lint test typecheck compile quality smoke setup setup-dev run demo-autonomy report bench courtroom baselines longevity longevity-24h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench final-proof
 
 PYTHON ?= python
 RUFF_SURFACE_TARGETS ?= core interface llm security senses skills executors infrastructure aura_main.py tools tests
@@ -192,7 +192,8 @@ seal: quality seal-quick
 	@echo ""
 	@echo "  All quality gates passed."
 	@echo "  All seal verification checks passed."
-	@echo "  Aura is certified for indefinite autonomous operation."
+	@echo "  Aura passed the configured local seal gates for this profile."
+	@echo "  Claims are limited to the evidence in CLAIMS_MATRIX.md."
 	@echo ""
 	@echo "🔒 ══════════════════════════════════════════════════════"
 
@@ -214,8 +215,13 @@ final-proof:
 	python tools/production_surface_lint.py \
 	  --scope production \
 	  --out artifacts/current/production_surface_lint.json
+	python tools/proof_integrity_lint.py \
+	  --scope production \
+	  --out artifacts/current/proof_integrity_lint.json
 	python tools/agi/run_dnu_agi_proof_battery.py \
 	  --full \
+	  --model-tier primary \
+	  --stop-existing-runtime \
 	  --out artifacts/current/agi_live
 	python tools/agi/validate_dnu_final_bundle.py \
 	  artifacts/current/agi_live
@@ -229,6 +235,20 @@ final-proof:
 	  --out artifacts/current/external_live_validation
 	python tools/external_validation/validate_external_live_bundle.py \
 	  artifacts/current/external_live_validation
+	python tools/integration/run_unified_aura_scenario.py \
+	  --out artifacts/current/unified_system_scenario
+	python tools/integration/validate_unified_aura_scenario.py \
+	  artifacts/current/unified_system_scenario
+	python tools/learning/run_continual_learning_battery.py \
+	  --full \
+	  --out artifacts/current/continual_learning
+	python tools/learning/validate_continual_learning_bundle.py \
+	  artifacts/current/continual_learning
+	python tools/environments/run_novel_environment_battery.py \
+	  --full \
+	  --out artifacts/current/novel_environment_adaptation
+	python tools/environments/validate_novel_environment_bundle.py \
+	  artifacts/current/novel_environment_adaptation
 	python tools/longevity/run_longevity_soak.py \
 	  --profile proof \
 	  --out artifacts/current/longevity_soak

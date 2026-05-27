@@ -164,6 +164,26 @@ class MemoryRetrievalPhase(BasePhase):
             return state
 
         try:
+            from core.runtime.proof_policy import is_strict_proof_answer_prompt
+
+            proof_origin = (
+                last_msg.get("origin")
+                or getattr(state.cognition, "current_origin", None)
+                or kwargs.get("origin")
+            )
+            if is_strict_proof_answer_prompt(query or objective or "", origin=proof_origin):
+                new_state = state.derive("memory_retrieval_skipped_for_strict_proof")
+                new_state.cognition.long_term_memory = []
+                new_state.response_modifiers["proof_memory_retrieval_skipped"] = True
+                return new_state
+        except _MEMORY_RECOVERABLE_ERRORS as exc:
+            _record_memory_degradation(
+                exc,
+                action="continued memory retrieval after strict proof guard failed",
+                stage="strict_proof_memory_guard",
+            )
+
+        try:
             affect_signature = (
                 state.affect.get_cognitive_signature()
                 if hasattr(state.affect, "get_cognitive_signature")

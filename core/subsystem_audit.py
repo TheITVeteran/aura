@@ -57,8 +57,16 @@ class SubsystemAudit:
             self._failures[subsystem_name] = history[-5:]
         logger.error("🚨 Subsystem [%s] reported failure: %s", subsystem_name, error)
 
-    def get_status(self, subsystem_name: str) -> Dict[str, Any]:
-        """Get the current health status of a specific subsystem."""
+    def get_status(self, subsystem_name: str | None = None) -> Dict[str, Any]:
+        """Get subsystem health.
+
+        With a name, returns that subsystem's health. Without a name, returns
+        the aggregate health report expected by generic ServiceContainer status
+        readers.
+        """
+        if subsystem_name is None:
+            return self.check_health()
+
         now = time.time()
         last_beat = self._heartbeats.get(subsystem_name)
         failures = self._failures.get(subsystem_name, [])

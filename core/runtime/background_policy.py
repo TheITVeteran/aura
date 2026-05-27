@@ -233,6 +233,19 @@ def background_activity_reason(
 
     now = time.time()
 
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        if proof_run_active():
+            return "proof_run_active"
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="continued background policy evaluation without proof-run signal",
+        )
+        logger.debug("Proof-run background policy check unavailable: %s", _exc)
+
     orch = orchestrator
     if orch is not None:
         boot_grace_s = _env_float("AURA_BACKGROUND_BOOT_GRACE_S", 300.0)

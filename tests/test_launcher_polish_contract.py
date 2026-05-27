@@ -147,11 +147,12 @@ def test_aura_main_uses_shared_runtime_boot_helper_across_cli_server_and_desktop
     main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
 
     assert "async def _boot_runtime_orchestrator(" in main_py
+    assert "async def boot_aura_runtime(" in main_py
     assert main_py.count("create_orchestrator()") == 1
     assert main_py.count("await bootstrap_aura(orchestrator)") == 1
     assert main_py.count("ServiceContainer.lock_registration()") == 1
-    assert main_py.count("_boot_runtime_orchestrator(") >= 4
-    assert 'orchestrator = await _boot_runtime_orchestrator(ready_label="CLI")' in main_py
+    assert main_py.count("boot_aura_runtime(") >= 4
+    assert 'orchestrator = await boot_aura_runtime(profile="cli", ready_label="CLI")' in main_py
     assert 'ready_label="Desktop"' in main_py
     assert 'ready_label="Server"' in main_py
 

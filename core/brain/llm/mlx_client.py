@@ -711,11 +711,12 @@ class MLXLocalClient:
         self._current_requested_max_tokens = 0
         self._current_request_prompt_chars = 0
 
-        # Resolve substrate SHM if available
-        from core.container import ServiceContainer
-
-        repo = ServiceContainer.get("state_repository", default=None)
-        self._substrate_mem = repo._shm if repo else None
+        # The state repository's SharedMemoryTransport may be backed by mmap on
+        # restricted/macOS paths. mmap handles are not picklable under the
+        # Darwin spawn context, so workers get a small multiprocessing bridge
+        # instead of the repository transport itself. The last slot is reserved
+        # for steering liveness.
+        self._substrate_mem = mp.Array("d", 16)
 
         # Shared memory flag to track if affective steering successfully attached
         self._steering_active = mp.Value("b", False)
@@ -2189,11 +2190,20 @@ class MLXLocalClient:
         system_prompt = kwargs.pop("system_prompt", None)
         tools = kwargs.pop("tools", None)
         foreground_request = bool(kwargs.get("foreground_request", False))
+        strict_answer_contract = bool(kwargs.get("strict_answer_contract", False))
+        proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
 
+        # and foreground_request and not strict_answer_contract
         # [STABILITY v53] Identity reinforcement for MLX path — inject Aura's
         # core identity into the system message so the base model can't override
         # it with generic assistant behavior.
-        if messages and isinstance(messages, list) and foreground_request:
+        if (
+            messages
+            and isinstance(messages, list)
+            and foreground_request
+            and not strict_answer_contract
+            and not proof_evaluation_contract
+        ):
             _identity_anchor = (
                 "You are Aura Luna. Speak with direct first-person continuity, "
                 "warmth, and concrete attention in ordinary conversation. "
@@ -2293,6 +2303,10 @@ class MLXLocalClient:
 
     def _check_steering_liveness(self) -> bool:
         """Returns True if the worker subprocess reports steering as active."""
+        try:
+            return bool(getattr(self, "_steering_active").value)
+        except (AttributeError, TypeError, ValueError, OSError):
+            pass
         try:
             sm = getattr(self, "_substrate_mem", None)
             if sm is None:
@@ -2406,6 +2420,26 @@ class MLXLocalClient:
         except Exception as exc:
             logger.debug("Somatic parameter throttle check failed: %s", exc)
 
+        foreground_owner_cm = None
+        if foreground_request:
+            foreground_owner_cm = _foreground_owner_context(
+                owner_label,
+                deadline=deadline if isinstance(deadline, Deadline) else None,
+                foreground_request=True,
+                stale_after=self._first_token_sla(foreground_request=True),
+            )
+            try:
+                await foreground_owner_cm.__aenter__()
+            except TimeoutError as exc:
+                logger.warning("⏸️ [MLX] %s", exc)
+                self._record_degraded_event(
+                    "foreground_owner_timeout",
+                    detail=f"{os.path.basename(self.model_path)}:{exc}",
+                    severity="warning",
+                    foreground_request=True,
+                )
+                return None
+
         acquired = await self._acquire_request_lock(
             owner_label=owner_label,
             deadline=deadline,
@@ -2414,6 +2448,8 @@ class MLXLocalClient:
         if not acquired:
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None
+            if foreground_owner_cm is not None:
+                await foreground_owner_cm.__aexit__(None, None, None)
             if _deferred_reboot:
                 recoverable = str(_deferred_reboot).startswith("recoverable_")
                 reboot_reason = str(_deferred_reboot).removeprefix("recoverable_")
@@ -2424,45 +2460,21 @@ class MLXLocalClient:
             if not request_is_background:
                 self._emit_steering_status(origin_label)
 
-            if foreground_request:
-                try:
-                    async with _foreground_owner_context(
-                        owner_label,
-                        deadline=deadline if isinstance(deadline, Deadline) else None,
-                        foreground_request=True,
-                        stale_after=self._first_token_sla(foreground_request=True),
-                    ):
-                        result = await self._generate_inner(
-                            prompt,
-                            _retry=True,
-                            request_is_background=request_is_background,
-                            foreground_request=foreground_request,
-                            owner_label=owner_label,
-                            **kwargs,
-                        )
-                except TimeoutError as exc:
-                    logger.warning("⏸️ [MLX] %s", exc)
-                    self._record_degraded_event(
-                        "foreground_owner_timeout",
-                        detail=f"{os.path.basename(self.model_path)}:{exc}",
-                        severity="warning",
-                        foreground_request=True,
-                    )
-                    return None
-            else:
-                result = await self._generate_inner(
-                    prompt,
-                    _retry=True,
-                    request_is_background=request_is_background,
-                    foreground_request=foreground_request,
-                    owner_label=owner_label,
-                    **kwargs,
-                )
+            result = await self._generate_inner(
+                prompt,
+                _retry=True,
+                request_is_background=request_is_background,
+                foreground_request=foreground_request,
+                owner_label=owner_label,
+                **kwargs,
+            )
             return result
         finally:
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None
             self._release_request_lock()
+            if foreground_owner_cm is not None:
+                await foreground_owner_cm.__aexit__(None, None, None)
             # Reboot AFTER releasing _request_lock to avoid lock-ordering deadlock
             if _deferred_reboot:
                 recoverable = str(_deferred_reboot).startswith("recoverable_")
@@ -2587,6 +2599,10 @@ class MLXLocalClient:
             ),
             "schema": kwargs.get("schema"),
             "stop_sequences": list(kwargs.get("stop_sequences") or []),
+            "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),
+            "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
+            "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
+            "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
         }
 
         # [STABILITY v57] Add default stop sequences to prevent prompt bleed
@@ -2715,12 +2731,23 @@ class MLXLocalClient:
             )
             return None
         except asyncio.CancelledError:
+            origin_label = str(kwargs.get("origin", "") or "")
+            purpose_label = str(kwargs.get("purpose", "") or "")
             expected_cancel_reason = self._consume_expected_generation_cancellation()
+            benchmark_baseline_cancel = (
+                origin_label.strip().lower() == "baseline"
+                or purpose_label.strip().lower().endswith("_baseline")
+            )
             if expected_cancel_reason:
                 logger.info(
                     "🧹 [MLX] Generation cancelled for %s during expected reboot (%s).",
                     os.path.basename(self.model_path),
                     expected_cancel_reason,
+                )
+            elif benchmark_baseline_cancel:
+                logger.info(
+                    "🧪 [MLX] Baseline generation cancelled for %s by benchmark timeout.",
+                    os.path.basename(self.model_path),
                 )
             else:
                 logger.warning(
@@ -2728,7 +2755,7 @@ class MLXLocalClient:
                     os.path.basename(self.model_path),
                 )
             self._pending_generations.pop(req_id, None)
-            if not expected_cancel_reason and (
+            if not expected_cancel_reason and not benchmark_baseline_cancel and (
                 foreground_request
                 or (
                     self._is_primary_or_deep_lane()
@@ -3184,18 +3211,10 @@ class MLXLocalClient:
 
 def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     """Compatibility factory for Aura's active local backend."""
-    from .model_registry import get_local_backend, get_model_path, get_runtime_model_path
+    from .model_registry import ACTIVE_MODEL, get_local_backend, get_model_path, get_runtime_model_path
 
     if model_path is None:
         model_path = get_runtime_model_path()
-
-    backend = get_local_backend()
-    # [STABILITY v53] Force llama_cpp for .gguf artifacts, even if the
-    # global default is MLX. This ensures the 1.5B Reflex model works.
-    if backend != "mlx" or str(model_path).lower().endswith(".gguf"):
-        from .local_server_client import get_local_server_client
-
-        return get_local_server_client(model_path=model_path, **kwargs)
 
     resolved_model_path = str(get_model_path(model_path)).strip()
     path_candidate = Path(resolved_model_path).expanduser()
@@ -3205,6 +3224,28 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     else:
         runtime_path = resolved_model_path
         client_key = resolved_model_path
+
+    try:
+        from core.runtime.proof_policy import proof_model_tier, proof_run_active
+
+        if proof_run_active(origin=kwargs.get("origin", "mlx_client")) and proof_model_tier() == "primary":
+            primary_path = _real_model_path(get_model_path(ACTIVE_MODEL))
+            target_path = _real_model_path(runtime_path)
+            if target_path != primary_path:
+                raise RuntimeError(
+                    "Proof-primary run refused lower local model lane: "
+                    f"{os.path.basename(target_path)} != {os.path.basename(primary_path)}"
+                )
+    except ImportError:
+        pass
+
+    backend = get_local_backend()
+    # [STABILITY v53] Force llama_cpp for .gguf artifacts, even if the
+    # global default is MLX. This ensures the 1.5B Reflex model works.
+    if backend != "mlx" or str(runtime_path).lower().endswith(".gguf"):
+        from .local_server_client import get_local_server_client
+
+        return get_local_server_client(model_path=runtime_path)
 
     if client_key not in _CLIENTS:
         _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)

@@ -291,6 +291,36 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ok")
         inner.assert_awaited_once()
 
+    async def test_foreground_generate_reserves_owner_before_request_lock(self):
+        import core.brain.llm.mlx_client as mlx_module
+
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        old_owner = mlx_module._FOREGROUND_OWNER_NAME
+        old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
+        observed_owner = []
+
+        async def _acquire(*_args, **_kwargs):
+            observed_owner.append(mlx_module._FOREGROUND_OWNER_NAME)
+            return True
+
+        try:
+            mlx_module._FOREGROUND_OWNER_NAME = None
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+            with patch.object(client, "_acquire_request_lock", side_effect=_acquire):
+                with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")):
+                    result = await client.generate(
+                        "hello",
+                        foreground_request=True,
+                        owner_label="live_user",
+                        deadline=get_deadline(30.0),
+                    )
+        finally:
+            mlx_module._FOREGROUND_OWNER_NAME = old_owner
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(observed_owner, ["live_user"])
+
     async def test_reboot_worker_clears_matching_warmup_owner(self):
         import core.brain.llm.mlx_client as mlx_module
 

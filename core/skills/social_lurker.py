@@ -1,5 +1,6 @@
 from core.runtime.errors import record_degradation
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 from core.skills.base_skill import BaseSkill
 from pydantic import BaseModel, Field

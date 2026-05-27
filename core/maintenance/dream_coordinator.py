@@ -57,6 +57,36 @@ class DreamCoordinator:
         if now - last < interval_s:
             return False
 
+        try:
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            reason = background_activity_reason(
+                None,
+                profile=MAINTENANCE_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+            if reason:
+                logger.info("DreamCoordinator: '%s' deferred — %s.", name, reason)
+                return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "dream_coordinator",
+                exc,
+                action=(
+                    f"Skipped dream subsystem '{name}' because maintenance "
+                    "admission policy was unavailable"
+                ),
+            )
+            logger.warning(
+                "DreamCoordinator: '%s' skipped; maintenance policy unavailable: %s",
+                name,
+                exc,
+            )
+            return False
+
         if self._lock.locked():
             logger.debug(
                 "DreamCoordinator: '%s' skipped — another subsystem is running.", name

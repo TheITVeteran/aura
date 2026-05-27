@@ -319,7 +319,10 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     try:
         from core.container import ServiceContainer
 
-        await asyncio.wait_for(ServiceContainer.shutdown(), timeout=5.0)
+        await asyncio.wait_for(
+            ServiceContainer.shutdown(hook_timeout_s=1.5, total_timeout_s=12.0),
+            timeout=14.0,
+        )
     except TimeoutError:
         _record_shutdown_degradation(
             TimeoutError("ServiceContainer shutdown timed out"),

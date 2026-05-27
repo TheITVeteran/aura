@@ -205,8 +205,8 @@ async def proof_self_repair(report: Any) -> ConformanceResult:
 
 
 def proof_launch_authority(main_source: str) -> ConformanceResult:
-    """Every launch surface must use ``_boot_runtime_orchestrator``."""
-    if "_boot_runtime_orchestrator" not in main_source:
+    """Every launch surface must use ``boot_aura_runtime``."""
+    if "boot_aura_runtime" not in main_source:
         return ConformanceResult(
             "launch_authority", ok=False, detail="canonical boot helper missing"
         )

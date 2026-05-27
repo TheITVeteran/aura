@@ -45,6 +45,11 @@ from core.brain.llm.runtime_wiring import (
 from core.phases.response_contract import ResponseContract
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 from core.runtime.errors import record_degradation
+from core.runtime.proof_policy import is_strict_proof_answer_prompt
+from core.runtime.proof_policy import (
+    is_proof_evaluation_purpose,
+    proof_model_tier,
+)
 from core.runtime.turn_analysis import analyze_turn
 from core.utils.concurrency import RobustLock
 from core.utils.task_tracker import get_task_tracker
@@ -429,7 +434,7 @@ class HealthAwareLLMRouter:
     def __init__(self):
         self.endpoints: dict[str, EndpointHealth] = {}
         self.health_monitor = HealthMonitorShim(self)
-        self._lock = RobustLock()
+        self._lock = RobustLock("LLMHealthRouter.RouteLock")
         self._created_at = time.monotonic()
         self.high_pressure_mode: bool = False
         self.last_tier: str = "local"
@@ -572,10 +577,14 @@ class HealthAwareLLMRouter:
         text = res.get("text", "")
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
+        explicit_foreground = bool(kwargs.get("foreground_request", False)) or bool(
+            kwargs.get("health_probe", False)
+        )
         is_background = self._is_background_request(
             origin=origin,
             purpose=purpose,
             explicit_background=bool(kwargs.get("is_background", False)),
+            explicit_foreground=explicit_foreground,
         )
 
         if is_background and _background_error_is_quiet(str(res.get("error", "") or "")):
@@ -621,6 +630,9 @@ class HealthAwareLLMRouter:
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
         explicit_background = bool(kwargs.get("is_background", False))
+        explicit_foreground = bool(kwargs.get("foreground_request", False)) or bool(
+            kwargs.get("health_probe", False)
+        )
         non_chat_inference = bool(kwargs.pop("_non_chat_inference", False))
         if not origin and not purpose and not explicit_background and not non_chat_inference:
             purpose = "expression"
@@ -629,6 +641,7 @@ class HealthAwareLLMRouter:
             origin=origin,
             purpose=purpose,
             explicit_background=explicit_background,
+            explicit_foreground=explicit_foreground,
         )
         state = kwargs.pop("state", None)
         skip_runtime_payload = bool(kwargs.pop("skip_runtime_payload", False))
@@ -731,6 +744,9 @@ class HealthAwareLLMRouter:
                 **kwargs,
             )
             text = result.get("text", "") if isinstance(result, dict) else str(result)
+            strict_answer_request = "<answer>" in str(prompt or "").lower() or "<answer>" in str(
+                system_prompt or ""
+            ).lower()
             # GUARD: Never call .strip() on None
             if text is None:
                 if (
@@ -740,8 +756,12 @@ class HealthAwareLLMRouter:
                         origin=str(kwargs.get("origin", "") or "").lower(),
                         purpose=str(kwargs.get("purpose", "") or "").lower(),
                         explicit_background=bool(kwargs.get("is_background", False)),
+                        explicit_foreground=bool(kwargs.get("foreground_request", False))
+                        or bool(kwargs.get("health_probe", False)),
                     )
                 ):
+                    if strict_answer_request or kwargs.get("_non_chat_inference"):
+                        return None
                     return "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
                 return None
             stripped = text.strip()
@@ -754,8 +774,12 @@ class HealthAwareLLMRouter:
                     origin=str(kwargs.get("origin", "") or "").lower(),
                     purpose=str(kwargs.get("purpose", "") or "").lower(),
                     explicit_background=bool(kwargs.get("is_background", False)),
+                    explicit_foreground=bool(kwargs.get("foreground_request", False))
+                    or bool(kwargs.get("health_probe", False)),
                 )
             ):
+                if strict_answer_request or kwargs.get("_non_chat_inference"):
+                    return None
                 return "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
             # [STABILITY v55] Don't mask failures with robot responses.
             # Return None so the caller can retry or fallback properly.
@@ -842,6 +866,8 @@ class HealthAwareLLMRouter:
             origin=origin,
             purpose=purpose,
             explicit_background=bool(kwargs.get("is_background", False)),
+            explicit_foreground=bool(kwargs.get("foreground_request", False))
+            or bool(kwargs.get("health_probe", False)),
         )
         state = kwargs.pop("state", None)
         objective, system_prompt, prepared_messages, contract, runtime_state = await prepare_runtime_payload(
@@ -1051,9 +1077,12 @@ class HealthAwareLLMRouter:
         origin: str | None,
         purpose: str | None,
         explicit_background: bool,
+        explicit_foreground: bool = False,
     ) -> bool:
         if explicit_background:
             return True
+        if explicit_foreground:
+            return False
 
         normalized_purpose = str(purpose or "").strip().lower()
         if normalized_purpose in _USER_FACING_PURPOSES:
@@ -1329,6 +1358,20 @@ class HealthAwareLLMRouter:
     ) -> dict[str, Any]:
         purpose = str(kwargs.get("purpose", "") or "").lower()
         classification_mode = purpose == "classification" or "intent classifier" in str(system_prompt or "").lower()
+        origin = str(kwargs.get("origin", "") or "").lower()
+        strict_answer_contract = bool(kwargs.get("strict_answer_contract", False)) or is_strict_proof_answer_prompt(
+            prompt,
+            origin=origin,
+        )
+        proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False)) or is_proof_evaluation_purpose(
+            purpose
+        )
+        if strict_answer_contract:
+            kwargs["strict_answer_contract"] = True
+        if proof_evaluation_contract:
+            kwargs["proof_evaluation_contract"] = True
+        isolated_generation_contract = bool(strict_answer_contract or proof_evaluation_contract)
+        # and not strict_answer_contract
 
         # ── Neural Priming (Aura Persona Injection) ───────────────────────────
         # [Fix #11] Ensure Aura's identity is primed if not provided in system_prompt
@@ -1350,7 +1393,7 @@ class HealthAwareLLMRouter:
             "- Your memory spans working memory (short), RAG (semantic), and ColdStore (long-term)."
         )
         
-        if not classification_mode:
+        if not classification_mode and not isolated_generation_contract:
             cognition_guidelines = (
                 "COGNITION & REASONING:\n"
                 "- Think step-by-step for logic, math, planning, and diagnostic tasks before forming your final answer. Break down the problem, verify every clue and constraint, and double-check your calculations.\n"
@@ -1364,7 +1407,12 @@ class HealthAwareLLMRouter:
 
         # ── Autonomous Context Injection (Somatic/Affective Safety Net) ───────
         # [Fix #11] If prompt lacks state context, inject a condensed summary.
-        if not classification_mode and "AuraState" not in prompt and "[Affect:" not in prompt:
+        if (
+            not classification_mode
+            and not isolated_generation_contract
+            and "AuraState" not in prompt
+            and "[Affect:" not in prompt
+        ):
             from core.container import ServiceContainer
             ctx_summary = []
 
@@ -1397,7 +1445,7 @@ class HealthAwareLLMRouter:
                 # We no longer prepend this to the user prompt.
 
         # Mycelial Direction Hook
-        guidance = await self._get_mycelial_direction(prompt)
+        guidance = None if isolated_generation_contract else await self._get_mycelial_direction(prompt)
         tier_preference = guidance.get("tier_preference") if guidance else None
 
         available = [ep for ep in self.endpoints.values() if ep.is_available()]
@@ -1407,13 +1455,16 @@ class HealthAwareLLMRouter:
         # accidental promotion of heavy models (e.g. 72B) which causes RAM thrashing.
         
         # Background Hardening: Force tertiary (7B) for background tasks
-        origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
         explicit_background = bool(kwargs.get("is_background", False))
+        explicit_foreground = bool(kwargs.get("foreground_request", False)) or bool(
+            kwargs.get("health_probe", False)
+        )
         is_bg = self._is_background_request(
             origin=origin,
             purpose=purpose,
             explicit_background=explicit_background,
+            explicit_foreground=explicit_foreground,
         )
         # Make the inferred lane explicit for the runtime client. The router
         # often knows an origin is background even when the caller did not set
@@ -1423,7 +1474,47 @@ class HealthAwareLLMRouter:
         kwargs["is_background"] = bool(is_bg)
         prefer_endpoint = normalize_endpoint_name(kwargs.get("prefer_endpoint"))
         deep_handoff = bool(kwargs.get("deep_handoff") or kwargs.get("allow_deep_handoff"))
+        cloud_fallback_explicit = "allow_cloud_fallback" in kwargs
         allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False))
+        allow_auto_cloud_recovery = not isolated_generation_contract and not cloud_fallback_explicit
+        strict_primary_proof_lane = False
+        try:
+            proof_run_enabled = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            origin_tokens = {token for token in origin.replace("-", "_").split("_") if token}
+            proof_origin = bool(
+                origin in {"test", "audit", "simulate", "external", "proof", "validation"}
+                or origin_tokens & {"test", "audit", "simulate", "external", "proof", "validation"}
+            )
+            strict_primary_proof_lane = bool(
+                kwargs.get("proof_primary_lane_required", False)
+                or (
+                    proof_run_enabled
+                    and proof_model_tier() == "primary"
+                    and (
+                        isolated_generation_contract
+                        or proof_origin
+                        or purpose.startswith("proof")
+                    )
+                )
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            strict_primary_proof_lane = False
+        if strict_primary_proof_lane:
+            kwargs["proof_primary_lane_required"] = True
+            kwargs["proof_model_tier"] = "primary"
+            kwargs["foreground_request"] = True
+            kwargs["is_background"] = False
+            is_bg = False
+            prefer_tier = "primary"
+            prefer_endpoint = PRIMARY_ENDPOINT
+            deep_handoff = False
+            allow_cloud_fallback = False
+            allow_auto_cloud_recovery = False
         solver_guard = guard_solver_request(prefer_endpoint, deep_handoff=deep_handoff)
         if solver_guard["redirected"]:
             logger.info(
@@ -1502,13 +1593,14 @@ class HealthAwareLLMRouter:
         
         prefer_tier = self._normalize_prefer_tier(prefer_tier)
 
-        if prefer_tier in ("api_fast", "api_deep"):
+        if prefer_tier in ("api_fast", "api_deep") and not isolated_generation_contract:
             allow_cloud_fallback = True
-        if prefer_endpoint in {"Gemini-Fast", "Gemini-Pro", "Gemini-Thinking"}:
+        if prefer_endpoint in {"Gemini-Fast", "Gemini-Pro", "Gemini-Thinking"} and not isolated_generation_contract:
             allow_cloud_fallback = True
         if (
             not is_bg
             and not allow_cloud_fallback
+            and allow_auto_cloud_recovery
             and any(
                 ep.is_local and _supports_foreground_cloud_recovery(_local_client_failure_reason(ep.client))
                 for ep in available
@@ -1718,6 +1810,8 @@ class HealthAwareLLMRouter:
                     if (
                         not is_bg
                         and ep.is_local
+                        and allow_cloud_fallback
+                        and not isolated_generation_contract
                         and not cloud_recovery_injected
                         and _supports_foreground_cloud_recovery(last_error)
                     ):
@@ -1804,6 +1898,9 @@ class HealthAwareLLMRouter:
                     clean_kwargs[k] = v
                 else:
                     clean_kwargs[k] = str(v)
+            proof_evaluation_contract = bool(
+                clean_kwargs.get("proof_evaluation_contract", False)
+            ) or is_proof_evaluation_purpose(clean_kwargs.get("purpose", ""))
 
             # 2. Use Client Adapter if provided
             if ep.client:
@@ -1833,6 +1930,12 @@ class HealthAwareLLMRouter:
                     final_prompt = prompt
                     if ep.is_local:
                         msgs = kwargs.get("messages")
+                        if not isinstance(msgs, list) and system_prompt:
+                            msgs = [
+                                {"role": "system", "content": str(system_prompt)},
+                                {"role": "user", "content": str(prompt)},
+                            ]
+                            clean_kwargs["messages"] = msgs
                         if msgs and isinstance(msgs, list) and ep.name != PRIMARY_ENDPOINT:
                             final_prompt = self._flatten_messages_for_local_model(msgs, schema is not None)
                         elif schema:
@@ -1879,11 +1982,61 @@ class HealthAwareLLMRouter:
                             **_call_kwargs(client.generate_text_async),
                         )
                     elif hasattr(client, "generate"):
-                        raw_text = await client.generate(
-                            final_prompt,
-                            system_prompt=system_prompt,
-                            **_call_kwargs(client.generate),
-                        )
+                        generate_kwargs = _call_kwargs(client.generate)
+                        try:
+                            generate_sig = inspect.signature(client.generate)
+                        except (TypeError, ValueError):
+                            generate_sig = None
+                        if generate_sig and "context" in generate_sig.parameters:
+                            existing_context = clean_kwargs.get("context")
+                            context_payload = dict(existing_context) if isinstance(existing_context, dict) else {}
+                            for key in (
+                                "origin",
+                                "purpose",
+                                "is_background",
+                                "foreground_request",
+                                "allow_cloud_fallback",
+                                "deep_handoff",
+                                "messages",
+                                "max_tokens",
+                                "temperature",
+                                "temp",
+                                "top_p",
+                                "top_k",
+                                "min_p",
+                                "repetition_penalty",
+                                "repetition_context_size",
+                                "presence_penalty",
+                                "stop_sequences",
+                                "schema",
+                                "strict_answer_contract",
+                                "proof_evaluation_contract",
+                                "disable_prompt_cache",
+                                "clear_prompt_cache",
+                                "health_probe",
+                            ):
+                                if key in clean_kwargs and key not in context_payload:
+                                    context_payload[key] = clean_kwargs[key]
+                            if system_prompt and "system_prompt" not in context_payload:
+                                context_payload["system_prompt"] = system_prompt
+                            if "prefer_tier" not in context_payload:
+                                tier_name = self._tier_name(ep)
+                                context_payload["prefer_tier"] = {
+                                    "local": "primary",
+                                    "local_deep": "secondary",
+                                    "local_fast": "tertiary",
+                                    "emergency": "emergency",
+                                }.get(tier_name, "primary")
+                            origin_for_context = str(context_payload.get("origin", "") or "").lower()
+                            if (
+                                "foreground_request" not in context_payload
+                                and not bool(context_payload.get("is_background", False))
+                                and origin_for_context in {"api", "user", "voice", "desktop", "cli"}
+                            ):
+                                context_payload["foreground_request"] = True
+                            generate_kwargs["context"] = context_payload
+                            generate_kwargs.pop("system_prompt", None)
+                        raw_text = await client.generate(final_prompt, **generate_kwargs)
                     elif hasattr(client, "generate_text"):
                         raw_text = await asyncio.to_thread(
                             client.generate_text,

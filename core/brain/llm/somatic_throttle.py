@@ -50,10 +50,22 @@ class SomaticComputeSentinel:
         except Exception as e:
             logger.debug("Failed to retrieve hardware metrics: %s", e)
 
-        # 3. Determine if systemic overload is present
-        # Elevated arousal (> 0.8) or critical RAM/CPU pressure or governance token exhaustion
-        is_stressed = (arousal > 0.8) or (ram_pct > 0.88) or (cpu_load > 0.9) or (gov_throttle <= 0.5)
-        is_critical = (arousal > 0.9) or (ram_pct > 0.93) or (gov_throttle <= 0.2)
+        # 3. Determine if systemic overload is present.
+        # Arousal alone is a reason to narrow sampling, not a reason to
+        # declare a critical hardware panic while RAM/CPU are healthy.
+        is_stressed = (
+            (arousal > 0.8)
+            or (ram_pct > 0.88)
+            or (cpu_load > 0.9)
+            or (gov_throttle <= 0.5)
+        )
+        arousal_resource_coupled = arousal > 0.95 and (ram_pct > 0.82 or cpu_load > 0.85)
+        is_critical = (
+            arousal_resource_coupled
+            or (ram_pct > 0.93)
+            or (cpu_load > 0.95)
+            or (gov_throttle <= 0.2)
+        )
 
         if gov_throttle == 0.0:
             # Token exhaustion: severe cap to block further consumption

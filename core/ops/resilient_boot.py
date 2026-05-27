@@ -68,7 +68,12 @@ class ResilientBoot:
         # Sync with Orchestrator's main boot lock
         from core.utils.concurrency import RobustLock
         if not hasattr(self.orchestrator, "_boot_lock"):
-            self.orchestrator._boot_lock = RobustLock()
+            self.orchestrator._boot_lock = RobustLock(
+                "Orchestrator.ResilientIgnitionLock",
+                watchdog_threshold_s=900.0,
+                force_release_on_stall=False,
+                timeout_s=900.0,
+            )
             
         async with self.orchestrator._boot_lock:
             if self.orchestrator.status.initialized:

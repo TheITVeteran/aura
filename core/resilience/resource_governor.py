@@ -23,10 +23,37 @@ import asyncio
 import gc
 import logging
 import os
+import sqlite3
 import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("Aura.ResourceGovernor")
+
+_SQLITE_LOCK_MARKERS = (
+    "database is locked",
+    "database table is locked",
+    "database schema is locked",
+)
+_SQLITE_CORRUPTION_MARKERS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "database schema is corrupt",
+    "malformed database",
+)
+
+
+def _sqlite_error_text(exc: BaseException) -> str:
+    return str(exc).strip().lower()
+
+
+def _is_sqlite_lock(exc: BaseException) -> bool:
+    text = _sqlite_error_text(exc)
+    return any(marker in text for marker in _SQLITE_LOCK_MARKERS)
+
+
+def _is_sqlite_corruption(exc: BaseException) -> bool:
+    text = _sqlite_error_text(exc)
+    return any(marker in text for marker in _SQLITE_CORRUPTION_MARKERS)
 
 # ---------------------------------------------------------------------------
 # Thresholds (tunable)
@@ -338,6 +365,8 @@ class ResourceGovernor:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                     compacted = True
                 except (sqlite3.Error, OSError) as e:
+                    if self._handle_ledger_maintenance_error(ledger, e, operation="wal_checkpoint"):
+                        return False
                     record_degradation('resource_governor', e)
                     logger.debug("ResourceGovernor: WAL checkpoint failed: %s", e)
 
@@ -366,6 +395,8 @@ class ResourceGovernor:
                         )
                         compacted = True
                 except (sqlite3.Error, OSError) as e:
+                    if self._handle_ledger_maintenance_error(ledger, e, operation="prune"):
+                        return False
                     record_degradation('resource_governor', e)
                     logger.debug("ResourceGovernor: ledger prune failed: %s", e)
 
@@ -374,6 +405,21 @@ class ResourceGovernor:
             record_degradation('resource_governor', e)
             logger.debug("ResourceGovernor: ledger compaction skipped: %s", e)
             return False
+
+    def _handle_ledger_maintenance_error(self, ledger: Any, exc: BaseException, *, operation: str) -> bool:
+        """Handle expected SQLite maintenance races/corruption without killing supervision."""
+        if _is_sqlite_lock(exc):
+            logger.debug("ResourceGovernor: ledger %s skipped because SQLite is busy: %s", operation, exc)
+            return True
+        if _is_sqlite_corruption(exc) and hasattr(ledger, "recover_storage"):
+            recovered = bool(ledger.recover_storage(exc))
+            if recovered:
+                logger.warning(
+                    "ResourceGovernor: ledger %s found corrupt storage and recovered it before continuing.",
+                    operation,
+                )
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # 3. System memory monitoring

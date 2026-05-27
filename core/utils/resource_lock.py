@@ -37,26 +37,38 @@ class ResourceLock:
                 self._browser_idle.set()
                 self._gpu_semaphore = asyncio.Semaphore(1)
 
+    def begin_browser_session(self) -> bool:
+        """Mark a browser session active from code that already owns the loop."""
+        self._ensure_primitives()
+        self._browser_sessions += 1
+        self._total_browser_sessions += 1
+        if self._browser_idle is not None:
+            self._browser_idle.clear()
+            logger.debug("🌐 Browser session started (%d active)", self._browser_sessions)
+            return True
+        logger.debug("Browser resource lock has no loop primitives; counters updated only.")
+        return False
+
+    def end_browser_session(self) -> None:
+        """Release a previously marked browser session."""
+        self._ensure_primitives()
+        self._browser_sessions = max(0, self._browser_sessions - 1)
+        if self._browser_sessions <= 0:
+            self._browser_sessions = 0
+            if self._browser_idle is not None:
+                self._browser_idle.set()
+            logger.debug("🌐 Browser session ended — background tasks resumed")
+
     @asynccontextmanager
     async def browser_session(self):
         """Context manager for browser operations.
         Clears the idle flag so heavy background tasks pause.
         """
-        self._ensure_primitives()
-        self._browser_sessions += 1
-        self._total_browser_sessions += 1
-        if self._browser_idle:
-            self._browser_idle.clear()
-        logger.debug("🌐 Browser session started (%d active)", self._browser_sessions)
+        self.begin_browser_session()
         try:
             yield
         finally:
-            self._browser_sessions -= 1
-            if self._browser_sessions <= 0:
-                self._browser_sessions = 0
-                if self._browser_idle:
-                    self._browser_idle.set()
-                logger.debug("🌐 Browser session ended — background tasks resumed")
+            self.end_browser_session()
 
     async def wait_for_browser_idle(self, timeout: Optional[float] = 30.0):
         """Wait until no browser session is active.

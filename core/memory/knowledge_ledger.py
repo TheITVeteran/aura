@@ -16,6 +16,7 @@ Format: List of natural-language entries like:
 
 from core.runtime.errors import record_degradation
 import logging
+import sqlite3
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional

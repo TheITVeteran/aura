@@ -13,6 +13,7 @@ import platform
 import shutil
 import signal
 import time
+import atexit
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -179,6 +180,9 @@ class MacKeepAwakeController:
         self._process = None
         return self.status()
 
+    def on_stop(self) -> None:
+        self.stop()
+
     def is_active(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
@@ -203,6 +207,7 @@ class MacKeepAwakeController:
 
 
 _controller: MacKeepAwakeController | None = None
+_shutdown_hooks_registered = False
 
 
 def get_keep_awake_controller() -> MacKeepAwakeController:
@@ -210,6 +215,31 @@ def get_keep_awake_controller() -> MacKeepAwakeController:
     if _controller is None:
         _controller = MacKeepAwakeController()
     return _controller
+
+
+def _register_shutdown_hooks(controller: MacKeepAwakeController) -> None:
+    global _shutdown_hooks_registered
+    if _shutdown_hooks_registered:
+        return
+    try:
+        from core.container import ServiceContainer
+
+        ServiceContainer.register_instance("keep_awake_controller", controller, required=False)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    try:
+        from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+        get_shutdown_coordinator().register(
+            controller.stop,
+            phase="actors",
+            name="keep_awake_controller",
+            timeout=4.0,
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    atexit.register(controller.stop)
+    _shutdown_hooks_registered = True
 
 
 def keep_awake_enabled_from_environment() -> bool:
@@ -239,10 +269,13 @@ def start_from_environment() -> KeepAwakeStatus:
     if not keep_awake_enabled_from_environment():
         return controller.status()
     keep_display = os.environ.get("AURA_KEEP_DISPLAY_AWAKE", "").strip().lower() in {"1", "true", "yes", "on"}
-    return controller.start(
+    status = controller.start(
         keep_display_awake=keep_display,
         require_ac_power=require_ac_power_from_environment(),
     )
+    if status.active:
+        _register_shutdown_hooks(controller)
+    return status
 
 
 __all__ = [

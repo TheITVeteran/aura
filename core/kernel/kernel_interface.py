@@ -414,7 +414,21 @@ class KernelInterface:
 
         try:
             # Inject user turn into working memory before tick so history builds.
-            if inject_to_working_memory and self._kernel.state is not None:
+            durable_working_memory_turn = bool(inject_to_working_memory)
+            try:
+                from core.runtime.proof_policy import is_proof_repair_prompt
+
+                if is_proof_repair_prompt(message, origin=origin):
+                    durable_working_memory_turn = False
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _emit_kernel_fault(
+                    exc,
+                    action="continued kernel processing after proof repair working-memory classification failed",
+                    severity="warning",
+                    stage="process.proof_repair_classification",
+                )
+
+            if durable_working_memory_turn and self._kernel.state is not None:
                 cognition = getattr(self._kernel.state, "cognition", None)
                 if cognition is None:
                     raise AttributeError("kernel state has no cognition")

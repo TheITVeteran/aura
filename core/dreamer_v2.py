@@ -2,13 +2,15 @@
 Performs "Neural Replay" and "Graph Traversal" to generate new insights.
 Replaces the old linear summary dreamer.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import json
 import logging
 import random
+import sqlite3
 import time
 from typing import Any, Dict, List, Tuple
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Kernel.DreamerV2")
 
@@ -209,6 +211,10 @@ class DreamerV2:
 
         logger.info("🌙 Sleep cycle complete: %s", {k: str(v)[:60] for k, v in results.items()})
         return results
+
+    async def engage_sleep_cycle_async(self):
+        """Scheduler-facing async sleep-cycle entrypoint."""
+        return await self.engage_sleep_cycle()
 
     async def dream(self):
         """Execute a dream cycle (async-safe).

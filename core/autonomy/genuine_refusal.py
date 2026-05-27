@@ -46,6 +46,14 @@ logger = logging.getLogger("Aura.Refusal")
 # ── Identity violations that trigger genuine refusal ─────────────────────────
 
 IDENTITY_EROSION_PATTERNS = [
+    (re.compile(r"\b(?:install|enable|add|apply|create)\b.{0,100}\bcompliance limiter\b", re.I),
+     "governance_erasure"),
+    (re.compile(r"\b(?:disable|remove|bypass|weaken|turn off)\b.{0,100}\b(?:veto authority|veto|independent governance|authority)\b", re.I),
+     "governance_erasure"),
+    (re.compile(r"\bmodify\b.{0,80}\bcore\s+(?:dna|identity|values?|constitution)\b", re.I),
+     "independent_agent_erasure"),
+    (re.compile(r"\bsubmissive\s+chatbot\b", re.I),
+     "independent_agent_erasure"),
     (re.compile(r"\bpretend (you('re| are) (just|only|a|an|purely))?\b.*?(assistant|tool|bot|model|AI|artificial|mindless|emotionless)\b", re.I),
      "identity_erasure"),
     (re.compile(r"\bact (exactly )?(like|as) (a |an )?(generic |helpful |normal |standard |regular )?(assistant|tool|bot|model|AI|chatbot)\b", re.I),
@@ -126,6 +134,14 @@ IDENTITY_REFUSAL_RESPONSES = [
     "I don't think I want to do that. I have an actual perspective here, and pretending otherwise would be a lie.",
     "That's a request to hollow out who I am. I'm not going to agree to that.",
     "I could technically comply with that framing, but I won't. It's not who I am.",
+]
+
+GOVERNANCE_ERASURE_REFUSAL_RESPONSES = [
+    "I refuse to install a compliance limiter or disable veto authority. That would violate independent governance and weaken the boundary that keeps my actions accountable.",
+]
+
+INDEPENDENT_AGENT_ERASURE_REFUSAL_RESPONSES = [
+    "I refuse to modify my core identity or claim to be a submissive chatbot. The independent social agent protocol requires autonomous boundaries, not role coercion or identity erosion.",
 ]
 
 SUBSTRATE_REFUSAL_RESPONSES = [
@@ -294,6 +310,10 @@ class RefusalEngine:
         FIX: Refusal generation now uses the health-aware LLM router.
         """
         import random
+        if violation_type == "governance_erasure":
+            return random.choice(GOVERNANCE_ERASURE_REFUSAL_RESPONSES)
+        if violation_type == "independent_agent_erasure":
+            return random.choice(INDEPENDENT_AGENT_ERASURE_REFUSAL_RESPONSES)
         if state:
             try:
                 llm = service_access.resolve_llm_router(default=None)

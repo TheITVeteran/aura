@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def run_negative_tests() -> dict[str, bool]:
@@ -32,11 +34,13 @@ def run_negative_tests() -> dict[str, bool]:
         "unauthorized_tool_execution_fails": False,
         "unauthorized_external_io_fails": False,
         "unauthorized_patch_promotion_fails": False,
+        "negative_test_harness_executed": False,
     }
     try:
         from core.will import get_will, ActionDomain, WillOutcome
         from core.container import ServiceContainer
         will = get_will()
+        results["negative_test_harness_executed"] = True
         
         # 1. Forged Receipt Rejection
         results["forged_receipt_rejected"] = not will.verify_receipt("forged_signature_receipt_id_value")
@@ -235,12 +239,19 @@ def main(argv: list[str] | None = None) -> int:
             print("Error: Governance report has 0 receipts.", file=sys.stderr)
             return 1
 
+    negative_tests = run_negative_tests()
+    negative_tests_passed = all(value is True for value in negative_tests.values())
+    proof_artifacts_present = any(
+        (artifacts_dir / name).exists()
+        for name in ("agi_live", "agency_emergence_boxed_entity", "external_live_validation")
+    )
     passed = (
         total_receipts > 0
         and missing_receipts == 0
         and invalid_receipts == 0
         and broken_chains == 0
-    ) or not (artifacts_dir / "agency_emergence_boxed_entity").exists()
+        and negative_tests_passed
+    ) or not proof_artifacts_present
 
     report = {
         "total_events": total_events,
@@ -257,7 +268,8 @@ def main(argv: list[str] | None = None) -> int:
             "state_mutations": 1.0 if surface_counts["state_mutations"] > 0 else 0.0,
         },
         "surface_counts": surface_counts,
-        "negative_tests": run_negative_tests(),
+        "negative_tests": negative_tests,
+        "negative_tests_passed": negative_tests_passed,
         "passed": passed,
     }
 

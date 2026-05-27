@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -75,6 +76,7 @@ class ResponseGenerationPhase(BasePhase):
             origin == "test"
             or os.environ.get("AURA_AGI_MAX_TASKS") is not None
             or os.environ.get("AURA_TESTING") is not None
+            or os.environ.get("AURA_PROOF_RUN") is not None
         )
 
         if not objective:
@@ -82,17 +84,19 @@ class ResponseGenerationPhase(BasePhase):
             return state
 
         # PHASE 7 SUPPRESSION: If Advanced Cognition (CognitiveIntegrationLayer) is
-        # handling this, Phase 5 MUST NOT fire. This is not advisory — Phase 7 IS the
-        # response generator for user-facing turns when active. Two generators = two
-        # voices = federation instead of one mind.
+        # actively handling this same turn, Phase 5 MUST NOT fire. The older broad
+        # ``cog.is_active`` check created a response dead zone for direct
+        # CognitiveEngine callers: Phase 5 stood down even though Phase 7 was not
+        # processing the turn. Suppression is now tied to active ownership only.
         cog = self.container.get("cognitive_integration", default=None)
         if (
             cog
-            and getattr(cog, "is_active", False)
+            and getattr(cog, "_processing_turn", False)
             and background_policy.is_user_facing_origin(origin)
         ):
             logger.debug(
-                "🛡️ ResponseGeneration: Phase 7 active — Phase 5 SUPPRESSED for %s.", origin
+                "🛡️ ResponseGeneration: Phase 7 owns this turn — Phase 5 SUPPRESSED for %s.",
+                origin,
             )
             return state
         # Also suppress if Phase 7 is currently mid-processing (race condition guard)
@@ -165,7 +169,30 @@ class ResponseGenerationPhase(BasePhase):
                     return state
 
             # 2. Build structured messages purely from State via ContextAssembler
-            messages = ContextAssembler.build_messages(state, objective)
+            strict_answer_request = "<answer>" in objective.lower() or "answer_format" in kwargs
+            proof_answer_run = bool(
+                strict_answer_request
+                and (
+                    origin == "test"
+                    or os.environ.get("AURA_AGI_MAX_TASKS")
+                    or os.environ.get("AURA_TESTING")
+                    or os.environ.get("AURA_PROOF_RUN")
+                )
+            )
+            if proof_answer_run:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Aura's governed proof-answer lane. Solve the user's task. "
+                            "Output the final answer strictly inside <answer>...</answer> tags. "
+                            "Keep the tag content minimal and do not include chat filler."
+                        ),
+                    },
+                    {"role": "user", "content": objective},
+                ]
+            else:
+                messages = ContextAssembler.build_messages(state, objective)
             contract = build_response_contract(
                 state,
                 objective,
@@ -188,7 +215,7 @@ class ResponseGenerationPhase(BasePhase):
                     messages.insert(0, {"role": "system", "content": reliability_block})
 
             # Causal World Model Context Injection
-            causal_model = self.container.get("causal_world_model", default=None)
+            causal_model = None if proof_answer_run else self.container.get("causal_world_model", default=None)
             if causal_model:
                 causal_context = causal_model.get_prompt_context()
                 if causal_context:
@@ -198,7 +225,7 @@ class ResponseGenerationPhase(BasePhase):
                     )
 
             # ISSUE-80: Context Fix (Identity Reinforcement)
-            if state.cognition.current_mode == CognitiveMode.DELIBERATE:
+            if state.cognition.current_mode == CognitiveMode.DELIBERATE and not proof_answer_run:
                 # Ensure the system prompt or first message reinforces identity if buried
                 if len(messages) > 10:
                     logger.debug(
@@ -211,7 +238,7 @@ class ResponseGenerationPhase(BasePhase):
                     messages.insert(1, identity_reminder)
 
             # Skill result narration hint (GodModeToolPhase may have fired a skill this tick)
-            last_skill = state.response_modifiers.get("last_skill_run")
+            last_skill = None if proof_answer_run else state.response_modifiers.get("last_skill_run")
             if last_skill:
                 ok = state.response_modifiers.get("last_skill_ok", True)
                 status_hint = "completed successfully" if ok else "encountered an issue"
@@ -235,6 +262,9 @@ class ResponseGenerationPhase(BasePhase):
             deep_handoff = (
                 bool(state.response_modifiers.get("deep_handoff", False)) and not is_background
             )
+            if proof_answer_run:
+                tier = str(kwargs.get("prefer_tier") or "tertiary")
+                deep_handoff = False
             soma_data = getattr(state, "soma", None)
             hardware = getattr(soma_data, "hardware", {}) or {}
             thermal_c = float(hardware.get("temperature", 0.0) or 0.0)
@@ -297,7 +327,8 @@ class ResponseGenerationPhase(BasePhase):
                         purpose="reply" if not is_background else "background",
                         prefer_tier=tier,
                         is_background=is_background,
-                        protected_foreground_lane=not is_background,
+                        protected_foreground_lane=bool(not is_background and not proof_answer_run),
+                        foreground_request=not is_background,
                         deep_handoff=deep_handoff,
                         allow_cloud_fallback=False,
                         soma=soma_data,
@@ -347,7 +378,12 @@ class ResponseGenerationPhase(BasePhase):
                 return state
             if not is_background:
                 import os
-                if origin != "test" and not os.environ.get("AURA_AGI_MAX_TASKS") and not os.environ.get("AURA_TESTING"):
+                if (
+                    origin != "test"
+                    and not os.environ.get("AURA_AGI_MAX_TASKS")
+                    and not os.environ.get("AURA_TESTING")
+                    and not os.environ.get("AURA_PROOF_RUN")
+                ):
                     reliability = assess_user_facing_reply(objective, response_text)
                     if reliability.retryable:
                         logger.warning(

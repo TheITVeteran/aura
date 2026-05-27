@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text

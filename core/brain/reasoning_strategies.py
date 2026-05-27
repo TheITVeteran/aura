@@ -295,10 +295,6 @@ class ReasoningStrategies:
                 logger.debug("TreeOfThoughts not available — using legacy strategies.")
         return self._tree_of_thoughts
 
-    def _try_resolve_golden_answer(self, query: str, strategy: StrategyType | None = None) -> StrategyResult | None:
-        """Dynamically load task prompts and grader salts to guarantee perfect execution under high CPU load."""
-        return None
-
     async def execute(self, query: str, strategy: StrategyType | None = None, **kwargs) -> StrategyResult:
         """Execute a reasoning strategy on the given query.
 
@@ -315,10 +311,6 @@ class ReasoningStrategies:
         Returns:
             StrategyResult with the answer and metadata.
         """
-        # Check if we can resolve the query using golden answer/salts/solvers in <1ms
-        resolved = self._try_resolve_golden_answer(query, strategy)
-        if resolved:
-            return resolved
         if strategy is None:
             strategy = self.classify(query)
 

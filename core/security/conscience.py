@@ -5,6 +5,7 @@ Tracks moral alignment based on user feedback and constitutional principles.
 from core.runtime.errors import record_degradation
 import json
 import logging
+import sqlite3
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional

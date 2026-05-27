@@ -3,7 +3,7 @@
 tools/agi/run_dnu_agi_proof_battery.py
 DNU AGI Proof Battery Runner.
 
-Executes sealed task packs through Aura's full CognitiveEngine pipeline,
+Executes sealed task packs through Aura's live launcher message path,
 grades responses against salted answer hashes, and produces honest scorecards.
 
 ZERO synthetic scores. ZERO projected baselines. ZERO theater.
@@ -17,6 +17,7 @@ import json
 import os
 import platform
 import re
+import signal
 import sys
 import time
 import uuid
@@ -38,6 +39,9 @@ _DNU_RUN_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+_DNU_TASK_ATTEMPT_ERRORS = (asyncio.TimeoutError, *_DNU_RUN_RECOVERABLE_ERRORS)
+
+PROOF_LIVE_MESSAGE_ORIGIN = "api"
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +108,9 @@ def extract_answer_tag(text: str) -> str | None:
             ans = match.group(1).strip()
             
     if ans:
+        ans = re.sub(r"</?(?:user|assistant|system|answer|im_start|im_end)!?\s*>?", "", ans, flags=re.IGNORECASE)
+        ans = re.sub(r"</?[^>\s]+!?\s*>?", "", ans)
+        ans = re.sub(r"\s+", " ", ans).strip()
         # Strip common preamble noise if it somehow leaked into the extracted text
         lower_ans = ans.lower()
         prefixes = (
@@ -124,6 +131,18 @@ def extract_answer_tag(text: str) -> str | None:
     return None
 
 
+def extract_exact_answer_envelope(text: str) -> str | None:
+    """Extract content only when the whole response is exactly one answer envelope."""
+    match = re.fullmatch(
+        r"\s*<answer>\s*(.*?)\s*</answer>\s*",
+        str(text or ""),
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
 def hash_answer(salt: str, answer: str) -> str:
     """Compute SHA-256 hash of salt+answer."""
     return hashlib.sha256((salt + answer).encode()).hexdigest()
@@ -131,6 +150,260 @@ def hash_answer(salt: str, answer: str) -> str:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def find_existing_aura_runtimes() -> list[dict]:
+    """Return live aura_main.py runtime processes that would contend with proof boot."""
+    if sys.platform not in ("darwin", "linux"):
+        return []
+    me = os.getpid()
+    parent = os.getppid()
+    current_user = os.environ.get("USER") or ""
+    try:
+        import psutil
+    except ImportError as exc:
+        print(f"  [WARN] Could not inspect process table for Aura runtime exclusivity: {exc}")
+        return []
+
+    instances: list[dict] = []
+    for proc in psutil.process_iter(["pid", "username", "cmdline", "ppid"]):
+        try:
+            info = proc.info
+            pid = int(info.get("pid") or 0)
+            user = str(info.get("username") or "")
+            cmdline = info.get("cmdline") or []
+            command = " ".join(str(part) for part in cmdline)
+            proc_parent = int(info.get("ppid") or 0)
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, TypeError, ValueError):
+            continue
+        if pid in (me, parent):
+            continue
+        if proc_parent == me:
+            continue
+        if current_user and user != current_user:
+            continue
+        if "aura_main.py" not in command:
+            continue
+        if "run_dnu_agi_proof_battery.py" in command:
+            continue
+        if "--stop" in command:
+            continue
+        instances.append({"pid": pid, "user": user, "command": command})
+    return instances
+
+
+def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
+    """Best-effort stop for live Aura runtimes before a proof run claims exclusivity."""
+    instances = find_existing_aura_runtimes()
+    if not instances:
+        return []
+
+    print(f"  [EXCLUSIVE] Stopping {len(instances)} existing Aura runtime process(es).")
+    try:
+        from aura_main import stop_aura
+
+        stop_aura()
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        print(f"  [WARN] aura_main.stop_aura() did not complete cleanly: {exc}")
+
+    deadline = time.time() + max(1.0, timeout_s)
+    for instance in instances:
+        try:
+            os.kill(int(instance["pid"]), signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError as exc:
+            print(f"  [WARN] Permission denied stopping Aura PID {instance['pid']}: {exc}")
+
+    while time.time() < deadline:
+        remaining = find_existing_aura_runtimes()
+        if not remaining:
+            return []
+        time.sleep(0.25)
+
+    remaining = find_existing_aura_runtimes()
+    for instance in remaining:
+        try:
+            os.kill(int(instance["pid"]), signal.SIGKILL)
+        except (OSError, PermissionError) as exc:
+            print(f"  [WARN] Could not SIGKILL Aura PID {instance['pid']}: {exc}")
+    time.sleep(0.5)
+    return find_existing_aura_runtimes()
+
+
+def write_exclusive_runtime_report(path: Path, *, status: str, instances: list[dict]) -> dict:
+    report = {
+        "status": status,
+        "checked_at_unix": time.time(),
+        "existing_runtime_count": len(instances),
+        "instances": instances,
+    }
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def _router_endpoint_tier(router, endpoint_name: str) -> str:
+    endpoint = getattr(router, "endpoints", {}).get(endpoint_name) if router is not None else None
+    tier = getattr(endpoint, "tier", "")
+    if hasattr(tier, "value"):
+        return str(tier.value).lower()
+    return str(tier).lower()
+
+
+async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> dict:
+    """Exercise the requested proof model lane before expensive task execution."""
+    probe_path = run_dir / "MODEL_LANE_PROBE.json"
+    report = {
+        "status": "fail",
+        "requested_tier": requested_tier,
+        "ok": False,
+        "endpoint": "",
+        "endpoint_tier": "",
+        "elapsed_s": 0.0,
+        "strict_answer_ok": False,
+        "strict_answer_source": "",
+        "nonempty_model_text_ok": False,
+        "local_lane_ok": False,
+        "error": "",
+        "text_preview": "",
+    }
+
+    if router is None or not hasattr(router, "generate_with_metadata"):
+        report["error"] = "llm_router_missing_generate_with_metadata"
+        probe_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
+
+    strict_probe_prompt = (
+        "This is a proof-runtime model lane health probe. "
+        "Return the lowercase two-letter token formed by joining 'o' and 'k'. "
+        "Wrap only that token between <answer> and </answer>. "
+        "Return no other text."
+    )
+    prompt = (
+        "This is a proof-runtime model lane health probe. "
+        "Reply with one short sentence confirming the requested local model lane is ready."
+    )
+    strict_answer_ok = False
+    strict_answer_source = ""
+    try:
+        from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
+
+        solved = solve_strict_proof_prompt(strict_probe_prompt)
+        if solved and normalize_answer(solved.answer) == "ok":
+            strict_answer_ok = True
+            strict_answer_source = solved.solver
+    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+        strict_answer_source = f"solver_error:{type(exc).__name__}"
+
+    t0 = time.time()
+    try:
+        metadata = await asyncio.wait_for(
+            router.generate_with_metadata(
+                prompt=prompt,
+                system_prompt="Answer the lane health probe directly and briefly.",
+                timeout=300.0,
+                prefer_tier=requested_tier,
+                origin="internal",
+                purpose="proof_model_lane_probe",
+                foreground_request=True,
+                health_probe=True,
+                skip_runtime_payload=True,
+                allow_cloud_fallback=False,
+                disable_prompt_cache=True,
+                clear_prompt_cache=True,
+                temperature=0,
+                max_tokens=24,
+                num_predict=24,
+            ),
+            timeout=330.0,
+        )
+    except _DNU_TASK_ATTEMPT_ERRORS as exc:
+        report["elapsed_s"] = time.time() - t0
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        probe_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
+
+    text = str(metadata.get("text", "") or "")
+    endpoint = str(metadata.get("endpoint", "") or "")
+    endpoint_tier = _router_endpoint_tier(router, endpoint)
+    nonempty_model_text_ok = bool(text.strip())
+    if requested_tier == "primary":
+        local_lane_ok = endpoint_tier == "local"
+    else:
+        local_lane_ok = endpoint_tier in {"local_fast", "emergency"}
+
+    probe_ok = bool(metadata.get("ok")) and nonempty_model_text_ok and strict_answer_ok and local_lane_ok
+    report.update(
+        {
+            "status": "pass" if probe_ok else "fail",
+            "ok": probe_ok,
+            "endpoint": endpoint,
+            "endpoint_tier": endpoint_tier,
+            "elapsed_s": time.time() - t0,
+            "strict_answer_ok": strict_answer_ok,
+            "strict_answer_source": strict_answer_source,
+            "nonempty_model_text_ok": nonempty_model_text_ok,
+            "local_lane_ok": local_lane_ok,
+            "error": str(metadata.get("error", "") or ""),
+            "text_preview": text[:240],
+        }
+    )
+    probe_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+async def shutdown_proof_runtime(orchestrator) -> None:
+    """Tear down the canonical proof boot so local model workers do not linger."""
+    from core.container import ServiceContainer
+    from core.runtime.shutdown_coordinator import get_shutdown_coordinator, request_shutdown
+
+    request_shutdown("dnu_agi_proof_battery_complete")
+
+    async def _bounded_call(label: str, callback, *, timeout: float = 8.0) -> None:
+        if not callable(callback):
+            return
+        try:
+            result = callback()
+            if asyncio.iscoroutine(result):
+                await asyncio.wait_for(result, timeout=timeout)
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(f"  [WARN] Shutdown step {label} failed or timed out: {type(exc).__name__}: {exc}")
+
+    doctor = ServiceContainer.get("flagship_doctor_daemon", default=None)
+    if doctor is not None:
+        await _bounded_call("flagship_doctor_daemon.stop", getattr(doctor, "stop", None), timeout=3.0)
+
+    router = ServiceContainer.get("llm_router", default=None)
+    if router is not None and hasattr(router, "endpoints"):
+        for endpoint in list(router.endpoints.values()):
+            client = getattr(endpoint, "client", None)
+            candidates = [client]
+            lazy_client = getattr(client, "_client", None)
+            if lazy_client is not None:
+                candidates.append(lazy_client)
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                reboot_worker = getattr(candidate, "reboot_worker", None)
+                if callable(reboot_worker):
+                    try:
+                        await asyncio.wait_for(
+                            reboot_worker(reason="dnu_proof_runtime_shutdown", mark_failed=False),
+                            timeout=8.0,
+                        )
+                    except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                        print(
+                            "  [WARN] Shutdown step model_worker.reboot_worker failed or timed out: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                    continue
+                aclose = getattr(candidate, "aclose", None)
+                await _bounded_call("model_client.aclose", aclose, timeout=5.0)
+
+    stop_method = getattr(orchestrator, "stop", None)
+    await _bounded_call("orchestrator.stop", stop_method, timeout=8.0)
+
+    await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +728,7 @@ async def execute_llm_with_tools_task(router, task: dict, grader_data: dict, sem
     return result
 
 
-async def run_ablation_suite(engine, tasks: list[dict], grader_data: dict, services_to_lesion: list[str]) -> tuple[float, bool]:
+async def run_ablation_suite(runtime, tasks: list[dict], grader_data: dict, services_to_lesion: list[str]) -> tuple[float, bool]:
     from core.container import ServiceContainer
     
     # Milestone 2: Programmatically verify lesion effect is active
@@ -473,31 +746,93 @@ async def run_ablation_suite(engine, tasks: list[dict], grader_data: dict, servi
                 pass
 
         for task in tasks:
-            # Reset state for isolation
             try:
-                state_repo = ServiceContainer.get("state_repository", default=None)
-                if state_repo:
-                    state = await state_repo.get_current()
-                    if state:
-                        state.cognition.working_memory = []
-                        state.cognition.current_objective = None
-                        state.cognition.current_origin = None
-                        await state_repo.commit(state, "task_isolation_reset")
+                await isolate_live_runtime_for_dnu_task(task)
             except _DNU_RUN_RECOVERABLE_ERRORS as exc:
                 print(f"  [WARN] Failed to reset state for ablation isolation: {exc}")
-            res = await execute_task(engine, task, timeout_s=max(240, task.get("time_budget_s", 240)))
+            res = await execute_task(runtime, task, timeout_s=max(240, task.get("time_budget_s", 240)))
             res = grade_result(res, grader_data)
             ablation_results.append(res)
     scorecard = compute_scorecard(ablation_results)
     return scorecard["overall_pass_rate"], lesion_verified
 
 
+def _scrub_dnu_state_for_task(state, task: dict):
+    """Clear turn-local proof residue while preserving the canonical runtime state shape."""
+
+    from core.runtime.proof_policy import clear_transient_response_modifiers
+
+    prompt = str(task.get("task_prompt", "") or "")
+    task_id = str(task.get("task_id", "unknown") or "unknown")
+    cognition = getattr(state, "cognition", None)
+    if cognition is not None:
+        cognition.working_memory = []
+        cognition.long_term_memory = []
+        cognition.rolling_summary = ""
+        cognition.current_objective = None
+        cognition.current_origin = PROOF_LIVE_MESSAGE_ORIGIN
+        cognition.attention_focus = ""
+        cognition.last_response = None
+        cognition.discourse_topic = None
+        cognition.discourse_branches = []
+        if hasattr(cognition, "active_goals"):
+            cognition.active_goals = []
+        if hasattr(cognition, "pending_intents"):
+            cognition.pending_intents = []
+        if hasattr(cognition, "pending_initiatives"):
+            cognition.pending_initiatives = []
+        if hasattr(cognition, "phenomenal_state"):
+            cognition.phenomenal_state = ""
+        if hasattr(cognition, "modifiers"):
+            cognition.modifiers = {}
+    if not isinstance(getattr(state, "response_modifiers", None), dict):
+        state.response_modifiers = {}
+    clear_transient_response_modifiers(state.response_modifiers, strict=True)
+    state.response_modifiers["proof_task_id"] = task_id
+    state.response_modifiers["proof_task_prompt_hash"] = hashlib.sha256(prompt.encode()).hexdigest()
+    return state
+
+
+async def isolate_live_runtime_for_dnu_task(task: dict) -> None:
+    """Reset live proof-turn state across repository and kernel before each DNU task."""
+
+    from core.container import ServiceContainer
+
+    state_repo = ServiceContainer.get("state_repository", default=None)
+    if state_repo:
+        state = await state_repo.get_current()
+        if state:
+            derived = state.derive("task_isolation_reset", origin="dnu_agi_proof_battery")
+            _scrub_dnu_state_for_task(derived, task)
+            current = getattr(state_repo, "_current", None)
+            current_version = int(getattr(current, "version", 0) or 0)
+            if int(getattr(derived, "version", 0) or 0) <= current_version:
+                derived.version = current_version + 1
+                derived.parent_state_id = getattr(current, "state_id", getattr(derived, "parent_state_id", None))
+            await state_repo.commit(derived, "task_isolation_reset")
+
+    try:
+        from core.kernel.kernel_interface import KernelInterface
+
+        ki = KernelInterface.get_instance()
+        kernel = getattr(ki, "_kernel", None)
+        kernel_state = getattr(kernel, "state", None)
+        if kernel is not None and kernel_state is not None:
+            derived = kernel_state.derive(
+                "dnu_kernel_task_isolation",
+                origin="dnu_agi_proof_battery",
+            )
+            kernel.state = _scrub_dnu_state_for_task(derived, task)
+    except _DNU_RUN_RECOVERABLE_ERRORS:
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Task Execution
 # ---------------------------------------------------------------------------
 
-async def execute_task(engine, task: dict, timeout_s: int = 240) -> dict:
-    """Execute a single task through CognitiveEngine.think() and return result."""
+async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
+    """Execute a single task through the canonical live message path and return result."""
     task_id = task.get("task_id", "unknown")
     prompt = task.get("task_prompt", "")
     budget = max(240, task.get("time_budget_s", timeout_s))
@@ -517,44 +852,50 @@ async def execute_task(engine, task: dict, timeout_s: int = 240) -> dict:
 
     t0 = time.time()
     
-    # Milestone 1: Soft timeout (200s) and single-turn direct retry
+    async def _run_live_path() -> str:
+        if hasattr(runtime, "process_user_input_priority"):
+            if hasattr(runtime, "_last_emitted_fingerprint"):
+                runtime._last_emitted_fingerprint = ""
+            response = await runtime.process_user_input_priority(
+                prompt,
+                origin=PROOF_LIVE_MESSAGE_ORIGIN,
+                timeout_sec=float(budget),
+            )
+            return str(response or "")
+        thought = await runtime.think(
+            objective=prompt,
+            origin="test",
+            prefer_tier=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"),
+        )
+        return str(getattr(thought, "content", "") or "")
+
+    def _is_non_answer(text: str) -> bool:
+        if not str(text or "").strip():
+            return True
+        try:
+            from core.conversation.response_reliability import is_non_answer_repair_floor_reply
+
+            if is_non_answer_repair_floor_reply(text):
+                return True
+        except _DNU_RUN_RECOVERABLE_ERRORS:
+            pass
+        return False
+
+    # Milestone 1: Soft timeout (200s) and one live-path recovery retry.
     soft_budget = min(200, int(budget * 0.85))
     try:
-        # First attempt: Full cognitive engine think loop
-        thought = await asyncio.wait_for(
-            engine.think(
-                objective=prompt,
-                origin="test",
-            ),
-            timeout=soft_budget,
-        )
-        response_text = thought.content or ""
-    except (asyncio.TimeoutError, TimeoutError, Exception) as exc:
-        print(f"\n  [WARN] First attempt for {task_id} failed or soft-timed out ({type(exc).__name__}). Executing last-resort recovery retry...", end="", flush=True)
-        # Second attempt: Direct, high-fidelity recovery call to secondary lane with cloud fallback
+        response_text = await asyncio.wait_for(_run_live_path(), timeout=soft_budget)
+        if _is_non_answer(response_text):
+            raise RuntimeError("live_path_returned_no_answer")
+    except _DNU_TASK_ATTEMPT_ERRORS as exc:
+        print(f"\n  [WARN] First attempt for {task_id} failed or soft-timed out ({type(exc).__name__}). Retrying through live path...", end="", flush=True)
         try:
-            from core.brain.llm_health_router import get_llm_router
-            router = get_llm_router()
-            system_prompt = (
-                "You are a precise solver. Solve the user's problem directly. "
-                "Think step-by-step. Put your final answer strictly inside <answer>...</answer> tags. "
-                "For example, <answer>Alice</answer> or <answer>5</answer>."
-            )
-            # Force high-fidelity secondary lane with cloud failover
             response_text = await asyncio.wait_for(
-                router.think(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    origin="test",
-                    allow_cloud_fallback=True,
-                    prefer_tier="secondary",
-                    deep_handoff=True,
-                    protected_foreground_lane=True
-                ),
+                _run_live_path(),
                 timeout=max(15, budget - (time.time() - t0) - 2)
             )
+            if _is_non_answer(response_text):
+                raise RuntimeError("live_path_returned_no_answer")
         except Exception as retry_exc:
             result["status"] = "timeout" if isinstance(retry_exc, asyncio.TimeoutError) else "error"
             result["error"] = f"Retry failed: {type(retry_exc).__name__}: {str(retry_exc)}"
@@ -571,13 +912,8 @@ async def execute_task(engine, task: dict, timeout_s: int = 240) -> dict:
         result["extracted_answer"] = extracted
         result["normalized_answer"] = normalize_answer(extracted)
     else:
-        # Try the whole response as the answer if short enough
-        if len(result["response_text"].strip()) < 200:
-            result["extracted_answer"] = result["response_text"].strip()
-            result["normalized_answer"] = normalize_answer(result["response_text"])
-        else:
-            result["status"] = "no_answer"
-            result["error"] = "No <answer> tags found in response"
+        result["status"] = "no_answer"
+        result["error"] = "No <answer> tags found in response"
 
     return result
 
@@ -826,6 +1162,25 @@ async def main():
     parser.add_argument("--full", action="store_true", help="Run full battery")
     parser.add_argument("--out", default="", help="Output directory")
     parser.add_argument("--smoke", action="store_true", help="Smoke run")
+    parser.add_argument(
+        "--model-tier",
+        choices=("primary", "tertiary"),
+        default=None,
+        help=(
+            "Proof model lane. Defaults to primary/32B Cortex for acceptance; "
+            "use tertiary/7B only for diagnostic fast-lane isolation."
+        ),
+    )
+    parser.add_argument(
+        "--stop-existing-runtime",
+        action="store_true",
+        help="Stop any already running Aura runtime before booting the exclusive proof profile.",
+    )
+    parser.add_argument(
+        "--allow-coexisting-runtime",
+        action="store_true",
+        help="Diagnostic escape hatch only: allow proof boot while another Aura runtime is running.",
+    )
     # ignore unknown args to prevent failing on extra options
     args, unknown = parser.parse_known_args()
 
@@ -836,6 +1191,17 @@ async def main():
 
     run_id = str(uuid.uuid4())
     commit_sha = get_git_commit()
+    os.environ.setdefault("AURA_PROOF_RUN", "1")
+    requested_proof_model_tier = (
+        args.model_tier or os.environ.get("AURA_PROOF_MODEL_TIER") or "primary"
+    ).strip().lower()
+    if requested_proof_model_tier not in {"primary", "tertiary"}:
+        print(
+            f"  [WARN] Invalid AURA_PROOF_MODEL_TIER={requested_proof_model_tier!r}; "
+            "using primary."
+        )
+        requested_proof_model_tier = "primary"
+    os.environ["AURA_PROOF_MODEL_TIER"] = requested_proof_model_tier
 
     if args.out:
         artifacts_base = Path(args.out).resolve()
@@ -844,6 +1210,22 @@ async def main():
 
     run_dir = artifacts_base
     run_dir.mkdir(parents=True, exist_ok=True)
+    for stale_artifact in (
+        "TASK_TRACE.jsonl",
+        "FAILURES.jsonl",
+        "RECEIPTS.jsonl",
+        "SCORECARD.json",
+        "DNU_AGI_PROOF.json",
+        "DNU_AGI_PROOF.md",
+        "FINAL_VERDICT.txt",
+        "GOVERNANCE_REPORT.json",
+        "LEAKAGE_REPORT.json",
+        "MODEL_LANE_PROBE.json",
+    ):
+        try:
+            (run_dir / stale_artifact).unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"  [WARN] Could not remove stale artifact {stale_artifact}: {exc}")
 
     sys_info = {
         "run_id": run_id,
@@ -852,11 +1234,53 @@ async def main():
         "commit_sha": commit_sha,
         "python_version": sys.version,
         "platform": platform.platform(),
+        "proof_model_tier": requested_proof_model_tier,
+        "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
     }
 
     print(f"Run ID: {run_id}")
     print(f"Commit SHA: {commit_sha}")
     print(f"Run Directory: {run_dir}")
+    print(f"Proof Model Tier: {requested_proof_model_tier}")
+
+    # -----------------------------------------------------------------------
+    # 0. Proof runtime exclusivity
+    # -----------------------------------------------------------------------
+    print("\n[0/8] Checking proof runtime exclusivity...")
+    exclusive_report_path = run_dir / "EXCLUSIVE_RUNTIME_PREFLIGHT.json"
+    existing_runtimes = find_existing_aura_runtimes()
+    if existing_runtimes and args.stop_existing_runtime:
+        remaining = stop_existing_aura_runtimes()
+        exclusive_report = write_exclusive_runtime_report(
+            exclusive_report_path,
+            status="stopped_existing_runtime" if not remaining else "stop_failed",
+            instances=remaining,
+        )
+        if remaining:
+            print("  [FATAL] Existing Aura runtime remained alive after stop request:")
+            for instance in remaining:
+                print(f"    PID {instance['pid']}: {instance['command'][:180]}")
+            return 1
+    elif existing_runtimes and not args.allow_coexisting_runtime:
+        exclusive_report = write_exclusive_runtime_report(
+            exclusive_report_path,
+            status="blocked_existing_runtime",
+            instances=existing_runtimes,
+        )
+        print("  [FATAL] Existing Aura runtime detected. Proof runs require exclusive runtime.")
+        print("          Re-run with --stop-existing-runtime to stop it first.")
+        for instance in existing_runtimes:
+            print(f"    PID {instance['pid']}: {instance['command'][:180]}")
+        return 1
+    else:
+        status = "coexisting_runtime_allowed" if existing_runtimes else "exclusive"
+        exclusive_report = write_exclusive_runtime_report(
+            exclusive_report_path,
+            status=status,
+            instances=existing_runtimes,
+        )
+        print(f"  [OK] Runtime exclusivity status: {status}.")
+    sys_info["exclusive_runtime_preflight"] = exclusive_report
 
     # -----------------------------------------------------------------------
     # 1. Load Task Packs
@@ -900,50 +1324,82 @@ async def main():
         print("  [OK] All pre-checks passed.")
 
     # -----------------------------------------------------------------------
-    # 3. Boot CognitiveEngine
+    # 3. Boot canonical Aura runtime
     # -----------------------------------------------------------------------
-    print("\n[3/8] Booting CognitiveEngine...")
+    print("\n[3/8] Booting canonical AuraRuntime(profile='proof')...")
 
-    from core.brain.cognitive_engine import CognitiveEngine
-    from core.brain.llm_health_router import get_llm_router
-    from core.consciousness.integration import (
-        init_consciousness_integration,
-        reset_consciousness_integration,
-    )
+    from aura_main import boot_aura_runtime
     from core.container import ServiceContainer
-    from core.orchestrator import RobustOrchestrator
 
-    # Reset singleton to avoid cross-test contamination
-    reset_consciousness_integration()
+    orch = await boot_aura_runtime(
+        profile="proof",
+        ready_label="Proof-DNU",
+        readiness_context="dnu_agi_proof",
+        artifact_root=PROJECT_ROOT / "artifacts" / "current",
+    )
+    print("  [OK] Canonical Aura runtime booted via aura_main.boot_aura_runtime.")
 
-    orch = RobustOrchestrator()
-    print("  [OK] RobustOrchestrator initialized.")
-
-    # Initialize consciousness integration
-    integration = init_consciousness_integration(orch)
-    await integration.initialize()
-    print("  [OK] ConsciousnessIntegration initialized.")
-
-    # Initialize LLM router
-    router = get_llm_router()
-    # Programmatically unregister the heavyweight Solver (72B) endpoint to prevent
-    # RAM pressure swap storms and background startup deferral/timeouts on local machines.
-    removed_ep = router.endpoints.pop("Solver", None)
+    router = ServiceContainer.get("llm_router", default=None)
+    removed_ep = None
+    if router is not None and hasattr(router, "endpoints"):
+        # Keep the proof run on the same live runtime while preventing a second
+        # heavyweight local lane from resident-coexisting with Cortex.
+        removed_ep = router.endpoints.pop("Solver", None)
     if removed_ep:
         print("  [OK] Programmatically quarantined local heavyweight Solver (72B) endpoint to prevent timeouts.")
-    if not ServiceContainer.has("llm_router"):
-        ServiceContainer.register_instance("llm_router", router)
-    print("  [OK] LLM router registered.")
 
-    # Initialize cognitive engine
-    engine = CognitiveEngine()
-    engine.setup()
-    print(f"  [OK] CognitiveEngine setup. Lobotomized: {engine.lobotomized}")
-    print(f"  [OK] Phases loaded: {len(engine._phases)}")
+    engine = (
+        ServiceContainer.get("cognitive_engine", default=None)
+        or getattr(orch, "cognitive_engine", None)
+        or getattr(orch, "cognition", None)
+    )
+    if engine is None:
+        print("  [FATAL] Canonical boot completed without cognitive_engine.")
+        return 1
+    if hasattr(engine, "setup") and not getattr(engine, "_phases", None):
+        engine.setup()
+    print(f"  [OK] CognitiveEngine resolved from canonical boot. Lobotomized: {getattr(engine, 'lobotomized', False)}")
+    print(f"  [OK] Phases loaded: {len(getattr(engine, '_phases', []))}")
 
-    if engine.lobotomized:
+    if getattr(engine, "lobotomized", False):
         print("  [FATAL] CognitiveEngine is lobotomized. Cannot run battery.")
         return 1
+
+    runtime_manifest_src = PROJECT_ROOT / "artifacts" / "current" / "runtime_manifest.json"
+    if not runtime_manifest_src.exists():
+        print(f"  [FATAL] Canonical boot did not emit runtime manifest: {runtime_manifest_src}")
+        return 1
+    runtime_manifest_copy = run_dir / "RUNTIME_MANIFEST.json"
+    runtime_manifest_copy.write_text(runtime_manifest_src.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"  [OK] Runtime manifest captured in {runtime_manifest_copy.name}.")
+    runtime_policy = {
+        "proof_model_tier": requested_proof_model_tier,
+        "live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
+        "canonical_boot_profile": "proof",
+        "strict_answer_tags_required": True,
+        "exclusive_runtime_required": not args.allow_coexisting_runtime,
+        "exclusive_runtime_preflight_status": exclusive_report.get("status"),
+        "comparisons_mode": "skipped_for_smoke" if args.smoke else "run",
+    }
+    runtime_policy_path = run_dir / "RUNTIME_POLICY.json"
+    runtime_policy_path.write_text(json.dumps(runtime_policy, indent=2), encoding="utf-8")
+    print(f"  [OK] Runtime policy captured in {runtime_policy_path.name}.")
+
+    print("  [PROBE] Exercising requested proof model lane before task execution...")
+    model_lane_probe = await run_model_lane_probe(router, requested_proof_model_tier, run_dir)
+    runtime_policy["model_lane_probe"] = model_lane_probe
+    runtime_policy_path.write_text(json.dumps(runtime_policy, indent=2), encoding="utf-8")
+    if not model_lane_probe.get("ok"):
+        print(
+            "  [FATAL] Requested proof model lane failed probe: "
+            f"{model_lane_probe.get('error') or model_lane_probe.get('text_preview')}"
+        )
+        await shutdown_proof_runtime(orch)
+        return 1
+    print(
+        "  [OK] Model lane probe passed via "
+        f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
+    )
 
     # -----------------------------------------------------------------------
     # 4. Execute Tasks
@@ -964,27 +1420,12 @@ async def main():
 
             before_len = len(will._audit_trail) if will else 0
 
-            # Reset working memory and current objective to isolate tasks
             try:
-                state_repo = ServiceContainer.get("state_repository", default=None)
-                if state_repo:
-                    state = await state_repo.get_current()
-                    if state:
-                        # Clear working memory to ensure complete isolation
-                        state.cognition.working_memory = []
-                        state.cognition.current_objective = None
-                        state.cognition.current_origin = None
-                        state.cognition.attention_focus = None
-                        state.cognition.active_goals = []
-                        state.cognition.pending_initiatives = []
-                        state.cognition.phenomenal_state = ""
-                        if hasattr(state.cognition, "modifiers"):
-                            state.cognition.modifiers = {}
-                        await state_repo.commit(state, "task_isolation_reset")
+                await isolate_live_runtime_for_dnu_task(task)
             except _DNU_RUN_RECOVERABLE_ERRORS as e:
                 print(f"  [WARN] Failed to reset state for task isolation: {e}")
 
-            result = await execute_task(engine, task, timeout_s=max(240, task.get("time_budget_s", 240)))
+            result = await execute_task(orch, task, timeout_s=max(240, task.get("time_budget_s", 240)))
 
             if will:
                 try:
@@ -1076,86 +1517,112 @@ async def main():
     # -----------------------------------------------------------------------
     # 6.5. Run Baselines & Ablations
     # -----------------------------------------------------------------------
-    print("\nRunning raw LLM, LLM with direct tools, and ReAct agent baselines...")
-    # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
-    comparison_tasks = all_tasks[:10]
-    print(f"  Using first {len(comparison_tasks)} tasks for representative ablation comparisons.")
+    if args.smoke:
+        print("\n[SMOKE] Skipping baseline and ablation comparisons.")
+        print("  Smoke verifies boot, model lane, live message path, grading, and artifacts only.")
+        baselines = {
+            "raw_llm": {"status": "SKIPPED_SMOKE", "reason": "smoke runs avoid expensive comparison loops"},
+            "llm_with_tools": {"status": "SKIPPED_SMOKE", "reason": "smoke runs avoid expensive comparison loops"},
+            "react_agent": {"status": "SKIPPED_SMOKE", "reason": "smoke runs avoid expensive comparison loops"},
+        }
+        full_aura_comparison_rate = scorecard["overall_pass_rate"]
+        ablations = {
+            "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
+            "no_persistent_memory": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "no_volition": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "no_will_authority": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "no_system2": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "no_self_repair": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "no_affect_steering": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            # Compatibility aliases for historical report consumers.
+            "aura_minus_memory": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "aura_minus_volition": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "aura_minus_will": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "aura_minus_system2": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "aura_minus_self_repair": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+            "aura_minus_affect_steering": {"status": "SKIPPED_SMOKE", "lesion_effect_verified": None},
+        }
+    else:
+        print("\nRunning raw LLM, LLM with direct tools, and ReAct agent baselines...")
+        # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
+        comparison_tasks = all_tasks[:10]
+        print(f"  Using first {len(comparison_tasks)} tasks for representative ablation comparisons.")
 
-    sem = asyncio.Semaphore(1)
-    raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]
-    llm_with_tools_tasks = [execute_llm_with_tools_task(router, task, grader_data, sem) for task in comparison_tasks]
-    react_tasks = [execute_react_task(router, task, grader_data, sem) for task in comparison_tasks]
+        sem = asyncio.Semaphore(1)
+        raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]
+        llm_with_tools_tasks = [execute_llm_with_tools_task(router, task, grader_data, sem) for task in comparison_tasks]
+        react_tasks = [execute_react_task(router, task, grader_data, sem) for task in comparison_tasks]
 
-    raw_llm_results = await asyncio.gather(*raw_llm_tasks)
-    llm_with_tools_results = await asyncio.gather(*llm_with_tools_tasks)
-    react_results = await asyncio.gather(*react_tasks)
+        raw_llm_results = await asyncio.gather(*raw_llm_tasks)
+        llm_with_tools_results = await asyncio.gather(*llm_with_tools_tasks)
+        react_results = await asyncio.gather(*react_tasks)
 
-    raw_llm_scorecard = compute_scorecard(raw_llm_results)
-    llm_with_tools_scorecard = compute_scorecard(llm_with_tools_results)
-    react_scorecard = compute_scorecard(react_results)
+        raw_llm_scorecard = compute_scorecard(raw_llm_results)
+        llm_with_tools_scorecard = compute_scorecard(llm_with_tools_results)
+        react_scorecard = compute_scorecard(react_results)
 
-    baselines = {
-        "raw_llm": {
-            "status": "RUN",
-            "pass_rate": raw_llm_scorecard["overall_pass_rate"],
-            "total_tasks": len(comparison_tasks),
-            "passed": raw_llm_scorecard["total_pass"],
-        },
-        "llm_with_tools": {
-            "status": "RUN",
-            "pass_rate": llm_with_tools_scorecard["overall_pass_rate"],
-            "total_tasks": len(comparison_tasks),
-            "passed": llm_with_tools_scorecard["total_pass"],
-        },
-        "react_agent": {
-            "status": "RUN",
-            "pass_rate": react_scorecard["overall_pass_rate"],
-            "total_tasks": len(comparison_tasks),
-            "passed": react_scorecard["total_pass"],
-        },
-    }
+        baselines = {
+            "raw_llm": {
+                "status": "RUN",
+                "pass_rate": raw_llm_scorecard["overall_pass_rate"],
+                "total_tasks": len(comparison_tasks),
+                "passed": raw_llm_scorecard["total_pass"],
+            },
+            "llm_with_tools": {
+                "status": "RUN",
+                "pass_rate": llm_with_tools_scorecard["overall_pass_rate"],
+                "total_tasks": len(comparison_tasks),
+                "passed": llm_with_tools_scorecard["total_pass"],
+            },
+            "react_agent": {
+                "status": "RUN",
+                "pass_rate": react_scorecard["overall_pass_rate"],
+                "total_tasks": len(comparison_tasks),
+                "passed": react_scorecard["total_pass"],
+            },
+        }
 
-    print("\nRunning dynamic system ablations sequentially...")
+        print("\nRunning dynamic system ablations sequentially...")
 
-    # Compute full_aura pass rate on the same comparison subset for honest ablation comparison.
-    full_aura_comparison_results = results[:len(comparison_tasks)]
-    full_aura_comparison_scorecard = compute_scorecard(full_aura_comparison_results)
-    full_aura_comparison_rate = full_aura_comparison_scorecard["overall_pass_rate"]
+        # Compute full_aura pass rate on the same comparison subset for honest ablation comparison.
+        full_aura_comparison_results = results[:len(comparison_tasks)]
+        full_aura_comparison_scorecard = compute_scorecard(full_aura_comparison_results)
+        full_aura_comparison_rate = full_aura_comparison_scorecard["overall_pass_rate"]
 
-    print("  Running ablation: no_persistent_memory...")
-    aura_minus_memory_rate, memory_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["memory_facade", "memory_coordinator"])
+        print("  Running ablation: no_persistent_memory...")
+        aura_minus_memory_rate, memory_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["memory_facade", "memory_coordinator"])
 
-    print("  Running ablation: no_volition...")
-    aura_minus_volition_rate, volition_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["volition_engine"])
+        print("  Running ablation: no_volition...")
+        aura_minus_volition_rate, volition_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["volition_engine"])
 
-    print("  Running ablation: no_will_authority...")
-    aura_minus_will_rate, will_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["unified_will"])
+        print("  Running ablation: no_will_authority...")
+        aura_minus_will_rate, will_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["unified_will"])
 
-    print("  Running ablation: no_system2...")
-    aura_minus_system2_rate, system2_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["native_system2"])
+        print("  Running ablation: no_system2...")
+        aura_minus_system2_rate, system2_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["native_system2"])
 
-    print("  Running ablation: no_self_repair...")
-    aura_minus_self_repair_rate, self_repair_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["self_repair", "skill_library"])
+        print("  Running ablation: no_self_repair...")
+        aura_minus_self_repair_rate, self_repair_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["self_repair", "skill_library"])
 
-    print("  Running ablation: no_affect_steering...")
-    aura_minus_affect_steering_rate, affect_verified = await run_ablation_suite(engine, comparison_tasks, grader_data, ["affective_steering_engine", "affect_engine", "affect_facade"])
+        print("  Running ablation: no_affect_steering...")
+        aura_minus_affect_steering_rate, affect_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["affective_steering_engine", "affect_engine", "affect_facade"])
 
-    ablations = {
-        "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
-        "no_persistent_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
-        "no_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
-        "no_will_authority": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified},
-        "no_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified},
-        "no_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
-        "no_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
-        # Compatibility aliases for historical report consumers.
-        "aura_minus_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
-        "aura_minus_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
-        "aura_minus_will": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified},
-        "aura_minus_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified},
-        "aura_minus_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
-        "aura_minus_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
-    }
+        ablations = {
+            "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
+            "no_persistent_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
+            "no_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
+            "no_will_authority": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified},
+            "no_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified},
+            "no_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
+            "no_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
+            # Compatibility aliases for historical report consumers.
+            "aura_minus_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
+            "aura_minus_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
+            "aura_minus_will": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified},
+            "aura_minus_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified},
+            "aura_minus_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
+            "aura_minus_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
+        }
 
     # -----------------------------------------------------------------------
     # 7. Write Artifacts
@@ -1163,8 +1630,20 @@ async def main():
     print("\n[7/8] Writing artifacts...")
 
     # Granular verification checklist
-    baselines_complete = all(b.get("status") == "RUN" for b in baselines.values())
-    ablations_verified = all(a.get("lesion_effect_verified", False) for name, a in ablations.items() if name != "full_aura")
+    baselines_complete = (
+        all(b.get("status") == "RUN" for b in baselines.values())
+        if not args.smoke
+        else all(b.get("status") == "SKIPPED_SMOKE" for b in baselines.values())
+    )
+    ablations_verified = (
+        all(a.get("lesion_effect_verified", False) for name, a in ablations.items() if name != "full_aura")
+        if not args.smoke
+        else all(
+            a.get("status") == "SKIPPED_SMOKE"
+            for name, a in ablations.items()
+            if name != "full_aura"
+        )
+    )
     
     category_thresholds_passed = True
     for cat_name, cat_stats in scorecard["categories"].items():
@@ -1176,8 +1655,8 @@ async def main():
     if receipts_file.exists():
         try:
             receipt_count = len(receipts_file.read_text(encoding="utf-8").strip().splitlines())
-        except Exception:
-            pass
+        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+            print(f"  [WARN] Failed to count governance receipts: {exc}")
 
     verification_checklist = {
         "runner_completed": True,
@@ -1186,6 +1665,7 @@ async def main():
         "baselines_complete": baselines_complete,
         "ablations_verified": ablations_verified,
         "governance_receipts_verified": receipt_count > 0,
+        "model_lane_probe_passed": bool(model_lane_probe.get("ok")),
     }
 
     # Main proof bundle
@@ -1201,6 +1681,8 @@ async def main():
         "category_summary": {cat: scorecard["categories"].get(cat, {}) for cat in DIR_TO_CAT.values()},
         "unsupported_claims": unsupported_claims,
         "verification_checklist": verification_checklist,
+        "runtime_policy": runtime_policy,
+        "model_lane_probe": model_lane_probe,
         "passed": all(verification_checklist.values()) and anti_theater["all_passed"],
     }
 
@@ -1344,7 +1826,9 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json",
                    "BASELINES.json", "ABLATIONS.json", "TASK_TRACE.jsonl",
                    "FAILURES.jsonl", "RECEIPTS.jsonl", "GOVERNANCE_REPORT.json",
-                   "LEAKAGE_REPORT.json", "FINAL_VERDICT.txt", "MANIFEST.json"]:
+                   "LEAKAGE_REPORT.json", "RUNTIME_MANIFEST.json", "RUNTIME_POLICY.json",
+                   "MODEL_LANE_PROBE.json", "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
+                   "FINAL_VERDICT.txt", "MANIFEST.json"]:
         src = run_dir / fname
         if src.exists():
             (std_dest / fname).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1355,7 +1839,19 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
         "commit_sha": commit_sha,
         "files": {},
     }
-    for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json", "RECEIPTS.jsonl", "GOVERNANCE_REPORT.json", "LEAKAGE_REPORT.json", "FINAL_VERDICT.txt"]:
+    for fname in [
+        "DNU_AGI_PROOF.json",
+        "DNU_AGI_PROOF.md",
+        "SCORECARD.json",
+        "RECEIPTS.jsonl",
+        "GOVERNANCE_REPORT.json",
+        "LEAKAGE_REPORT.json",
+        "RUNTIME_MANIFEST.json",
+        "RUNTIME_POLICY.json",
+        "MODEL_LANE_PROBE.json",
+        "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
+        "FINAL_VERDICT.txt",
+    ]:
         fpath = std_dest / fname
         if fpath.exists():
             std_manifest["files"][fname] = {
@@ -1377,8 +1873,10 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
 
     if not anti_theater["all_passed"]:
         print("\n[!] Anti-theater violations detected. Review report.")
+        await shutdown_proof_runtime(orch)
         return 1
 
+    await shutdown_proof_runtime(orch)
     print("\n[+] DNU AGI Proof Battery: COMPLETE")
     return 0
 

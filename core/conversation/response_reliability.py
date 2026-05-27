@@ -550,6 +550,7 @@ _EXACT_REPLY_RE = re.compile(
     r"(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*[\"'“”‘’]*(?P<target>.+?)\s*[\"'“”‘’]*\s*$",
     re.IGNORECASE,
 )
+_ANSWER_TAG_RE = re.compile(r"<answer>\s*(?P<answer>.*?)\s*</answer>", re.IGNORECASE | re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -795,6 +796,23 @@ def _matches_exact_reply_request(user_message: Any, reply_text: Any) -> bool:
     target = match.group("target").strip(" .!?\t\r\n\"'“”‘’")
     reply = raw_reply.strip(" .!?\t\r\n\"'“”‘’")
     return bool(target and _normalize(target) == _normalize(reply))
+
+
+def _matches_strict_answer_tag_request(user_message: Any, reply_text: Any) -> bool:
+    user = _normalize(user_message)
+    if "<answer>" not in user and "answer tag" not in user and "answer tags" not in user:
+        return False
+    raw_reply = str(reply_text or "").strip()
+    match = _ANSWER_TAG_RE.search(raw_reply)
+    if not match:
+        return False
+    answer = str(match.group("answer") or "").strip()
+    if not answer:
+        return False
+    outside = _ANSWER_TAG_RE.sub("", raw_reply).strip()
+    if len(outside) > 240:
+        return False
+    return True
 
 
 def _requires_substantive_reply(user_message: Any) -> bool:
@@ -1254,6 +1272,7 @@ def assess_user_facing_reply(
     reliability_turn = is_reliability_concern(user_message)
     reliability_diagnostic_turn = _requires_reliability_diagnostic(user_message)
     exact_reply = _matches_exact_reply_request(user_message, raw)
+    strict_answer_tag_reply = _matches_strict_answer_tag_request(user_message, raw)
     if reliability_turn:
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
             reasons.append("low_signal_reliability_reply")
@@ -1271,7 +1290,7 @@ def assess_user_facing_reply(
             reasons.append("low_signal_status_reply")
         elif not _has_status_substance(raw):
             reasons.append("too_thin_for_status_turn")
-    elif not exact_reply and _requires_substantive_reply(user_message):
+    elif not exact_reply and not strict_answer_tag_reply and _requires_substantive_reply(user_message):
         words = _word_count(raw)
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2:
             reasons.append("too_short_for_user_turn")

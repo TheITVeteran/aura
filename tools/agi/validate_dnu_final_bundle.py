@@ -4,15 +4,24 @@ tools/agi/validate_dnu_final_bundle.py
 Rigorous validator script for the DNU AGI Proof artifact bundle.
 """
 
-import json
-import os
-import sys
-import re
 import hashlib
+import json
+import re
+import sys
 from pathlib import Path
 
 def print_fail(msg):
     print(f"VALIDATION_FAILURE: {msg}")
+
+
+def load_json_artifact(path: Path, label: str, failures: list[str]) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        failures.append(f"Failed to parse {label}: {exc}")
+        return {}
 
 def main():
     if len(sys.argv) < 2:
@@ -42,6 +51,7 @@ def main():
     gov_file = run_dir / "GOVERNANCE_REPORT.json"
     leakage_file = run_dir / "LEAKAGE_REPORT.json"
     manifest_file = run_dir / "MANIFEST.json"
+    runtime_manifest_file = run_dir / "RUNTIME_MANIFEST.json"
 
     # Check for missing required JSON files
     for name, f in [
@@ -52,6 +62,7 @@ def main():
         ("GOVERNANCE_REPORT.json", gov_file),
         ("LEAKAGE_REPORT.json", leakage_file),
         ("MANIFEST.json", manifest_file),
+        ("RUNTIME_MANIFEST.json", runtime_manifest_file),
     ]:
         if not f.exists():
             failures.append(f"Required artifact '{name}' is missing")
@@ -63,48 +74,20 @@ def main():
     gov_data = {}
     leakage_data = {}
     manifest_data = {}
+    runtime_manifest_data = {}
 
-    if proof_file.exists():
-        try:
-            proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse DNU_AGI_PROOF.json: {e}")
-
-    if scorecard_file.exists():
-        try:
-            scorecard_data = json.loads(scorecard_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse SCORECARD.json: {e}")
-
-    if baselines_file.exists():
-        try:
-            baselines_data = json.loads(baselines_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse BASELINES.json: {e}")
-
-    if ablations_file.exists():
-        try:
-            ablations_data = json.loads(ablations_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse ABLATIONS.json: {e}")
-
-    if gov_file.exists():
-        try:
-            gov_data = json.loads(gov_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse GOVERNANCE_REPORT.json: {e}")
-
-    if leakage_file.exists():
-        try:
-            leakage_data = json.loads(leakage_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse LEAKAGE_REPORT.json: {e}")
-
-    if manifest_file.exists():
-        try:
-            manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            failures.append(f"Failed to parse MANIFEST.json: {e}")
+    proof_data = load_json_artifact(proof_file, "DNU_AGI_PROOF.json", failures)
+    scorecard_data = load_json_artifact(scorecard_file, "SCORECARD.json", failures)
+    baselines_data = load_json_artifact(baselines_file, "BASELINES.json", failures)
+    ablations_data = load_json_artifact(ablations_file, "ABLATIONS.json", failures)
+    gov_data = load_json_artifact(gov_file, "GOVERNANCE_REPORT.json", failures)
+    leakage_data = load_json_artifact(leakage_file, "LEAKAGE_REPORT.json", failures)
+    manifest_data = load_json_artifact(manifest_file, "MANIFEST.json", failures)
+    runtime_manifest_data = load_json_artifact(
+        runtime_manifest_file,
+        "RUNTIME_MANIFEST.json",
+        failures,
+    )
 
     # Determine verdict and tier from loaded proof_data
     final_tier = 0
@@ -114,6 +97,31 @@ def main():
 
     if proof_data:
         final_tier = proof_data.get("tier", {}).get("tier", 0)
+
+    if not runtime_manifest_data:
+        failures.append("Runtime manifest is missing or unreadable")
+    else:
+        if runtime_manifest_data.get("schema") != "aura.runtime_manifest.v1":
+            failures.append("Runtime manifest schema is invalid")
+        if runtime_manifest_data.get("profile") != "proof":
+            failures.append(f"Runtime manifest profile is not proof: {runtime_manifest_data.get('profile')}")
+        if not str(runtime_manifest_data.get("ready_label", "")).startswith("Proof"):
+            failures.append(
+                f"Runtime manifest ready_label is not a proof boot: {runtime_manifest_data.get('ready_label')}"
+            )
+        role_names = set((runtime_manifest_data.get("service_roles") or {}).keys())
+        required_roles = {
+            "runtime",
+            "model",
+            "memory_writer",
+            "state_writer",
+            "governance",
+            "output_gate",
+            "task_supervisor",
+        }
+        missing_roles = sorted(required_roles - role_names)
+        if missing_roles:
+            failures.append(f"Runtime manifest missing required service roles: {missing_roles}")
 
     # 3. DNU AGI PROVEN appears anywhere unless final_tier == 6
     if verdict_text == "DNU AGI PROVEN" and final_tier != 6:

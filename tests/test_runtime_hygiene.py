@@ -240,6 +240,40 @@ def test_runtime_hygiene_thread_join_helper_skips_current_thread():
 
 
 @pytest.mark.asyncio
+async def test_runtime_hygiene_child_cleanup_is_concurrent():
+    class SlowTerminatingProcess:
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            time.sleep(0.15)
+            raise subprocess.TimeoutExpired(cmd="slow", timeout=timeout or 0.0)
+
+        def kill(self):
+            self.killed = True
+
+    hygiene = RuntimeHygieneManager()
+    hygiene.process_shutdown_timeout_s = 0.2
+    processes = [SlowTerminatingProcess(), SlowTerminatingProcess(), SlowTerminatingProcess()]
+    hygiene._process_refs = {idx: proc for idx, proc in enumerate(processes)}
+
+    started = time.monotonic()
+    await hygiene._cleanup_child_processes()
+    elapsed = time.monotonic() - started
+
+    assert all(proc.terminated for proc in processes)
+    assert all(proc.killed for proc in processes)
+    assert elapsed < 0.6
+
+
+@pytest.mark.asyncio
 async def test_stability_guardian_surfaces_runtime_hygiene_findings(service_container):
     service_container.register_instance(
         "runtime_hygiene",

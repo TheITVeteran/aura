@@ -22,9 +22,20 @@ def main(argv: list[str] | None = None) -> int:
     scorecard_path = bundle_dir / "SCORECARD.json"
     receipts_path = bundle_dir / "RECEIPTS.jsonl"
     manifest_path = bundle_dir / "MANIFEST.json"
+    integrity_path = bundle_dir / "INTEGRITY.json"
+    trace_path = bundle_dir / "TRACE.json"
+    ablations_path = bundle_dir / "ABLATIONS.json"
 
     # 1. Structural check
-    if not scorecard_path.exists() or not receipts_path.exists() or not manifest_path.exists():
+    required_paths = [
+        scorecard_path,
+        receipts_path,
+        manifest_path,
+        integrity_path,
+        trace_path,
+        ablations_path,
+    ]
+    if not all(path.exists() for path in required_paths):
         print(f"Error: Missing required files in bundle: {bundle_dir}", file=sys.stderr)
         return 1
 
@@ -96,6 +107,37 @@ def main(argv: list[str] | None = None) -> int:
         print("  [OK] Secure receipt matching verified.")
     except Exception as exc:
         print(f"Error validating receipts: {exc}", file=sys.stderr)
+        return 1
+
+    # 5. Adaptation integrity checks
+    try:
+        integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
+        required_true = [
+            "rules_not_disclosed_to_policy",
+            "action_selection_owned_by_core_policy",
+            "mutation_adaptation_verified",
+            "baseline_degraded",
+        ]
+        missing = [key for key in required_true if integrity.get(key) is not True]
+        if missing:
+            print(f"Error: Novel-environment integrity checks failed: {missing}", file=sys.stderr)
+            return 1
+        if int(integrity.get("interactive_trace_count", 0)) < 5:
+            print("Error: Too few interactive traces for novel-environment proof.", file=sys.stderr)
+            return 1
+
+        ablations = json.loads(ablations_path.read_text(encoding="utf-8"))
+        full_rate = float(ablations.get("full_aura", {}).get("pass_rate", 0.0))
+        no_rule_rate = float(ablations.get("no_rule_induction", {}).get("pass_rate", 1.0))
+        if full_rate <= no_rule_rate:
+            print("Error: no-rule-induction ablation did not degrade.", file=sys.stderr)
+            return 1
+        if ablations.get("no_rule_induction", {}).get("lesion_effect_verified") is not True:
+            print("Error: no-rule-induction lesion effect was not verified.", file=sys.stderr)
+            return 1
+        print("  [OK] Novel-environment adaptation integrity verified.")
+    except Exception as exc:
+        print(f"Error validating adaptation integrity: {exc}", file=sys.stderr)
         return 1
 
     print("Novel Environment Adaptation Bundle: PASS")

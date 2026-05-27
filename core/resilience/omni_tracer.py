@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 
 _TRACE_FILE = Path.home() / ".aura" / "run" / "omni_trace.jsonl"
 _OMNI_LOCK = threading.Lock()
+logger = logging.getLogger("Aura.OmniTracer")
 
 
 def _classify_forwarded_log(source: str, message: str, severity: str) -> tuple[str, str]:
@@ -162,8 +163,12 @@ def write_trace(source: str, error_type: str, message: str, trace: str = "", sev
                 severity=final_severity,
                 classification=classification,
             )
-    except ImportError as _exc:
-        logger.debug("Suppressed %s in core.resilience.omni_tracer: %s", type(_exc).__name__, _exc)
+    except (ImportError, RuntimeError, AttributeError) as _exc:
+        logging.getLogger("Aura.OmniTracer").debug(
+            "Suppressed %s in core.resilience.omni_tracer: %s",
+            type(_exc).__name__,
+            _exc,
+        )
 
 class OmniLogHandler(logging.Handler):
     """Intercepts high-severity logs and dumps them to the Omni-Trace."""
@@ -176,7 +181,11 @@ class OmniLogHandler(logging.Handler):
                     trace = "".join(traceback.format_exception(*record.exc_info))
                 write_trace(f"log_{record.levelname.lower()}", record.name, msg, trace)
             except OSError as _exc:
-                logger.debug("Suppressed %s in core.resilience.omni_tracer: %s", type(_exc).__name__, _exc)
+                logging.getLogger("Aura.OmniTracer").debug(
+                    "Suppressed %s in core.resilience.omni_tracer: %s",
+                    type(_exc).__name__,
+                    _exc,
+                )
 
 def _sys_excepthook(exc_type, exc_value, exc_traceback):
     trace = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))

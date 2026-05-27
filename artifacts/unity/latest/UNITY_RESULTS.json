@@ -1,26 +1,26 @@
 {
   "action_gating_success_rate": 1.0,
-  "false_fragmentation_claims": 0,
-  "false_unity_claims": 0,
+  "false_fragmentation_claims": 1,
+  "false_unity_claims": 1,
   "fragmentation_cases": {
-    "gated": true,
-    "repaired": true,
-    "self_reported": true
+    "gated": false,
+    "repaired": false,
+    "self_reported": false
   },
   "lesion_effects": {
-    "draft_reconciliation": true,
-    "ownership_binding": true,
-    "temporal_binding": true
+    "draft_reconciliation": false,
+    "ownership_binding": false,
+    "temporal_binding": false
   },
-  "memory_conflict_preservation_rate": 1.0,
+  "memory_conflict_preservation_rate": 0.0,
   "mind_moment_cases": {
-    "active_present": true,
-    "lesion_degradation": true,
-    "will_gating": true
+    "active_present": false,
+    "lesion_degradation": false,
+    "will_gating": false
   },
-  "repair_success_rate": 1.0,
-  "tests_passed": 28,
-  "tests_total": 28,
-  "timestamp": 1779247501.002812,
+  "repair_success_rate": 0.0,
+  "tests_passed": 3,
+  "tests_total": 3,
+  "timestamp": 1779842418.9740732,
   "unity_layer_version": "1.1"
 }

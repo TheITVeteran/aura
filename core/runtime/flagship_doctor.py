@@ -279,6 +279,8 @@ import sqlite3
 import threading
 import logging
 
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+
 logger = logging.getLogger("Aura.FlagshipDoctor")
 
 
@@ -303,7 +305,7 @@ class FlagshipDoctorDaemon:
 
     def start(self, loop: Any = None) -> None:
         """Start the background monitoring thread and event-loop heartbeat updater."""
-        if self._running:
+        if self._running or is_shutdown_requested():
             return
         
         import asyncio
@@ -336,7 +338,7 @@ class FlagshipDoctorDaemon:
     async def _heartbeat_updater(self) -> None:
         """Async task that constantly updates the heartbeat timestamp on the event loop."""
         import asyncio
-        while self._running:
+        while self._running and not is_shutdown_requested():
             self._last_heartbeat = time.time()
             try:
                 await asyncio.sleep(0.5)
@@ -347,9 +349,9 @@ class FlagshipDoctorDaemon:
         """Standard thread loop running in the background to detect event-loop stalls or high memory."""
         logger.info("FlagshipDoctorDaemon background thread started.")
         
-        while self._running:
+        while self._running and not is_shutdown_requested():
             time.sleep(self.check_interval)
-            if not self._running:
+            if not self._running or is_shutdown_requested():
                 break
                 
             # 1. Event Loop Lag check

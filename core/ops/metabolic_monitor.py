@@ -85,12 +85,12 @@ class MetabolicMonitor:
 
     def __init__(
         self,
-        ram_threshold_mb: int = 8192,
+        ram_threshold_mb: int | None = None,
         cpu_threshold: float = 80.0,
         disk_threshold: float = 92.0,
     ) -> None:
         self.process: psutil.Process | None = None
-        self.ram_threshold_mb = max(256, int(ram_threshold_mb))
+        self.ram_threshold_mb = self._resolve_ram_threshold_mb(ram_threshold_mb)
         self.cpu_threshold = max(1.0, float(cpu_threshold))
         self.disk_threshold = _clamp(float(disk_threshold), 50.0, 99.0)
 
@@ -111,6 +111,39 @@ class MetabolicMonitor:
         self._pressure_actions_total = 0
 
         self._refresh_process()
+
+    def _resolve_ram_threshold_mb(self, configured: int | None) -> int:
+        """Choose a process-RSS threshold that matches the actual host.
+
+        Aura's primary local model lane can legitimately occupy more than 12 GB
+        RSS on large-memory Apple Silicon systems. A fixed 8 GB stress threshold
+        misclassifies healthy 32B startup as a critical resource incident. Keep
+        explicit constructor/env overrides exact, and otherwise scale the default
+        to half of physical RAM with an 8 GB minimum.
+        """
+        if configured is not None:
+            return max(256, int(configured))
+        override = os.getenv("AURA_METABOLIC_RAM_THRESHOLD_MB", "").strip()
+        if override:
+            try:
+                return max(256, int(float(override)))
+            except ValueError as exc:
+                _record_metabolic_degradation(
+                    exc,
+                    action="ignored invalid AURA_METABOLIC_RAM_THRESHOLD_MB override",
+                    severity="warning",
+                    extra={"override": override},
+                )
+        try:
+            total_ram_mb = float(psutil.virtual_memory().total) / _BYTES_PER_MB
+        except psutil.Error as exc:
+            _record_metabolic_degradation(
+                exc,
+                action="using conservative metabolic RAM threshold after host RAM probe failed",
+                severity="warning",
+            )
+            total_ram_mb = 8192.0
+        return max(8192, int(total_ram_mb * 0.50))
 
     def start(self, interval: float = 5.0) -> None:
         """Start the background monitoring thread."""

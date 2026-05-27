@@ -97,22 +97,36 @@ class IntegrityGuard:
             chain = [process]
             try:
                 chain.extend(process.parents())
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                parent = process.parent()
-                if parent:
-                    chain.append(parent)
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                record_degradation(
+                    "integrity_guard",
+                    exc,
+                    severity="warning",
+                    action="continued sovereignty check without full process parent chain",
+                )
+                try:
+                    parent = process.parent()
+                    if parent:
+                        chain.append(parent)
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+                    pass
             for proc in chain:
                 name = ""
                 try:
                     name = proc.name().lower()
-                except (RuntimeError, AttributeError, TypeError, ValueError):
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
                     continue
                 if any(s in name for s in suspicious):
                     logger.warning("🩸 [SOVEREIGNTY] Debugger detected in process chain: %s", proc.name())
                     score -= 0.5
                     break
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('integrity_guard', e)
+        except (ImportError, AttributeError, RuntimeError, OSError) as e:
+            record_degradation(
+                "integrity_guard",
+                e,
+                severity="warning",
+                action="continued sovereignty check without process inspection",
+            )
             logger.debug("IntegrityGuard: PID check failed (likely psutil/permissions): %s", e)
             
         self._last_sovereignty_score = max(0.0, score)
@@ -125,7 +139,7 @@ class IntegrityGuard:
             audit = ServiceContainer.get("subsystem_audit", default=None)
             if audit:
                 audit.heartbeat("sovereign_scanner")
-        except (ImportError, AttributeError, RuntimeError) as _exc:
+        except (ImportError, AttributeError, RuntimeError, OSError) as _exc:
             record_degradation('integrity_guard', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -141,7 +155,7 @@ class IntegrityGuard:
                     mycelium = ServiceContainer.get("mycelial_network", default=None)
                     if mycelium:
                         await mycelium.emit_reflex("ENV_BREACH", {"score": score})
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except (ImportError, AttributeError, RuntimeError, OSError) as e:
                 record_degradation('integrity_guard', e)
                 logger.error("Integrity watchdog error: %s", e)
             

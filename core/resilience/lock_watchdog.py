@@ -15,6 +15,7 @@ class _TrackedLock:
     start_time: float
     name: str
     on_stall: Optional[Callable[[], Any]] = None
+    threshold_s: Optional[float] = None
     interventions: int = 0
     last_alert_at: float = 0.0
     last_intervention_at: float = 0.0
@@ -39,15 +40,27 @@ class LockWatchdog:
         if self._running:
             return
         self._running = True
+        monitor = self._monitor_loop()
         try:
-            from core.utils.task_tracker import get_task_tracker
+            from core.runtime.task_ownership import close_awaitable, create_tracked_task
 
-            self._task = get_task_tracker().create_task(
-                self._monitor_loop(),
+            self._task = create_tracked_task(
+                monitor,
                 name="aura.lock_watchdog",
             )
-        except (ImportError, AttributeError, RuntimeError):
-            self._task = get_task_tracker().create_task(self._monitor_loop(), name="aura.lock_watchdog")
+        except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+            self._running = False
+            self._task = None
+            try:
+                close_awaitable(monitor)
+            except NameError:
+                if inspect.iscoroutine(monitor):
+                    monitor.close()
+            except (NameError, RuntimeError, AttributeError, TypeError) as close_exc:
+                record_degradation("lock_watchdog", close_exc)
+            record_degradation("lock_watchdog", exc)
+            logger.error("LockWatchdog failed to start under tracked task ownership: %s", exc)
+            return
         logger.info("🛡️ LockWatchdog ACTIVE (Threshold: %ss).", self._threshold)
 
     async def stop(self):
@@ -61,13 +74,20 @@ class LockWatchdog:
                 logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
         self._task = None
 
-    def report_acquire_start(self, lock_id: str, name: str, on_stall: Optional[Callable[[], Any]] = None):
+    def report_acquire_start(
+        self,
+        lock_id: str,
+        name: str,
+        on_stall: Optional[Callable[[], Any]] = None,
+        threshold_s: Optional[float] = None,
+    ):
         """Called when a lock acquisition begins."""
         existing = self._active_locks.get(lock_id)
         self._active_locks[lock_id] = _TrackedLock(
             start_time=time.monotonic(),
             name=name,
             on_stall=on_stall or (existing.on_stall if existing else None),
+            threshold_s=threshold_s if threshold_s is not None else (existing.threshold_s if existing else None),
             interventions=existing.interventions if existing else 0,
             last_alert_at=existing.last_alert_at if existing else 0.0,
             last_intervention_at=existing.last_intervention_at if existing else 0.0,
@@ -99,6 +119,7 @@ class LockWatchdog:
                     "lock_id": lock_id,
                     "name": tracked.name,
                     "held_duration_s": round(max(0.0, now - tracked.start_time), 3),
+                    "threshold_s": tracked.threshold_s if tracked.threshold_s is not None else self._threshold,
                     "interventions": tracked.interventions,
                     "last_alert_at": tracked.last_alert_at,
                     "last_intervention_at": tracked.last_intervention_at,
@@ -143,7 +164,8 @@ class LockWatchdog:
                 now = time.monotonic()
                 for lock_id, tracked in list(self._active_locks.items()):
                     held_duration = now - tracked.start_time
-                    if held_duration > self._threshold:
+                    threshold_s = tracked.threshold_s if tracked.threshold_s is not None else self._threshold
+                    if held_duration > threshold_s:
                         if (now - tracked.last_alert_at) >= self._check_interval:
                             tracked.last_alert_at = now
                             logger.critical(

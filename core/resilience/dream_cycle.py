@@ -100,3 +100,11 @@ class DreamCycle:
                 msg = f"Re-processed: {msg}"
             self.orchestrator.enqueue_message(msg)
             await asyncio.sleep(0.1) # Small stagger
+
+    async def process_dlq_async(self):
+        """Scheduler-facing DLQ recovery entrypoint.
+
+        The runtime scheduler calls the explicit DLQ method so dream recovery
+        can be distinguished from broader subconscious dream work.
+        """
+        return await self.process_dreams()

@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -16,6 +17,19 @@ logger = logging.getLogger("Aura.TerminalMonitor")
 
 # Persistent blacklist for error fingerprints
 BLACKLIST_PATH = Path.home() / ".aura" / "data" / "terminal_blacklist.json"
+
+
+def _safe_terminal_degradation(exc: BaseException) -> None:
+    """Record monitor-internal failures without breaking logging teardown."""
+    try:
+        recorder = record_degradation
+        if callable(recorder):
+            recorder("terminal_monitor", exc)
+    except (RuntimeError, OSError, TypeError, ValueError, AttributeError) as degradation_exc:
+        try:
+            sys.__stderr__.write(f"TerminalMonitor degradation recorder failed: {degradation_exc}\n")
+        except (RuntimeError, OSError, ValueError):
+            return
 
 @dataclass
 class ErrorEntry:
@@ -56,6 +70,7 @@ class TerminalMonitor:
         self._max_fixes_per_window = 3
         self._cooldown = 300
         self._blacklist: set = self._load_blacklist()
+        self._handler: logging.Handler | None = None
 
         # Harmless errors to ignore
         self._ignore_patterns = [
@@ -133,6 +148,14 @@ class TerminalMonitor:
 
     def _attach_handler(self):
         """Attach a log handler that captures ERROR/CRITICAL messages."""
+        if self._handler is not None:
+            return
+
+        entry_cls = ErrorEntry
+        formatter_cls = logging.Formatter
+        safe_degradation = _safe_terminal_degradation
+        stderr = sys.stderr
+
         class _MonitorHandler(logging.Handler):
             def __init__(self, monitor: 'TerminalMonitor'):
                 super().__init__(level=logging.ERROR)
@@ -143,23 +166,45 @@ class TerminalMonitor:
                     msg = self.format(record)
                     exc_text = ""
                     if record.exc_info:
-                        exc_text = logging.Formatter().formatException(record.exc_info)
+                        exc_text = formatter_cls().formatException(record.exc_info)
                     
-                    entry = ErrorEntry(
+                    entry = entry_cls(
                         message=f"{msg}\n{exc_text}".strip()[:3000],
                         level=record.levelname,
                         source=record.name,
                     )
                     self.monitor._ingest_error(entry)
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('terminal_monitor', e)
-                    import sys
-                    print(f"TerminalMonitor Log Error: {e}", file=sys.stderr)
+                    safe_degradation(e)
+                    try:
+                        print(f"TerminalMonitor Log Error: {e}", file=stderr)
+                    except (RuntimeError, OSError, ValueError) as stderr_exc:
+                        safe_degradation(stderr_exc)
         
         handler = _MonitorHandler(self)
         handler.setFormatter(logging.Formatter("%(name)s | %(message)s"))
         logging.getLogger().addHandler(handler)
+        self._handler = handler
         logger.info("✓ Terminal Monitor v5.0 attached (Circuit Breaker: ACTIVE)")
+
+    def close(self) -> None:
+        """Detach the monitor from root logging before interpreter teardown."""
+        handler = self._handler
+        if handler is None:
+            return
+        try:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _safe_terminal_degradation(exc)
+        finally:
+            self._handler = None
+
+    def on_stop(self) -> None:
+        self.close()
+
+    def cleanup(self) -> None:
+        self.close()
 
     def _is_sepsis_candidate(self, entry: ErrorEntry) -> bool:
         """Return true only for failures that should trip the emergency loop.

@@ -1,5 +1,6 @@
 from core.runtime.errors import record_degradation
 import asyncio
+import httpx
 import json
 import logging
 import re

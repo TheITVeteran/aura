@@ -115,6 +115,34 @@ def _foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def _profile_is_proof(profile: str | None, ready_label: str | None = None) -> bool:
+    """Return True for canonical proof/evaluation boot profiles."""
+
+    tokens = {
+        str(profile or "").strip().lower(),
+        str(ready_label or "").strip().lower(),
+    }
+    return bool(tokens & {"proof", "eval", "evaluation", "validation", "benchmark"}) or any(
+        any(marker in token for marker in ("proof", "validation", "benchmark"))
+        for token in tokens
+        if token
+    )
+
+
+def _activate_proof_runtime_policy(profile: str | None, ready_label: str | None = None) -> None:
+    """Make proof-profile boots enforce the same runtime policy everywhere.
+
+    Proof runners use the normal Aura boot path, but they need stricter lane
+    contracts so background/autonomy work cannot silently spin up a lower local
+    model while a primary-lane proof is being measured.
+    """
+
+    if not _profile_is_proof(profile, ready_label):
+        return
+    os.environ.setdefault("AURA_PROOF_RUN", "1")
+    os.environ.setdefault("AURA_PROOF_MODEL_TIER", "primary")
+
+
 def _record_main_degradation(exc: BaseException, message: str, *args: Any) -> None:
     record_degradation(_AURA_MAIN_DEGRADATION_KEY, exc)
     logger.warning(message, *args, exc)
@@ -542,6 +570,8 @@ async def _boot_runtime_orchestrator(
     *,
     ready_label: str,
     readiness_context: str | None = None,
+    profile: str | None = None,
+    artifact_root: str | Path | None = None,
 ):
     """Canonical runtime boot path shared by CLI/server/desktop surfaces."""
     from core.container import ServiceContainer
@@ -579,6 +609,11 @@ async def _boot_runtime_orchestrator(
     ServiceContainer.lock_registration()
     _enforce_service_manifest(ready_label)
     await _enforce_boot_probes(ready_label)
+    _write_runtime_manifest(
+        profile=profile or ready_label.lower(),
+        ready_label=ready_label,
+        artifact_root=artifact_root,
+    )
     logger.info("🛡️ Registry Locked. Aura Ready (%s).", ready_label)
 
     # ── Wire viability + self-healing + stem cells + boot phases ───────
@@ -757,6 +792,55 @@ async def _boot_runtime_orchestrator(
     return orchestrator
 
 
+async def boot_aura_runtime(
+    *,
+    profile: str,
+    artifact_root: str | Path | None = None,
+    readiness_context: str | None = None,
+    ready_label: str | None = None,
+):
+    """Public canonical boot entry for launchers and proof runners.
+
+    CLI, desktop, server, and validation/proof surfaces must use this path so
+    their evidence reflects the same live Aura boot contract.
+    """
+    resolved_ready_label = ready_label or profile.title()
+    _activate_proof_runtime_policy(profile, resolved_ready_label)
+    return await _boot_runtime_orchestrator(
+        ready_label=resolved_ready_label,
+        readiness_context=readiness_context or f"{profile}_boot",
+        profile=profile,
+        artifact_root=artifact_root,
+    )
+
+
+def _write_runtime_manifest(
+    *,
+    profile: str,
+    ready_label: str,
+    artifact_root: str | Path | None = None,
+) -> None:
+    try:
+        from core.runtime.runtime_manifest import write_runtime_manifest
+
+        if artifact_root is None:
+            artifact_root = os.environ.get("AURA_ARTIFACTS_DIR") or PROJECT_ROOT / "artifacts" / "current"
+        path = write_runtime_manifest(
+            profile=profile,
+            ready_label=ready_label,
+            project_root=PROJECT_ROOT,
+            artifact_root=Path(artifact_root),
+        )
+        logger.info("🧾 Runtime manifest written: %s", path)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued canonical boot after runtime manifest emission failed",
+        )
+        logger.warning("Runtime manifest emission failed: %s", exc)
+
+
 def _register_runtime_singletons(orchestrator: Any) -> None:
     """Register module-level singletons + orchestrator-attached components
     with ServiceContainer so the manifest verification finds canonical owners.
@@ -839,6 +923,19 @@ def _register_runtime_singletons(orchestrator: Any) -> None:
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         record_degradation('aura_main', exc)
         logger.debug("orchestrator registration skipped: %s", exc)
+
+    try:
+        system2 = ServiceContainer.get("native_system2", default=None)
+        if system2 is None:
+            from core.reasoning.native_system2 import get_native_system2
+
+            system2 = get_native_system2()
+            ServiceContainer.register_instance("native_system2", system2, required=False)
+        if not ServiceContainer.has("system2_search"):
+            ServiceContainer.register_instance("system2_search", system2, required=False)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation('aura_main', exc)
+        logger.warning("native_system2 boot singleton unavailable: %s", exc)
 
     try:
         if _foreground_only_runtime() or not _env_flag("AURA_REGISTER_REIMPLEMENTATION_LAB", True):
@@ -974,7 +1071,7 @@ def _enforce_service_manifest(ready_label: str) -> None:
 
 async def run_console():
     """Interactive CLI Mode"""
-    orchestrator = await _boot_runtime_orchestrator(ready_label="CLI")
+    orchestrator = await boot_aura_runtime(profile="cli", ready_label="CLI")
 
     from core.main import conversation_loop
     await conversation_loop(orchestrator=orchestrator)
@@ -986,7 +1083,8 @@ async def run_philosophy_stream(port: int = 8000):
 
     from core.container import ServiceContainer
 
-    orchestrator = await _boot_runtime_orchestrator(
+    orchestrator = await boot_aura_runtime(
+        profile="philosophy",
         ready_label="Philosophy",
         readiness_context="philosophy_stream",
     )
@@ -1181,7 +1279,8 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None):
         
         # 1. Initialize Orchestrator and wait for boot
         logger.info("🧠 Orchestrator boot beginning...")
-        orchestrator = await _boot_runtime_orchestrator(
+        orchestrator = await boot_aura_runtime(
+            profile="desktop",
             ready_label="Desktop",
             readiness_context="server_boot",
         )
@@ -1699,7 +1798,8 @@ def main():
             ):
                 host = "0.0.0.0"
             async def _run_server_with_bootstrap():
-                orchestrator = await _boot_runtime_orchestrator(
+                orchestrator = await boot_aura_runtime(
+                    profile="server",
                     ready_label="Server",
                     readiness_context="server_boot",
                 )

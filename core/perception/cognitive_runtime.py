@@ -8,10 +8,13 @@ plugs raw terminal text and a key action space into this general loop.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.container import ServiceContainer
+
+logger = logging.getLogger(__name__)
 
 from .action_gateway import ActionDecision, ActionRequest, EnvironmentActionGateway
 from .affordance_schema import AffordanceKnowledgeBase

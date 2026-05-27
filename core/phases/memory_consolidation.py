@@ -80,6 +80,34 @@ class MemoryConsolidationPhase(BasePhase):
             logger.warning("💾 MemoryConsolidation: Dropped %d non-dict items from working memory.", len(new_state.cognition.working_memory) - len(clean_memory))
             new_state.cognition.working_memory = clean_memory
 
+        try:
+            from core.runtime.proof_policy import is_strict_proof_answer_prompt
+
+            proof_origin = getattr(new_state.cognition, "current_origin", None) or kwargs.get("origin")
+            proof_text = objective or ""
+            for item in reversed(new_state.cognition.working_memory):
+                if isinstance(item, dict) and item.get("role") == "user":
+                    proof_origin = item.get("origin") or proof_origin
+                    proof_text = str(item.get("content", "") or proof_text)
+                    break
+            if is_strict_proof_answer_prompt(proof_text, origin=proof_origin):
+                new_state.cognition.long_term_memory = []
+                new_state.response_modifiers["proof_memory_consolidation_skipped"] = True
+                return new_state
+        except _MEMORY_CONSOLIDATION_ERRORS as exc:
+            self._mark_consolidation_status(
+                new_state,
+                status="partial",
+                stage="strict_proof_consolidation_guard",
+                error=exc,
+            )
+            _record_memory_consolidation_degradation(
+                exc,
+                action="continued memory consolidation after strict proof guard failed",
+                severity="warning",
+                extra={"stage": "strict_proof_consolidation_guard"},
+            )
+
         # ISSUE-81: Consolidation Skip Fix
         # Allow consolidation if there's high arousal or a pending action,
         # even if the turn is not strictly completed.

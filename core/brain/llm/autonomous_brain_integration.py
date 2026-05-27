@@ -178,6 +178,14 @@ class AutonomousCognitiveEngine:
             or getattr(config.llm, "mlx_brainstem_path", None)
             or get_runtime_model_path(BRAINSTEM_MODEL)
         )
+        primary_proof_lane = False
+        try:
+            from core.runtime.proof_policy import proof_model_tier, proof_run_active
+
+            primary_proof_lane = bool(proof_run_active(origin="llm_tier_initialization") and proof_model_tier() == "primary")
+        except BRAIN_RECOVERABLE_ERRORS as exc:
+            logger.debug("Proof tier policy unavailable during LLM tier initialization: %s", exc)
+        allow_non_primary_tiers = not primary_proof_lane
 
         if cortex_model_path and PRIMARY_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
             try:
@@ -202,7 +210,9 @@ class AutonomousCognitiveEngine:
                 logger.error("Failed to register %s pathway: %s", PRIMARY_ENDPOINT, e)
 
         # ── LOCAL SECONDARY: Solver (72B) — Hot-swap deep thinker ──
-        if solver_model_path and DEEP_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
+        if primary_proof_lane:
+            logger.info("🛡️ Proof-primary lane active — non-primary local LLM endpoints are not registered.")
+        if allow_non_primary_tiers and solver_model_path and DEEP_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
             try:
                 from .mlx_client import get_mlx_client
                 solver_client = get_mlx_client(
@@ -244,7 +254,9 @@ class AutonomousCognitiveEngine:
                 )
                 capture_and_log(e, {'module': __name__})
         
-        if gemini_key and "Gemini-Fast" not in getattr(self.llm_router, "endpoints", {}):
+        if primary_proof_lane and gemini_key:
+            logger.info("🛡️ Proof-primary lane active — cloud teacher endpoints are not registered.")
+        elif allow_non_primary_tiers and gemini_key and "Gemini-Fast" not in getattr(self.llm_router, "endpoints", {}):
             try:
                 from .gemini_adapter import DailyRateLimiter, GeminiAdapter
                 
@@ -302,11 +314,11 @@ class AutonomousCognitiveEngine:
                     action="continued local-first operation without Gemini teacher adapters",
                 )
                 logger.warning("Failed to initialize Gemini adapters: %s", e)
-        else:
+        elif not gemini_key:
             logger.info("No GEMINI_API_KEY found — running fully local (teacher disabled)")
 
         # ── LOCAL TERTIARY: Brainstem (7B) — Background/heartbeat ──
-        if brainstem_model_path and BRAINSTEM_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
+        if allow_non_primary_tiers and brainstem_model_path and BRAINSTEM_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
             try:
                 from .mlx_client import get_mlx_client
                 brainstem_client = get_mlx_client(
@@ -334,7 +346,7 @@ class AutonomousCognitiveEngine:
         # ── EMERGENCY: CPU Fallback (1.5B — bypasses Metal entirely) ──
         # If 7B brainstem fails, fall back to 1.5B on CPU
         fallback_model = brainstem_model_path or cortex_model_path
-        if fallback_model and FALLBACK_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
+        if allow_non_primary_tiers and fallback_model and FALLBACK_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
             try:
                 from .mlx_client import get_mlx_client
 
@@ -363,6 +375,8 @@ class AutonomousCognitiveEngine:
         
         # ── Sanity check: ensure at least one endpoint exists ──
         if not self.llm_router.endpoints:
+            if primary_proof_lane:
+                raise RuntimeError("Proof-primary boot failed closed: no primary LLM endpoint registered")
             logger.error("⚠️ NO LLM endpoints registered! Registering Emergency Reflex pathway.")
             reflex_client = ReflexClient()
             self.llm_router.register_endpoint(LLMEndpoint(

@@ -18,6 +18,7 @@ metrics = get_metrics()
 class Hypervisor:
     def __init__(self, lag_threshold_s: float = 0.5):
         self._lag_threshold = lag_threshold_s
+        self._active_lag_threshold = max(lag_threshold_s, 5.0)
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_tick = time.time()
@@ -43,6 +44,44 @@ class Hypervisor:
         """Return True only when the watchdog loop is actively supervised."""
         return bool(self._running and self._task is not None and not self._task.done())
 
+    def _active_runtime_reason(self) -> str:
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if proof_run_active():
+                return "proof_run_active"
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            logger.debug("Hypervisor proof-run probe unavailable: %s", exc)
+
+        try:
+            from core.runtime.foreground_guard import foreground_activity_reason
+
+            reason = foreground_activity_reason()
+            if reason:
+                return reason
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            logger.debug("Hypervisor foreground probe unavailable: %s", exc)
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            if gate and hasattr(gate, "get_conversation_status"):
+                status = dict(gate.get_conversation_status() or {})
+                if bool(status.get("foreground_owned")) or int(
+                    status.get("active_generations", 0) or 0
+                ) > 0:
+                    return "foreground_generation_active"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Hypervisor inference-gate probe unavailable: %s", exc)
+        return ""
+
+    def _lag_threshold_for_context(self) -> tuple[float, str]:
+        reason = self._active_runtime_reason()
+        if reason:
+            return self._active_lag_threshold, reason
+        return self._lag_threshold, "idle"
+
     async def _watchdog_loop(self):
         while self._running:
             start = time.time()
@@ -54,8 +93,14 @@ class Hypervisor:
             self._last_tick = time.time()
             metrics.gauge("hypervisor.loop_lag_s", lag)
 
-            if lag > self._lag_threshold:
-                logger.warning("🚨 HIGH EVENT LOOP LAG detected: %.3fs", lag)
+            lag_threshold, lag_context = self._lag_threshold_for_context()
+            if lag > lag_threshold:
+                logger.warning(
+                    "🚨 HIGH EVENT LOOP LAG detected: %.3fs (context=%s threshold=%.3fs)",
+                    lag,
+                    lag_context,
+                    lag_threshold,
+                )
                 metrics.increment("hypervisor.lag_spikes_total")
 
                 if lag > 5.0:

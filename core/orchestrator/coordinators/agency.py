@@ -5,6 +5,7 @@ Handles skill dispatch, task execution, and agentic loop management.
 from core.runtime.errors import record_degradation
 import logging
 import asyncio
+import sqlite3
 from typing import Any, Dict, Optional
 
 from core.health.degraded_events import record_degraded_event

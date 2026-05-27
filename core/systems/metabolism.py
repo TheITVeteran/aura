@@ -71,7 +71,7 @@ class MetabolismEngine:
         try:
             self._purge_waste(report)
             self._purge_stale_logs(report)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('metabolism', exc)
             msg = f"Metabolism sweep error: {exc}"
             logger.error(msg, exc_info=True)
@@ -87,26 +87,21 @@ class MetabolismEngine:
             for dname in list(dirnames):
                 if dname in WASTE_DIRS:
                     target = dp / dname
-                    try:
-                        size = self._dir_size(target)
-                        shutil.rmtree(target)
+                    removed, size = self._remove_waste_dir(target)
+                    if removed:
                         report.dirs_removed += 1
                         report.bytes_reclaimed += size
                         dirnames.remove(dname)
-                    except (OSError, IOError) as exc:
-                        record_degradation('metabolism', exc)
-                        report.errors.append(f"rmdir {target}: {exc}")
             for fname in filenames:
                 fpath = dp / fname
                 if fpath.suffix in WASTE_EXTENSIONS:
                     try:
                         size = fpath.stat().st_size
-                        fpath.unlink()
+                        fpath.unlink(missing_ok=True)
                         report.files_removed += 1
                         report.bytes_reclaimed += size
-                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                        record_degradation('metabolism', exc)
-                        report.errors.append(f"unlink {fpath}: {exc}")
+                    except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        logger.debug("Metabolism left volatile waste file in place: %s: %s", fpath, exc)
 
     def _purge_stale_logs(self, report: PurgeReport) -> None:
         cutoff = time.time() - (self.days_threshold * 86400)
@@ -122,9 +117,26 @@ class MetabolismEngine:
                             fpath.unlink()
                             report.files_removed += 1
                             report.bytes_reclaimed += size
-                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('metabolism', exc)
                         report.errors.append(f"stale log {fpath}: {exc}")
+
+    def _remove_waste_dir(self, target: Path) -> tuple[bool, int]:
+        """Best-effort removal for volatile cache directories.
+
+        ``__pycache__`` directories are actively recreated while Aura imports
+        modules. A race here is housekeeping noise, not a runtime degradation.
+        """
+        size = self._dir_size(target)
+        for _ in range(2):
+            if not target.exists():
+                return False, 0
+            shutil.rmtree(target, ignore_errors=True)
+            if not target.exists():
+                return True, size
+            time.sleep(0.02)
+        logger.debug("Metabolism left live cache directory in place: %s", target)
+        return False, 0
 
     @staticmethod
     def _dir_size(path: Path) -> int:
@@ -133,7 +145,6 @@ class MetabolismEngine:
             for entry in path.rglob("*"):
                 if entry.is_file():
                     total += entry.stat().st_size
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('metabolism', exc)
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Suppressed: %s", exc)
         return total

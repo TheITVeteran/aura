@@ -276,6 +276,55 @@ def test_metabolic_monitor_dispatches_pressure_mitigation(monkeypatch):
     assert monitor.get_status_report()["pressure_actions_total"] == 1
 
 
+def test_metabolic_monitor_default_ram_threshold_scales_for_primary_model_lane(monkeypatch):
+    import core.ops.metabolic_monitor as metabolic_module
+
+    monkeypatch.delenv("AURA_METABOLIC_RAM_THRESHOLD_MB", raising=False)
+    monkeypatch.setattr(
+        metabolic_module.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=62.0, total=64 * 1024 * 1024 * 1024),
+    )
+
+    monitor = metabolic_module.MetabolicMonitor()
+
+    assert monitor.ram_threshold_mb == 32768
+    assert (
+        monitor._classify_pressure(
+            cpu_percent=20.0,
+            rss_mb=16384.0,
+            ram_percent=62.0,
+            disk_percent=50.0,
+            health_score=0.90,
+        )
+        == "nominal"
+    )
+
+
+def test_metabolic_monitor_explicit_ram_threshold_still_escalates(monkeypatch):
+    import core.ops.metabolic_monitor as metabolic_module
+
+    monkeypatch.setattr(
+        metabolic_module.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=62.0, total=64 * 1024 * 1024 * 1024),
+    )
+
+    monitor = metabolic_module.MetabolicMonitor(ram_threshold_mb=1024)
+
+    assert monitor.ram_threshold_mb == 1024
+    assert (
+        monitor._classify_pressure(
+            cpu_percent=20.0,
+            rss_mb=2048.0,
+            ram_percent=62.0,
+            disk_percent=50.0,
+            health_score=0.90,
+        )
+        == "critical"
+    )
+
+
 def test_metabolic_monitor_loop_records_failure_without_exiting_silently(monkeypatch):
     import core.ops.metabolic_monitor as metabolic_module
 

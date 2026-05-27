@@ -79,18 +79,43 @@ class IncidentManager:
 
     def report(
         self,
-        category: str,
-        description: str,
-        severity: IncidentSeverity = IncidentSeverity.WARNING,
+        category: str | None = None,
+        description: str | None = None,
+        severity: IncidentSeverity | str = IncidentSeverity.WARNING,
         root_cause_hint: str = "",
         mitigation_taken: str = "",
         metadata: Optional[Dict[str, Any]] = None,
+        *,
+        source: str | None = None,
+        title: str | None = None,
+        detail: str | None = None,
+        **extra_metadata: Any,
     ) -> Incident:
         """Report an incident. Deduplicates by category.
 
         If an active incident of the same category exists, increments its
         occurrence count and possibly escalates severity.
         """
+        if category is None:
+            category = source or "uncategorized"
+        if description is None:
+            description = detail or title or category
+
+        incident_metadata = dict(metadata or {})
+        if source:
+            incident_metadata.setdefault("source", source)
+        if title:
+            incident_metadata.setdefault("title", title)
+        if detail:
+            incident_metadata.setdefault("detail", detail)
+        incident_metadata.update(extra_metadata)
+
+        if not isinstance(severity, IncidentSeverity):
+            try:
+                severity = IncidentSeverity(str(severity).strip().lower())
+            except ValueError:
+                severity = IncidentSeverity.WARNING
+
         self._total_incidents += 1
 
         # Dedup check
@@ -103,8 +128,8 @@ class IncidentManager:
                 existing.root_cause_hint = root_cause_hint
             if mitigation_taken:
                 existing.mitigation_taken = mitigation_taken
-            if metadata:
-                existing.metadata.update(metadata)
+            if incident_metadata:
+                existing.metadata.update(incident_metadata)
 
             # Auto-escalate
             if existing.occurrence_count >= self.ESCALATION_THRESHOLD:
@@ -129,7 +154,7 @@ class IncidentManager:
             description=description,
             root_cause_hint=root_cause_hint,
             mitigation_taken=mitigation_taken,
-            metadata=dict(metadata or {}),
+            metadata=incident_metadata,
         )
 
         self._active[category] = incident

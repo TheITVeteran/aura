@@ -6,6 +6,7 @@ from core.utils.exceptions import capture_and_log
 
 import asyncio
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
 from enum import Enum

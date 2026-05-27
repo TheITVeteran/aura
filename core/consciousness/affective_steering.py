@@ -449,15 +449,17 @@ class SteeringVectorLibrary:
         source_dirs: list[Path] | None = None,
     ):
         discovered_source_dirs: list[Path] = []
+        env_dir = os.environ.get("AURA_STEERING_DIR")
+        if env_dir and Path(env_dir).exists():
+            discovered_source_dirs.append(Path(env_dir))
+
+        extracted_dir = Path(__file__).parent.parent.parent / "training" / "vectors"
+        if extracted_dir.exists() and (
+            any(extracted_dir.glob("*.npy")) or any(extracted_dir.glob("*.npz"))
+        ):
+            discovered_source_dirs.append(extracted_dir)
+
         if cache_dir is None:
-            env_dir = os.environ.get("AURA_STEERING_DIR")
-            if env_dir and Path(env_dir).exists():
-                discovered_source_dirs.append(Path(env_dir))
-
-            extracted_dir = Path(__file__).parent.parent.parent / "training" / "vectors"
-            if extracted_dir.exists() and (any(extracted_dir.glob("*.npy")) or any(extracted_dir.glob("*.npz"))):
-                discovered_source_dirs.append(extracted_dir)
-
             try:
                 from core.config import config as aura_config
                 cache_dir = aura_config.paths.data_dir / "steering_vectors"
@@ -1620,6 +1622,118 @@ class AffectiveSteeringEngine:
             base = Path.home() / ".aura" / "steering_vectors"
         return base / f"dmodel_{int(d_model)}_layers_{int(n_layers)}"
 
+    @staticmethod
+    def _coerce_hidden_size(candidate: Any) -> int | None:
+        try:
+            value = int(candidate)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return value if value > 512 else None
+
+    def _metadata_hidden_size(self, model: Any) -> int | None:
+        """Read hidden size from common MLX/HF model metadata and embeddings."""
+
+        roots = [model, getattr(model, "model", None), getattr(model, "args", None)]
+        roots.extend(getattr(root, "config", None) for root in list(roots) if root is not None)
+        for root in roots:
+            if root is None:
+                continue
+            for attr in (
+                "hidden_size",
+                "d_model",
+                "model_dim",
+                "n_embd",
+                "dim",
+                "embed_dim",
+            ):
+                hidden = self._coerce_hidden_size(getattr(root, attr, None))
+                if hidden is not None:
+                    return hidden
+
+        for root in (model, getattr(model, "model", None)):
+            if root is None:
+                continue
+            for attr in ("embed_tokens", "tok_embeddings", "wte"):
+                emb = getattr(root, attr, None)
+                weight = getattr(emb, "weight", None)
+                shape = getattr(weight, "shape", None)
+                if shape and len(shape) >= 2:
+                    hidden = self._coerce_hidden_size(shape[-1])
+                    if hidden is not None:
+                        return hidden
+        return None
+
+    def _cached_vector_hidden_size(self, n_layers: int) -> int | None:
+        """Infer hidden size from trusted packaged/runtime CAA vector artifacts.
+
+        Some MLX model wrappers hide their projection weights, but Aura ships
+        vetted CAA vectors for the live 32B lane. If model introspection cannot
+        expose d_model, using the vector geometry is better than guessing and
+        re-deriving incompatible vectors on every boot.
+        """
+
+        roots: list[Path] = []
+        env_dir = os.environ.get("AURA_STEERING_DIR")
+        if env_dir:
+            roots.append(Path(env_dir))
+        if not env_dir:
+            try:
+                from core.config import config as aura_config
+
+                runtime_base = aura_config.paths.data_dir / "steering_vectors"
+                roots.extend(sorted(runtime_base.glob(f"dmodel_*_layers_{int(n_layers)}")))
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _emit_affective_fault(
+                    exc,
+                    action="continued model geometry discovery without runtime steering cache scan",
+                    severity="warning",
+                    stage="cached_vector_geometry",
+                )
+                logger.debug("Runtime steering cache scan unavailable: %s", exc)
+            roots.append(Path(__file__).parent.parent.parent / "training" / "vectors")
+
+        target_layers = set(self._compute_target_layers(n_layers))
+        keys = {str(dim["key"]) for dim in AFFECTIVE_DIMENSIONS}
+        counts: dict[int, int] = {}
+        for root in roots:
+            if not root.exists():
+                continue
+            for key in keys:
+                for path in root.glob(f"{key}_layer*.np*"):
+                    match = re.match(rf"^{re.escape(key)}_layer_?(?P<layer>\d+)$", path.stem)
+                    if not match:
+                        continue
+                    try:
+                        if int(match.group("layer")) not in target_layers:
+                            continue
+                        if path.suffix == ".npy":
+                            vector = np.load(path)
+                        else:
+                            with np.load(path, allow_pickle=True) as data:
+                                vector = None
+                                for vector_key in ("v", "vector", "direction", "arr_0"):
+                                    if vector_key in data:
+                                        vector = data[vector_key]
+                                        break
+                                if vector is None:
+                                    continue
+                        dim = int(np.asarray(vector).reshape(-1).shape[0])
+                    except (OSError, ValueError, RuntimeError, AttributeError, TypeError) as exc:
+                        _emit_affective_fault(
+                            exc,
+                            action="ignored unreadable CAA vector during model geometry inference",
+                            severity="warning",
+                            stage="cached_vector_geometry",
+                            extra={"path": str(path)},
+                        )
+                        continue
+                    if dim > 512:
+                        counts[dim] = counts.get(dim, 0) + 1
+
+        if not counts:
+            return None
+        return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+
     def _discover_model_geometry(self, model) -> tuple[int, int]:
         """Determine n_layers and d_model from the loaded model."""
         try:
@@ -1632,9 +1746,28 @@ class AffectiveSteeringEngine:
                 return 0, 0
             n_layers = len(layers)
 
+            metadata_hidden = self._metadata_hidden_size(model)
+            if metadata_hidden is not None:
+                return n_layers, metadata_hidden
+
             # d_model: find first weight with the right shape
             # Typically in attention q_proj or input_layernorm
             for layer in layers[:3]:
+                for norm_name in (
+                    "input_layernorm",
+                    "post_attention_layernorm",
+                    "ln_1",
+                    "ln1",
+                    "norm1",
+                ):
+                    norm = getattr(layer, norm_name, None)
+                    weight = getattr(norm, "weight", None)
+                    shape = getattr(weight, "shape", None)
+                    if shape:
+                        d_model = self._coerce_hidden_size(shape[0])
+                        if d_model is not None:
+                            return n_layers, d_model
+
                 # Try attention layers
                 for attr_name in ["self_attn", "attention", "attn"]:
                     attn = getattr(layer, attr_name, None)
@@ -1656,9 +1789,24 @@ class AffectiveSteeringEngine:
                         for proj_name in ["down_proj", "w2", "gate_proj"]:
                             proj = getattr(ff, proj_name, None)
                             if proj and hasattr(proj, "weight"):
-                                d_model = proj.weight.shape[-1]
-                                if d_model > 512:
-                                    return n_layers, d_model
+                                shape = getattr(proj.weight, "shape", None)
+                                if shape:
+                                    candidates = [shape[-1]]
+                                    if proj_name in {"down_proj", "w2"}:
+                                        candidates.insert(0, shape[0])
+                                    for candidate in candidates:
+                                        d_model = self._coerce_hidden_size(candidate)
+                                        if d_model is not None:
+                                            return n_layers, d_model
+
+            cached_hidden = self._cached_vector_hidden_size(n_layers)
+            if cached_hidden is not None:
+                logger.info(
+                    "Geometry discovery using cached CAA vector d_model=%d for %d-layer model.",
+                    cached_hidden,
+                    n_layers,
+                )
+                return n_layers, cached_hidden
 
             logger.warning("Geometry discovery reached fallback for d_model.")
             return n_layers, d_model or 4096  # Reasonable guess if discovery fails
@@ -1671,7 +1819,6 @@ class AffectiveSteeringEngine:
             )
             logger.error("Error discovering model geometry: %s", e)
             return 0, 0
-
     def _discover_model_layers(self, model) -> list[Any] | None:
         """Helper to find the layers list in various MLX model structures."""
         layers = getattr(model, "layers", None)

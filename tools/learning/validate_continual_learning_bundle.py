@@ -22,9 +22,20 @@ def main(argv: list[str] | None = None) -> int:
     scorecard_path = bundle_dir / "SCORECARD.json"
     receipts_path = bundle_dir / "RECEIPTS.jsonl"
     manifest_path = bundle_dir / "MANIFEST.json"
+    integrity_path = bundle_dir / "INTEGRITY.json"
+    baselines_path = bundle_dir / "BASELINES.json"
+    ablations_path = bundle_dir / "ABLATIONS.json"
 
     # 1. Structural check
-    if not scorecard_path.exists() or not receipts_path.exists() or not manifest_path.exists():
+    required_paths = [
+        scorecard_path,
+        receipts_path,
+        manifest_path,
+        integrity_path,
+        baselines_path,
+        ablations_path,
+    ]
+    if not all(path.exists() for path in required_paths):
         print(f"Error: Missing required files in bundle: {bundle_dir}", file=sys.stderr)
         return 1
 
@@ -56,11 +67,11 @@ def main(argv: list[str] | None = None) -> int:
         total = scorecard.get("total_attempted", 0)
         passed = scorecard.get("passed_count", 0)
         pass_rate = scorecard.get("pass_rate", 0.0)
-        if total < 3:
-            print(f"Error: Scorecard contains fewer than 3 tasks: got {total}", file=sys.stderr)
+        if total < 5:
+            print(f"Error: Scorecard contains fewer than 5 tasks: got {total}", file=sys.stderr)
             return 1
-        if pass_rate < 0.66:
-            print(f"Error: Pass rate below 66% threshold: got {pass_rate:.1%}", file=sys.stderr)
+        if pass_rate < 0.8:
+            print(f"Error: Pass rate below 80% threshold: got {pass_rate:.1%}", file=sys.stderr)
             return 1
         print(f"  [OK] Scorecard: {passed}/{total} tasks passed (rate: {pass_rate:.1%}).")
     except Exception as exc:
@@ -96,6 +107,37 @@ def main(argv: list[str] | None = None) -> int:
         print("  [OK] Secure receipt matching verified.")
     except Exception as exc:
         print(f"Error validating receipts: {exc}", file=sys.stderr)
+        return 1
+
+    # 5. Anti-theater learning integrity verification
+    try:
+        integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
+        required_true = [
+            "rule_not_visible_in_prompt",
+            "solution_code_not_embedded_in_runner",
+            "held_out_examples_unseen",
+            "skill_provenance_receipt_exists",
+            "restart_persistence_passed",
+            "retention_passed",
+            "no_learning_ablation_degraded",
+        ]
+        missing = [key for key in required_true if integrity.get(key) is not True]
+        if missing:
+            print(f"Error: Continual learning integrity checks failed: {missing}", file=sys.stderr)
+            return 1
+
+        ablations = json.loads(ablations_path.read_text(encoding="utf-8"))
+        full_rate = float(ablations.get("full_aura", {}).get("pass_rate", 0.0))
+        no_learning_rate = float(ablations.get("no_learning", {}).get("pass_rate", 1.0))
+        if full_rate <= no_learning_rate:
+            print("Error: no-learning ablation did not degrade relative to full Aura.", file=sys.stderr)
+            return 1
+        if ablations.get("no_learning", {}).get("lesion_effect_verified") is not True:
+            print("Error: no-learning lesion effect was not verified.", file=sys.stderr)
+            return 1
+        print("  [OK] Continual learning integrity and ablation checks verified.")
+    except Exception as exc:
+        print(f"Error validating continual learning integrity: {exc}", file=sys.stderr)
         return 1
 
     print("Continual Learning Bundle: PASS")

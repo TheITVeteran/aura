@@ -314,7 +314,13 @@ class TokenSentinel:
                     threshold = 4
 
             if repeats >= threshold:
-                logger.error("🚨 SENTINEL: Mathematical loop detected! Sequence %r (len=%d) repeated %d times. Aborting.", seq_str[:30], seq_len, repeats)
+                logger.warning(
+                    "🚨 SENTINEL: Generative loop detected; aborting sequence %r "
+                    "(len=%d, repeats=%d).",
+                    seq_str[:30],
+                    seq_len,
+                    repeats,
+                )
                 return InterventionSignal(
                     type=InterventionType.ABORT_LOOP,
                     reason=f"Generative loop detected: {seq_str[:20]!r} x{repeats}",

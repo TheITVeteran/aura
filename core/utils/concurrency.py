@@ -42,23 +42,37 @@ class RobustLock:
     ZENITH LOCKDOWN: Adaptive timeouts and GPU load scaling.
     """
 
-    def __init__(self, name: str = "UnnamedLock"):
+    def __init__(
+        self,
+        name: str = "UnnamedLock",
+        *,
+        watchdog_threshold_s: float | None = None,
+        force_release_on_stall: bool = True,
+        timeout_s: float | None = None,
+    ):
         import uuid
 
         self.name = name
         full_id = str(uuid.uuid4())
         self.id = full_id[:8]
         self._lock = threading.Lock()
-        self.timeout = 30.0  # Base timeout (Zenith default)
+        self.timeout = float(timeout_s) if timeout_s is not None else 30.0  # Base timeout (Zenith default)
         self.adaptive = True
         self.last_acquire_start = 0.0
+        self.watchdog_threshold_s = watchdog_threshold_s
+        self.force_release_on_stall = force_release_on_stall
 
     @staticmethod
     def _watchdog_report_acquire_start(
-        watchdog: Any, lock_id: str, name: str, callback: Any
+        watchdog: Any, lock_id: str, name: str, callback: Any, threshold_s: float | None = None
     ) -> None:
         try:
-            watchdog.report_acquire_start(lock_id, name, on_stall=callback)
+            watchdog.report_acquire_start(
+                lock_id,
+                name,
+                on_stall=callback,
+                threshold_s=threshold_s,
+            )
         except TypeError:
             watchdog.report_acquire_start(lock_id, name)
 
@@ -76,7 +90,14 @@ class RobustLock:
         from core.resilience.lock_watchdog import get_lock_watchdog
 
         watchdog = get_lock_watchdog()
-        self._watchdog_report_acquire_start(watchdog, self.id, self.name, self.force_release)
+        stall_callback = self.force_release if self.force_release_on_stall else None
+        self._watchdog_report_acquire_start(
+            watchdog,
+            self.id,
+            self.name,
+            stall_callback,
+            self.watchdog_threshold_s,
+        )
 
         # Adaptive Scaling: if GPU is saturated, extend timeout
         if self.adaptive:
@@ -134,7 +155,13 @@ class RobustLock:
 
         for attempt in range(max_retries):
             self.last_acquire_start = time.monotonic()
-            self._watchdog_report_acquire_start(watchdog, self.id, self.name, self.force_release)
+            self._watchdog_report_acquire_start(
+                watchdog,
+                self.id,
+                self.name,
+                stall_callback,
+                self.watchdog_threshold_s,
+            )
             try:
                 success = await _await_threaded_acquire(wait_time)
             except asyncio.CancelledError:
@@ -156,11 +183,23 @@ class RobustLock:
             )
             await asyncio.sleep(random.uniform(0.1, 0.5))
 
-        # Safety valve: force-release the EXISTING lock (don't reinitialize)
+        # Safety valve: force-release the EXISTING lock only for locks that
+        # explicitly permit corruption-risk recovery. Boot and promotion locks
+        # prefer fail-closed acquisition over replacing a live mutex.
+        if not self.force_release_on_stall:
+            watchdog.report_release(self.id)
+            return False
+
         self.force_release()
         watchdog.report_release(self.id)
 
-        self._watchdog_report_acquire_start(watchdog, self.id, self.name, self.force_release)
+        self._watchdog_report_acquire_start(
+            watchdog,
+            self.id,
+            self.name,
+            stall_callback,
+            self.watchdog_threshold_s,
+        )
         try:
             success = await _await_threaded_acquire(10.0)
         except asyncio.CancelledError:

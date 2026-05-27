@@ -1,8 +1,0 @@
-{
-  "status": "pass",
-  "answer_leak_result": "pass",
-  "salt_leak_result": "pass",
-  "hidden_test_leak_result": "pass",
-  "grader_leak_result": "pass",
-  "canary_result": "pass"
-}

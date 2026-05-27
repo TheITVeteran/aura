@@ -149,7 +149,7 @@ class SovereignTerminalSkill(BaseSkill):
                         e,
                         severity="warning",
                         action="returned terminal timeout result after process kill failed",
-                        extra={"pid": getattr(process, "pid", None), "command": command[:240]},
+                        extra={"pid": getattr(process, "pid", None), "command": cmd[:240]},
                     )
                     logger.debug("Failed to kill process %s: %s", process.pid, e)
                 
