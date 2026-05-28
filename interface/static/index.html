@@ -31,73 +31,82 @@
 <body>
     <!-- ═══ SPLASH SCREEN ═══ -->
     <div id="splash-screen" class="splash-screen" role="status" aria-label="Loading Aura">
-        <!-- Cognitive top status/telemetry bar -->
-        <div class="cognitive-top-bar">[ SYSTEM_CORE: ACTIVE // COGNITION: HYDRATING // PHI-LEVEL: 0.88 // THREADS: [α, β, θ, γ, ψ] ]</div>
-        
-        <!-- Floating neural/tensor data packets -->
-        <div class="neuro-bubble bubble-1">[ψ(t)]</div>
-        <div class="neuro-bubble bubble-2">[0x7F]</div>
-        <div class="neuro-bubble bubble-3">[Φ = 0.88]</div>
-        <div class="neuro-bubble bubble-4">[d/dt]</div>
-        <div class="neuro-bubble bubble-5">[|1⟩+|0⟩]</div>
-        <div class="neuro-bubble bubble-6">[θ_layer_25]</div>
-        
+        <!-- Subtle particle canvas -->
+        <canvas id="splash-particles" class="splash-particles"></canvas>
+
         <div class="splash-content">
-            <!-- Glowing Orbiting Orb -->
+            <!-- Glowing Orb — larger, more premium -->
             <div class="splash-orb">
                 <div class="splash-orb-inner"></div>
                 <div class="splash-orb-ring"></div>
                 <div class="splash-orb-ring ring-2"></div>
+                <div class="splash-orb-ring ring-3"></div>
             </div>
-            
-            <!-- Neon ASCII Logo -->
-            <pre class="ascii-logo">
- ▄████████  ███    ███  ████████▄     ▄████████    ███         ███    ███  ███▄▄▄▄      ▄████████ 
-███    ███  ███    ███  ███   ▀███   ███    ███    ███         ███    ███  ███▀▀▀██▄   ███    ███ 
-███    ███  ███    ███  ███    ███   ███    ███    ███         ███    ███  ███   ███   ███    ███ 
-███    ███  ███    ███  ███    ███   ███    ███    ███         ███    ███  ███   ███   ███    ███ 
-▀███████████  ███    ███  ████████▀  ▀███████████    ███         ███    ███  ███   ███ ▀███████████ 
-███    ███  ███    ███  ███   ▀███   ███    ███    ███         ███    ███  ███   ███   ███    ███ 
-███    ███  ███    ███  ███    ███   ███    ███    ███         ███    ███  ███   ███   ███    ███ 
-███    ███  ▀████████▀  ███    ███   ███    ███    ██████████  ▀████████▀   ▀█   █▀    ███    ███ 
-            </pre>
-            
+
+            <!-- Clean typographic logo -->
+            <h1 class="splash-logo">AURA<span class="splash-logo-accent">LUNA</span></h1>
             <p class="splash-subtitle">Initializing Cognitive Systems</p>
-            
+
             <div class="splash-progress">
                 <div class="splash-progress-bar" id="splash-bar"></div>
             </div>
             <p class="splash-status" id="splash-status">Establishing neural link...</p>
             <button id="splash-start-btn" class="splash-start-btn" style="display: none;">START</button>
         </div>
-        
-        <!-- Bioluminescent cognitive architecture diagram at the bottom -->
-        <div class="cognitive-bottom-diagram">
-            <pre class="ascii-architecture">
-                  .  .:::..      ..:::.  .
-               .::'  .::'::..  ..::'::.  `::.
-             .::'   .::'   `::::'   `::.   `::.
-            .::'    :: ·.::**::**::.· ::    `::.
-           ::'      ::      ·::·      ::      `::
-          ::'       `::.   .::::.   .::'       `::
-         ::'          `::..::'  `::..::'          `::
-        ::  ·::**::·     `::'    `::'     ·::**::·  ::
-        ::   .::..        ::      ::        ..::.   ::
-        ::  ::'  `::.     :: ·*· ::     .::'  `::  ::
-        ::  :: ·::**::·   ::      ::   ·::****::· ::::
-        `:: `::·::**::·   ::.    .::   ·::******::·::'
-         `::. `::..  ..::'  `::::'  `::..  ..::' .::'
-           `::.  `::::'   ·.::***::.·   `::::'  .::'
-             `::..  `::.    ·::**::·    .::'  ..::'
-                `::.. `::.            .::' ..::'
-                   `::..`::.  ·:**:·  .::'..::'
-                      `:::·.::***::.·:::'
-                        ::·.::*****::.·::
-                        `::.        .::'
-                          `::..  ..::'
-                             `::::'
-            </pre>
-        </div>
+
+        <!-- Minimal version tag -->
+        <div class="splash-footer">Sovereign Digital Organism · v∞</div>
+
+        <!-- Particle animation script -->
+        <script>
+        (function(){
+            const c = document.getElementById('splash-particles');
+            if (!c) return;
+            const ctx = c.getContext('2d');
+            let w, h, particles = [];
+            function resize() { w = c.width = window.innerWidth; h = c.height = window.innerHeight; }
+            resize(); window.addEventListener('resize', resize);
+            for (let i = 0; i < 80; i++) {
+                particles.push({
+                    x: Math.random() * w, y: Math.random() * h,
+                    vx: (Math.random() - 0.5) * 0.3, vy: (Math.random() - 0.5) * 0.3,
+                    r: Math.random() * 1.5 + 0.5,
+                    a: Math.random() * 0.4 + 0.1
+                });
+            }
+            function draw() {
+                if (c.offsetParent === null) return;
+                ctx.clearRect(0, 0, w, h);
+                particles.forEach(p => {
+                    p.x += p.vx; p.y += p.vy;
+                    if (p.x < 0) p.x = w; if (p.x > w) p.x = 0;
+                    if (p.y < 0) p.y = h; if (p.y > h) p.y = 0;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(138, 43, 226, ${p.a})`;
+                    ctx.fill();
+                });
+                // Draw faint connection lines
+                for (let i = 0; i < particles.length; i++) {
+                    for (let j = i + 1; j < particles.length; j++) {
+                        const dx = particles[i].x - particles[j].x;
+                        const dy = particles[i].y - particles[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < 120) {
+                            ctx.beginPath();
+                            ctx.moveTo(particles[i].x, particles[i].y);
+                            ctx.lineTo(particles[j].x, particles[j].y);
+                            ctx.strokeStyle = `rgba(138, 43, 226, ${0.06 * (1 - dist / 120)})`;
+                            ctx.lineWidth = 0.5;
+                            ctx.stroke();
+                        }
+                    }
+                }
+                requestAnimationFrame(draw);
+            }
+            draw();
+        })();
+        </script>
     </div>
 
     <!-- ═══ AURORA AMBIENT BACKGROUND ═══ -->

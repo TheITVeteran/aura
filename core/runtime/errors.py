@@ -218,6 +218,33 @@ def record_degradation(
     DegradationRecord
         The created record, for further programmatic use.
     """
+    # ── Filter out expected async lifecycle events ────────────────────
+    # CancelledError is a normal part of asyncio shutdown, not real degradation.
+    # Recording it spikes frustration/depletion in the resilience engine and
+    # creates a feedback loop during graceful teardown.
+    import asyncio as _asyncio
+    if isinstance(error, (_asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+        logger.debug(
+            "[DEGRADATION] Suppressed expected lifecycle event in %s: %s: %s",
+            subsystem, type(error).__name__, str(error)[:100],
+        )
+        return DegradationRecord(
+            subsystem=subsystem, severity="debug",
+            error_type=type(error).__qualname__,
+            error_message=str(error)[:500],
+            action=action or "lifecycle event — not real degradation",
+            timestamp=time.time(),
+        )
+
+    # ── Skip during shutdown ─────────────────────────────────────────
+    _shutting_down = False
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+        _shutting_down = is_shutdown_requested()
+    except (ImportError, RuntimeError):
+        pass
+    if _shutting_down:
+        severity = "debug"  # Demote everything during shutdown
     if classification in (FallbackClassification.GOVERNANCE_BYPASS, FallbackClassification.STATE_CORRUPTION_RISK):
         # Trigger strict fail-closed exceptions
         if classification == FallbackClassification.GOVERNANCE_BYPASS:

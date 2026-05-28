@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import time
+import warnings
 from typing import Any
 
 from core.container import ServiceContainer
@@ -74,7 +75,13 @@ def _load_webrtcvad():
         return None
     _WEBRTCVAD_IMPORT_ATTEMPTED = True
     try:
-        webrtcvad = importlib.import_module("webrtcvad")
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"pkg_resources is deprecated as an API.*",
+                category=UserWarning,
+            )
+            webrtcvad = importlib.import_module("webrtcvad")
         _WEBRTCVAD_IMPORT_ERROR = None
     except (ImportError, OSError, RuntimeError) as exc:
         _WEBRTCVAD_IMPORT_ERROR = exc

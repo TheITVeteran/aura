@@ -94,6 +94,11 @@ def test_build_conversational_context_blocks_aggregates_registered_services(serv
         ),
         required=False,
     )
+    service_container.register_instance(
+        "joy_social",
+        SimpleNamespace(get_context_injection=lambda: "joy-social"),
+        required=False,
+    )
 
     blocks = conversation_support.build_conversational_context_blocks(
         state,
@@ -108,6 +113,7 @@ def test_build_conversational_context_blocks_aggregates_registered_services(serv
         "conversation",
         "relation:bryan",
         "social:bryan:steady continuity",
+        "joy-social",
     ]
 
 

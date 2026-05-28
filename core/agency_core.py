@@ -580,6 +580,7 @@ class AgencyCore:
             "creative_synthesis": self._pathway_creative_synthesis,
             "metacognitive_audit": self._pathway_metacognitive_audit,
         }
+        self._pathway_hooks: dict[str, list[Callable[..., Any]]] = {}
         self._action_queue: list[dict[str, Any]] = []
         self._last_pulse = time.time()
         self._current_monologue: str = ""
@@ -589,6 +590,55 @@ class AgencyCore:
         self._last_social_reflection: float = 0.0
         self._last_creative_synthesis: float = 0.0
         logger.info("🧠 AgencyCore initialized with %d structured pathways", len(self._pathway_registry))
+
+    def register_pathway_hook(self, pathway_name: str, provider: Callable[..., Any]) -> None:
+        """Register an external proposal provider for a named agency pathway."""
+        if pathway_name not in self._pathway_registry:
+            raise ValueError(f"Unknown agency pathway: {pathway_name}")
+        if not callable(provider):
+            raise TypeError("Agency pathway hook provider must be callable.")
+        hooks = self._pathway_hooks.setdefault(pathway_name, [])
+        if provider not in hooks:
+            hooks.append(provider)
+
+    async def _collect_pathway_hook_actions(
+        self,
+        pathway_name: str,
+        now: float,
+        idle_seconds: float,
+    ) -> list[dict[str, Any]]:
+        """Collect external proposals for a pathway without letting hooks own the loop."""
+        actions: list[dict[str, Any]] = []
+        hooks = self._pathway_hooks.get(pathway_name, [])
+        for provider in list(hooks):
+            try:
+                signature = inspect.signature(provider)
+                if signature.parameters:
+                    proposal = provider(
+                        pathway=pathway_name,
+                        now=now,
+                        idle_seconds=idle_seconds,
+                        agency=self,
+                    )
+                else:
+                    proposal = provider()
+                if inspect.isawaitable(proposal):
+                    proposal = await proposal
+                if not isinstance(proposal, dict):
+                    continue
+                action = dict(proposal)
+                action.setdefault("source", f"{pathway_name}:hook")
+                action.setdefault("origin", pathway_name)
+                if "priority" not in action:
+                    action["priority"] = float(action.get("urgency", 0.3))
+                actions.append(action)
+            except _AGENCY_BOUNDARY_ERRORS as exc:
+                _record_agency_degradation(
+                    exc,
+                    action=f"agency pathway hook {pathway_name} skipped",
+                )
+                logger.debug("Agency pathway hook %s failed: %s", pathway_name, exc)
+        return actions
 
     def _resolve_component(self, name: str, default: Any = None) -> Any:
         """Robustly resolve a system component from the ServiceContainer.
@@ -845,6 +895,9 @@ class AgencyCore:
                     action = await action
                 if action:
                     proposed_actions.append(action)
+                proposed_actions.extend(
+                    await self._collect_pathway_hook_actions(name, now, idle_seconds)
+                )
             except _AGENCY_BOUNDARY_ERRORS as e:
                 _record_agency_degradation(e, action=f"agency pathway {name} skipped")
                 logger.debug("Agency pathway %s failed: %s", name, e)

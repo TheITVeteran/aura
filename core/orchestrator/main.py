@@ -1321,6 +1321,16 @@ class RobustOrchestrator(
 
                 self._agency_core = AgencyCore(orchestrator=self)
                 ServiceContainer.register_instance("agency_core", self._agency_core)
+                try:
+                    from skills.joy_social_integration import bind_joy_social_agency
+
+                    bind_joy_social_agency(orchestrator=self, agency=self._agency_core)
+                except _ORCHESTRATOR_RECOVERABLE_ERRORS as bind_err:
+                    _record_main_degradation(
+                        bind_err,
+                        action="continued startup after JoySocial AgencyCore hook binding failed",
+                        severity="warning",
+                    )
                 logger.info("✓ AgencyCore initialized")
             except _ORCHESTRATOR_RECOVERABLE_ERRORS as ac_err:
                 _record_main_degradation(

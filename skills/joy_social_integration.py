@@ -426,9 +426,12 @@ def integrate_joy_social(
     # Idempotency guard
     if getattr(orchestrator, "joy_social", None) is not None:
         logger.info("🌟 JoySocial already wired — returning existing coordinator")
+        _register_runtime_service(orchestrator.joy_social)
         return orchestrator.joy_social
 
     coordinator = JoySocialCoordinator(orchestrator, social_config)
+    orchestrator.joy_social = coordinator
+    _register_runtime_service(coordinator)
 
     # ── 1. Background tick ───────────────────────────────────────────────────
     try:
@@ -448,14 +451,8 @@ def integrate_joy_social(
         _register_context_hook(orchestrator, coordinator)
 
     # ── 3. AgencyCore pathway enhancement ───────────────────────────────────
-    agency = getattr(orchestrator, "agency_core", None)
-    if agency:
-        _register_agency_hooks(agency, coordinator)
-    else:
-        logger.warning("JoySocial: AgencyCore not found — pathway hooks not registered (harmless)")
-
-    # ── 4. Attach to orchestrator ────────────────────────────────────────────
-    orchestrator.joy_social = coordinator
+    if not bind_joy_social_agency(orchestrator=orchestrator):
+        logger.info("JoySocial: AgencyCore not ready yet — pathway hooks will bind after AgencyCore boot")
 
     logger.info("🌟 JoySocialCoordinator fully wired into orchestrator")
     return coordinator
@@ -463,6 +460,66 @@ def integrate_joy_social(
 # ────────────────────────────────────────────────────────────────────────────
 # Integration Helpers (Hook-Based, No Monkey-Patching)
 # ────────────────────────────────────────────────────────────────────────────
+
+def _register_runtime_service(coordinator: JoySocialCoordinator) -> None:
+    """Expose JoySocial to canonical runtime context assembly."""
+    try:
+        from core.container import ServiceContainer
+
+        ServiceContainer.register_instance("joy_social", coordinator, required=False)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("JoySocial: service registration skipped: %s", exc)
+
+
+def _resolve_registered_joy_social(orchestrator: Any | None = None) -> Any:
+    coordinator = getattr(orchestrator, "joy_social", None) if orchestrator is not None else None
+    if coordinator is not None:
+        return coordinator
+    try:
+        from core.container import ServiceContainer
+
+        return ServiceContainer.get("joy_social", default=None)
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+
+
+def _resolve_agency_core(orchestrator: Any) -> Any:
+    """Resolve AgencyCore from the live orchestrator or ServiceContainer."""
+    for attr_name in ("agency_core", "_agency_core"):
+        agency = getattr(orchestrator, attr_name, None)
+        if agency is not None:
+            return agency
+    try:
+        from core.container import ServiceContainer
+
+        return ServiceContainer.get("agency_core", default=None)
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+
+
+def bind_joy_social_agency(orchestrator: Any | None = None, agency: Any | None = None) -> bool:
+    """Bind JoySocial proposal hooks once AgencyCore is available."""
+    coordinator = _resolve_registered_joy_social(orchestrator)
+    if coordinator is None:
+        return False
+    if getattr(coordinator, "_agency_hooks_registered", False):
+        return True
+
+    resolved_agency = agency or (_resolve_agency_core(orchestrator) if orchestrator is not None else None)
+    if resolved_agency is None:
+        try:
+            from core.container import ServiceContainer
+
+            resolved_agency = ServiceContainer.get("agency_core", default=None)
+        except (ImportError, AttributeError, RuntimeError):
+            resolved_agency = None
+    if resolved_agency is None:
+        return False
+
+    registered = _register_agency_hooks(resolved_agency, coordinator)
+    if registered:
+        setattr(coordinator, "_agency_hooks_registered", True)
+    return registered
 
 def _register_context_hook(orchestrator: Any, coordinator: JoySocialCoordinator) -> None:
     """Register JoySocial context injection via the orchestrator's hook registry.
@@ -473,6 +530,11 @@ def _register_context_hook(orchestrator: Any, coordinator: JoySocialCoordinator)
     # Preferred: use the mycelium event bus for context injection
     try:
         from core.container import ServiceContainer
+        registered = ServiceContainer.get("joy_social", default=None)
+        if registered is coordinator:
+            logger.info("✅ JoySocial: context available via canonical conversation context service")
+            return
+
         bus = ServiceContainer.get("mycelium", default=None)
         if bus and hasattr(bus, "on"):
             async def _joy_context_hook(event_data: dict) -> None:
@@ -492,10 +554,10 @@ def _register_context_hook(orchestrator: Any, coordinator: JoySocialCoordinator)
         logger.info("✅ JoySocial: context registered via orchestrator._context_hooks")
         return
 
-    logger.info("⚠ JoySocial: no context hook mechanism available — context injection inactive")
+    logger.info("JoySocial: no legacy context hook available; using canonical service path when present")
 
 
-def _register_agency_hooks(agency: Any, coordinator: JoySocialCoordinator) -> None:
+def _register_agency_hooks(agency: Any, coordinator: JoySocialCoordinator) -> bool:
     """Register hobby/social proposals as agency pathway hooks.
 
     Instead of replacing agency methods with setattr, we register proposal
@@ -507,7 +569,7 @@ def _register_agency_hooks(agency: Any, coordinator: JoySocialCoordinator) -> No
         agency.register_pathway_hook("curiosity_drive", coordinator.propose_hobby_action)
         agency.register_pathway_hook("social_hunger", coordinator.propose_social_action)
         logger.info("✅ JoySocial: agency pathway hooks registered")
-        return
+        return True
 
     # Fallback: register as proposal sources in the agency's provider list
     providers = getattr(agency, "_proposal_providers", None)
@@ -518,6 +580,7 @@ def _register_agency_hooks(agency: Any, coordinator: JoySocialCoordinator) -> No
             "social": coordinator.propose_social_action,
         })
         logger.info("✅ JoySocial: agency proposal providers registered")
-        return
+        return True
 
     logger.info("⚠ JoySocial: no agency hook mechanism — proposals inactive")
+    return False

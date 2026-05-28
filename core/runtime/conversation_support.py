@@ -213,6 +213,19 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
         logger.debug("SocialImagination injection failed: %s", exc)
 
     try:
+        joy_social = service_access.optional_service("joy_social", default=None)
+        if joy_social and hasattr(joy_social, "get_context_injection"):
+            joy_block = joy_social.get_context_injection()
+            if joy_block:
+                blocks.append(joy_block)
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without joy/social context block",
+        )
+        logger.debug("JoySocial context injection failed: %s", exc)
+
+    try:
         coding_block = build_coding_context_block(objective or "")
         if coding_block:
             priority_blocks.append(coding_block)

@@ -1,6 +1,12 @@
+from types import SimpleNamespace
+
 import pytest
 
-from skills.joy_social_integration import JoySocialCoordinator
+from skills.joy_social_integration import (
+    JoySocialCoordinator,
+    bind_joy_social_agency,
+    integrate_joy_social,
+)
 from skills.social_media import (
     LocalMemoryAdapter,
     Platform,
@@ -142,5 +148,112 @@ async def test_joy_social_uses_canonical_platform_contract() -> None:
             "action": "read",
             "target": "limit=3",
             "outcome": "success",
+        }
+    ]
+
+
+def test_joy_social_integration_uses_private_agency_core_and_service_registry(
+    monkeypatch, service_container
+) -> None:
+    registered_hooks: list[tuple[str, object]] = []
+
+    class AgencyScenario:
+        def register_pathway_hook(self, name, callback):
+            registered_hooks.append((name, callback))
+
+    class CoordinatorScenario:
+        def __init__(self, orchestrator, social_config=None):
+            self.orchestrator = orchestrator
+            self.social_config = social_config
+
+        def start_background_tick(self, _interval):
+            return None
+
+        def get_context_injection(self):
+            return "joy context"
+
+        def propose_hobby_action(self, *_args, **_kwargs):
+            return None
+
+        def propose_social_action(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "skills.joy_social_integration.JoySocialCoordinator",
+        CoordinatorScenario,
+    )
+
+    orchestrator = SimpleNamespace(_agency_core=AgencyScenario())
+
+    coordinator = integrate_joy_social(orchestrator)
+
+    assert coordinator is orchestrator.joy_social
+    assert service_container.get("joy_social") is coordinator
+    assert [name for name, _callback in registered_hooks] == [
+        "aesthetic_creation",
+        "curiosity_drive",
+        "social_hunger",
+    ]
+
+
+def test_joy_social_agency_binding_can_attach_after_delayed_agency_boot(service_container) -> None:
+    registered_hooks: list[str] = []
+
+    class AgencyScenario:
+        def register_pathway_hook(self, name, callback):
+            registered_hooks.append(name)
+
+    coordinator = SimpleNamespace(
+        get_context_injection=lambda: "joy context",
+        propose_hobby_action=lambda *_args, **_kwargs: None,
+        propose_social_action=lambda *_args, **_kwargs: None,
+    )
+    orchestrator = SimpleNamespace(joy_social=coordinator)
+    service_container.register_instance("joy_social", coordinator, required=False)
+
+    assert bind_joy_social_agency(orchestrator=orchestrator, agency=AgencyScenario()) is True
+    assert getattr(coordinator, "_agency_hooks_registered") is True
+    assert registered_hooks == [
+        "aesthetic_creation",
+        "curiosity_drive",
+        "social_hunger",
+    ]
+
+    assert bind_joy_social_agency(orchestrator=orchestrator, agency=AgencyScenario()) is True
+    assert registered_hooks == [
+        "aesthetic_creation",
+        "curiosity_drive",
+        "social_hunger",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agency_core_pathway_hooks_become_rankable_actions() -> None:
+    from core.agency_core import AgencyCore
+
+    agency = AgencyCore(orchestrator=SimpleNamespace())
+    agency.register_pathway_hook(
+        "social_hunger",
+        lambda: {
+            "type": "social_post",
+            "urgency": 0.72,
+            "executor": "orchestrator.joy_social.post_to_social",
+        },
+    )
+
+    actions = await agency._collect_pathway_hook_actions(
+        "social_hunger",
+        now=1.0,
+        idle_seconds=900.0,
+    )
+
+    assert actions == [
+        {
+            "type": "social_post",
+            "urgency": 0.72,
+            "executor": "orchestrator.joy_social.post_to_social",
+            "source": "social_hunger:hook",
+            "origin": "social_hunger",
+            "priority": 0.72,
         }
     ]

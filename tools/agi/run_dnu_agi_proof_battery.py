@@ -587,6 +587,9 @@ def _baseline_timeout_seconds() -> float:
     return min(180.0, max(30.0, value))
 
 
+DNU_BASELINE_MAX_TOKENS = 160
+
+
 def _force_abort_router_generation(router, *, reason: str) -> int:
     """Synchronously abort active local generations reachable from the router."""
     aborted = 0
@@ -719,8 +722,8 @@ async def _generate_baseline_response(
             repetition_penalty=1.35,
             repetition_context_size=1024,
             stop_sequences=["\n\n", "\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"],
-            max_tokens=96,
-            num_predict=96,
+            max_tokens=DNU_BASELINE_MAX_TOKENS,
+            num_predict=DNU_BASELINE_MAX_TOKENS,
         ),
         name=f"dnu_baseline:{purpose}",
     )

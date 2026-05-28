@@ -2,25 +2,25 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779893944.5654871`
+Generated: `1779902795.9906628`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1563
-- Python lines: 451031
+- Python lines: 451299
 - Dependency edges: 670
-- ServiceContainer `.get()` calls: 1441
-- ServiceContainer registrations: 345
+- ServiceContainer `.get()` calls: 1445
+- ServiceContainer registrations: 346
 
 ## Subsystem Dependency Graph
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>91 files, 19921 lines"]
+    runtime["runtime<br/>91 files, 19934 lines"]
     utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 41689 lines"]
-    consciousness["consciousness<br/>120 files, 56903 lines"]
+    brain["brain<br/>115 files, 41699 lines"]
+    consciousness["consciousness<br/>120 files, 56937 lines"]
     resilience["resilience<br/>53 files, 11111 lines"]
     health["health<br/>3 files, 697 lines"]
     memory["memory<br/>64 files, 14093 lines"]
@@ -33,10 +33,10 @@ graph TD
     affect["affect<br/>5 files, 1840 lines"]
     observability["observability<br/>3 files, 553 lines"]
     governance["governance<br/>7 files, 1006 lines"]
-    identity["identity<br/>11 files, 2079 lines"]
+    identity["identity<br/>11 files, 2136 lines"]
     world_model["world_model<br/>9 files, 2541 lines"]
-    orchestrator["orchestrator<br/>42 files, 18634 lines"]
-    security["security<br/>17 files, 4565 lines"]
+    orchestrator["orchestrator<br/>42 files, 18644 lines"]
+    security["security<br/>17 files, 4623 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
     autonomy["autonomy<br/>22 files, 7560 lines"]
     executive["executive<br/>4 files, 2306 lines"]
@@ -97,7 +97,7 @@ graph TD
     simulation["simulation<br/>3 files, 390 lines"]
     soma["soma<br/>3 files, 502 lines"]
     sovereign["sovereign<br/>4 files, 541 lines"]
-    startup["startup<br/>2 files, 316 lines"]
+    startup["startup<br/>2 files, 326 lines"]
     workspace["workspace<br/>3 files, 1069 lines"]
     context["context<br/>4 files, 1199 lines"]
     creativity["creativity<br/>2 files, 800 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 60337 lines"]
+    core_root["core_root<br/>182 files, 60413 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -816,11 +816,11 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core_root | 182 | 60337 | 2472049 | 101 | 0 |
-| consciousness | 120 | 56903 | 2396897 | 37 | 28 |
-| brain | 115 | 41689 | 1799539 | 40 | 39 |
-| runtime | 91 | 19921 | 699818 | 37 | 103 |
-| orchestrator | 42 | 18634 | 822691 | 123 | 8 |
+| core_root | 182 | 60413 | 2475538 | 101 | 0 |
+| consciousness | 120 | 56937 | 2398373 | 37 | 28 |
+| brain | 115 | 41699 | 1800017 | 40 | 39 |
+| runtime | 91 | 19934 | 700399 | 37 | 103 |
+| orchestrator | 42 | 18644 | 823200 | 123 | 8 |
 | phases | 29 | 16506 | 742900 | 32 | 6 |
 | memory | 64 | 14093 | 569614 | 15 | 20 |
 | skills | 71 | 13396 | 551695 | 24 | 5 |
@@ -836,7 +836,7 @@ graph TD
 | kernel | 10 | 5290 | 219057 | 19 | 4 |
 | utils | 41 | 4956 | 192837 | 17 | 49 |
 | senses | 23 | 4911 | 205779 | 16 | 14 |
-| security | 17 | 4565 | 180377 | 11 | 8 |
+| security | 17 | 4623 | 182059 | 11 | 8 |
 | coordinators | 9 | 4224 | 198441 | 36 | 5 |
 | conversation | 8 | 3844 | 141764 | 10 | 6 |
 | social | 10 | 3688 | 158124 | 8 | 1 |
@@ -856,7 +856,7 @@ graph TD
 | self_improvement | 12 | 2285 | 86875 | 3 | 2 |
 | ops | 11 | 2262 | 87136 | 15 | 5 |
 | conversational | 4 | 2237 | 95525 | 4 | 3 |
-| identity | 11 | 2079 | 88530 | 9 | 9 |
+| identity | 11 | 2136 | 90455 | 9 | 9 |
 | collective | 6 | 1963 | 81012 | 8 | 4 |
 | evolution | 6 | 1855 | 75408 | 8 | 2 |
 | affect | 5 | 1840 | 83592 | 12 | 11 |
@@ -911,8 +911,8 @@ graph TD
 | verification | 4 | 350 | 13177 | 2 | 3 |
 | tasks | 3 | 333 | 11388 | 3 | 8 |
 | networking | 1 | 327 | 12150 | 3 | 1 |
+| startup | 2 | 326 | 11280 | 5 | 2 |
 | unknowns | 4 | 325 | 11829 | 3 | 1 |
-| startup | 2 | 316 | 10887 | 5 | 2 |
 | ethics | 1 | 309 | 11902 | 1 | 4 |
 | world | 1 | 297 | 10842 | 0 | 4 |
 | values | 2 | 289 | 10861 | 0 | 0 |
@@ -942,8 +942,8 @@ graph TD
 
 ## ServiceContainer Cross-Wiring
 
-- Unique services retrieved: 353
-- Unique services registered: 285
+- Unique services retrieved: 354
+- Unique services registered: 286
 - Services retrieved without detected registration: 181
 
 ### Top Fetched Services
@@ -1125,8 +1125,8 @@ Review candidates:
 - `core/agency/autonomous_task_engine.py:681` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency/autonomous_task_engine.py:767` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency_core.py:132` [core_root] `get_registry.update` - get_registry().update(active_shards=len(self.active_shards)),
-- `core/agency_core.py:728` [core_root] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
-- `core/agency_core.py:911` [core_root] `get_registry.update` - get_registry().update(
+- `core/agency_core.py:778` [core_root] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
+- `core/agency_core.py:964` [core_root] `get_registry.update` - get_registry().update(
 - `core/architect/lesion_matrix.py:135` [architect] `self._set_state` - self._set_state(self._saved_state)
 
 ### Tool execution
@@ -1312,7 +1312,7 @@ Top limp-on files:
 - `core/services/`: 2 file(s), 31 line(s)
 - `core/session/`: 2 file(s), 225 line(s)
 - `core/skill_management/`: 1 file(s), 350 line(s)
-- `core/startup/`: 2 file(s), 316 line(s)
+- `core/startup/`: 2 file(s), 326 line(s)
 - `core/telemetry/`: 2 file(s), 191 line(s)
 - `core/tools/`: 2 file(s), 457 line(s)
 - `core/values/`: 2 file(s), 289 line(s)

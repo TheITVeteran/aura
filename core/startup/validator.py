@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -165,7 +166,16 @@ def check_optional_packages() -> List[ValidationResult]:
     results = []
     for pkg, fix, impact in optional:
         try:
-            importlib.import_module(pkg)
+            if pkg == "webrtcvad":
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"pkg_resources is deprecated as an API.*",
+                        category=UserWarning,
+                    )
+                    importlib.import_module(pkg)
+            else:
+                importlib.import_module(pkg)
             results.append(ValidationResult(name=f"Optional: {pkg}", passed=True, message=""))
         except ImportError:
             results.append(ValidationResult(

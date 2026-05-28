@@ -1,6 +1,7 @@
 # requirements/senses.txt
 
 playwright>=1.44           # Web browsing + scraping
+playwright-stealth>=2.0.3  # Browser stealth helpers for PhantomBrowser
 pyautogui>=0.9             # Desktop automation
 pillow>=10.0               # Image processing
 python-nmap>=0.7           # Network discovery (requires nmap binary)

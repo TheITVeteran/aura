@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1330,7 +1331,10 @@ def test_dnu_baselines_are_bounded_and_marked_as_benchmark_calls():
     assert "strict_value_contract=True" not in baseline_block
     assert "proof_evaluation_contract=True" not in baseline_block
     assert "repetition_penalty=1.35" in baseline_block
-    assert "max_tokens=96" in baseline_block
+    assert "DNU_BASELINE_MAX_TOKENS = 160" in source
+    assert "max_tokens=DNU_BASELINE_MAX_TOKENS" in baseline_block
+    assert "num_predict=DNU_BASELINE_MAX_TOKENS" in baseline_block
+    assert "max_tokens=96" not in baseline_block
     assert "_force_abort_router_generation" in source
     assert "_recover_router_after_baseline_abort" in source
 
@@ -1379,7 +1383,10 @@ def test_agency_baselines_are_bounded_and_marked_as_benchmark_calls():
     assert "proof_primary_lane_required=True" in source
     assert 'stop_sequences=["\\n\\n", "\\\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"]' in source
     assert "repetition_penalty=1.35" in source
-    assert "max_tokens=72" in source
+    assert "AGENCY_BASELINE_MAX_TOKENS = 128" in source
+    assert "max_tokens=AGENCY_BASELINE_MAX_TOKENS" in source
+    assert "num_predict=AGENCY_BASELINE_MAX_TOKENS" in source
+    assert "max_tokens=72" not in source
     assert "exactly one complete sentence" in source
     assert "literal \\\\n tokens or blank-line padding" in source
     assert "disable_prompt_cache=True" in source
@@ -1616,6 +1623,30 @@ def test_startup_audio_check_skips_optional_pyaudio_when_hearing_disabled(monkey
         assert "Voice input disabled" in result.message
     finally:
         set_capabilities(previous)
+
+
+def test_startup_optional_webrtcvad_probe_suppresses_known_dependency_warning(monkeypatch):
+    import core.startup.validator as validator_module
+
+    def import_module(name):
+        if name == "webrtcvad":
+            warnings.warn_explicit(
+                "pkg_resources is deprecated as an API",
+                UserWarning,
+                "webrtcvad.py",
+                1,
+                module="webrtcvad",
+            )
+        return object()
+
+    monkeypatch.setattr(validator_module.importlib, "import_module", import_module)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        results = validator_module.check_optional_packages()
+
+    assert any(result.name == "Optional: webrtcvad" and result.passed for result in results)
+    assert caught == []
 
 
 def test_structured_evaluation_floor_handles_bounded_planning_prompts():

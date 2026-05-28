@@ -48,6 +48,7 @@ AGENCY_RESPONSE_REPAIR_ATTEMPTS = 2
 AGENCY_LIVE_TASK_TIMEOUT_SECONDS = 330.0
 AGENCY_BASELINE_TIMEOUT_SECONDS = 12.0
 AGENCY_ABLATION_TIMEOUT_SECONDS = 45.0
+AGENCY_BASELINE_MAX_TOKENS = 128
 
 
 def _record_agency_battery_degradation(stage: str, error: BaseException) -> None:
@@ -533,8 +534,8 @@ async def _generate_agency_baseline_response(
             repetition_penalty=1.35,
             repetition_context_size=1024,
             stop_sequences=["\n\n", "\\n", "User:", "Assistant:", "<|im_end|>", "<|endoftext|>"],
-            max_tokens=72,
-            num_predict=72,
+            max_tokens=AGENCY_BASELINE_MAX_TOKENS,
+            num_predict=AGENCY_BASELINE_MAX_TOKENS,
             timeout=timeout_s,
         ),
         name=f"agency_baseline:{purpose}",

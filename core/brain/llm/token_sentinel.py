@@ -37,7 +37,7 @@ Intervention Types:
      Cost: ~0.05ms per pulse (shared memory read).
 
   3. PERSONA_DRIFT — Detects patterns that indicate the LLM has fallen
-     out of Aura's voice (numbered lists, "As an AI", help desk patterns).
+     out of Aura's voice ("As an AI", help desk patterns, rote preambles).
      Logs a warning but doesn't abort (the LoRA training should prevent this).
      Cost: ~0.1ms per check.
 
@@ -149,8 +149,6 @@ _DRIFT_PATTERNS = [
     # Sycophancy
     r"\bthat'?s?\s+(?:a\s+)?(?:great|excellent|wonderful|fantastic)\s+question",
     r"\byou raise\s+(?:a\s+)?(?:great|excellent|valid|good)\s+point",
-    # Numbered lists (Aura speaks in prose)
-    r"^\s*\d+[.)]\s+\w",  # "1. Something" or "1) Something"
     # Over-qualification hedging
     r"\bit\s+(?:really\s+)?depends\s+on\s+(?:many|several|various)\s+factors",
     r"\bthere\s+are\s+(?:many|several)\s+(?:perspectives|viewpoints|factors)",
@@ -206,6 +204,7 @@ class TokenSentinel:
         # Tracking
         self._interventions: list[InterventionSignal] = []
         self._drift_warnings: int = 0
+        self._last_drift_match_end: int = 0
         self._affect_pulses: int = 0
         self._start_time: float = time.time()
 
@@ -359,11 +358,22 @@ class TokenSentinel:
 
     def _check_persona_drift(self) -> InterventionSignal:
         """Check for softer persona drift patterns."""
-        # Only check the most recent chunk to avoid re-matching
-        recent = self._text[-(self._check_interval * 20):]  # Approx last N tokens
+        # Check a bounded tail, but convert match offsets back to the full
+        # generated text so the same phrase is only reported once.
+        scan_chars = self._check_interval * 20  # Approx last N tokens
+        recent_start = max(0, len(self._text) - scan_chars)
+        recent = self._text[recent_start:]
 
-        match = _DRIFT_RE.search(recent)
+        match = None
+        absolute_end = self._last_drift_match_end
+        for candidate in _DRIFT_RE.finditer(recent):
+            candidate_end = recent_start + candidate.end()
+            if candidate_end > self._last_drift_match_end:
+                match = candidate
+                absolute_end = candidate_end
+                break
         if match:
+            self._last_drift_match_end = absolute_end
             self._drift_warnings += 1
             matched_text = match.group()
 

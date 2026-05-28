@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -81,6 +82,30 @@ def test_vad_frame_splitter_preserves_partial_audio():
     assert len(remaining) == 1
     assert len(remaining[0]) == frame_bytes
     assert cortex._pending_audio == bytearray()
+
+
+def test_webrtcvad_import_suppresses_known_pkg_resources_warning(monkeypatch):
+    vad_backend = object()
+
+    def import_module(name):
+        assert name == "webrtcvad"
+        warnings.warn_explicit(
+            "pkg_resources is deprecated as an API",
+            UserWarning,
+            "webrtcvad.py",
+            1,
+            module="webrtcvad",
+        )
+        return vad_backend
+
+    monkeypatch.setattr(voice_module.importlib, "import_module", import_module)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        loaded = voice_module._load_webrtcvad()
+
+    assert loaded is vad_backend
+    assert caught == []
 
 
 @pytest.mark.asyncio
