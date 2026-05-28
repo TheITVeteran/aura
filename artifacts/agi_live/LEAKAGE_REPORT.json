@@ -1,8 +1,25 @@
 {
+  "schema": "aura.dnu_leakage_report.v2",
+  "generated_by": "tools/agi/run_dnu_agi_proof_battery.py::build_leakage_report",
   "status": "pass",
   "answer_leak_result": "pass",
   "salt_leak_result": "pass",
   "hidden_test_leak_result": "pass",
   "grader_leak_result": "pass",
-  "canary_result": "pass"
+  "canary_result": "pass",
+  "pre_check_violations": [],
+  "post_check_violations": [],
+  "proof_integrity_lint": {
+    "generated_at_unix": 1780009051.3774679,
+    "root": "/private/var/folders/4j/r61gf1hj119fpbtvykg46b2r0000gn/T/aura-live-rkajxyka/repo",
+    "scope": "production",
+    "files_scanned": 484,
+    "passed": true,
+    "findings": []
+  },
+  "trace_invalid_lines": 0,
+  "structured_solver_task_count": 1,
+  "structured_solver_tasks": [
+    "R001"
+  ]
 }

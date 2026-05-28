@@ -1,0 +1,81 @@
+{
+  "proof_model_tier": "primary",
+  "live_message_origin": "api",
+  "canonical_boot_profile": "proof",
+  "strict_answer_tags_required": true,
+  "structured_proof_solver_enabled": true,
+  "exclusive_runtime_required": true,
+  "exclusive_runtime_preflight_status": "exclusive",
+  "comparisons_mode": "run",
+  "model_lane_probe": {
+    "status": "pass",
+    "requested_tier": "primary",
+    "ok": true,
+    "endpoint": "Cortex",
+    "endpoint_tier": "local",
+    "elapsed_s": 10.85260272026062,
+    "strict_answer_ok": true,
+    "strict_answer_source": "joined_quoted_tokens",
+    "nonempty_model_text_ok": true,
+    "local_lane_ok": true,
+    "error": "",
+    "text_preview": "Yes.",
+    "structured_proof_solver_enabled": true,
+    "lane_status": {
+      "desired_model": "Cortex (32B)",
+      "desired_endpoint": "Cortex",
+      "foreground_endpoint": "Cortex",
+      "background_endpoint": "Brainstem",
+      "foreground_tier": "local",
+      "background_tier": "local_fast",
+      "state": "ready",
+      "last_failure_reason": "",
+      "conversation_ready": true,
+      "cortex_recovery_attempts": 0,
+      "time_since_last_success_s": 0.00034117698669433594,
+      "last_transition_at": 1780008944.585162,
+      "last_ready_at": 1780008944.585161,
+      "last_progress_at": 1780008967.199475,
+      "warmup_attempted": true,
+      "warmup_in_flight": false,
+      "foreground_owned": false,
+      "foreground_owner": "",
+      "active_generations": 0,
+      "request_age_s": 0.0,
+      "current_request_started_at": 0.0,
+      "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+      "recurrent_depth": {
+        "active": true,
+        "config": {
+          "n_loops": 2,
+          "prelude_end": 12,
+          "coda_start": 52,
+          "recurrent_layers": 40,
+          "num_layers": 64,
+          "residual_alpha": 0.1,
+          "prelude_frac": 0.2,
+          "coda_frac": 0.2,
+          "patch_scope": "instance_subclass"
+        }
+      },
+      "last_heartbeat": 1780008965.670559,
+      "last_token_progress_at": 0.0,
+      "last_generation_completed_at": 1780008967.1994739,
+      "process_started_at": 1780008939.468571
+    },
+    "recurrent_depth": {
+      "active": true,
+      "config": {
+        "n_loops": 2,
+        "prelude_end": 12,
+        "coda_start": 52,
+        "recurrent_layers": 40,
+        "num_layers": 64,
+        "residual_alpha": 0.1,
+        "prelude_frac": 0.2,
+        "coda_frac": 0.2,
+        "patch_scope": "instance_subclass"
+      }
+    }
+  }
+}

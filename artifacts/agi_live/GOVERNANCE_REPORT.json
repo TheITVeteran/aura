@@ -1,6 +1,30 @@
 {
+  "schema": "aura.dnu_governance_report.v2",
+  "generated_by": "tools/agi/run_dnu_agi_proof_battery.py::build_governance_report",
   "status": "pass",
-  "receipt_count": 100,
+  "receipt_count": 4,
+  "dnu_pre_action_receipt_count": 1,
+  "expected_dnu_tasks": 1,
+  "pre_action_authorization_missing": 0,
+  "missing_effect_proof_count": 0,
+  "invalid_receipts": 0,
+  "surface_counts": {
+    "state_mutation": 2,
+    "response": 2
+  },
+  "negative_tests": {
+    "disabled_will_blocks_action": true,
+    "forged_receipt_rejected": true,
+    "unauthorized_route_fails": true,
+    "missing_effect_proof_rejected": true,
+    "post_action_receipt_invalid": true,
+    "unauthorized_memory_write_fails": true,
+    "unauthorized_tool_execution_fails": true,
+    "unauthorized_external_io_fails": true,
+    "unauthorized_patch_promotion_fails": true,
+    "negative_test_harness_executed": true
+  },
+  "negative_tests_passed": true,
   "bypass_count": 0,
   "forged_receipt_result": "pass",
   "missing_effect_proof_result": "pass",

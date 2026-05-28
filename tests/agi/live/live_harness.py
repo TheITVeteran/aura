@@ -67,6 +67,13 @@ class LiveAuraHarness:
             return list(ignored)
 
         shutil.copytree(self.repo_root, target, ignore=custom_ignore)
+
+        # Symlink models and training directories to preserve weight resolution
+        for dir_name in ("models", "training"):
+            src_dir = self.repo_root / dir_name
+            if src_dir.exists():
+                os.symlink(src_dir.resolve(), target / dir_name)
+
         return target
 
     def run_command(
@@ -95,19 +102,26 @@ class LiveAuraHarness:
         run_env["PYTHONPATH"] = str(repo)
         run_env["AURA_ROOT"] = str(self.repo_root)
 
-        proc = subprocess.run(
-            args,
-            cwd=repo,
-            text=True,
-            capture_output=True,
-            timeout=timeout_s,
-            env=run_env,
-        )
+        stdout_file = artifacts / "subprocess_stdout.log"
+        stderr_file = artifacts / "subprocess_stderr.log"
+        with open(stdout_file, "w") as out_f, open(stderr_file, "w") as err_f:
+            proc = subprocess.run(
+                args,
+                cwd=repo,
+                text=True,
+                stdout=out_f,
+                stderr=err_f,
+                timeout=timeout_s,
+                env=run_env,
+            )
+
+        stdout_content = stdout_file.read_text(encoding="utf-8", errors="ignore") if stdout_file.exists() else ""
+        stderr_content = stderr_file.read_text(encoding="utf-8", errors="ignore") if stderr_file.exists() else ""
 
         return LiveRunResult(
             ok=proc.returncode == 0,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=stdout_content,
+            stderr=stderr_content,
             artifacts_dir=artifacts,
             returncode=proc.returncode,
         )

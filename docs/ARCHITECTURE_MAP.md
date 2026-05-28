@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779979584.9343119`
+Generated: `1780008664.5569549`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1572
-- Python lines: 453796
+- Python lines: 453916
 - Dependency edges: 676
 - ServiceContainer `.get()` calls: 1445
 - ServiceContainer registrations: 346
@@ -19,8 +19,8 @@ Generated: `1779979584.9343119`
 graph TD
     runtime["runtime<br/>91 files, 19967 lines"]
     utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 41837 lines"]
-    consciousness["consciousness<br/>120 files, 56937 lines"]
+    brain["brain<br/>115 files, 41881 lines"]
+    consciousness["consciousness<br/>120 files, 56969 lines"]
     resilience["resilience<br/>53 files, 11111 lines"]
     health["health<br/>3 files, 697 lines"]
     memory["memory<br/>68 files, 16308 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 54778 lines"]
+    core_root["core_root<br/>182 files, 54822 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -822,14 +822,14 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 120 | 56937 | 2398373 | 37 | 29 |
-| core_root | 182 | 54778 | 2228038 | 99 | 0 |
-| brain | 115 | 41837 | 1806163 | 40 | 39 |
+| consciousness | 120 | 56969 | 2399763 | 37 | 29 |
+| core_root | 182 | 54822 | 2229470 | 99 | 0 |
+| brain | 115 | 41881 | 1807658 | 40 | 39 |
 | runtime | 91 | 19967 | 701962 | 37 | 103 |
 | orchestrator | 42 | 18644 | 823200 | 123 | 9 |
 | phases | 29 | 16659 | 751032 | 32 | 7 |
-| memory | 68 | 16308 | 658692 | 16 | 20 |
-| agency | 28 | 13970 | 566677 | 27 | 17 |
+| memory | 68 | 16308 | 658362 | 16 | 20 |
+| agency | 28 | 13970 | 564973 | 27 | 17 |
 | skills | 71 | 13399 | 551793 | 24 | 5 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
 | resilience | 53 | 11111 | 448134 | 16 | 25 |
@@ -857,7 +857,7 @@ graph TD
 | embodiment | 15 | 2627 | 102452 | 12 | 4 |
 | world_model | 9 | 2541 | 103649 | 8 | 9 |
 | unity | 11 | 2409 | 100598 | 3 | 5 |
-| governance | 8 | 2383 | 96008 | 7 | 10 |
+| governance | 8 | 2383 | 95999 | 7 | 10 |
 | somatic | 5 | 2375 | 89958 | 7 | 3 |
 | executive | 4 | 2306 | 97369 | 13 | 7 |
 | self_improvement | 12 | 2285 | 86875 | 3 | 2 |
@@ -876,7 +876,7 @@ graph TD
 | meta | 7 | 1256 | 47229 | 5 | 5 |
 | pneuma | 7 | 1224 | 46166 | 4 | 3 |
 | context | 4 | 1199 | 46480 | 1 | 1 |
-| motivation | 7 | 1194 | 50463 | 10 | 4 |
+| motivation | 7 | 1194 | 50455 | 10 | 4 |
 | grounding | 7 | 1092 | 40453 | 4 | 1 |
 | cybernetics | 6 | 1091 | 43608 | 6 | 1 |
 | workspace | 3 | 1069 | 39594 | 3 | 2 |

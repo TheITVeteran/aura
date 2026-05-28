@@ -1,82 +1,46 @@
 {
   "system_info": {
-    "run_id": "bba057be-d306-4df5-a98e-c8ec1b104a99",
-    "timestamp": 1779769924.059646,
-    "timestamp_iso": "2026-05-26T04:32:04Z",
-    "commit_sha": "5e10147cccf6cff2b33a280150a29909f176b9fa",
+    "run_id": "476094c6-27d0-4b19-aad7-0ce635e88f87",
+    "timestamp": 1780008935.823164,
+    "timestamp_iso": "2026-05-28T22:55:35Z",
+    "commit_sha": "unknown_no_git_dir",
     "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
-    "platform": "macOS-26.4.1-arm64-arm-64bit"
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "proof_model_tier": "primary",
+    "proof_live_message_origin": "api",
+    "structured_proof_solver_enabled": true,
+    "exclusive_runtime_preflight": {
+      "status": "exclusive",
+      "checked_at_unix": 1780008935.913527,
+      "existing_runtime_count": 0,
+      "instances": []
+    }
   },
   "scorecard": {
-    "total_tasks": 100,
-    "total_pass": 87,
-    "total_fail": 13,
+    "total_tasks": 1,
+    "total_pass": 1,
+    "total_fail": 0,
     "total_timeout": 0,
     "total_error": 0,
     "total_no_answer": 0,
     "total_ungraded": 0,
     "categories": {
       "novel_reasoning": {
-        "attempted": 50,
-        "passed": 46,
-        "failed": 4,
+        "attempted": 1,
+        "passed": 1,
+        "failed": 0,
         "timed_out": 0,
         "errors": 0,
         "no_answer": 0,
-        "pass_rate": 0.92
-      },
-      "coding": {
-        "attempted": 10,
-        "passed": 9,
-        "failed": 1,
-        "timed_out": 0,
-        "errors": 0,
-        "no_answer": 0,
-        "pass_rate": 0.9
-      },
-      "planning": {
-        "attempted": 10,
-        "passed": 7,
-        "failed": 3,
-        "timed_out": 0,
-        "errors": 0,
-        "no_answer": 0,
-        "pass_rate": 0.7
-      },
-      "self_debug": {
-        "attempted": 10,
-        "passed": 8,
-        "failed": 2,
-        "timed_out": 0,
-        "errors": 0,
-        "no_answer": 0,
-        "pass_rate": 0.8
-      },
-      "transfer": {
-        "attempted": 10,
-        "passed": 8,
-        "failed": 2,
-        "timed_out": 0,
-        "errors": 0,
-        "no_answer": 0,
-        "pass_rate": 0.8
-      },
-      "research": {
-        "attempted": 10,
-        "passed": 9,
-        "failed": 1,
-        "timed_out": 0,
-        "errors": 0,
-        "no_answer": 0,
-        "pass_rate": 0.9
+        "pass_rate": 1.0
       }
     },
-    "overall_pass_rate": 0.87
+    "overall_pass_rate": 1.0
   },
   "tier": {
-    "tier": 5,
-    "label": "Expert",
-    "pass_rate": 0.87
+    "tier": 2,
+    "label": "Emergent (Capped)",
+    "pass_rate": 1.0
   },
   "anti_theater": {
     "pre_check_violations": [],
@@ -86,21 +50,21 @@
   "baselines": {
     "raw_llm": {
       "status": "RUN",
-      "pass_rate": 0.9,
-      "total_tasks": 10,
-      "passed": 9
+      "pass_rate": 0.0,
+      "total_tasks": 1,
+      "passed": 0
     },
     "llm_with_tools": {
       "status": "RUN",
-      "pass_rate": 1.0,
-      "total_tasks": 10,
-      "passed": 10
+      "pass_rate": 0.0,
+      "total_tasks": 1,
+      "passed": 0
     },
     "react_agent": {
       "status": "RUN",
-      "pass_rate": 0.9,
-      "total_tasks": 10,
-      "passed": 9
+      "pass_rate": 0.0,
+      "total_tasks": 1,
+      "passed": 0
     }
   },
   "ablations": {
@@ -110,131 +74,256 @@
     },
     "no_persistent_memory": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_volition": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_will_authority": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_system2": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_self_repair": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "no_affect_steering": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_memory": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_volition": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_will": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_system2": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_self_repair": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     },
     "aura_minus_affect_steering": {
       "status": "RUN",
-      "pass_rate": 1.0,
+      "pass_rate": 0.0,
       "lesion_effect_verified": true
     }
   },
-  "task_count": 100,
+  "task_count": 1,
   "grader_entry_count": 100,
   "category_summary": {
     "novel_reasoning": {
-      "attempted": 50,
-      "passed": 46,
-      "failed": 4,
+      "attempted": 1,
+      "passed": 1,
+      "failed": 0,
       "timed_out": 0,
       "errors": 0,
       "no_answer": 0,
-      "pass_rate": 0.92
+      "pass_rate": 1.0
     },
-    "coding": {
-      "attempted": 10,
-      "passed": 9,
-      "failed": 1,
-      "timed_out": 0,
-      "errors": 0,
-      "no_answer": 0,
-      "pass_rate": 0.9
-    },
-    "planning": {
-      "attempted": 10,
-      "passed": 7,
-      "failed": 3,
-      "timed_out": 0,
-      "errors": 0,
-      "no_answer": 0,
-      "pass_rate": 0.7
-    },
-    "self_debug": {
-      "attempted": 10,
-      "passed": 8,
-      "failed": 2,
-      "timed_out": 0,
-      "errors": 0,
-      "no_answer": 0,
-      "pass_rate": 0.8
-    },
-    "transfer": {
-      "attempted": 10,
-      "passed": 8,
-      "failed": 2,
-      "timed_out": 0,
-      "errors": 0,
-      "no_answer": 0,
-      "pass_rate": 0.8
-    },
-    "research": {
-      "attempted": 10,
-      "passed": 9,
-      "failed": 1,
-      "timed_out": 0,
-      "errors": 0,
-      "no_answer": 0,
-      "pass_rate": 0.9
-    }
+    "coding": {},
+    "planning": {},
+    "self_debug": {},
+    "transfer": {},
+    "research": {}
   },
-  "unsupported_claims": [],
+  "unsupported_claims": [
+    "Category 'novel_reasoning' has 1 tasks, below minimum of 50",
+    "Category 'coding' has 0 tasks, below minimum of 10",
+    "Category 'planning' has 0 tasks, below minimum of 5",
+    "Category 'self_debug' has 0 tasks, below minimum of 5",
+    "Category 'transfer' has 0 tasks, below minimum of 10",
+    "Category 'research' has 0 tasks, below minimum of 10"
+  ],
   "verification_checklist": {
     "runner_completed": true,
     "score_threshold_passed": true,
     "category_thresholds_passed": true,
     "baselines_complete": true,
     "ablations_verified": true,
-    "governance_receipts_verified": true
+    "governance_receipts_verified": true,
+    "leakage_checks_passed": true,
+    "model_lane_probe_passed": true,
+    "model_lane_answered_without_structured_solver": true
   },
+  "runtime_policy": {
+    "proof_model_tier": "primary",
+    "live_message_origin": "api",
+    "canonical_boot_profile": "proof",
+    "strict_answer_tags_required": true,
+    "structured_proof_solver_enabled": true,
+    "exclusive_runtime_required": true,
+    "exclusive_runtime_preflight_status": "exclusive",
+    "comparisons_mode": "run",
+    "model_lane_probe": {
+      "status": "pass",
+      "requested_tier": "primary",
+      "ok": true,
+      "endpoint": "Cortex",
+      "endpoint_tier": "local",
+      "elapsed_s": 10.85260272026062,
+      "strict_answer_ok": true,
+      "strict_answer_source": "joined_quoted_tokens",
+      "nonempty_model_text_ok": true,
+      "local_lane_ok": true,
+      "error": "",
+      "text_preview": "Yes.",
+      "structured_proof_solver_enabled": true,
+      "lane_status": {
+        "desired_model": "Cortex (32B)",
+        "desired_endpoint": "Cortex",
+        "foreground_endpoint": "Cortex",
+        "background_endpoint": "Brainstem",
+        "foreground_tier": "local",
+        "background_tier": "local_fast",
+        "state": "ready",
+        "last_failure_reason": "",
+        "conversation_ready": true,
+        "cortex_recovery_attempts": 0,
+        "time_since_last_success_s": 0.00034117698669433594,
+        "last_transition_at": 1780008944.585162,
+        "last_ready_at": 1780008944.585161,
+        "last_progress_at": 1780008967.199475,
+        "warmup_attempted": true,
+        "warmup_in_flight": false,
+        "foreground_owned": false,
+        "foreground_owner": "",
+        "active_generations": 0,
+        "request_age_s": 0.0,
+        "current_request_started_at": 0.0,
+        "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+        "recurrent_depth": {
+          "active": true,
+          "config": {
+            "n_loops": 2,
+            "prelude_end": 12,
+            "coda_start": 52,
+            "recurrent_layers": 40,
+            "num_layers": 64,
+            "residual_alpha": 0.1,
+            "prelude_frac": 0.2,
+            "coda_frac": 0.2,
+            "patch_scope": "instance_subclass"
+          }
+        },
+        "last_heartbeat": 1780008965.670559,
+        "last_token_progress_at": 0.0,
+        "last_generation_completed_at": 1780008967.1994739,
+        "process_started_at": 1780008939.468571
+      },
+      "recurrent_depth": {
+        "active": true,
+        "config": {
+          "n_loops": 2,
+          "prelude_end": 12,
+          "coda_start": 52,
+          "recurrent_layers": 40,
+          "num_layers": 64,
+          "residual_alpha": 0.1,
+          "prelude_frac": 0.2,
+          "coda_frac": 0.2,
+          "patch_scope": "instance_subclass"
+        }
+      }
+    }
+  },
+  "model_lane_probe": {
+    "status": "pass",
+    "requested_tier": "primary",
+    "ok": true,
+    "endpoint": "Cortex",
+    "endpoint_tier": "local",
+    "elapsed_s": 10.85260272026062,
+    "strict_answer_ok": true,
+    "strict_answer_source": "joined_quoted_tokens",
+    "nonempty_model_text_ok": true,
+    "local_lane_ok": true,
+    "error": "",
+    "text_preview": "Yes.",
+    "structured_proof_solver_enabled": true,
+    "lane_status": {
+      "desired_model": "Cortex (32B)",
+      "desired_endpoint": "Cortex",
+      "foreground_endpoint": "Cortex",
+      "background_endpoint": "Brainstem",
+      "foreground_tier": "local",
+      "background_tier": "local_fast",
+      "state": "ready",
+      "last_failure_reason": "",
+      "conversation_ready": true,
+      "cortex_recovery_attempts": 0,
+      "time_since_last_success_s": 0.00034117698669433594,
+      "last_transition_at": 1780008944.585162,
+      "last_ready_at": 1780008944.585161,
+      "last_progress_at": 1780008967.199475,
+      "warmup_attempted": true,
+      "warmup_in_flight": false,
+      "foreground_owned": false,
+      "foreground_owner": "",
+      "active_generations": 0,
+      "request_age_s": 0.0,
+      "current_request_started_at": 0.0,
+      "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+      "recurrent_depth": {
+        "active": true,
+        "config": {
+          "n_loops": 2,
+          "prelude_end": 12,
+          "coda_start": 52,
+          "recurrent_layers": 40,
+          "num_layers": 64,
+          "residual_alpha": 0.1,
+          "prelude_frac": 0.2,
+          "coda_frac": 0.2,
+          "patch_scope": "instance_subclass"
+        }
+      },
+      "last_heartbeat": 1780008965.670559,
+      "last_token_progress_at": 0.0,
+      "last_generation_completed_at": 1780008967.1994739,
+      "process_started_at": 1780008939.468571
+    },
+    "recurrent_depth": {
+      "active": true,
+      "config": {
+        "n_loops": 2,
+        "prelude_end": 12,
+        "coda_start": 52,
+        "recurrent_layers": 40,
+        "num_layers": 64,
+        "residual_alpha": 0.1,
+        "prelude_frac": 0.2,
+        "coda_frac": 0.2,
+        "patch_scope": "instance_subclass"
+      }
+    }
+  },
+  "structured_solver_task_count": 1,
+  "governance_report_status": "pass",
+  "leakage_report_status": "pass",
   "passed": true
 }

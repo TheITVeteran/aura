@@ -6,4 +6,4 @@ from tests.agi.live.live_harness import LiveAuraHarness, PROJECT_ROOT
 def live_harness():
     harness = LiveAuraHarness(PROJECT_ROOT)
     yield harness
-    harness.cleanup()
+    # harness.cleanup()

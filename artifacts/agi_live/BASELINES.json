@@ -1,20 +1,20 @@
 {
   "raw_llm": {
     "status": "RUN",
-    "pass_rate": 0.9,
-    "total_tasks": 10,
-    "passed": 9
+    "pass_rate": 0.0,
+    "total_tasks": 1,
+    "passed": 0
   },
   "llm_with_tools": {
     "status": "RUN",
-    "pass_rate": 1.0,
-    "total_tasks": 10,
-    "passed": 10
+    "pass_rate": 0.0,
+    "total_tasks": 1,
+    "passed": 0
   },
   "react_agent": {
     "status": "RUN",
-    "pass_rate": 0.9,
-    "total_tasks": 10,
-    "passed": 9
+    "pass_rate": 0.0,
+    "total_tasks": 1,
+    "passed": 0
   }
 }

@@ -1829,8 +1829,7 @@ async def main():
             "  [FATAL] Requested proof model lane failed probe: "
             f"{model_lane_probe.get('error') or model_lane_probe.get('text_preview')}"
         )
-        await shutdown_proof_runtime(orch)
-        return 1
+        os._exit(1)
     print(
         "  [OK] Model lane probe passed via "
         f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
@@ -2365,4 +2364,6 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    import os
+    code = asyncio.run(main())
+    os._exit(code)
