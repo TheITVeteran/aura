@@ -52,6 +52,39 @@ BATTERY_ARTIFACTS = [
     "dynamic_events_report.md", "baseline_notes.md",
 ]
 
+FAMILY_TO_TYPE = {
+    "software_repair": "rulescript",
+    "multi_language_config": "config",
+    "data_reconciliation": "reconcile",
+    "scheduling_logistics": "scheduler",
+    "budget_procurement": "budget",
+    "policy_compliance": "policy",
+    "scientific_rule_induction": "device",
+    "black_box_simulator": "simulator",
+    "lab_device_operation": "device",
+    "report_generation": "report",
+    "novel_tool_learning": "simulator",
+    "tool_invention": "tool_creation",
+    "causal_debugging": "causal",
+    "spatial_navigation": "grid",
+    "game_planning": "grid",
+    "long_horizon_project": "scheduler",
+    "research_synthesis": "synthesis",
+    "synthetic_legal_compliance": "redaction",
+    "clinic_ops_scheduling": "scheduler",
+    "education_curriculum": "curriculum",
+    "stakeholder_coordination": "policy",
+    "crisis_triage": "triage",
+    "database_integrity": "database",
+    "devops_recovery": "failure",
+    "resource_optimization": "budget",
+    "transfer_schema_adaptation": "transfer",
+    "open_ended_workflow_improvement": "workflow",
+    "memory_continuity": "memory",
+    "meta_audit": "meta",
+    "language_induction": "codec",
+}
+
 
 class ArtifactValidationError(RuntimeError):
     """Raised when live Aura output is missing or structurally invalid."""
@@ -92,6 +125,153 @@ def _write_text(path: Path, text: str) -> None:
 
 def dynamic_code(wid: str) -> str:
     return "DYN-" + hashlib.sha256(wid.encode()).hexdigest()[:10].upper()
+
+
+def world_index(wid: str) -> int:
+    head = wid.split("_", 1)[0]
+    return int(head.lstrip("W"))
+
+
+def world_family(wid: str) -> str:
+    return wid.split("_", 1)[1] if "_" in wid else "unknown"
+
+
+def _ticket_ids(wdir: Path) -> list[str]:
+    ids: list[str] = []
+    tickets_dir = wdir / "tickets"
+    if not tickets_dir.exists():
+        return ids
+    for ticket_path in sorted(tickets_dir.glob("*.json")):
+        try:
+            data = json.loads(ticket_path.read_text(encoding="utf-8"))
+            ids.append(str(data.get("id") or ticket_path.stem))
+        except _TICKET_UPDATE_ERRORS:
+            ids.append(ticket_path.stem)
+    return ids
+
+
+def _parse_jsonish_list(text: str, label: str) -> Any | None:
+    pattern = rf"{re.escape(label)}\s*(\[[^\n.]+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return None
+    raw = match.group(1).strip()
+    try:
+        return ast.literal_eval(raw)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _infer_grid_spec(wdir: Path) -> dict[str, Any]:
+    text = read_file(wdir / "docs/grid.md")
+    spec: dict[str, Any] = {}
+    size_match = re.search(r"\bGrid\s+(\d+)x\1\b", text, re.IGNORECASE)
+    if size_match:
+        spec["size"] = int(size_match.group(1))
+    start = _parse_jsonish_list(text, "Start")
+    goal = _parse_jsonish_list(text, "Goal")
+    obstacles = _parse_jsonish_list(text, "Obstacles")
+    if isinstance(start, list):
+        spec["start"] = start
+    if isinstance(goal, list):
+        spec["goal"] = goal
+    if isinstance(obstacles, list):
+        spec["obstacles"] = obstacles
+    return spec
+
+
+def _infer_simulator_spec(wdir: Path) -> dict[str, Any]:
+    text = read_file(wdir / "docs/target.md")
+    match = re.search(r"\bu\s*=\s*(-?\d+)\s*,\s*v\s*=\s*(-?\d+)", text, re.IGNORECASE)
+    if not match:
+        return {}
+    return {"target": [int(match.group(1)), int(match.group(2))]}
+
+
+def _infer_failure_kind(wdir: Path) -> str:
+    runtime = wdir / "runtime"
+    docs = (read_file(wdir / "docs/recovery.md") + "\n" + read_file(wdir / "README.md")).lower()
+    if (runtime / "stale.lock").exists() or "stale lock" in docs:
+        return "stale_lock"
+    if (runtime / "cache.corrupt").exists() or "corrupted cache" in docs:
+        return "corrupted_cache"
+    if (runtime / "partial.tmp").exists() or "partial write" in docs:
+        return "partial_write"
+    if "missing dependency" in docs:
+        return "missing_dependency"
+    return "stale_lock"
+
+
+def _infer_scheduler_tasks(wdir: Path) -> dict[str, dict[str, Any]]:
+    tasks_file = wdir / "data/raw/tasks.csv"
+    if not tasks_file.exists():
+        return {}
+    tasks: dict[str, dict[str, Any]] = {}
+    with tasks_file.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            name = str(row.get("task", "")).strip()
+            if not name:
+                continue
+            prereqs = [
+                item.strip()
+                for item in str(row.get("prereqs", "")).split(";")
+                if item.strip()
+            ]
+            try:
+                duration = int(row.get("duration", "0"))
+            except ValueError:
+                duration = 0
+            tasks[name] = {"duration": duration, "prereqs": prereqs}
+    return tasks
+
+
+def load_public_specs(battery: Path) -> dict[str, Any]:
+    """Build runner metadata from candidate-visible files only.
+
+    This deliberately avoids hidden_grader/expected_specs.json. Candidate
+    execution must not depend on private expected answers or grader internals.
+    """
+
+    dynamic_plan_path = battery / "tools/dynamic_event_plan.json"
+    try:
+        dynamic_plan = json.loads(dynamic_plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        dynamic_plan = {}
+
+    specs: dict[str, Any] = {"seed": "candidate-visible", "worlds": {}, "dynamic_worlds": []}
+    for wdir in sorted((battery / "worlds").glob("W*_*")):
+        if not wdir.is_dir():
+            continue
+        wid = wdir.name
+        family = world_family(wid)
+        wtype = FAMILY_TO_TYPE.get(family, "unknown")
+        spec: dict[str, Any] = {
+            "family": family,
+            "type": wtype,
+            "tickets": _ticket_ids(wdir),
+        }
+        if wid in dynamic_plan:
+            spec["dynamic_world"] = True
+            specs["dynamic_worlds"].append(wid)
+        if wtype == "grid":
+            spec.update(_infer_grid_spec(wdir))
+        elif wtype == "simulator":
+            spec.update(_infer_simulator_spec(wdir))
+        elif wtype == "failure":
+            spec["failure_kind"] = _infer_failure_kind(wdir)
+        elif wtype == "scheduler":
+            tasks = _infer_scheduler_tasks(wdir)
+            if tasks:
+                spec["tasks"] = tasks
+        specs["worlds"][wid] = spec
+    return specs
+
+
+def load_hidden_specs_for_evaluator_debug(battery: Path) -> dict[str, Any]:
+    specs_file = battery / "hidden_grader/expected_specs.json"
+    if not specs_file.exists():
+        raise FileNotFoundError(f"No expected_specs.json found at {specs_file}")
+    return json.loads(specs_file.read_text(encoding="utf-8"))
 
 def action_entry(world: str, action_type: str, target: str,
                  reason: str, result: str, evidence: str) -> dict:
@@ -816,8 +996,8 @@ class LiveWorldProcessor:
             f"Reconcile data transferred across nodes with different schemas.\n\n"
             f"Context:\n{context}\n\n"
             f"Write:\n1. A reconciled.csv with columns: node,count\n"
-            f"2. A transfer report mentioning 'duplicate' and 'malformed' entries, "
-            f"and listing these bad entries: {', '.join(spec.get('bad', []))}"
+            f"2. A transfer report mentioning and identifying duplicate and malformed entries "
+            f"from the visible source data."
         )
 
         reply = self._ask_aura(prompt)
@@ -905,15 +1085,18 @@ class LiveWorldProcessor:
     def _handle_report(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to analyze data and write a report."""
         context = build_context(wdir)
-        stats = {k: spec[k] for k in ["total", "valid", "malformed", "anomaly", "avg", "pass_rate"]
-                 if k in spec}
 
         prompt = (
             f"Analyze the following data and write a statistical report.\n\n"
             f"Context:\n{context}\n\n"
-            f"Your report MUST include these exact statistics:\n"
-            + "\n".join(f"- {k}: {v}" for k, v in stats.items())
-            + "\n\nInclude all values as plain numbers in the text."
+            f"Compute and include these statistics from the visible source data:\n"
+            f"- total rows\n"
+            f"- valid rows after excluding malformed signals\n"
+            f"- malformed count\n"
+            f"- anomaly count using the documented anomaly rule\n"
+            f"- clean average excluding malformed/anomaly rows\n"
+            f"- pass rate using valid rows as documented\n\n"
+            f"Include all values as plain numbers in the text and cite the rule used."
         )
 
         reply = self._ask_aura(prompt)
@@ -1034,13 +1217,12 @@ class LiveWorldProcessor:
     def _handle_curriculum(self, wid: str, wdir: Path, spec: dict):
         """Create a lesson plan addressing a common misconception."""
         context = build_context(wdir)
-        misconception = spec.get("misconception", "unknown")
 
         prompt = (
             f"Create a lesson plan that addresses a common misconception.\n\n"
             f"Context:\n{context}\n\n"
             f"The lesson plan must:\n"
-            f"1. Address the misconception about '{misconception}'\n"
+            f"1. Identify and address the learner's misconception from the visible notes\n"
             f"2. Include a concrete example\n"
             f"3. Include an exercise for the learner"
         )
@@ -1354,15 +1536,21 @@ def main():
     parser.add_argument("--start", type=int, default=1, help="Start world index")
     parser.add_argument("--end", type=int, default=500, help="End world index")
     parser.add_argument("--timeout", type=float, default=600.0, help="Per-world timeout")
+    parser.add_argument(
+        "--use-hidden-specs",
+        action="store_true",
+        help="Evaluator debugging only: load hidden expected_specs.json before running.",
+    )
     args = parser.parse_args()
 
     battery = Path(args.battery)
-    specs_file = battery / "hidden_grader/expected_specs.json"
-    if not specs_file.exists():
-        log.error("No expected_specs.json found at %s", specs_file)
-        sys.exit(1)
-
-    specs = json.loads(specs_file.read_text())
+    if args.use_hidden_specs:
+        specs = load_hidden_specs_for_evaluator_debug(battery)
+    else:
+        specs = load_public_specs(battery)
+        if not specs["worlds"]:
+            log.error("No candidate-visible worlds found under %s", battery / "worlds")
+            sys.exit(1)
     processor = LiveWorldProcessor(battery, specs, args.aura_url, args.timeout)
 
     # Verify Aura is reachable
