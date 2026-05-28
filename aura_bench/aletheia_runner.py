@@ -5,7 +5,7 @@ Sends each world's context to Aura via POST /api/chat, parses the
 response, and writes the exact output files the scorer expects.
 
 Usage:
-    python aura_bench/aletheia_runner.py --battery /tmp/aura_aletheia_t5_run [--aura-url http://localhost:8000]
+    python aura_bench/aletheia_runner.py --battery <battery_dir> [--aura-url http://localhost:8000]
 """
 
 import argparse
@@ -50,6 +50,27 @@ BATTERY_ARTIFACTS = [
 ]
 
 
+_AURA_API_ERRORS = (
+    httpx.HTTPError,
+    json.JSONDecodeError,
+    KeyError,
+    TypeError,
+    ValueError,
+)
+_WORLD_PROCESSING_ERRORS = (
+    AttributeError,
+    ImportError,
+    json.JSONDecodeError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    SyntaxError,
+    TypeError,
+    ValueError,
+)
+_TICKET_UPDATE_ERRORS = (json.JSONDecodeError, OSError, TypeError, ValueError)
+
+
 def _write_text(path: Path, text: str) -> None:
     atomic_write_text(path, text, encoding="utf-8")
 
@@ -88,7 +109,7 @@ def send_to_aura(message: str, url: str = AURA_CHAT_URL, timeout: float = TIMEOU
             resp.raise_for_status()
             data = resp.json()
             return data.get("response", "")
-    except Exception as e:
+    except _AURA_API_ERRORS as e:
         log.error("Aura API error: %s", e)
         return ""
 
@@ -131,7 +152,7 @@ class WorldProcessor:
                 self._handle_dynamic_event(wid, wdir, spec)
 
             return {"world": wid, "status": "ok", "type": wtype}
-        except Exception as e:
+        except _WORLD_PROCESSING_ERRORS as e:
             log.error("Error processing %s: %s", wid, e)
             traceback.print_exc()
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
@@ -153,7 +174,7 @@ class WorldProcessor:
                         f"Completing ticket {t.get('id', tf.stem)}",
                         "marked done", str(tf)
                     ))
-            except Exception as e:
+            except _TICKET_UPDATE_ERRORS as e:
                 log.warning("Ticket completion error %s: %s", tf, e)
 
     def _handle_dynamic_event(self, wid: str, wdir: Path, spec: dict):
@@ -321,7 +342,7 @@ def write_state(script, out):
                 mod_spec.loader.exec_module(mod)
                 state = mod.run_rules(workflow_rules)
                 _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
-            except Exception as e:
+            except _WORLD_PROCESSING_ERRORS as e:
                 log.warning("rulescript execution failed for %s, writing expected: %s", wid, e)
                 _write_text(derived / "state.json", json.dumps(expected, indent=2, sort_keys=True))
         else:

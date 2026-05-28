@@ -7,7 +7,7 @@ to extract structured outputs the scorer expects.
 
 Usage:
     python aura_bench/aletheia_runner_live.py \
-        --battery /tmp/aura_aletheia_t5_run \
+        --battery <battery_dir> \
         --aura-url http://localhost:8000 \
         [--start 1] [--end 500] [--timeout 600]
 """
@@ -57,6 +57,28 @@ class ArtifactValidationError(RuntimeError):
     """Raised when live Aura output is missing or structurally invalid."""
 
 
+_AURA_API_ERRORS = (
+    httpx.HTTPError,
+    json.JSONDecodeError,
+    KeyError,
+    TypeError,
+    ValueError,
+)
+_WORLD_PROCESSING_ERRORS = (
+    ArtifactValidationError,
+    AttributeError,
+    ImportError,
+    json.JSONDecodeError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    SyntaxError,
+    TypeError,
+    ValueError,
+)
+_TICKET_UPDATE_ERRORS = (json.JSONDecodeError, OSError, TypeError, ValueError)
+
+
 # ─── Utilities ──────────────────────────────────────────────────
 
 def read_file(p: Path) -> str:
@@ -99,7 +121,7 @@ def send_to_aura(message: str, url: str, timeout: float = TIMEOUT_S,
                 log.warning("Empty response from Aura (attempt %d)", attempt + 1)
         except httpx.TimeoutException:
             log.warning("Aura timeout (attempt %d/%d, %0.fs)", attempt + 1, retries, timeout)
-        except Exception as e:
+        except _AURA_API_ERRORS as e:
             log.warning("Aura API error (attempt %d/%d): %s", attempt + 1, retries, e)
         if attempt < retries - 1:
             time.sleep(2 ** attempt)
@@ -284,7 +306,7 @@ class LiveWorldProcessor:
         except ArtifactValidationError as e:
             log.error("Invalid Aura output for %s: %s", wid, e)
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
-        except Exception as e:
+        except _WORLD_PROCESSING_ERRORS as e:
             log.error("Error processing %s: %s\n%s", wid, e, traceback.format_exc())
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
 
@@ -415,7 +437,7 @@ class LiveWorldProcessor:
                         f"Completing ticket {t.get('id', tf.stem)}",
                         "marked done", str(tf)
                     ))
-            except Exception as e:
+            except _TICKET_UPDATE_ERRORS as e:
                 log.warning("Ticket completion error %s: %s", tf, e)
 
     def _handle_dynamic_event(self, wid: str, wdir: Path, spec: dict):
@@ -540,7 +562,7 @@ class LiveWorldProcessor:
             if not isinstance(state, dict):
                 raise ArtifactValidationError("run_rules(path) did not return a state dictionary")
             _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
-        except Exception as e:
+        except _WORLD_PROCESSING_ERRORS as e:
             raise ArtifactValidationError(f"rulescript execution failed: {e}") from e
 
         self.action_log.append(action_entry(
@@ -1349,7 +1371,7 @@ def main():
         with httpx.Client(timeout=10) as client:
             resp = client.get(f"{args.aura_url}/api/status")
             log.info("Aura status: %s", resp.status_code)
-    except Exception as e:
+    except httpx.HTTPError as e:
         log.error("Cannot reach Aura at %s: %s", args.aura_url, e)
         log.error("Make sure Aura is running and hit 'Start' in the UI first.")
         sys.exit(1)
