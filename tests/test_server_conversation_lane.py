@@ -646,8 +646,10 @@ async def test_api_chat_returns_structured_timeout_when_kernel_times_out(monkeyp
 async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
+    from core.runtime import conversation_support
 
     kernel_calls = []
+    experience_recorder = AsyncMock()
 
     class _ForbiddenGate:
         async def generate(self, *_args, **_kwargs):
@@ -667,6 +669,7 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncMock())
+    monkeypatch.setattr(conversation_support, "record_conversation_experience", experience_recorder)
     monkeypatch.setattr(
         chat_routes,
         "_collect_conversation_lane_status",
@@ -705,6 +708,7 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
     assert kernel_calls
     assert kernel_calls[0]["origin"] == "benchmark"
     assert kernel_calls[0]["priority"] is True
+    experience_recorder.assert_not_awaited()
 
 
 @pytest.mark.asyncio

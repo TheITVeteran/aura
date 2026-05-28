@@ -85,6 +85,8 @@ _BENCHMARK_CHAT_FALLBACK_MARKERS = (
     "i should not hand you a broken fragment",
     "i shouldn't hand you a broken fragment",
     "benchmark request produced no canonical kernel response",
+    "previous turn open",
+    "next clean reply",
 )
 
 
@@ -208,6 +210,7 @@ async def _complete_logged_exchange(
     aura_response: str,
     *,
     regenerated: bool = False,
+    record_experience: bool = True,
 ) -> None:
     """Finalize a pending exchange in place so history is never duplicated."""
     final_response = aura_response or "…"
@@ -237,6 +240,9 @@ async def _complete_logged_exchange(
             target["regenerated"] = True
         _trim_conversation_log_locked()
 
+    if not record_experience:
+        return
+
     try:
         from core.runtime.conversation_support import record_conversation_experience
 
@@ -246,10 +252,15 @@ async def _complete_logged_exchange(
         logger.debug("Conversation experience recording skipped: %s", exc)
 
 
-async def _log_exchange(user_msg: str, aura_response: str):
+async def _log_exchange(user_msg: str, aura_response: str, *, record_experience: bool = True):
     """Record a conversation exchange for session tracking."""
     exchange_id = await _begin_logged_exchange(user_msg)
-    await _complete_logged_exchange(exchange_id, user_msg, aura_response)
+    await _complete_logged_exchange(
+        exchange_id,
+        user_msg,
+        aura_response,
+        record_experience=record_experience,
+    )
 
 
 async def _emit_chat_output_receipt(
@@ -4853,13 +4864,14 @@ async def api_chat(
     # directive scaffolding that belong in generation context, not in reply
     # quality classification or conversational memory.
     _semantic_user_message = _original_user_message
-    try:
-        from core.runtime.foreground_guard import notify_user_spoke as _guard_notify_user_spoke
+    if not is_benchmark:
+        try:
+            from core.runtime.foreground_guard import notify_user_spoke as _guard_notify_user_spoke
 
-        _guard_notify_user_spoke(_semantic_user_message)
-    except _CHAT_RECOVERABLE_ERRORS as _guard_notify_exc:
-        record_degradation('chat', _guard_notify_exc)
-        logger.debug("Foreground guard preflight notify skipped: %s", _guard_notify_exc)
+            _guard_notify_user_spoke(_semantic_user_message)
+        except _CHAT_RECOVERABLE_ERRORS as _guard_notify_exc:
+            record_degradation('chat', _guard_notify_exc)
+            logger.debug("Foreground guard preflight notify skipped: %s", _guard_notify_exc)
 
     # ── Conscience pre-gate ─────────────────────────────────────
     # Hard-line rules apply BEFORE the cognitive pipeline ever sees the
@@ -4949,9 +4961,10 @@ async def api_chat(
                     return JSONResponse(_idempotency_cache[idem_key])
 
         try:
+            foreground_busy_wait_s = 30.0 if is_benchmark else _FOREGROUND_CHAT_BUSY_WAIT_S
             await asyncio.wait_for(
                 _foreground_chat_lock.acquire(),
-                timeout=max(0.05, min(_FOREGROUND_CHAT_BUSY_WAIT_S, _remaining_foreground_budget(reserve=1.0))),
+                timeout=max(0.05, min(foreground_busy_wait_s, _remaining_foreground_budget(reserve=1.0))),
             )
             foreground_slot_acquired = True
         except TimeoutError:
@@ -4967,43 +4980,48 @@ async def api_chat(
                     logger.debug("Foreground lock reacquire after preemption timed out: %s", exc)
             
             if not foreground_slot_acquired:
+                status = "benchmark_foreground_busy" if is_benchmark else "foreground_busy"
+                response_confidence = "failed" if is_benchmark else "degraded"
+                status_code = 503 if is_benchmark else 200
                 return JSONResponse(
                     {
                         "response": "I still have the previous turn open. I am not going to fake a new answer over it; the next clean reply should land from the active turn.",
-                        "status": "foreground_busy",
+                        "status": status,
                         "conversation_lane": _collect_conversation_lane_status(),
-                        "response_confidence": "degraded",
+                        "response_confidence": response_confidence,
                     },
-                    status_code=200,
+                    status_code=status_code,
                 )
 
         # Notify proactive presence systems; pass content for away-signal detection
-        _notify_user_spoke(_semantic_user_message)
+        if not is_benchmark:
+            _notify_user_spoke(_semantic_user_message)
 
         # Animal cognition: track user emotional state and adapt style
-        try:
-            from core.consciousness.animal_cognition import (
-                get_camouflage_adapter,
-                get_emotional_tracker,
-            )
-            emotional_tracker = get_emotional_tracker()
-            emotional_tracker.update(_semantic_user_message)
-            camouflage = get_camouflage_adapter()
-            camouflage.observe_user(_semantic_user_message)
-            # Feed emotional signals into neurochemical system
-            ncs = ServiceContainer.get("neurochemical_system", default=None)
-            if ncs:
-                triggers = emotional_tracker.get_neurochemical_triggers()
-                for trigger, amount in triggers.items():
-                    if "norepinephrine" in trigger:
-                        ncs.on_wakefulness(amount)
-                    elif "dopamine" in trigger:
-                        ncs.on_novelty(amount)
-                    elif "oxytocin" in trigger:
-                        ncs.on_social_connection(amount)
-        except _CHAT_RECOVERABLE_ERRORS as _ac_exc:
-            record_degradation('chat', _ac_exc)
-            logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
+        if not is_benchmark:
+            try:
+                from core.consciousness.animal_cognition import (
+                    get_camouflage_adapter,
+                    get_emotional_tracker,
+                )
+                emotional_tracker = get_emotional_tracker()
+                emotional_tracker.update(_semantic_user_message)
+                camouflage = get_camouflage_adapter()
+                camouflage.observe_user(_semantic_user_message)
+                # Feed emotional signals into neurochemical system
+                ncs = ServiceContainer.get("neurochemical_system", default=None)
+                if ncs:
+                    triggers = emotional_tracker.get_neurochemical_triggers()
+                    for trigger, amount in triggers.items():
+                        if "norepinephrine" in trigger:
+                            ncs.on_wakefulness(amount)
+                        elif "dopamine" in trigger:
+                            ncs.on_novelty(amount)
+                        elif "oxytocin" in trigger:
+                            ncs.on_social_connection(amount)
+            except _CHAT_RECOVERABLE_ERRORS as _ac_exc:
+                record_degradation('chat', _ac_exc)
+                logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
         allow_chat_fastpaths = not is_benchmark
 
@@ -5547,7 +5565,8 @@ async def api_chat(
                 f"{referential_anchor}"
             )
         try:
-            await _preserve_large_user_paste(_semantic_user_message)
+            if not is_benchmark:
+                await _preserve_large_user_paste(_semantic_user_message)
             pending_exchange_id = await _begin_logged_exchange(_semantic_user_message)
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat", exc)
@@ -5660,6 +5679,7 @@ async def api_chat(
                     pending_exchange_id,
                     _semantic_user_message,
                     timeout_reply,
+                    record_experience=False,
                 )
                 pending_exchange_id = None
             return JSONResponse(
@@ -5725,10 +5745,11 @@ async def api_chat(
                         pending_exchange_id,
                         _semantic_user_message,
                         empty_reply,
+                        record_experience=False,
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(_semantic_user_message, empty_reply)
+                    await _log_exchange(_semantic_user_message, empty_reply, record_experience=False)
                 await _emit_chat_output_receipt(
                     empty_reply,
                     cause="chat_response",
@@ -5752,11 +5773,12 @@ async def api_chat(
                 final_benchmark_text,
             )
             if contract_reason:
-                with open("/tmp/contract_debug.log", "a") as f:
-                    f.write(f"=== CONTRACT UNMET: {contract_reason} ===\n")
-                    f.write(f"Prompt: {_semantic_user_message}\n")
-                    f.write(f"Response: {final_benchmark_text}\n")
-                    f.write("="*40 + "\n")
+                logger.warning(
+                    "Benchmark artifact contract unmet (%s): prompt_len=%d response_len=%d",
+                    contract_reason,
+                    len(_semantic_user_message),
+                    len(final_benchmark_text),
+                )
                 failed_reply = (
                     "Benchmark request failed closed because the canonical kernel response "
                     f"did not satisfy the requested artifact contract: {contract_reason}."
@@ -5766,10 +5788,11 @@ async def api_chat(
                         pending_exchange_id,
                         _semantic_user_message,
                         failed_reply,
+                        record_experience=False,
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(_semantic_user_message, failed_reply)
+                    await _log_exchange(_semantic_user_message, failed_reply, record_experience=False)
                 await _emit_chat_output_receipt(
                     failed_reply,
                     cause="chat_response",
@@ -5805,10 +5828,11 @@ async def api_chat(
                     pending_exchange_id,
                     _semantic_user_message,
                     final_benchmark_text,
+                    record_experience=False,
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(_semantic_user_message, final_benchmark_text)
+                await _log_exchange(_semantic_user_message, final_benchmark_text, record_experience=False)
             await _emit_chat_output_receipt(
                 final_benchmark_text,
                 cause="chat_response",
@@ -5993,6 +6017,36 @@ async def api_chat(
         return JSONResponse(response_data)
     except TimeoutError:
         lane = _mark_conversation_lane_timeout()
+        if is_benchmark:
+            timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    body.message,
+                    timeout_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            await _emit_chat_output_receipt(
+                timeout_reply,
+                cause="chat_timeout",
+                origin="benchmark",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "benchmark_timeout",
+                    "status": "timeout",
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": timeout_reply,
+                    "status": "benchmark_timeout",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+            )
+
         # [STABILITY v53] Last-resort: try protected foreground before returning timeout.
         # The kernel timed out but the LLM might still be responsive for a direct call.
         try:
@@ -6127,8 +6181,19 @@ async def api_chat(
                 pending_exchange_id,
                 body.message,
                 cancel_reply,
+                record_experience=not is_benchmark,
             )
             pending_exchange_id = None
+        if is_benchmark:
+            return JSONResponse(
+                {
+                    "response": cancel_reply,
+                    "status": "benchmark_cancelled",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+            )
         return JSONResponse(
             {
                 "response": cancel_reply,
@@ -6148,8 +6213,27 @@ async def api_chat(
                 pending_exchange_id,
                 body.message,
                 error_reply,
+                record_experience=not is_benchmark,
             )
             pending_exchange_id = None
+        if is_benchmark:
+            await _emit_chat_output_receipt(
+                error_reply,
+                cause="chat_error",
+                origin="benchmark",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "benchmark_error",
+                    "status": type(e).__name__,
+                },
+            )
+            return JSONResponse({
+                "response": error_reply,
+                "status": "benchmark_error",
+                "error_type": type(e).__name__,
+                "conversation_lane": _collect_conversation_lane_status(),
+                "response_confidence": "failed",
+            }, status_code=503)
         # [STABILITY v53] ALWAYS return 200 with a response. Chat must never
         # appear broken to the user. The "status" field conveys error state.
         return JSONResponse({

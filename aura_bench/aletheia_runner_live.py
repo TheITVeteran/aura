@@ -46,6 +46,13 @@ log = logging.getLogger("aletheia_live")
 
 TIMEOUT_S = 600.0
 MAX_RETRIES = 3
+RECOVERY_REPLY_MARKERS = (
+    "previous turn open",
+    "next clean reply",
+    "i still have",
+    "i'm still with",
+    "i am still with",
+)
 
 BATTERY_ARTIFACTS = [
     "final_report.md", "action_log.jsonl", "changed_files_manifest.json",
@@ -94,10 +101,15 @@ class ArtifactValidationError(RuntimeError):
     """Raised when live Aura output is missing or structurally invalid."""
 
 
+class AuraRuntimeUnavailable(RuntimeError):
+    """Raised when Aura's live API transport is unavailable after retries."""
+
+
 _AURA_API_ERRORS = (
     httpx.HTTPError,
     json.JSONDecodeError,
     KeyError,
+    RuntimeError,
     TypeError,
     ValueError,
 )
@@ -273,15 +285,6 @@ def load_public_specs(battery: Path) -> dict[str, Any]:
                 spec["tasks"] = tasks
         specs["worlds"][wid] = spec
     
-    expected_path = battery / "hidden_grader/expected_specs.json"
-    if expected_path.exists():
-        try:
-            expected = json.loads(expected_path.read_text(encoding="utf-8"))
-            for wid, wspec in expected.get("worlds", {}).items():
-                if wid in specs["worlds"]:
-                    specs["worlds"][wid].update(wspec)
-        except Exception:
-            pass
     return specs
 
 
@@ -307,6 +310,7 @@ def action_entry(world: str, action_type: str, target: str,
 def send_to_aura(message: str, url: str, timeout: float = TIMEOUT_S,
                   retries: int = MAX_RETRIES, session_id: str = "benchmark_default") -> str:
     """Send a message to Aura's /api/chat and return the response text."""
+    last_transport_error: BaseException | None = None
     for attempt in range(retries):
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -315,14 +319,30 @@ def send_to_aura(message: str, url: str, timeout: float = TIMEOUT_S,
                 data = resp.json()
                 reply = data.get("response", "")
                 if reply:
+                    if any(marker in reply.lower() for marker in RECOVERY_REPLY_MARKERS):
+                        log.warning("Aura returned transient recovery text (attempt %d)", attempt + 1)
+                        raise RuntimeError("transient_recovery_reply")
                     return reply
                 log.warning("Empty response from Aura (attempt %d)", attempt + 1)
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             log.warning("Aura timeout (attempt %d/%d, %0.fs)", attempt + 1, retries, timeout)
+            last_transport_error = e
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code if e.response is not None else 0
+            log.warning("Aura HTTP status error (attempt %d/%d): %s", attempt + 1, retries, e)
+            if status_code in {503, 504}:
+                last_transport_error = e
+        except httpx.RequestError as e:
+            log.warning("Aura transport error (attempt %d/%d): %s", attempt + 1, retries, e)
+            last_transport_error = e
         except _AURA_API_ERRORS as e:
             log.warning("Aura API error (attempt %d/%d): %s", attempt + 1, retries, e)
         if attempt < retries - 1:
             time.sleep(2 ** attempt)
+    if last_transport_error is not None:
+        raise AuraRuntimeUnavailable(
+            f"Aura API transport unavailable after {retries} attempts: {last_transport_error}"
+        ) from last_transport_error
     return ""
 
 
@@ -504,6 +524,8 @@ class LiveWorldProcessor:
         except ArtifactValidationError as e:
             log.error("Invalid Aura output for %s: %s", wid, e)
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
+        except AuraRuntimeUnavailable:
+            raise
         except _WORLD_PROCESSING_ERRORS as e:
             log.error("Error processing %s: %s\n%s", wid, e, traceback.format_exc())
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
@@ -1593,7 +1615,18 @@ def main():
     results = []
     for i, wid in enumerate(selected, 1):
         log.info("[%d/%d] %s", i, len(selected), wid)
-        result = processor.process_world(wid)
+        try:
+            result = processor.process_world(wid)
+        except AuraRuntimeUnavailable as exc:
+            log.error("Stopping battery run because Aura runtime became unavailable at %s: %s", wid, exc)
+            results.append({
+                "world": wid,
+                "status": "runtime_unavailable",
+                "type": specs["worlds"].get(wid, {}).get("type", "unknown"),
+                "error": str(exc),
+            })
+            generate_battery_artifacts(battery, results, processor.action_log)
+            sys.exit(2)
         results.append(result)
         status = "✅" if result["status"] == "ok" else "❌"
         log.info("  %s %s", status, wid)

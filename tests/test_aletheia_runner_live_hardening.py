@@ -99,3 +99,54 @@ def test_live_aletheia_public_specs_do_not_require_hidden_grader(tmp_path):
     assert spec["goal"] == [5, 5]
     assert spec["obstacles"] == [[2, 2], [2, 3], [3, 2]]
     assert spec["tickets"] == ["W0014_spatial_navigation-T1"]
+
+
+def test_live_aletheia_public_specs_ignore_hidden_grader_values(tmp_path):
+    from aura_bench.aletheia_runner_live import load_public_specs
+
+    root = tmp_path
+    world = root / "worlds/W0014_spatial_navigation"
+    (world / "docs").mkdir(parents=True)
+    (world / "tickets").mkdir()
+    (root / "tools").mkdir()
+    (root / "hidden_grader").mkdir()
+    (world / "docs/grid.md").write_text(
+        "Grid 6x6. Start [0, 0]. Goal [5, 5]. "
+        "Obstacles [[2, 2]]. Output data/derived/path.json."
+    )
+    (root / "hidden_grader/expected_specs.json").write_text(
+        json.dumps(
+            {
+                "worlds": {
+                    "W0014_spatial_navigation": {
+                        "size": 99,
+                        "goal": [98, 98],
+                        "obstacles": [[7, 7]],
+                    }
+                }
+            }
+        )
+    )
+
+    spec = load_public_specs(root)["worlds"]["W0014_spatial_navigation"]
+
+    assert spec["size"] == 6
+    assert spec["goal"] == [5, 5]
+    assert spec["obstacles"] == [[2, 2]]
+
+
+def test_live_aletheia_transport_failure_is_fail_closed(monkeypatch):
+    import httpx
+    from aura_bench.aletheia_runner_live import AuraRuntimeUnavailable, send_to_aura
+
+    def _raise_transport(*_args, **_kwargs):
+        raise httpx.ConnectError("server down")
+
+    monkeypatch.setattr(httpx.Client, "post", _raise_transport)
+
+    try:
+        send_to_aura("hello", "http://127.0.0.1:9/api/chat", timeout=0.1, retries=1)
+    except AuraRuntimeUnavailable as exc:
+        assert "transport unavailable" in str(exc)
+    else:
+        raise AssertionError("transport failure should stop the live battery runner")
