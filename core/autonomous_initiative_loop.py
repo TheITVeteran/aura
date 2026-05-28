@@ -307,13 +307,13 @@ class AutonomousInitiativeLoop:
                     queue.task_done()
             except asyncio.CancelledError:
                 break
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except _INITIATIVE_RECOVERABLE_ERRORS as e:
                 _record_initiative_degradation(
                     e,
-                    action="kept initiative event listener alive after transient queue failure",
+                    action="kept initiative event listener alive after event handling failure",
                     severity="warning",
                 )
-                logger.debug("Initiative event listener transient error: %s", e)
+                logger.debug("Initiative event listener recovered from event error: %s", e)
 
     async def _world_watcher_loop(self):
         """Periodically checks RSS feeds for real-time reactivity."""
@@ -858,9 +858,51 @@ class AutonomousInitiativeLoop:
             return {"allowed": False, "reason": f"affective_pressure:{affective_pressure:.2f}"}
         return {"allowed": True, "reason": "allowed"}
 
-    async def _on_proactive_initiation(self, data: dict):
+    @staticmethod
+    def _normalize_proactive_event(event: Any) -> dict[str, Any]:
+        """Extract payloads from supported event-bus envelope shapes."""
+        payload = event
+
+        if isinstance(payload, (tuple, list)):
+            if len(payload) >= 3 and isinstance(payload[2], dict):
+                payload = payload[2]
+            else:
+                payload = next(
+                    (item for item in reversed(payload) if isinstance(item, dict)),
+                    {},
+                )
+
+        for _ in range(3):
+            if isinstance(payload, dict):
+                if "content" in payload:
+                    return payload
+
+                for key in ("data", "payload", "event"):
+                    nested = payload.get(key)
+                    if isinstance(nested, dict):
+                        normalized = dict(nested)
+                        topic = payload.get("topic")
+                        if topic and "topic" not in normalized:
+                            normalized["topic"] = topic
+                        payload = normalized
+                        break
+                else:
+                    return payload
+            else:
+                for attr in ("data", "payload", "event"):
+                    nested = getattr(payload, attr, None)
+                    if isinstance(nested, dict):
+                        payload = nested
+                        break
+                else:
+                    return {}
+
+        return payload if isinstance(payload, dict) else {}
+
+    async def _on_proactive_initiation(self, data: Any):
         """Handle proactive triggers (BUG-032) — route to neural feed, not chat."""
-        content = data.get("content")
+        payload = self._normalize_proactive_event(data)
+        content = payload.get("content")
         if content:
             logger.info("🔭 Proactive initiation received: %s", content[:60])
             self._emit_feed(
@@ -868,6 +910,14 @@ class AutonomousInitiativeLoop:
                 content,
                 category="Initiative",
             )
+            return
+
+        _record_initiative_degradation(
+            ValueError("proactive initiation event missing content"),
+            action="ignored malformed proactive initiation event",
+            severity="warning",
+            extra={"event_type": type(data).__name__},
+        )
 
     async def _execute_email_adapter(
         self, payload: dict[str, Any], cap_engine: Any = None

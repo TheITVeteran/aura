@@ -99,3 +99,78 @@ async def test_stop_awaits_background_task_cancellation(monkeypatch):
     assert loop.running is False
     assert all(task.done() for task in loop._core_tasks())
     assert set(marker) == {"world", "knowledge", "self_development", "social"}
+
+
+@pytest.mark.asyncio
+async def test_proactive_initiation_accepts_event_bus_priority_envelope(monkeypatch):
+    emitted: list[tuple[str, str, str]] = []
+    loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
+
+    monkeypatch.setattr(
+        AutonomousInitiativeLoop,
+        "_emit_feed",
+        staticmethod(
+            lambda title, content, *, category: emitted.append((title, content, category))
+        ),
+    )
+
+    await loop._on_proactive_initiation(
+        (
+            30,
+            7,
+            {
+                "topic": "aura.proactive.initiation",
+                "data": {
+                    "content": "Investigate sustained CPU pressure before starting optional work.",
+                    "source": "jarvis_anticipation",
+                },
+            },
+        )
+    )
+
+    assert emitted == [
+        (
+            "Proactive Initiation",
+            "Investigate sustained CPU pressure before starting optional work.",
+            "Initiative",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_event_listener_survives_malformed_envelope_then_processes_next(monkeypatch):
+    emitted: list[str] = []
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
+    loop.running = True
+
+    monkeypatch.setattr(
+        AutonomousInitiativeLoop,
+        "_emit_feed",
+        staticmethod(lambda _title, content, *, category: emitted.append(content)),
+    )
+    monkeypatch.setattr(
+        "core.autonomous_initiative_loop._record_initiative_degradation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    listener = asyncio.create_task(loop._event_listener_loop(queue))
+    await queue.put((30, 1, {"topic": "aura.proactive.initiation", "data": "bad"}))
+    await queue.put(
+        (
+            30,
+            2,
+            {
+                "topic": "aura.proactive.initiation",
+                "data": {"content": "Valid follow-up event still arrives."},
+            },
+        )
+    )
+
+    await asyncio.wait_for(queue.join(), timeout=1.0)
+    assert emitted == ["Valid follow-up event still arrives."]
+    assert not listener.done()
+
+    loop.running = False
+    listener.cancel()
+    await asyncio.wait_for(listener, timeout=1.0)
