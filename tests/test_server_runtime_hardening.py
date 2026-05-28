@@ -1321,6 +1321,116 @@ async def test_state_repository_owner_commit_coalesces_stale_queue_entries(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_state_repository_proxy_commit_defers_and_replays_after_transport_timeout(monkeypatch, tmp_path):
+    repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
+    repo._current = AuraState()
+
+    class FlakyTransport:
+        def __init__(self):
+            self.fail = True
+            self.calls = []
+
+        async def request(self, target, action, payload, timeout=None):
+            self.calls.append(
+                {
+                    "target": target,
+                    "action": action,
+                    "trace_id": payload["trace_id"],
+                    "cause": payload["cause"],
+                    "timeout": timeout,
+                }
+            )
+            if self.fail:
+                raise TimeoutError("commit bus saturated")
+            return {"ok": True}
+
+    transport = FlakyTransport()
+    monkeypatch.setattr(repo, "_resolve_transport", lambda: transport)
+
+    first_state = repo._current.derive("foreground_commit", origin="api")
+    await repo.commit(first_state, "foreground_commit", trace_id="trace-1")
+
+    assert repo.get_runtime_status()["pending_proxy_commit"] is True
+    assert repo.get_runtime_status()["pending_proxy_commit_count"] == 1
+    assert transport.calls[-1]["trace_id"] == "trace-1"
+    db = await repo._ensure_db()
+    async with db.execute(
+        "SELECT payload_json, attempts FROM proxy_commit_outbox WHERE slot = ?",
+        (repo.PROXY_OUTBOX_SLOT,),
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert json.loads(row[0])["trace_id"] == "trace-1"
+    assert row[1] == 1
+
+    transport.fail = False
+    second_state = first_state.derive("next_foreground_commit", origin="api")
+    await repo.commit(second_state, "next_foreground_commit", trace_id="trace-2")
+
+    assert repo.get_runtime_status()["pending_proxy_commit"] is False
+    assert [call["trace_id"] for call in transport.calls[-2:]] == ["trace-1", "trace-2"]
+    db = await repo._ensure_db()
+    async with db.execute("SELECT COUNT(*) FROM proxy_commit_outbox") as cursor:
+        row = await cursor.fetchone()
+    assert row[0] == 0
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_state_repository_proxy_commit_outbox_survives_repository_restart(tmp_path):
+    db_path = str(tmp_path / "aura_state.db")
+    first_repo = StateRepository(db_path=db_path, is_vault_owner=False)
+    await first_repo._defer_proxy_commit(
+        {
+            "state": {"version": 7},
+            "cause": "foreground_commit",
+            "trace_id": "trace-durable",
+        },
+        TimeoutError("commit bus saturated"),
+    )
+    await first_repo.close()
+
+    restarted_repo = StateRepository(db_path=db_path, is_vault_owner=False)
+    await restarted_repo._load_pending_proxy_commit()
+
+    assert restarted_repo.get_runtime_status()["pending_proxy_commit"] is True
+    assert restarted_repo._pending_proxy_commit_payload["trace_id"] == "trace-durable"
+    assert restarted_repo.get_runtime_status()["pending_proxy_commit_count"] == 1
+    await restarted_repo.close()
+
+
+@pytest.mark.asyncio
+async def test_state_repository_repair_runtime_flushes_pending_proxy_commit(monkeypatch, tmp_path):
+    repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
+    repo._current = AuraState()
+    repo._pending_proxy_commit_payload = {
+        "state": {"version": 1},
+        "cause": "foreground_commit",
+        "trace_id": "trace-pending",
+    }
+
+    class HealthyTransport:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, target, action, payload, timeout=None):
+            self.calls.append((target, action, payload["trace_id"], timeout))
+            return {"ok": True}
+
+    transport = HealthyTransport()
+    monkeypatch.setattr(repo, "_resolve_transport", lambda: transport)
+
+    result = await repo.repair_runtime()
+
+    assert "flushed_pending_proxy_commit" in result["actions"]
+    assert repo.get_runtime_status()["pending_proxy_commit"] is False
+    assert [(target, action, trace_id) for target, action, trace_id, _timeout in transport.calls] == [
+        ("state_vault", "commit", "trace-pending")
+    ]
+    await repo.close()
+
+
+@pytest.mark.asyncio
 async def test_state_repository_process_commit_writes_inline_without_spawning_background_tasks(
     service_container, monkeypatch, tmp_path
 ):

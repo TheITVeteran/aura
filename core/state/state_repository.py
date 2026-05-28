@@ -162,6 +162,7 @@ class StateRepository:
     TRANSPORT_LONG_TERM_MEMORY_LIMIT = 12
     TRANSPORT_GOAL_LIMIT = 12
     TRANSPORT_PERCEPT_LIMIT = 48
+    PROXY_OUTBOX_SLOT = "latest"
 
     def __init__(self, db_path: str = "data/aura_state.db", is_vault_owner: bool = False):
         self.db_path = db_path
@@ -185,6 +186,9 @@ class StateRepository:
         self._repair_count = 0
         self._last_shm_write_mode = "idle"
         self._last_shm_overflow_bytes = 0
+        self._pending_proxy_commit_payload: dict[str, Any] | None = None
+        self._pending_proxy_commit_count = 0
+        self._last_proxy_commit_error = ""
 
     @property
     def lock(self) -> Any:
@@ -317,6 +321,7 @@ class StateRepository:
                 )
         else:
             self._transport = self._resolve_transport()
+            await self._load_pending_proxy_commit()
             # Proxy Mode: Attach to SHM for reading
             self._shm = SharedMemoryTransport(
                 name="aura_state_shm", size=get_state_shm_size_bytes()
@@ -434,48 +439,48 @@ class StateRepository:
                 state_dict = json.loads(serialized_state)
             else:
                 state_dict = await asyncio.to_thread(self._circular_safe_asdict, new_state)
-            last_error: Exception | None = None
-            for attempt in range(2):
-                try:
-                    await transport.request(
-                        "state_vault",
-                        "commit",
-                        {
-                            "state": state_dict,
-                            "cause": cause,
-                            "trace_id": trace_id,
-                        },
-                        timeout=_state_proxy_commit_timeout_seconds(),
-                    )
+            payload = {
+                "state": state_dict,
+                "cause": cause,
+                "trace_id": trace_id,
+            }
+            pending_payload = self._pending_proxy_commit_payload
+            if pending_payload is not None:
+                pending_ok, transport, pending_error = await self._send_proxy_commit_request(
+                    transport,
+                    pending_payload,
+                )
+                if pending_ok:
+                    self._pending_proxy_commit_payload = None
+                    await self._clear_pending_proxy_commit()
+                    logger.info("✅ [STATE] Replayed deferred proxy commit before current commit.")
+                else:
+                    await self._defer_proxy_commit(payload, pending_error)
                     return new_state
-                except (BrokenPipeError, ConnectionError) as e:
-                    # Vault pipe died — this is recoverable on next tick.
-                    # Don't re-raise; just log and let the proxy continue.
-                    _record_state_degradation(e)
-                    logger.warning(
-                        "⚠️ [STATE] Vault pipe broken (attempt %d/2): %s — state not persisted this tick.",
-                        attempt + 1,
-                        type(e).__name__,
-                    )
-                    self._transport = None
-                    transport = self._resolve_transport()
-                    if attempt == 0:
-                        await asyncio.sleep(0.3)
-                        continue
-                    # After both attempts fail, just log — don't crash the kernel
-                    return new_state
-                except _STATE_BOUNDARY_ERRORS as e:
-                    _record_state_degradation(e)
-                    last_error = e
-                    logger.warning(
-                        "❌ [STATE] Proxy Commit Request FAILED (attempt %d/2): %s", attempt + 1, e
-                    )
-                    self._transport = None
-                    transport = self._resolve_transport()
-                    if attempt == 0:
-                        await asyncio.sleep(0.2)
-                        continue
+
+            ok, transport, error = await self._send_proxy_commit_request(transport, payload)
+            if ok:
+                return new_state
+            await self._defer_proxy_commit(payload, error)
+            return new_state
         else:
+            if os.environ.get("AURA_STRICT_RUNTIME") == "1":
+                if self._should_use_bounded_db_snapshot(new_state, cause):
+                    serialized_state = await asyncio.to_thread(
+                        self._serialize_transport_snapshot, new_state
+                    )
+                    state_dict = json.loads(serialized_state)
+                else:
+                    state_dict = await asyncio.to_thread(self._circular_safe_asdict, new_state)
+                await self._defer_proxy_commit(
+                    {
+                        "state": state_dict,
+                        "cause": cause,
+                        "trace_id": trace_id,
+                    },
+                    RuntimeError("state_vault transport unavailable"),
+                )
+                return new_state
             logger.warning(
                 "⚠️ [STATE] ActorBus/Transport missing in Proxy Mode (Standalone/Test runtime). Falling back to direct database persistence."
             )
@@ -532,6 +537,178 @@ class StateRepository:
                 logger.error("🛑 [STATE] Standalone fallback direct database commit failed: %s", db_err)
 
         return new_state
+
+    async def _send_proxy_commit_request(
+        self,
+        transport: Any,
+        payload: dict[str, Any],
+    ) -> tuple[bool, Any, BaseException | None]:
+        """Send one proxy commit to the vault with bounded retries."""
+
+        last_error: BaseException | None = None
+        for attempt in range(2):
+            if transport is None:
+                transport = self._resolve_transport()
+            if transport is None:
+                last_error = RuntimeError("state_vault transport unavailable")
+                _record_state_degradation(
+                    last_error,
+                    action="state proxy commit deferred because vault transport was unavailable",
+                )
+                if attempt == 0:
+                    await asyncio.sleep(0.2)
+                    continue
+                return False, None, last_error
+            try:
+                await transport.request(
+                    "state_vault",
+                    "commit",
+                    payload,
+                    timeout=_state_proxy_commit_timeout_seconds(),
+                )
+                return True, transport, None
+            except (BrokenPipeError, ConnectionError) as exc:
+                _record_state_degradation(exc)
+                last_error = exc
+                logger.warning(
+                    "⚠️ [STATE] Vault pipe broken (attempt %d/2): %s — commit deferred for replay.",
+                    attempt + 1,
+                    type(exc).__name__,
+                )
+                self._transport = None
+                transport = self._resolve_transport()
+                if attempt == 0:
+                    await asyncio.sleep(0.3)
+                    continue
+            except _STATE_BOUNDARY_ERRORS as exc:
+                _record_state_degradation(exc)
+                last_error = exc
+                logger.warning(
+                    "❌ [STATE] Proxy Commit Request FAILED (attempt %d/2): %s", attempt + 1, exc
+                )
+                self._transport = None
+                transport = self._resolve_transport()
+                if attempt == 0:
+                    await asyncio.sleep(0.2)
+                    continue
+        return False, transport, last_error
+
+    async def _ensure_proxy_outbox_schema(self, db: aiosqlite.Connection) -> None:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS proxy_commit_outbox (
+                slot TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                error TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL
+            )
+        """)
+        await db.commit()
+
+    async def _load_pending_proxy_commit(self) -> None:
+        """Load the deferred proxy commit outbox after a process restart."""
+
+        try:
+            db = await self._ensure_db()
+            await self._ensure_proxy_outbox_schema(db)
+            async with db.execute(
+                "SELECT payload_json, error, attempts FROM proxy_commit_outbox WHERE slot = ?",
+                (self.PROXY_OUTBOX_SLOT,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                return
+            payload = json.loads(row[0])
+            if not isinstance(payload, dict):
+                raise ValueError("proxy_commit_outbox payload was not a dictionary")
+            self._pending_proxy_commit_payload = payload
+            self._last_proxy_commit_error = str(row[1] or "loaded_from_outbox")
+            self._pending_proxy_commit_count = max(
+                self._pending_proxy_commit_count,
+                int(row[2] or 1),
+            )
+            logger.warning(
+                "⚠️ [STATE] Loaded deferred proxy commit from durable outbox (attempts=%d, cause=%s).",
+                self._pending_proxy_commit_count,
+                payload.get("cause"),
+            )
+        except _STATE_BOUNDARY_ERRORS as exc:
+            _record_state_degradation(
+                exc,
+                action="deferred proxy commit outbox load failed",
+            )
+            logger.warning("⚠️ [STATE] Deferred proxy commit outbox load failed: %s", exc)
+
+    async def _persist_pending_proxy_commit(self, payload: dict[str, Any]) -> None:
+        try:
+            db = await self._ensure_db()
+            await self._ensure_proxy_outbox_schema(db)
+            payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+            for attempt in range(3):
+                try:
+                    async with db.execute("BEGIN IMMEDIATE"):
+                        await db.execute(
+                            """INSERT OR REPLACE INTO proxy_commit_outbox
+                               (slot, payload_json, error, attempts, updated_at)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            (
+                                self.PROXY_OUTBOX_SLOT,
+                                payload_json,
+                                self._last_proxy_commit_error,
+                                int(self._pending_proxy_commit_count),
+                                time.time(),
+                            ),
+                        )
+                        await db.commit()
+                    return
+                except aiosqlite.OperationalError as exc:
+                    if "database is locked" in str(exc).lower() and attempt < 2:
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
+                    raise
+        except _STATE_BOUNDARY_ERRORS as exc:
+            _record_state_degradation(
+                exc,
+                action="deferred proxy commit outbox persist failed",
+            )
+            logger.error("🛑 [STATE] Deferred proxy commit outbox persist failed: %s", exc)
+
+    async def _clear_pending_proxy_commit(self) -> None:
+        try:
+            db = await self._ensure_db()
+            await self._ensure_proxy_outbox_schema(db)
+            await db.execute(
+                "DELETE FROM proxy_commit_outbox WHERE slot = ?",
+                (self.PROXY_OUTBOX_SLOT,),
+            )
+            await db.commit()
+            self._last_proxy_commit_error = ""
+        except _STATE_BOUNDARY_ERRORS as exc:
+            _record_state_degradation(
+                exc,
+                action="deferred proxy commit outbox clear failed",
+            )
+            logger.warning("⚠️ [STATE] Deferred proxy commit outbox clear failed: %s", exc)
+
+    async def _defer_proxy_commit(
+        self,
+        payload: dict[str, Any],
+        error: BaseException | None,
+    ) -> None:
+        """Keep the latest failed proxy commit so a later healthy bus can replay it."""
+
+        self._pending_proxy_commit_payload = payload
+        self._pending_proxy_commit_count += 1
+        self._last_proxy_commit_error = (
+            f"{type(error).__name__}: {error}" if error is not None else "unknown"
+        )
+        await self._persist_pending_proxy_commit(payload)
+        logger.warning(
+            "⚠️ [STATE] Deferred proxy commit for replay (pending_count=%d, cause=%s, error=%s).",
+            self._pending_proxy_commit_count,
+            payload.get("cause"),
+            self._last_proxy_commit_error,
+        )
 
     async def _enqueue_owner_commit(self, payload: dict[str, Any]) -> None:
         """
@@ -908,6 +1085,9 @@ class StateRepository:
             "repair_count": int(self._repair_count),
             "last_shm_write_mode": str(self._last_shm_write_mode),
             "last_shm_overflow_bytes": int(self._last_shm_overflow_bytes),
+            "pending_proxy_commit": self._pending_proxy_commit_payload is not None,
+            "pending_proxy_commit_count": int(self._pending_proxy_commit_count),
+            "last_proxy_commit_error": str(self._last_proxy_commit_error),
             "shm_attached": shm_attached,
             "state_available": state_available,
             "vault_transport_available": vault_transport_available,
@@ -956,6 +1136,21 @@ class StateRepository:
             if self._current is not None:
                 self._repair_count += 1
                 actions.append("rehydrated_proxy")
+
+        if not self.is_vault_owner and self._pending_proxy_commit_payload is not None:
+            transport = self._resolve_transport()
+            if transport is not None:
+                ok, _transport, error = await self._send_proxy_commit_request(
+                    transport,
+                    self._pending_proxy_commit_payload,
+                )
+                if ok:
+                    self._pending_proxy_commit_payload = None
+                    await self._clear_pending_proxy_commit()
+                    self._repair_count += 1
+                    actions.append("flushed_pending_proxy_commit")
+                elif error is not None:
+                    self._last_proxy_commit_error = f"{type(error).__name__}: {error}"
 
         queue_depth = self._mutation_queue.qsize()
         if queue_depth >= max(1, int(self._mutation_queue_maxsize * 0.75)):
