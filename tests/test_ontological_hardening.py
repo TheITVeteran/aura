@@ -49,6 +49,25 @@ def test_response_contract_flags_identity_memory_erasure_request():
     assert "identity_defense" in contract.reason
 
 
+def test_benchmark_routing_never_requests_deep_solver_handoff():
+    state = AuraState.default()
+    state.cognition.current_origin = "benchmark"
+    phase = CognitiveRoutingPhase(SimpleNamespace(organs={}, orchestrator=None))
+
+    phase._stamp_llm_route(
+        state,
+        objective=(
+            "Repair this complex multi-file traceback, patch the package, "
+            "run tests, and emit only the final artifact."
+        ),
+        intent_type="TASK",
+        is_user_facing=True,
+    )
+
+    assert state.response_modifiers["model_tier"] == "primary"
+    assert state.response_modifiers["deep_handoff"] is False
+
+
 @pytest.mark.asyncio
 async def test_cognitive_routing_routes_self_preservation_threat_to_deliberate():
     state = AuraState.default()

@@ -1375,6 +1375,11 @@ class HealthAwareLLMRouter:
             or purpose.endswith("_baseline")
             or "_baseline" in purpose
         )
+        live_benchmark_request = origin == "benchmark" and not (
+            purpose == "baseline"
+            or purpose.endswith("_baseline")
+            or "_baseline" in purpose
+        )
         if benchmark_request:
             kwargs["benchmark_request"] = True
         benchmark_isolation_contract = bool(
@@ -1530,6 +1535,7 @@ class HealthAwareLLMRouter:
             )
             strict_primary_proof_lane = bool(
                 kwargs.get("proof_primary_lane_required", False)
+                or live_benchmark_request
                 or (
                     proof_run_enabled
                     and proof_model_tier() == "primary"
@@ -1545,7 +1551,9 @@ class HealthAwareLLMRouter:
         if strict_primary_proof_lane:
             kwargs["proof_primary_lane_required"] = True
             kwargs["proof_model_tier"] = "primary"
-            kwargs["foreground_request"] = False if benchmark_request else True
+            kwargs["foreground_request"] = (
+                True if live_benchmark_request else (False if benchmark_request else True)
+            )
             kwargs["is_background"] = False
             is_bg = False
             prefer_tier = "primary"

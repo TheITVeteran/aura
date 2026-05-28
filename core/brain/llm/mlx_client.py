@@ -2644,23 +2644,35 @@ class MLXLocalClient:
         # injection). Caller-supplied kwargs win; the bridge fills any
         # field the caller didn't pin. This is the structural alternative
         # to "tell the LLM how to feel" — sampling itself changes.
-        try:
-            from core.brain.latent_bridge import compute_inference_params
-
-            _bridge = compute_inference_params(
-                base_max_tokens=int(kwargs.get("max_tokens", self.max_tokens) or self.max_tokens),
-                base_temperature=float(
-                    kwargs.get("temperature", kwargs.get("temp", self.temp)) or self.temp
-                ),
-                foreground=bool(foreground_request),
-            )
-        except (ImportError, AttributeError, RuntimeError) as _bridge_exc:
+        pinned_generation_contract = bool(
+            kwargs.get("strict_answer_contract", False)
+            or kwargs.get("strict_value_contract", False)
+            or kwargs.get("proof_evaluation_contract", False)
+            or kwargs.get("benchmark_request", False)
+            or kwargs.get("schema") is not None
+        )
+        if pinned_generation_contract:
             _bridge = None
-            _record_mlx_degradation(
-                _bridge_exc,
-                action="continued generation with caller/default sampling parameters",
-            )
-            logger.debug("latent_bridge unavailable: %s", _bridge_exc)
+        else:
+            try:
+                from core.brain.latent_bridge import compute_inference_params
+
+                _bridge = compute_inference_params(
+                    base_max_tokens=int(
+                        kwargs.get("max_tokens", self.max_tokens) or self.max_tokens
+                    ),
+                    base_temperature=float(
+                        kwargs.get("temperature", kwargs.get("temp", self.temp)) or self.temp
+                    ),
+                    foreground=bool(foreground_request),
+                )
+            except (ImportError, AttributeError, RuntimeError) as _bridge_exc:
+                _bridge = None
+                _record_mlx_degradation(
+                    _bridge_exc,
+                    action="continued generation with caller/default sampling parameters",
+                )
+                logger.debug("latent_bridge unavailable: %s", _bridge_exc)
 
         def _bridge_get(field: str, fallback: Any) -> Any:
             if _bridge is None:
@@ -2701,6 +2713,7 @@ class MLXLocalClient:
             "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),
             "strict_value_contract": bool(kwargs.get("strict_value_contract", False)),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
+            "benchmark_request": bool(kwargs.get("benchmark_request", False)),
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
         }

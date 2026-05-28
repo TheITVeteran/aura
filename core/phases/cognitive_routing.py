@@ -432,6 +432,19 @@ class CognitiveRoutingPhase(BasePhase):
 
             return new_state
 
+        if str(routing_origin or "").strip().lower() == "benchmark":
+            analysis = analyze_turn(input_text)
+            logger.info("🧭 Routing: benchmark/proof artifact turn kept out of TASK/SKILL dispatch.")
+            new_state.cognition.current_mode = CognitiveMode.DELIBERATE
+            new_state.cognition.current_objective = input_text
+            new_state.cognition.current_origin = routing_origin
+            new_state.response_modifiers["intent_type"] = "CHAT"
+            new_state.response_modifiers["semantic_intent"] = analysis.semantic_mode
+            new_state.response_modifiers["model_tier"] = "primary"
+            new_state.response_modifiers["deep_handoff"] = False
+            new_state.response_modifiers.pop("matched_skills", None)
+            return new_state
+
         if routing_origin in user_origins and _looks_like_simple_dialogue_request(input_text):
             logger.info("🧭 Routing: simple dialogue request kept on CHAT lane.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE

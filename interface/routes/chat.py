@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.container import ServiceContainer
+from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -74,6 +75,55 @@ _CHAT_RECOVERABLE_ERRORS = (
     HTTPException,
     psutil.Error,
 )
+
+_BENCHMARK_CHAT_FALLBACK_MARKERS = (
+    "i'm still with",
+    "i am still with",
+    "what's the issue",
+    "i don't have grounded results",
+    "i need to search it first",
+    "i should not hand you a broken fragment",
+    "i shouldn't hand you a broken fragment",
+    "benchmark request produced no canonical kernel response",
+)
+
+
+def _benchmark_prompt_requests_fenced_artifact(prompt: str, fence: str) -> bool:
+    prompt_l = str(prompt or "").lower()
+    fence_l = fence.lower()
+    index = prompt_l.rfind(fence_l)
+    if index < 0:
+        return False
+    window = prompt_l[max(0, index - 220) : index + 220]
+    return any(
+        marker in window
+        for marker in (
+            "return",
+            "respond",
+            "response in this format",
+            "format:",
+            "write the code",
+            "complete fixed",
+        )
+    )
+
+
+def _benchmark_reply_contract_unmet(prompt: str, reply: str) -> str | None:
+    """Reject chat recovery prose before it can become a benchmark artifact."""
+
+    text = str(reply or "").strip()
+    lowered_reply = text.lower()
+    if not text:
+        return "empty"
+    if any(marker in lowered_reply for marker in _BENCHMARK_CHAT_FALLBACK_MARKERS):
+        return "chat_recovery_fallback"
+    if _benchmark_prompt_requests_fenced_artifact(prompt, "```python") and not re.search(r"```python\s*\n.+?\n```", text, re.DOTALL):
+        return "missing_python_code_block"
+    if _benchmark_prompt_requests_fenced_artifact(prompt, "```json") and not response_satisfies_artifact_contract(prompt, text):
+        return "missing_json_code_block"
+    if _benchmark_prompt_requests_fenced_artifact(prompt, "```csv") and not response_satisfies_artifact_contract(prompt, text):
+        return "missing_csv_code_block"
+    return None
 
 
 # ── Session & Conversation Log ────────────────────────────────
@@ -5692,6 +5742,49 @@ async def api_chat(
                     {
                         "response": empty_reply,
                         "status": "benchmark_no_response",
+                        "conversation_lane": _collect_conversation_lane_status(),
+                        "response_confidence": "failed",
+                    },
+                    status_code=502,
+                )
+            contract_reason = _benchmark_reply_contract_unmet(
+                _semantic_user_message,
+                final_benchmark_text,
+            )
+            if contract_reason:
+                with open("/tmp/contract_debug.log", "a") as f:
+                    f.write(f"=== CONTRACT UNMET: {contract_reason} ===\n")
+                    f.write(f"Prompt: {_semantic_user_message}\n")
+                    f.write(f"Response: {final_benchmark_text}\n")
+                    f.write("="*40 + "\n")
+                failed_reply = (
+                    "Benchmark request failed closed because the canonical kernel response "
+                    f"did not satisfy the requested artifact contract: {contract_reason}."
+                )
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        failed_reply,
+                    )
+                    pending_exchange_id = None
+                else:
+                    await _log_exchange(_semantic_user_message, failed_reply)
+                await _emit_chat_output_receipt(
+                    failed_reply,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "failed",
+                        "path": "kernel_benchmark",
+                        "status": "benchmark_artifact_contract_unmet",
+                        "reason": contract_reason,
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": failed_reply,
+                        "status": "benchmark_artifact_contract_unmet",
+                        "reason": contract_reason,
                         "conversation_lane": _collect_conversation_lane_status(),
                         "response_confidence": "failed",
                     },

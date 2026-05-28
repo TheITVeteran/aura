@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +127,34 @@ async def test_cognitive_routing_upgrades_multi_step_skill_fast_path_to_task():
     assert new_state.cognition.current_mode == CognitiveMode.DELIBERATE
 
 
+def test_legacy_cognitive_routing_keeps_benchmark_artifacts_out_of_skill_fast_path():
+    detect_calls = []
+    capability_engine = SimpleNamespace(
+        detect_intent=lambda text: detect_calls.append(text) or ["run_code"]
+    )
+    container = SimpleNamespace(
+        get=lambda name, default=None: capability_engine if name == "capability_engine" else default
+    )
+    phase = CognitiveRoutingPhase(container)
+
+    state = AuraState.default()
+    state.cognition.current_objective = (
+        "You are reconciling inventory data from multiple sources. "
+        "Return the reconciled data as a CSV with columns: sku,count. "
+        "Then list the bad/quarantined entries by name."
+    )
+    state.cognition.current_origin = "benchmark"
+
+    new_state = asyncio.run(phase.execute(state))
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert new_state.response_modifiers["model_tier"] == "primary"
+    assert new_state.response_modifiers["deep_handoff"] is False
+    assert "matched_skills" not in new_state.response_modifiers
+    assert new_state.cognition.current_mode == CognitiveMode.DELIBERATE
+    assert detect_calls == []
+
+
 @pytest.mark.asyncio
 async def test_cognitive_routing_learning_bundle_skips_incidental_skill_cache():
     detect_calls = []
@@ -198,6 +227,25 @@ async def test_cognitive_routing_keeps_execution_report_off_skill_and_task_fast_
     assert "matched_skills" not in new_state.response_modifiers
     assert new_state.response_modifiers["deep_handoff"] is False
     assert new_state.cognition.current_mode == CognitiveMode.REACTIVE
+
+
+def test_godmode_keeps_benchmark_artifacts_out_of_task_engine(monkeypatch):
+    phase = GodModeToolPhase(kernel=SimpleNamespace())
+    state = AuraState.default()
+    state.cognition.current_origin = "benchmark"
+    state.cognition.current_objective = "Return the reconciled data as a CSV with columns: sku,count."
+    state.response_modifiers["intent_type"] = "TASK"
+    state.response_modifiers["matched_skills"] = ["run_code"]
+
+    async def _should_not_dispatch(*_args, **_kwargs):
+        raise AssertionError("benchmark artifact turn entered TaskEngine dispatch")
+
+    monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
+
+    new_state = asyncio.run(phase.execute(state))
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert "matched_skills" not in new_state.response_modifiers
 
 
 @pytest.mark.asyncio

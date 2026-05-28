@@ -377,15 +377,16 @@ class CognitiveRoutingPhase(Phase):
         routing_origin = self._normalize_origin(getattr(state.cognition, "current_origin", ""))
         if routing_origin == "benchmark":
             model_tier = "primary"
+            deep_handoff = False
         else:
             model_tier = self._resolve_model_tier(is_user_facing)
-        deep_handoff = self._should_allow_deep_handoff(
-            objective,
-            is_user_facing=is_user_facing,
-            intent_type=intent_type,
-            analysis=current_analysis,
-            route_meta=metadata,
-        )
+            deep_handoff = self._should_allow_deep_handoff(
+                objective,
+                is_user_facing=is_user_facing,
+                intent_type=intent_type,
+                analysis=current_analysis,
+                route_meta=metadata,
+            )
         state.response_modifiers["intent_type"] = intent_type
         state.response_modifiers["model_tier"] = model_tier
         state.response_modifiers["deep_handoff"] = deep_handoff
@@ -465,6 +466,23 @@ class CognitiveRoutingPhase(Phase):
             intent_type=analysis.intent_type,
         )
         new_state.response_modifiers["semantic_intent"] = analysis.semantic_mode
+
+        if is_benchmark:
+            logger.info(
+                "🧭 Routing: benchmark/proof artifact turn kept out of TASK/SKILL dispatch."
+            )
+            new_state.cognition.current_mode = CognitiveMode.DELIBERATE
+            new_state.response_modifiers.pop("matched_skills", None)
+            self._stamp_llm_route(
+                new_state,
+                objective=objective,
+                intent_type="CHAT",
+                is_user_facing=True,
+                analysis=analysis,
+                route_meta=route_meta,
+            )
+            return new_state
+
         affect_signature = (
             new_state.affect.get_cognitive_signature()
             if hasattr(new_state.affect, "get_cognitive_signature")

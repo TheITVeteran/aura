@@ -3353,6 +3353,11 @@ class InferenceGate:
             or purpose.endswith("_baseline")
             or "_baseline" in purpose
         )
+        live_benchmark_request = origin == "benchmark" and not (
+            purpose == "baseline"
+            or purpose.endswith("_baseline")
+            or "_baseline" in purpose
+        )
         if benchmark_request:
             context["benchmark_request"] = True
 
@@ -3443,6 +3448,7 @@ class InferenceGate:
             )
             strict_primary_proof_lane = bool(
                 context.get("proof_primary_lane_required", False)
+                or live_benchmark_request
                 or (
                     proof_run_enabled
                     and proof_model_tier() == "primary"
@@ -3459,6 +3465,8 @@ class InferenceGate:
         if strict_primary_proof_lane:
             context["proof_primary_lane_required"] = True
             context["proof_model_tier"] = "primary"
+            if live_benchmark_request:
+                context["foreground_request"] = True
             requested_tier = "primary"
             deep_handoff = False
             is_background = False
@@ -3871,7 +3879,13 @@ class InferenceGate:
             from core.consciousness.resource_stakes import get_resource_stakes
 
             token_mult = get_resource_stakes().get_token_budget_multiplier()
-            if token_mult < 0.95 and not strict_answer_contract and not health_probe:
+            if (
+                token_mult < 0.95
+                and not strict_answer_contract
+                and not health_probe
+                and not isolated_generation_contract
+                and not benchmark_request
+            ):
                 max_tokens = max(384, int(max_tokens * token_mult))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             record_degradation(
@@ -3926,7 +3940,13 @@ class InferenceGate:
             # When Φ is high (highly integrated thought), we allow maximum token budget.
             # When Φ is low (< 0.8), the budget is dynamically scaled down (min 20%).
             # This forces the model to be extremely concise and structured when integration is compromised.
-            if phi_val < 0.8 and not strict_answer_contract and not health_probe:
+            if (
+                phi_val < 0.8
+                and not strict_answer_contract
+                and not health_probe
+                and not isolated_generation_contract
+                and not benchmark_request
+            ):
                 phi_scale = 0.2 + 0.8 * (phi_val / 0.8)
                 max_tokens = max(256, int(max_tokens * phi_scale))
                 logger.info("🧠 [PHI CONTROL] Integration Φ=%.3f -> scaling token budget by %.2f (max_tokens=%d)", 

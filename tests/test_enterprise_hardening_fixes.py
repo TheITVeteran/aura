@@ -1228,8 +1228,11 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert '"strict_value_contract",' in gate_source
     assert '"disable_prompt_cache",' in gate_source
     assert '"clear_prompt_cache",' in gate_source
-    assert 'if token_mult < 0.95 and not strict_answer_contract and not health_probe:' in gate_source
-    assert 'if phi_val < 0.8 and not strict_answer_contract and not health_probe:' in gate_source
+    assert "token_mult < 0.95" in gate_source
+    assert "and not strict_answer_contract" in gate_source
+    assert "and not isolated_generation_contract" in gate_source
+    assert "and not benchmark_request" in gate_source
+    assert "phi_val < 0.8" in gate_source
     assert 'max_tokens = max(1, min(max_tokens, strict_max_token_cap))' in gate_source
     assert '"Do not copy instructions, role labels, or explanatory text."' in gate_source
     assert 'fallback_client = None' in gate_source
@@ -1404,13 +1407,18 @@ def test_primary_benchmark_lane_does_not_become_user_facing_chat():
     mlx_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(
         encoding="utf-8"
     )
+    response_source = (
+        root / "core" / "phases" / "response_generation_unitary.py"
+    ).read_text(encoding="utf-8")
 
     assert "benchmark_request = bool(kwargs.get(\"benchmark_request\", False))" in router_source
+    assert "live_benchmark_request = origin == \"benchmark\"" in router_source
     assert "benchmark_isolation_contract = bool(" in router_source
     assert "not benchmark_request" in router_source
-    assert 'kwargs["foreground_request"] = False if benchmark_request else True' in router_source
+    assert "True if live_benchmark_request else (False if benchmark_request else True)" in router_source
     assert '"benchmark_request",' in router_source
     assert "benchmark_request = bool(context.get(\"benchmark_request\", False))" in gate_source
+    assert "live_benchmark_request = origin == \"benchmark\"" in gate_source
     assert "or benchmark_request" in gate_source
     assert "strict_proof_answer_request = (" in gate_source
     assert "not benchmark_request and is_strict_proof_answer_prompt" in gate_source
@@ -1425,6 +1433,12 @@ def test_primary_benchmark_lane_does_not_become_user_facing_chat():
     assert '"proof_primary_lane_required",' in gate_source
     assert '"benchmark_no_text"' in router_source
     assert "benchmark_invalid_response" in router_source
+    assert 'contract.requires_search and routing_origin != "benchmark"' in response_source
+    assert '"proof_primary_lane_required": True' in response_source
+    assert '"allow_deep_handoff": False' in response_source
+    assert "proof_or_benchmark_model_no_valid_text" in response_source
+    assert "and not benchmark_turn" in response_source
+    assert "if self._guard and not benchmark_turn" in response_source
     assert "benchmark_request = bool(kwargs.get(\"benchmark_request\", False))" in mlx_source
     assert "request_is_background = False" in mlx_source
     assert "and not benchmark_request" in mlx_source

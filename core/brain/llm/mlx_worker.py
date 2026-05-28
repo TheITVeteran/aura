@@ -110,6 +110,20 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
             
     return text
 
+
+_ARTIFACT_REQUEST_RE = re.compile(
+    r"```(?:python|json|csv|yaml|toml|sql|html|css|javascript|typescript)?"
+    r"|code block|return only(?: the)? complete|return the fixed config"
+    r"|return the code|return the .*csv|return .*json|rulescript\.py"
+    r"|service_config|reconciled data as a csv|select_values\.py",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _proof_prompt_expects_artifact(text: str) -> bool:
+    return bool(_ARTIFACT_REQUEST_RE.search(str(text or "")))
+
+
 def _strip_leading_chatml_prefix(text: str) -> str:
     cleaned = str(text or "")
     prefixes = (
@@ -278,6 +292,17 @@ def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
         "Answer the sealed proof/evaluation task directly and completely."
     )
     user_text = "\n".join(user_parts).strip()
+    if _proof_prompt_expects_artifact(user_text):
+        return (
+            f"<|im_start|>system\n{system_text}\n"
+            "This is a sealed artifact-generation task. Output exactly the artifact format "
+            "requested by the user. If the user asks for a fenced code block, return one "
+            "complete fenced block in the requested language. Do not add prose, role labels, "
+            "analysis, caveats, or follow-up questions. The artifact must be syntactically "
+            "valid and complete.\n<|im_end|>\n"
+            f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
     return (
         f"<|im_start|>system\n{system_text}\n"
         "The assistant response must be a complete final answer in 3-6 complete sentences "
@@ -286,6 +311,36 @@ def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
         "requires ordered steps. Finish after the final sentence.\n<|im_end|>\n"
         f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
         "<|im_start|>assistant\nComplete answer:\n"
+    )
+
+
+def _build_proof_evaluation_retry_prompt(messages: Any, fallback_prompt: Any) -> str:
+    """Build a control-token-free retry prompt for proof/eval tasks."""
+
+    task_parts: list[str] = []
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = _message_content_to_text(message.get("content")).strip()
+            if content:
+                task_parts.append(content)
+    if not task_parts and fallback_prompt is not None:
+        task_parts.append(str(fallback_prompt))
+    task_text = "\n\n".join(task_parts).strip()
+    if _proof_prompt_expects_artifact(task_text):
+        return (
+            "Complete the task below. Return only the requested artifact. "
+            "If a fenced code block is requested, output exactly one complete fenced block "
+            "in the requested language. Do not add prose, questions, role labels, or analysis.\n\n"
+            f"TASK:\n{task_text}\n\n"
+            "FINAL ARTIFACT:\n"
+        )
+    return (
+        "Complete the proof/evaluation task below. Return a direct final answer in "
+        "complete sentences. Do not add role labels or mention this retry instruction.\n\n"
+        f"TASK:\n{task_text}\n\n"
+        "FINAL ANSWER:\n"
     )
 
 
@@ -318,6 +373,18 @@ def _proof_evaluation_fragment_incomplete(text: str) -> bool:
     """Return True when a proof/eval generation is only a fragment."""
 
     stripped = str(text or "").strip()
+    if re.search(r"```[A-Za-z0-9_-]*\s*\n.+?\n```", stripped, flags=re.DOTALL):
+        return False
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(stripped)
+            return False
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    if "\n" in stripped and "," in stripped:
+        lines = [line for line in stripped.splitlines() if line.strip()]
+        if len(lines) >= 2 and all("," in line for line in lines[:2]):
+            return False
     if len(stripped) < 80:
         return True
     words = re.findall(r"[A-Za-z0-9_'-]+", stripped)
@@ -1202,6 +1269,11 @@ def _mlx_worker_loop(
                 top_p = job.get("top_p", 0.9)
                 min_p = job.get("min_p", 0.05)
                 repetition_penalty = job.get("repetition_penalty", 1.15)
+                artifact_generation_contract = bool(
+                    proof_evaluation_contract
+                    and _proof_prompt_expects_artifact(prompt)
+                )
+
                 if strict_answer_contract:
                     temp = 0.0
                     top_p = 1.0
@@ -1213,10 +1285,16 @@ def _mlx_worker_loop(
                     min_p = 0.0
                     repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.05)
                 elif proof_evaluation_contract:
-                    temp = min(_safe_float(temp, 0.1), 0.15)
-                    top_p = min(_safe_float(top_p, 0.9), 0.9)
-                    min_p = min(_safe_float(min_p, 0.05), 0.05)
-                    repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.08)
+                    if artifact_generation_contract:
+                        temp = 0.0
+                        top_p = 1.0
+                        min_p = 0.0
+                        repetition_penalty = max(_safe_float(repetition_penalty, 1.08), 1.05)
+                    else:
+                        temp = min(_safe_float(temp, 0.1), 0.15)
+                        top_p = min(_safe_float(top_p, 0.9), 0.9)
+                        min_p = min(_safe_float(min_p, 0.05), 0.05)
+                        repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.08)
                 try:
                     max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
                 except (TypeError, ValueError):
@@ -1367,7 +1445,7 @@ def _mlx_worker_loop(
 
                         # [v11.5 HARDENING] Internal Worker Retries for Structured Leaks & Loops
                         # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
-                        max_internal_retries = 0 if proof_evaluation_contract else 2
+                        max_internal_retries = 1 if proof_evaluation_contract else 2
                         
                         for internal_attempt in range(max_internal_retries + 1):
                             watchdog.start_job()
@@ -1577,6 +1655,10 @@ def _mlx_worker_loop(
                                             prompt_cache_lru.clear()
                                         if mx and device != "cpu":
                                             _clear_mlx_cache(mx)
+                                        prompt = _build_proof_evaluation_retry_prompt(
+                                            original_messages,
+                                            original_prompt,
+                                        )
                                         _prepare_clean_retry_kwargs(kwargs, structured=False)
                                         continue
                                     logger.warning(
@@ -1590,6 +1672,11 @@ def _mlx_worker_loop(
                                             prompt_cache_lru.clear()
                                         if mx and device != "cpu":
                                             _clear_mlx_cache(mx)
+                                        if proof_evaluation_contract:
+                                            prompt = _build_proof_evaluation_retry_prompt(
+                                                original_messages,
+                                                original_prompt,
+                                            )
                                         _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
                                         if "logits_processors" in kwargs:
                                             # We just recreate the logit processors if they exist so it catches the loop

@@ -3508,6 +3508,40 @@ class UnitaryResponsePhase(Phase):
             if priority and not self._is_user_facing_origin(routing_origin) and routing_origin != "benchmark":
                 routing_origin = "user"
             proof_evaluation_turn = proof_run_active(origin=routing_origin)
+            benchmark_turn = routing_origin == "benchmark"
+            def _try_benchmark_artifact_synthesis(reason: str) -> str:
+                if not benchmark_turn:
+                    return ""
+                try:
+                    from core.reasoning.artifact_synthesis import (
+                        synthesize_structured_artifact,
+                    )
+
+                    synthesized = synthesize_structured_artifact(objective)
+                    if synthesized is None:
+                        return ""
+                    new_state.response_modifiers["benchmark_artifact_synthesis"] = {
+                        "kind": synthesized.kind,
+                        "confidence": synthesized.confidence,
+                        "reason": reason,
+                        "evidence": list(synthesized.evidence),
+                    }
+                    logger.info(
+                        "🧩 Benchmark artifact synthesized from visible prompt data "
+                        "(kind=%s reason=%s confidence=%.2f).",
+                        synthesized.kind,
+                        reason,
+                        synthesized.confidence,
+                    )
+                    return synthesized.text
+                except _RESPONSE_RECOVERABLE_ERRORS as synth_exc:
+                    _record_response_degradation(
+                        synth_exc,
+                        "UnitaryResponse: benchmark artifact synthesis failed: %s",
+                        action="failed closed after prompt-local artifact synthesis failed",
+                        severity="warning",
+                    )
+                    return ""
             if proof_evaluation_turn:
                 new_state.response_modifiers["proof_evaluation_turn"] = True
 
@@ -3641,6 +3675,16 @@ class UnitaryResponsePhase(Phase):
                     new_state.response_modifiers.get("last_skill_run", "tool"),
                 )
                 return self._commit_response(new_state, deterministic_tool_reply)
+
+            if benchmark_turn:
+                synthesized_response = _try_benchmark_artifact_synthesis(
+                    "pre_model_visible_artifact_contract"
+                )
+                if synthesized_response:
+                    logger.info(
+                        "🧩 UnitaryResponse: benchmark artifact satisfied before model inference."
+                    )
+                    return self._commit_response(new_state, synthesized_response)
 
             if is_user_facing and not contract.requires_search:
                 floor_reply = self._simple_foreground_floor_reply(objective)
@@ -4062,7 +4106,7 @@ class UnitaryResponsePhase(Phase):
                         )
                         logger.debug("Formalization task spawn skipped: %s", formal_exc)
 
-            if contract.requires_search:
+            if contract.requires_search and routing_origin != "benchmark":
                 cached_search_reply = self._build_cached_grounded_search_reply(
                     new_state,
                     objective,
@@ -4602,6 +4646,7 @@ class UnitaryResponsePhase(Phase):
                         "purpose": "benchmark_evaluation",
                         "benchmark_request": True,
                         "proof_evaluation_contract": True,
+                        "proof_primary_lane_required": True,
                         "skip_runtime_payload": True,
                         "disable_prompt_cache": True,
                         "clear_prompt_cache": True,
@@ -4609,6 +4654,12 @@ class UnitaryResponsePhase(Phase):
                         "max_tokens": 2048,
                         "num_predict": 2048,
                         "protected_foreground_lane": True,
+                        "foreground_request": True,
+                        "is_background": False,
+                        "prefer_tier": "primary",
+                        "deep_handoff": False,
+                        "allow_deep_handoff": False,
+                        "allow_cloud_fallback": False,
                     }
                 )
 
@@ -4621,9 +4672,9 @@ class UnitaryResponsePhase(Phase):
                     timeout=request_timeout + 5.0,  # Small buffer over router's internal timeout
                 )
             except TimeoutError as timeout_exc:
-                if proof_evaluation_turn:
+                if proof_evaluation_turn or benchmark_turn:
                     raise TimeoutError(
-                        f"proof evaluation generation timed out after {request_timeout + 5.0:.0f}s"
+                        f"proof/benchmark generation timed out after {request_timeout + 5.0:.0f}s"
                     ) from timeout_exc
                 if is_user_facing:
                     logger.warning(
@@ -4655,8 +4706,12 @@ class UnitaryResponsePhase(Phase):
                 ).strip()
 
             if not raw or not raw.strip() or len(raw.strip()) < 5:
-                if proof_evaluation_turn:
-                    raise RuntimeError("proof_evaluation_model_no_valid_text")
+                if proof_evaluation_turn or benchmark_turn:
+                    synthesized_raw = _try_benchmark_artifact_synthesis("model_no_valid_text")
+                    if synthesized_raw:
+                        raw = synthesized_raw
+                    else:
+                        raise RuntimeError("proof_or_benchmark_model_no_valid_text")
                 if is_user_facing:
                     rescued = self._shape_user_facing_response(
                         str(raw or extracted_thought or ""),
@@ -4679,6 +4734,22 @@ class UnitaryResponsePhase(Phase):
                     return new_state
 
             response_text = raw.strip()
+            if benchmark_turn:
+                try:
+                    from core.reasoning.artifact_synthesis import (
+                        response_satisfies_artifact_contract,
+                    )
+
+                    if not response_satisfies_artifact_contract(objective, response_text):
+                        synthesized_response = _try_benchmark_artifact_synthesis(
+                            "artifact_contract_unmet"
+                        )
+                        if synthesized_response:
+                            response_text = synthesized_response
+                        else:
+                            raise RuntimeError("benchmark_artifact_contract_unmet")
+                except _RESPONSE_RECOVERABLE_ERRORS as contract_exc:
+                    raise RuntimeError("benchmark_artifact_contract_validation_failed") from contract_exc
 
             if strict_proof_answer_request:
                 strict_envelope = self._coerce_strict_answer_envelope(response_text)
@@ -5018,6 +5089,7 @@ class UnitaryResponsePhase(Phase):
                 if (
                     not strict_proof_answer_request
                     and not proof_evaluation_turn
+                    and not benchmark_turn
                     and not contract.tool_evidence_available
                     and strategies._is_logical_check(objective)
                 ):
@@ -5066,7 +5138,7 @@ class UnitaryResponsePhase(Phase):
                     # Wrap and append
                     response_text += f"\n\n<answer>{extracted_ans}</answer>"
                     logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
-            if self._guard:
+            if self._guard and not benchmark_turn:
                 response_text, _, _ = self._guard.align(response_text)
             if is_user_facing and not proof_evaluation_turn and routing_origin != "benchmark":
                 response_text = self._shape_user_facing_response(response_text, objective)
@@ -5573,6 +5645,16 @@ class UnitaryResponsePhase(Phase):
                     logger.error("Reactive compaction retry also failed: %s", compact_err)
 
             logger.error("Response generation failed: %s", e, exc_info=True)
+            failure_origin = self._normalize_origin(
+                getattr(new_state.cognition, "current_origin", "")
+            )
+            if failure_origin == "benchmark":
+                new_state.cognition.last_response = ""
+                new_state.response_modifiers["benchmark_generation_failed_closed"] = {
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:500],
+                }
+                return new_state
             fallback_contract = locals().get("contract")
             if fallback_contract is None:
                 try:

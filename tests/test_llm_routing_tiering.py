@@ -97,6 +97,22 @@ class TestLLMRoutingTiering(unittest.IsolatedAsyncioTestCase):
         # Verify 72B was NOT called (it used to be called in 'greedy' mode)
         self.mock_72b.think.assert_not_called()
 
+    async def test_live_benchmark_requests_stay_on_primary_lane(self):
+        """Live proof batteries must exercise Cortex, not accidental Solver handoff."""
+        result = await self.router.generate_with_metadata(
+            "Repair this multi-file traceback and emit only the patched artifact.",
+            prefer_tier="secondary",
+            deep_handoff=True,
+            origin="benchmark",
+            purpose="benchmark_evaluation",
+            benchmark_request=True,
+            skip_runtime_payload=True,
+        )
+
+        self.assertEqual(result["endpoint"], "Cortex")
+        self.assertEqual(result["text"], "32B response")
+        self.mock_72b.think.assert_not_called()
+
     async def test_foreground_primary_skips_brainstem_and_uses_cloud_fallback(self):
         """Foreground chat must not silently degrade to the 7B brainstem."""
         self.mock_32b.think.side_effect = Exception("32B failed")

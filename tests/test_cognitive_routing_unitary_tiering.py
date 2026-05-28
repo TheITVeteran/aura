@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,35 @@ async def test_everyday_chat_fast_path_stays_reactive_on_primary():
     assert new_state.response_modifiers["intent_type"] == "CHAT"
     assert new_state.response_modifiers["model_tier"] == "primary"
     assert new_state.response_modifiers["deep_handoff"] is False
+
+
+def test_benchmark_artifact_turn_stays_out_of_task_and_skill_dispatch(monkeypatch):
+    kernel = SimpleNamespace(orchestrator=SimpleNamespace(cycle_count=100))
+    phase = CognitiveRoutingPhase(kernel)
+    state = AuraState.default()
+    state.cognition.current_origin = "benchmark"
+    detect_calls = []
+    capability_engine = SimpleNamespace(
+        detect_intent=lambda text: detect_calls.append(text) or ["run_code"]
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: capability_engine if name == "capability_engine" else default),
+    )
+
+    objective = (
+        "You are reconciling inventory data from multiple sources. "
+        "Return the reconciled data as a CSV with columns: sku,count. "
+        "Then list the bad/quarantined entries by name."
+    )
+    new_state = asyncio.run(phase.execute(state, objective=objective, priority=True))
+
+    assert new_state.cognition.current_mode == CognitiveMode.DELIBERATE
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert new_state.response_modifiers["model_tier"] == "primary"
+    assert new_state.response_modifiers["deep_handoff"] is False
+    assert "matched_skills" not in new_state.response_modifiers
+    assert detect_calls == []
 
 
 @pytest.mark.asyncio

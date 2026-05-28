@@ -1060,6 +1060,12 @@ class GodModeToolPhase(Phase):
             )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             proof_eval_turn = False
+        benchmark_turn = str(getattr(state.cognition, "current_origin", "") or "").strip().lower() == "benchmark"
+        if benchmark_turn:
+            state.response_modifiers["intent_type"] = "CHAT"
+            state.response_modifiers.pop("matched_skills", None)
+            logger.info("⚡ GodMode: benchmark/proof artifact turn kept out of tool/task dispatch.")
+            return state
         if intent_type == "TASK" and _looks_like_simple_dialogue_request(objective):
             state.response_modifiers["intent_type"] = "CHAT"
             state.response_modifiers.pop("matched_skills", None)

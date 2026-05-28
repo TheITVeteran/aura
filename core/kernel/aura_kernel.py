@@ -167,6 +167,7 @@ class AuraKernel:
         # The shared legacy bootstrap wires many common phases, but the response
         # phase must remain the unitary implementation used by the sovereign
         # kernel path rather than the older compatibility generator.
+        self.routing_phase = CognitiveRoutingPhase(self)
         self.response_phase = UnitaryResponsePhase(self)
 
         # Feedback Observer
