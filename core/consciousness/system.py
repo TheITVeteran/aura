@@ -418,9 +418,28 @@ class ConsciousnessSystem:
             from .aura_protocol import get_protocol_server
 
             self.aura_protocol = get_protocol_server()
-            await self.aura_protocol.start()
-            self._mark_layer_online("aura_protocol")
-            logger.info("🧠 Layer 8: AuraProtocolServer ONLINE (port=%d)", self.aura_protocol._port)
+            protocol_started = await self.aura_protocol.start()
+            if protocol_started:
+                self._mark_layer_online("aura_protocol")
+                logger.info(
+                    "🧠 Layer 8: AuraProtocolServer ONLINE (port=%d)",
+                    self.aura_protocol._port,
+                )
+            else:
+                status = self.aura_protocol.get_status()
+                if not hasattr(self, "layer_status"):
+                    self.layer_status = {}
+                if not hasattr(self, "_degraded_layers"):
+                    self._degraded_layers = {}
+                self.layer_status["aura_protocol"] = "degraded"
+                self._degraded_layers["aura_protocol"] = str(
+                    status.get("last_error") or "protocol listener did not bind"
+                )
+                logger.warning(
+                    "🧠 Layer 8: AuraProtocolServer OFFLINE (port=%d, reason=%s)",
+                    self.aura_protocol._port,
+                    self._degraded_layers["aura_protocol"],
+                )
         except (ImportError, AttributeError, RuntimeError) as e:
             self._mark_layer_degraded(
                 "aura_protocol",

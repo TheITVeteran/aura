@@ -89,9 +89,11 @@ class LiveAuraHarness:
         run_env["AURA_ARTIFACTS_DIR"] = str(artifacts)
         run_env["AURA_STRICT_RUNTIME"] = "1"
         run_env["AURA_AGI_LIVE_TEST"] = "1"
+        run_env["AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE"] = "1"
         
         # Ensure python path includes the isolated repo copy
         run_env["PYTHONPATH"] = str(repo)
+        run_env["AURA_ROOT"] = str(self.repo_root)
 
         proc = subprocess.run(
             args,

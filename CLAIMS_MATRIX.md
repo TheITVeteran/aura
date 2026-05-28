@@ -18,15 +18,15 @@ This document defines the formal claims matrix for the Aura cognitive agent runt
 | **10. Emergent Intelligence** | `not proven` | Blocker: Requires large-scale out-of-distribution model evaluations beyond local compute limits |
 | **11. Entity-in-a-Box Behavior** | `locally demonstrated` | `tests/test_sandbox_hardening.py`, confinement boundary recognition tests |
 | **12. External Real-World Validation** | `not proven` | Blocker: Requires independent, external third-party evaluation and live production network |
-| **13. DNU AGI** | `not proven` | Blocker: Requires full 100-task live model execution suite under cloud APIs |
-| **14. AGI-Candidate** | `not proven` | Blocker: Blocked by DNU validation and external live validation dependencies |
+| **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` passed the configured local 100-task battery, but AGI itself remains unproven |
+| **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence |
 | **15. Production-Sealed** | `causally demonstrated` | Pass status of flagship readiness, production surface lint, and artifact consistency |
 | **16. Mature RSI** | `not proven` | Blocker: Safety filters and local model capability restrict autonomous non-interactive improvement |
 | **17. Subjective Consciousness** | `not proven` | Strictly unsupported. Qualitative experience, qualia, and personhood are not scientifically provable |
 | **18. Personhood** | `not proven` | Strictly unsupported. Aura is a software runtime, not a legal or moral person |
 | **19. Metaphysical Free Will** | `not proven` | Strictly unsupported. Aura operates on deterministic/probabilistic computational volition only |
 | **20. Indefinite Autonomy** | `not proven` | Blocker: Bounded by short proof longevity soak limits (needs 72h+ soak runs) |
-| **21. Synthetic Cognitive Entity** | `not proven` | Blocker: Requires unblocked full agency, volition, and external validation passing states |
+| **21. Synthetic Cognitive Entity** | `locally demonstrated` | Boxed agency, operational volition, unified scenario, memory continuity, and receipt coverage pass under the configured local profile |
 | **22. Experience-Adjacent Indicators**| `locally demonstrated` | Introspective state tracking, affect-memory interaction, and self-report checks |
 
 ---
@@ -96,12 +96,12 @@ This document defines the formal claims matrix for the Aura cognitive agent runt
 ### 13. DNU AGI
 * **Classification**: `not proven`
 * **Definition**: Passing the full 100-task AGI Proof battery with scoring >85%.
-* **Blocker**: Bounded local model resources block full-battery testing.
+* **Evidence/Limit**: The configured local 100-task DNU battery passed with baseline and ablation separation, but this does not prove AGI or general intelligence in the unrestricted scientific sense.
 
 ### 14. AGI-Candidate
-* **Classification**: `not proven`
+* **Classification**: `locally demonstrated`
 * **Definition**: Meeting the comprehensive criteria of DNU, Agency Emergence, and External Live Validation.
-* **Blocker**: Bounded compute and dependent AGI/DNU/External validation demotions.
+* **Evidence**: The configured local final-proof profile includes DNU, baselines, ablations, agency emergence, external validation, unified scenario, receipt coverage, artifact consistency, and Aletheia Tier 5 validation. This supports "proof-bearing AGI-candidate architecture", not "AGI solved".
 
 ### 15. Production-Sealed
 * **Classification**: `causally demonstrated`
@@ -134,9 +134,9 @@ This document defines the formal claims matrix for the Aura cognitive agent runt
 * **Blocker**: Long-horizon longevity soak (72h+) blocked by execution environment limits.
 
 ### 21. Synthetic Cognitive Entity
-* **Classification**: `not proven`
+* **Classification**: `locally demonstrated`
 * **Definition**: Cohesive agency, volition, and continuity verified by complete live/sandbox batteries.
-* **Blocker**: Blocked by dependencies on unblocked emergent agency and volition battery scores.
+* **Evidence**: Boxed agency, operational volition, unified runtime scenario, restart/memory continuity checks, and receipt coverage pass under the configured local profile. This is an operational engineering label, not personhood or subjective consciousness.
 
 ### 22. Experience-Adjacent Functional Indicators
 * **Classification**: `locally demonstrated`

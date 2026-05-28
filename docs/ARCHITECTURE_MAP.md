@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779980682.661404`
+Generated: `1779979584.9343119`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1572
-- Python lines: 453916
+- Python lines: 453796
 - Dependency edges: 676
 - ServiceContainer `.get()` calls: 1445
 - ServiceContainer registrations: 346
@@ -19,8 +19,8 @@ Generated: `1779980682.661404`
 graph TD
     runtime["runtime<br/>91 files, 19967 lines"]
     utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 41881 lines"]
-    consciousness["consciousness<br/>120 files, 56969 lines"]
+    brain["brain<br/>115 files, 41837 lines"]
+    consciousness["consciousness<br/>120 files, 56937 lines"]
     resilience["resilience<br/>53 files, 11111 lines"]
     health["health<br/>3 files, 697 lines"]
     memory["memory<br/>68 files, 16308 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 54822 lines"]
+    core_root["core_root<br/>182 files, 54778 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -822,9 +822,9 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 120 | 56969 | 2399763 | 37 | 29 |
-| core_root | 182 | 54822 | 2229470 | 99 | 0 |
-| brain | 115 | 41881 | 1807658 | 40 | 39 |
+| consciousness | 120 | 56937 | 2398373 | 37 | 29 |
+| core_root | 182 | 54778 | 2228038 | 99 | 0 |
+| brain | 115 | 41837 | 1806163 | 40 | 39 |
 | runtime | 91 | 19967 | 701962 | 37 | 103 |
 | orchestrator | 42 | 18644 | 823200 | 123 | 9 |
 | phases | 29 | 16659 | 751032 | 32 | 7 |

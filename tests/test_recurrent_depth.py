@@ -83,6 +83,37 @@ def test_resolve_loops_honors_72b_lane_override(monkeypatch):
     assert resolve_loops_for_model(_Model()) == 2
 
 
+def test_recurrent_depth_invalid_env_fails_as_runtime_error(monkeypatch):
+    class _Inner:
+        layers = [object()] * 64
+
+    class _Model:
+        model = _Inner()
+
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "twice")
+    monkeypatch.delenv("AURA_RECURRENT_LOOPS", raising=False)
+
+    with pytest.raises(RuntimeError, match="AURA_RECURRENT_LOOPS_32B"):
+        resolve_loops_for_model(_Model())
+
+
+def test_recurrent_depth_rejects_unsafe_fraction_override(monkeypatch):
+    import core.brain.llm.recurrent_depth as rd
+
+    class _Inner:
+        layers = [object()] * 64
+
+    class _Model:
+        model = _Inner()
+
+    monkeypatch.setenv("AURA_RECURRENT_PRELUDE", "0.95")
+    monkeypatch.delenv("AURA_RECURRENT_LOOPS", raising=False)
+    monkeypatch.delenv("AURA_RECURRENT_LOOPS_32B", raising=False)
+
+    with pytest.raises(RuntimeError, match="AURA_RECURRENT_PRELUDE"):
+        rd.apply_for_model(_Model())
+
+
 @pytest.mark.hardware
 def test_restore_rewinds_mlx_cache():
     """Direct end-to-end proof the snapshot/restore actually works."""

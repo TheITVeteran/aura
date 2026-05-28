@@ -258,6 +258,7 @@ class AuraProtocolServer:
         self._messages_received: int = 0
         self._messages_rejected: int = 0
         self._last_message_at: float = 0.0
+        self._last_error: str | None = None
         self._connected_peers: dict[str, float] = {}  # identity -> last_seen
 
         logger.info(
@@ -266,10 +267,15 @@ class AuraProtocolServer:
             self._port,
         )
 
-    async def start(self) -> None:
-        """Start listening for incoming connections."""
+    async def start(self) -> bool:
+        """Start listening for incoming connections.
+
+        Returns True only when the TCP listener is actually bound. A bind
+        failure leaves the protocol server offline so callers cannot
+        accidentally advertise a dead inter-instance channel as healthy.
+        """
         if self._running:
-            return
+            return True
         try:
             self._server = await asyncio.start_server(
                 self._handle_connection,
@@ -277,13 +283,18 @@ class AuraProtocolServer:
                 self._port,
             )
             self._running = True
+            self._last_error = None
             ServiceContainer.register_instance("aura_protocol_server", self)
             logger.info(
                 "AuraProtocolServer ONLINE -- listening on %s:%d",
                 self._host,
                 self._port,
             )
+            return True
         except OSError as e:
+            self._server = None
+            self._running = False
+            self._last_error = f"{type(e).__name__}: {e}"
             _record_aura_protocol_degradation(
                 e,
                 action="kept aura protocol server offline after bind failure",
@@ -296,6 +307,7 @@ class AuraProtocolServer:
                 self._port,
                 e,
             )
+            return False
 
     async def stop(self) -> None:
         """Stop the server."""
@@ -500,6 +512,7 @@ class AuraProtocolServer:
             "messages_received": self._messages_received,
             "messages_rejected": self._messages_rejected,
             "last_message_at": self._last_message_at,
+            "last_error": self._last_error,
             "connected_peers": dict(self._connected_peers),
             "handler_count": len(self._handlers),
         }

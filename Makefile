@@ -1,4 +1,4 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench final-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset
+.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset
 
 PYTHON ?= python
 RUFF_SURFACE_TARGETS ?= core interface llm security senses skills executors infrastructure aura_main.py tools tests
@@ -157,6 +157,13 @@ chaos:
 clean-bench:
 	@rm -rf ~/.aura/data/bench
 	@echo "🧹 cleaned ~/.aura/data/bench"
+
+aletheia-validate:
+	@echo "🧪 Validating committed Aletheia Tier 5 evidence..."
+	@$(PYTHON) tools/validate_aletheia_tier5.py \
+	  --artifacts artifacts/aletheia \
+	  --out artifacts/current/aletheia_tier5_validation.json
+	@echo "✅ Aletheia Tier 5 evidence validated"
 
 # ─── Enterprise Product Targets ──────────────────────────────────────────
 
@@ -392,6 +399,9 @@ final-proof:
 	  artifacts/current/longevity_soak
 	python tools/receipt_coverage_validator.py \
 	  --artifacts artifacts/current
+	python tools/validate_aletheia_tier5.py \
+	  --artifacts artifacts/aletheia \
+	  --out artifacts/current/aletheia_tier5_validation.json
 	python tools/artifact_consistency_validator.py \
 	  --artifacts artifacts/current
 	python tools/final_claim_validator.py \

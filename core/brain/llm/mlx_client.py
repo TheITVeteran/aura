@@ -3341,14 +3341,17 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
 
     try:
         from core.runtime.proof_policy import proof_model_tier, proof_run_active
+        from .model_registry import model_identities_compatible
 
         if proof_run_active(origin=kwargs.get("origin", "mlx_client")) and proof_model_tier() == "primary":
             primary_path = _real_model_path(get_model_path(ACTIVE_MODEL))
             target_path = _real_model_path(runtime_path)
-            if target_path != primary_path:
+            primary_name = os.path.basename(primary_path)
+            target_name = os.path.basename(target_path)
+            if target_name != primary_name and not model_identities_compatible(target_name, primary_name):
                 raise RuntimeError(
                     "Proof-primary run refused lower local model lane: "
-                    f"{os.path.basename(target_path)} != {os.path.basename(primary_path)}"
+                    f"{target_name} != {primary_name}"
                 )
     except ImportError:
         pass

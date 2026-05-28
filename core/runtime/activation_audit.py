@@ -471,8 +471,7 @@ class ActivationAuditor:
     @staticmethod
     def _safe_json(value: Any) -> Any:
         try:
-            json.dumps(value, default=str)
-            return value
+            return json.loads(json.dumps(value, default=str))
         except (json.JSONDecodeError, TypeError, ValueError):
             return repr(value)
 

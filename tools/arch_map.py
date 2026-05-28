@@ -57,6 +57,7 @@ OPERATIONAL_SURFACES: tuple[OperationalSurface, ...] = (
         description="Calls that can ask the single will authority to approve action.",
         owners=(
             "core/will.py",
+            "core/governance/will.py",
             "core/governance/will_client.py",
             "core/runtime/will_transaction.py",
             "core/executive/authority_gateway.py",

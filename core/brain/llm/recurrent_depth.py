@@ -79,14 +79,42 @@ def _get_lane_defaults(num_layers: int) -> tuple:
     return _get_model_profile_defaults(num_layers)
 
 
-def _model_size_loop_env(num_layers: int) -> Optional[str]:
+def _model_size_loop_env(num_layers: int) -> tuple[str, str] | None:
     if num_layers >= 72:
-        return os.environ.get("AURA_RECURRENT_LOOPS_72B")
+        name = "AURA_RECURRENT_LOOPS_72B"
+        value = os.environ.get(name)
+        return (name, value) if value is not None else None
     if num_layers >= 56:
-        return os.environ.get("AURA_RECURRENT_LOOPS_32B")
+        name = "AURA_RECURRENT_LOOPS_32B"
+        value = os.environ.get(name)
+        return (name, value) if value is not None else None
     if num_layers >= 24:
-        return os.environ.get("AURA_RECURRENT_LOOPS_14B")
-    return os.environ.get("AURA_RECURRENT_LOOPS_SMALL")
+        name = "AURA_RECURRENT_LOOPS_14B"
+        value = os.environ.get(name)
+        return (name, value) if value is not None else None
+    name = "AURA_RECURRENT_LOOPS_SMALL"
+    value = os.environ.get(name)
+    return (name, value) if value is not None else None
+
+
+def _parse_loop_count(raw: str, *, env_name: str) -> int:
+    try:
+        loops = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{env_name} must be an integer, got {raw!r}") from exc
+    if loops < 0:
+        raise RuntimeError(f"{env_name} must be >= 0, got {loops}")
+    return loops
+
+
+def _parse_fraction(raw: str, *, env_name: str, minimum: float, maximum: float) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{env_name} must be numeric, got {raw!r}") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{env_name} must be between {minimum:g} and {maximum:g}, got {value:g}")
+    return value
 
 
 class CacheSnapshotError(RuntimeError):
@@ -445,7 +473,7 @@ def resolve_loops_for_model(model) -> int:
     # Explicit env override takes priority
     env_loops = os.environ.get("AURA_RECURRENT_LOOPS")
     if env_loops is not None:
-        n = int(env_loops)
+        n = _parse_loop_count(env_loops, env_name="AURA_RECURRENT_LOOPS")
         if n == 0:
             # Explicitly disabled
             return 0
@@ -463,7 +491,8 @@ def resolve_loops_for_model(model) -> int:
     num_layers = len(layers)
     size_override = _model_size_loop_env(num_layers)
     if size_override is not None:
-        n = int(size_override)
+        env_name, raw_loops = size_override
+        n = _parse_loop_count(raw_loops, env_name=env_name)
         if n == 0:
             return 0
         return n
@@ -496,9 +525,24 @@ def apply_for_model(model) -> bool:
     num_layers = len(getattr(inner, "layers", [])) if inner else 64
     defaults = _get_model_profile_defaults(num_layers)
 
-    prelude_frac = float(os.environ.get("AURA_RECURRENT_PRELUDE", defaults[1]))
-    coda_frac = float(os.environ.get("AURA_RECURRENT_CODA", defaults[2]))
-    alpha = float(os.environ.get("AURA_RECURRENT_ALPHA", defaults[3]))
+    prelude_frac = _parse_fraction(
+        os.environ.get("AURA_RECURRENT_PRELUDE", str(defaults[1])),
+        env_name="AURA_RECURRENT_PRELUDE",
+        minimum=0.05,
+        maximum=0.45,
+    )
+    coda_frac = _parse_fraction(
+        os.environ.get("AURA_RECURRENT_CODA", str(defaults[2])),
+        env_name="AURA_RECURRENT_CODA",
+        minimum=0.05,
+        maximum=0.45,
+    )
+    alpha = _parse_fraction(
+        os.environ.get("AURA_RECURRENT_ALPHA", str(defaults[3])),
+        env_name="AURA_RECURRENT_ALPHA",
+        minimum=0.0,
+        maximum=0.5,
+    )
 
     return apply_recurrent_depth(
         model,
