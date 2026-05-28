@@ -21,6 +21,13 @@ def _get_mx():
     return mx
 
 
+def _mlx_device(mx, name: str):
+    """Return an MLX device across enum-style and callable-style APIs."""
+
+    device = getattr(mx, name)
+    return device() if callable(device) else device
+
+
 @dataclass(frozen=True)
 class CoreRuntime:
     _instance = None
@@ -54,7 +61,7 @@ class CoreRuntime:
                     mx = _get_mx()
                     if mx:
                         if psutil.sensors_battery() and psutil.sensors_battery().percent < 12:
-                            mx.set_default_device(mx.cpu())
+                            mx.set_default_device(_mlx_device(mx, "cpu"))
                         try:
                             from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
 

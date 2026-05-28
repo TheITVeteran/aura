@@ -19,6 +19,14 @@ from core.resilience.state_manager import StateManager
 
 logger = logging.getLogger("Aura.CoreRuntime")
 
+
+def _mlx_device(mx_module, name: str):
+    """Return an MLX device across enum-style and callable-style APIs."""
+
+    device = getattr(mx_module, name)
+    return device() if callable(device) else device
+
+
 @dataclass(frozen=True)
 class CoreRuntime:
     _instance = None
@@ -55,7 +63,7 @@ class CoreRuntime:
                     # Hardware optimization
                     if mx:
                         if psutil.sensors_battery() and psutil.sensors_battery().percent < 12:
-                            mx.set_default_device(mx.cpu())
+                            mx.set_default_device(_mlx_device(mx, "cpu"))
                         try:
                             from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
                             sentinel = get_gpu_sentinel()
