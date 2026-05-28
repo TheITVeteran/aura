@@ -105,6 +105,7 @@ class AuraEventBus:
         # Redis integration (C-07/H-12 FIX)
         self._redis: Optional[Any] = None
         self._pubsub_task: Optional[asyncio.Task] = None
+        self._redis_loop: Optional[asyncio.AbstractEventLoop] = None
         self._redis_url = config.redis.url if hasattr(config, "redis") else "redis://localhost:6379/0"
         self._use_redis = (_REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False))
 
@@ -160,12 +161,60 @@ class AuraEventBus:
         else:
             logger.info("✓ [EVENT_BUS] Health check passed: %s topics active.", len(self._subscribers))
 
+    def _check_loop_mismatch(self):
+        """Check if the current running loop matches the loop Redis was initialized on.
+        If not, reset Redis connection state so it gets recreated on the current loop.
+        """
+        if not self._use_redis or not self._redis:
+            return
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        redis_loop = getattr(self, "_redis_loop", None)
+        if redis_loop is None:
+            self._redis_loop = current_loop
+            return
+
+        if redis_loop is not current_loop:
+            logger.info(
+                "AuraEventBus: Event loop changed from %s to %s. Re-initializing Redis client.",
+                redis_loop,
+                current_loop,
+            )
+            old_redis = self._redis
+            old_task = self._pubsub_task
+            self._redis = None
+            self._pubsub_task = None
+            self._redis_loop = None
+
+            if old_task:
+                try:
+                    old_task.cancel()
+                except RuntimeError as exc:
+                    record_degradation('event_bus', exc)
+                    logger.debug("AuraEventBus: failed to cancel stale Redis listener task: %s", exc)
+            if old_redis:
+                async def safe_close(r):
+                    try:
+                        await r.aclose()
+                    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                        record_degradation('event_bus', exc)
+                        logger.debug("AuraEventBus: stale Redis close failed: %s", exc)
+                try:
+                    current_loop.create_task(safe_close(old_redis))
+                except RuntimeError as e:
+                    logger.debug("AuraEventBus: Error scheduling old Redis close: %s", e)
+
     async def _setup_redis(self):
         """Initialize Redis connection and start listener task."""
         if not self._use_redis or self._redis:
             return
             
         try:
+            self._redis_loop = asyncio.get_running_loop()
             self._redis = redis.from_url(self._redis_url, decode_responses=True)
             await self._redis.ping()
             self._pubsub_task = get_task_tracker().create_task(
@@ -278,6 +327,7 @@ class AuraEventBus:
             except RuntimeError as _e:
                 logger.debug('Ignored RuntimeError in event_bus.py: %s', _e)
                 
+        self._check_loop_mismatch()
         if self._use_redis and not self._redis:
             await self._setup_redis()
             
@@ -319,6 +369,18 @@ class AuraEventBus:
         Args:
             priority: EventPriority tier. Lower = higher priority.
         """
+        # Ensure we're on the correct loop before doing anything
+        try:
+            current_loop = asyncio.get_running_loop()
+            if self._loop is None:
+                self._loop = current_loop
+            elif self._loop is not current_loop:
+                self._loop = current_loop
+        except RuntimeError:
+            pass
+
+        self._check_loop_mismatch()
+
         # Tag with bus ID to prevent our own redis listener from echoing it back
         if isinstance(data, dict) and "_bus_id" not in data:
             data["_bus_id"] = self._bus_id
@@ -328,6 +390,7 @@ class AuraEventBus:
         
         # 2. Remote delivery via Redis (H-12)
         if self._use_redis:
+            self._check_loop_mismatch()
             if not self._redis:
                 await self._setup_redis()
 
@@ -388,6 +451,7 @@ class AuraEventBus:
         except RuntimeError:
             current_loop = None
         
+        stale_subscribers = []
         for q, loop in subscribers:
             try:
                 if loop and loop.is_running():
@@ -397,16 +461,42 @@ class AuraEventBus:
                         loop.call_soon_threadsafe(self._safe_put_direct, q, item)
                     with self._stats_lock:
                         self._delivered_count += 1
+                elif loop and loop.is_closed():
+                    # Stale subscriber from a closed loop — mark for removal
+                    stale_subscribers.append((q, loop))
                 else:
                     self._safe_put_direct(q, item)
                     with self._stats_lock:
                         self._delivered_count += 1
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            except RuntimeError as e:
+                if "attached to a different loop" in str(e) or "is closed" in str(e):
+                    # Stale loop reference — mark for removal
+                    stale_subscribers.append((q, loop))
+                    logger.debug("EventBus: Removing stale subscriber (loop mismatch) on topic '%s'", topic)
+                else:
+                    record_degradation('event_bus', e)
+                    with self._stats_lock:
+                        self._error_count += 1
+                        self._last_error = e
+                    logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
+            except (AttributeError, TypeError, ValueError) as e:
                 record_degradation('event_bus', e)
                 with self._stats_lock:
                     self._error_count += 1
                     self._last_error = e
                 logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
+
+        # Clean up stale subscribers
+        if stale_subscribers:
+            acquired = self._lock.acquire(timeout=2.0)
+            if acquired:
+                try:
+                    for tup in stale_subscribers:
+                        for t_topic in list(self._subscribers.keys()):
+                            self._subscribers[t_topic].discard(tup)
+                    logger.info("EventBus: Removed %d stale subscriber(s).", len(stale_subscribers))
+                finally:
+                    self._lock.release()
 
     def _safe_put_direct(self, queue, itm):
         """Synchronously puts item into the subscriber queue. 

@@ -89,7 +89,7 @@ def proof_run_active(origin: Any = None) -> bool:
     """Return True when the current turn is part of a proof/eval run."""
 
     normalized = str(origin or "").strip().lower()
-    if normalized in {"test", "proof", "eval", "evaluation", "benchmark"}:
+    if normalized in {"test", "proof", "eval", "evaluation"}:
         return True
     return any(os.environ.get(name) for name in _PROOF_ACTIVE_ENV)
 

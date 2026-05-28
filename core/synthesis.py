@@ -373,7 +373,12 @@ def _conversation_response_floor(user_message: str) -> str:
 def stabilize_user_facing_response(text: str, user_message: str = "") -> str:
     """Shared final cleanup for user-visible conversational text."""
     cleaned = strip_role_artifacts(text)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # If the response contains code blocks, JSON/brackets, or multiple newlines,
+    # we preserve the formatting (newlines/indentation) instead of folding whitespace.
+    if "```" in cleaned or "{" in cleaned or "[" in cleaned or "\n" in cleaned:
+        cleaned = cleaned.strip()
+    else:
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
     assessment = assess_user_facing_reply(user_message, cleaned)
     if assessment.retryable:
         preserve_substantive_soft_failure = bool(

@@ -205,12 +205,13 @@ class AuraKernel:
             "websocket",
             "direct",
             "external",
+            "benchmark",
         }:
             return True
         tokens = {token for token in normalized.split("_") if token}
         return bool(
             tokens
-            & {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"}
+            & {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "benchmark"}
         )
 
     def _finalize_foreground_turn_state(self, *, objective: str, turn_origin: str) -> None:

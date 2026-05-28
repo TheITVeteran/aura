@@ -328,7 +328,7 @@ class CognitiveRoutingPhase(BasePhase):
                     normalized["role"] = role_for_origin(normalized.get("origin"))
                 last_msg = normalized
 
-        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test")
+        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test", "benchmark")
         active_objective = state.cognition.current_objective or objective
         active_origin = (
             (state.cognition.current_origin if active_objective else None)

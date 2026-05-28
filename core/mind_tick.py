@@ -575,7 +575,7 @@ class MindTick:
                         logger.debug("MindTick continuity objective scrub failed: %s", exc)
                     if not objective:
                         return current_state
-                    if current_origin in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "test"}:
+                    if current_origin in {"user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "test", "benchmark"}:
                         logger.debug("💓 MindTick: Skipping background tick for foreground-owned objective from origin=%s.", current_origin)
                         return current_state
                     if quiet_until > time.time():
@@ -699,7 +699,7 @@ class MindTick:
                                         b.reset()
                     
                         if "response_generation" not in tick_metadata.phases_executed:
-                            user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test")
+                            user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test", "benchmark")
                             current_origin = getattr(current_state.cognition, "current_origin", None)
                             if current_origin in user_origins:
                                 logger.warning("🛡️ MindTick: Emergency Fallback - Injecting reflexive response.")
@@ -746,23 +746,60 @@ class MindTick:
                     current_state = await execute_tick()
                 
                 # 4. Bridge to Event Bus (for UI/Observability)
-                from core.event_bus import get_event_bus
-                bus = get_event_bus()
-                try:
-                    # Wrap in a 5.0s timeout to prevent Redis stalls from blocking the tick.
-                    await asyncio.wait_for(bus.publish("aura/events/mind_tick", {
-                        "tick_id": self._tick_count,
-                        "mode": self.mode.value,
-                        "phases": metadata.phases_executed,
-                        "durations": metadata.phase_durations,
-                        "total_duration": metadata.duration,
-                        "timestamp": time.time()
-                    }), timeout=5.0)
-                except TimeoutError:
-                    logger.warning("⚠️ MindTick: EventBus publish stalled (timeout). Continuing tick.")
-                except _MIND_BOUNDARY_ERRORS as e:
-                    _record_mind_degradation(e)
-                    logger.error("⚠️ MindTick: EventBus publish failed: %s", e)
+                # Circuit-breaker: after repeated failures, back off to avoid
+                # flooding the resilience engine with degradation events.
+                if not hasattr(self, "_bus_fail_count"):
+                    self._bus_fail_count = 0
+                    self._bus_backoff_until_tick = 0
+
+                if self._tick_count < self._bus_backoff_until_tick:
+                    pass  # Skip publish during backoff
+                else:
+                    from core.event_bus import get_event_bus
+                    bus = get_event_bus()
+                    try:
+                        # Wrap in a 5.0s timeout to prevent Redis stalls from blocking the tick.
+                        await asyncio.wait_for(bus.publish("aura/events/mind_tick", {
+                            "tick_id": self._tick_count,
+                            "mode": self.mode.value,
+                            "phases": metadata.phases_executed,
+                            "durations": metadata.phase_durations,
+                            "total_duration": metadata.duration,
+                            "timestamp": time.time()
+                        }), timeout=5.0)
+                        # Reset on success
+                        if self._bus_fail_count > 0:
+                            logger.info("⚠️ MindTick: EventBus publish recovered after %d failures.", self._bus_fail_count)
+                            self._bus_fail_count = 0
+                            self._bus_backoff_until_tick = 0
+                    except TimeoutError:
+                        self._bus_fail_count += 1
+                        if self._bus_fail_count <= 2:
+                            _record_mind_degradation(TimeoutError("event_bus_publish_timeout"))
+                            logger.warning("⚠️ MindTick: EventBus publish stalled (timeout). Continuing tick.")
+                        elif self._bus_fail_count == 3:
+                            logger.warning(
+                                "⚠️ MindTick: EventBus publish timing out repeatedly (%d). "
+                                "Backing off EventBus publish retries for runtime stability.",
+                                self._bus_fail_count,
+                            )
+                        backoff = min(30, 10 * self._bus_fail_count)
+                        self._bus_backoff_until_tick = self._tick_count + backoff
+                    except _MIND_BOUNDARY_ERRORS as e:
+                        self._bus_fail_count += 1
+                        # Only record degradation on first failure, then back off
+                        if self._bus_fail_count <= 2:
+                            _record_mind_degradation(e)
+                            logger.error("⚠️ MindTick: EventBus publish failed: %s", e)
+                        elif self._bus_fail_count == 3:
+                            logger.warning(
+                                "⚠️ MindTick: EventBus publish failing repeatedly (%d). "
+                                "Suppressing further degradation reports. Will retry every 30 ticks.",
+                                self._bus_fail_count,
+                            )
+                        # Exponential backoff: skip 10, 20, 30 ticks (capped at 30)
+                        backoff = min(30, 10 * self._bus_fail_count)
+                        self._bus_backoff_until_tick = self._tick_count + backoff
                 
                 # 4. Metacognitive Audit
                 audit_interval = 60.0 # 1 minute base audit

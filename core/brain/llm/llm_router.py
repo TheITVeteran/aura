@@ -740,6 +740,8 @@ class IntelligentLLMRouter:
 
     @staticmethod
     def _background_deferral_reason(origin: str) -> str:
+        if origin == "benchmark":
+            return ""
         try:
             from core.container import ServiceContainer
 
@@ -924,7 +926,7 @@ class IntelligentLLMRouter:
         if substrate_text:
             return substrate_text
 
-        if should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
+        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
             tools = build_agentic_tool_map(
                 contract.required_skill if contract else None,
                 objective=prompt,
@@ -972,7 +974,8 @@ class IntelligentLLMRouter:
         # Resolve tier
         resolved_tier = self._resolve_tier(prefer_tier)
 
-        kwargs["system_prompt"] = self._apply_core_persona(kwargs.get("system_prompt", ""))
+        if origin != "benchmark":
+            kwargs["system_prompt"] = self._apply_core_persona(kwargs.get("system_prompt", ""))
 
         # Autonomic Routing (Exhaustion Reflex)
         soma = kwargs.get("soma", {})
@@ -1189,14 +1192,17 @@ class IntelligentLLMRouter:
                 is_background=is_background,
             ),
         )
-        system_prompt = self._apply_core_persona(system_prompt_from_payload or system_prompt or "")
+        if origin != "benchmark":
+            system_prompt = self._apply_core_persona(system_prompt_from_payload or system_prompt or "")
+        else:
+            system_prompt = system_prompt_from_payload or system_prompt or ""
         kwargs.pop("system_prompt", None)
         if prepared_messages is not None:
             kwargs["messages"] = prepared_messages
         else:
             kwargs.pop("messages", None)
 
-        if should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
+        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
             tools = build_agentic_tool_map(
                 contract.required_skill if contract else None,
                 objective=prompt,

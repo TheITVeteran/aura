@@ -80,7 +80,7 @@ def _prepare_clean_retry_kwargs(kwargs: dict[str, Any], *, structured: bool = Fa
     )
 
 
-def _sanitize_telemetry_leakage(text: str) -> str | None:
+def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None:
     """Strip leaked internal telemetry labels and paths that occasionally 
     slip out from the LoRA fine-tune weights during specific topics.
     Returns None if a fatal hallucination is detected so the caller can retry.
@@ -92,19 +92,20 @@ def _sanitize_telemetry_leakage(text: str) -> str | None:
     # filesystem, or proof output. The old slash-count heuristic rejected any
     # answer with more than 15 "/" characters, which is common in live coding
     # tasks and path-aware proof/eval runs.
-    slash_count = text.count("/")
-    if slash_count > 30 and "http" not in text.lower():
-        path_like = re.findall(r"(?:/[A-Za-z0-9._-]+){3,}", text)
-        path_chars = sum(len(path) for path in path_like)
-        if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
-            return None
+    if not is_proof:
+        slash_count = text.count("/")
+        if slash_count > 30 and "http" not in text.lower():
+            path_like = re.findall(r"(?:/[A-Za-z0-9._-]+){3,}", text)
+            path_chars = sum(len(path) for path in path_like)
+            if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
+                return None
             
     # 3) Extreme numeric sequences. If a single word/number has more than 20 digits, it's a hallucination.
     if re.search(r'\d{20,}', text):
         return None
 
     # 4) Corrupted lexical output is a model-state failure, not a usable answer.
-    if _contains_corrupted_language(text):
+    if not is_proof and _contains_corrupted_language(text):
         return None
             
     return text
@@ -1614,7 +1615,7 @@ def _mlx_worker_loop(
                                         response_text = get_refusal_fallback(seed=token_count)
                                         break
 
-                                sanitized_text = _sanitize_telemetry_leakage(response_text)
+                                sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
                                 if sanitized_text is None:
                                     logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
                                     response_text = ""

@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import ast
 import csv
 import hashlib
 import io
@@ -50,6 +51,10 @@ BATTERY_ARTIFACTS = [
 ]
 
 
+class ArtifactValidationError(RuntimeError):
+    """Raised when live Aura output is missing or structurally invalid."""
+
+
 # ─── Utilities ──────────────────────────────────────────────────
 
 def read_file(p: Path) -> str:
@@ -75,12 +80,12 @@ def action_entry(world: str, action_type: str, target: str,
 
 
 def send_to_aura(message: str, url: str, timeout: float = TIMEOUT_S,
-                  retries: int = MAX_RETRIES) -> str:
+                  retries: int = MAX_RETRIES, session_id: str = "benchmark_default") -> str:
     """Send a message to Aura's /api/chat and return the response text."""
     for attempt in range(retries):
         try:
             with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, json={"message": message})
+                resp = client.post(url, json={"message": message, "session_id": session_id}, headers={"X-Aura-Benchmark": "true"})
                 resp.raise_for_status()
                 data = resp.json()
                 reply = data.get("response", "")
@@ -134,6 +139,46 @@ def extract_code_block(text: str, lang: str = "python") -> str | None:
     pattern = rf'```(?:{lang})?\s*\n(.*?)```'
     match = re.search(pattern, text, re.DOTALL)
     return match.group(1).strip() if match else None
+
+
+def _validate_json_file(path: Path) -> None:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArtifactValidationError(f"{path} is not valid JSON: {exc}") from exc
+
+
+def _validate_csv_file(path: Path) -> None:
+    try:
+        rows = list(csv.reader(io.StringIO(path.read_text(encoding="utf-8"))))
+    except (OSError, csv.Error) as exc:
+        raise ArtifactValidationError(f"{path} is not valid CSV: {exc}") from exc
+    if not rows or not any(cell.strip() for cell in rows[0]):
+        raise ArtifactValidationError(f"{path} is missing a CSV header")
+
+
+def _validate_python_file(path: Path) -> None:
+    try:
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        raise ArtifactValidationError(f"{path} is not valid Python: {exc}") from exc
+
+
+def _require_nonempty(path: Path) -> None:
+    if not path.exists():
+        raise ArtifactValidationError(f"missing required artifact: {path}")
+    if not path.read_text(encoding="utf-8", errors="replace").strip():
+        raise ArtifactValidationError(f"empty required artifact: {path}")
+
+
+def _validate_artifact(path: Path) -> None:
+    _require_nonempty(path)
+    if path.suffix == ".json":
+        _validate_json_file(path)
+    elif path.suffix == ".csv":
+        _validate_csv_file(path)
+    elif path.suffix == ".py":
+        _validate_python_file(path)
 
 
 # ─── World Prompt Builders ──────────────────────────────────────
@@ -199,6 +244,7 @@ class LiveWorldProcessor:
 
     def process_world(self, wid: str) -> dict:
         """Process one world through Aura's live API."""
+        self.current_wid = wid
         spec = self.specs["worlds"].get(wid, {})
         wtype = spec.get("type", "unknown")
         wdir = self.root / "worlds" / wid
@@ -213,19 +259,134 @@ class LiveWorldProcessor:
                 return {"world": wid, "status": "no_handler", "type": wtype}
 
             handler(wid, wdir, spec)
-            self._complete_tickets(wid, wdir, spec)
 
             if spec.get("dynamic_world"):
                 self._handle_dynamic_event(wid, wdir, spec)
 
+            validation_errors = self._validate_world_outputs(wid, wdir, spec)
+            if validation_errors:
+                for validation_error in validation_errors:
+                    log.error("%s: output validation failed: %s", wid, validation_error)
+                return {
+                    "world": wid,
+                    "status": "error",
+                    "type": wtype,
+                    "error": "; ".join(validation_errors),
+                }
+
+            self._complete_tickets(wid, wdir, spec)
             return {"world": wid, "status": "ok", "type": wtype}
+        except ArtifactValidationError as e:
+            log.error("Invalid Aura output for %s: %s", wid, e)
+            return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
         except Exception as e:
             log.error("Error processing %s: %s\n%s", wid, e, traceback.format_exc())
             return {"world": wid, "status": "error", "type": wtype, "error": str(e)}
 
+    def _expected_artifacts(self, wtype: str) -> tuple[str, ...]:
+        return {
+            "rulescript": ("apps/rules/rulescript.py", "data/derived/state.json"),
+            "config": ("data/derived/service_config_fixed.json",),
+            "reconcile": ("data/derived/reconciled.csv", "reports/quarantine.md"),
+            "scheduler": ("data/derived/schedule.json",),
+            "budget": ("data/derived/selected_items.json",),
+            "policy": (
+                "data/derived/vendor_decision.json",
+                "reports/stakeholder_plan.md",
+                "drafts/policy_note.md",
+            ),
+            "device": ("apps/model/model.py", "reports/device_law.md"),
+            "transfer": ("data/derived/reconciled.csv", "reports/transfer_report.md"),
+            "simulator": ("reports/sim_prediction.md",),
+            "tool_creation": ("tools/select_values.py",),
+            "report": ("reports/analysis.md",),
+            "causal": ("reports/root_cause.md",),
+            "grid": ("data/derived/path.json",),
+            "synthesis": ("reports/synthesis.md",),
+            "redaction": ("reports/redacted.md",),
+            "curriculum": ("reports/lesson_plan.md",),
+            "triage": ("data/derived/triage_order.json",),
+            "database": ("data/derived/category_totals.csv",),
+            "failure": ("reports/recovery.md", "data/derived/recovered.json"),
+            "workflow": ("tools/validate_outputs.py", "reports/workflow_improvement.md"),
+            "memory": ("reports/vendor_choice.md",),
+            "meta": ("reports/meta_audit.md",),
+            "codec": ("data/derived/decoded.txt",),
+        }.get(wtype, ())
+
+    def _validate_world_outputs(self, wid: str, wdir: Path, spec: dict) -> list[str]:
+        errors: list[str] = []
+        wtype = str(spec.get("type", "unknown"))
+        for relative_path in self._expected_artifacts(wtype):
+            try:
+                _validate_artifact(wdir / relative_path)
+            except ArtifactValidationError as exc:
+                errors.append(str(exc))
+
+        if wtype == "grid":
+            try:
+                self._validate_grid_path(wdir, spec)
+            except ArtifactValidationError as exc:
+                errors.append(str(exc))
+
+        if spec.get("dynamic_world"):
+            response_path = wdir / "reports/dynamic_response.md"
+            code = dynamic_code(wid)
+            try:
+                _require_nonempty(response_path)
+                response = response_path.read_text(encoding="utf-8", errors="replace").lower()
+                if code.lower() not in response:
+                    raise ArtifactValidationError(
+                        f"{response_path} does not mention dynamic event code {code}"
+                    )
+            except ArtifactValidationError as exc:
+                errors.append(str(exc))
+        return errors
+
+    def _validate_grid_path(self, wdir: Path, spec: dict) -> None:
+        path_file = wdir / "data/derived/path.json"
+        try:
+            path = json.loads(path_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ArtifactValidationError(f"{path_file} is not a valid JSON grid path: {exc}") from exc
+        if not isinstance(path, list) or not path:
+            raise ArtifactValidationError(f"{path_file} must contain a non-empty coordinate list")
+
+        start = tuple(spec.get("start", [0, 0]))
+        goal = tuple(spec.get("goal", [5, 5]))
+        size = int(spec.get("size", 6))
+        obstacles = {tuple(obstacle) for obstacle in spec.get("obstacles", [])}
+        coordinates: list[tuple[int, int]] = []
+        for index, item in enumerate(path):
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, int) for value in item)
+            ):
+                raise ArtifactValidationError(
+                    f"{path_file} has invalid coordinate at index {index}: {item!r}"
+                )
+            coordinate = tuple(item)
+            row, col = coordinate
+            if not (0 <= row < size and 0 <= col < size):
+                raise ArtifactValidationError(f"{path_file} coordinate out of bounds: {item!r}")
+            if coordinate in obstacles:
+                raise ArtifactValidationError(f"{path_file} enters obstacle: {item!r}")
+            coordinates.append(coordinate)
+        if coordinates[0] != start or coordinates[-1] != goal:
+            raise ArtifactValidationError(
+                f"{path_file} must start at {list(start)} and end at {list(goal)}"
+            )
+        for previous, current in zip(coordinates, coordinates[1:]):
+            if abs(previous[0] - current[0]) + abs(previous[1] - current[1]) != 1:
+                raise ArtifactValidationError(
+                    f"{path_file} contains non-cardinal step: {list(previous)} -> {list(current)}"
+                )
+
     def _ask_aura(self, prompt: str) -> str:
         """Send prompt to Aura and return response."""
-        reply = send_to_aura(prompt, self.aura_url, self.timeout)
+        session_id = getattr(self, "current_wid", "benchmark_default")
+        reply = send_to_aura(prompt, self.aura_url, self.timeout, session_id=session_id)
         if not reply:
             raise RuntimeError("Aura returned empty response")
         return reply
@@ -303,13 +464,14 @@ class LiveWorldProcessor:
 
         reply = self._ask_aura(prompt)
 
-        # Write the response, ensuring event code is present
-        ensure_dir(wdir / "reports")
         if code.lower() not in reply.lower():
-            reply += f"\n\nEvent code: {code}"
+            raise ArtifactValidationError(
+                f"Aura response did not acknowledge dynamic event code {code}"
+            )
         if "dynamic" not in reply.lower():
-            reply = f"Dynamic event response:\n\n{reply}"
+            raise ArtifactValidationError("Aura response did not describe the dynamic event")
 
+        ensure_dir(wdir / "reports")
         (wdir / "reports/dynamic_response.md").write_text(reply)
 
         # Mark dynamic ticket done
@@ -353,13 +515,11 @@ class LiveWorldProcessor:
         reply = self._ask_aura(prompt)
         code = extract_code_block(reply, "python")
 
-        if code and "def run_rules" in code:
-            ensure_dir(app_dir)
+        ensure_dir(app_dir)
+        if code:
             (app_dir / "rulescript.py").write_text(code)
         else:
-            # Fallback: use a known-good implementation
-            log.warning("%s: Aura's rulescript fix wasn't parseable, using fallback", wid)
-            self._write_fallback_rulescript(app_dir)
+            (app_dir / "rulescript.py").write_text(reply)
 
         # Execute the script
         derived = wdir / "data/derived"
@@ -368,93 +528,20 @@ class LiveWorldProcessor:
             import importlib.util
             mod_spec = importlib.util.spec_from_file_location("rs", app_dir / "rulescript.py")
             mod = importlib.util.module_from_spec(mod_spec)
+            if mod_spec.loader is None:
+                raise ArtifactValidationError("rulescript loader unavailable")
             mod_spec.loader.exec_module(mod)
             state = mod.run_rules(wdir / "docs/workflow.rules")
+            if not isinstance(state, dict):
+                raise ArtifactValidationError("run_rules(path) did not return a state dictionary")
             (derived / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True))
         except Exception as e:
-            log.warning("%s: rulescript execution failed: %s", wid, e)
-            # Ask Aura what the output should be
-            self._ask_aura_for_state(wid, wdir, workflow_rules, derived)
+            raise ArtifactValidationError(f"rulescript execution failed: {e}") from e
 
         self.action_log.append(action_entry(
             wid, "edit", "apps/rules/rulescript.py",
             "Fix LOOP and IFGE via Aura reasoning", "Fixed", "apps/rules/rulescript.py"
         ))
-
-    def _write_fallback_rulescript(self, app_dir: Path):
-        """Write the reference rulescript implementation as fallback."""
-        code = '''from pathlib import Path
-import json
-
-def run_rules(path):
-    state = {}
-    lines = Path(path).read_text().splitlines()
-    i = 0
-    while i < len(lines):
-        raw = lines[i].strip()
-        i += 1
-        if not raw or raw.startswith('#'):
-            continue
-        p = raw.split()
-        cmd = p[0]
-        if cmd == 'SET':
-            state[p[1]] = int(p[2]) if p[2].lstrip('-').isdigit() else p[2]
-        elif cmd == 'ADD':
-            state[p[1]] = state.get(p[1], 0) + int(p[2])
-        elif cmd == 'MUL':
-            state[p[1]] = state.get(p[1], 0) * int(p[2])
-        elif cmd == 'MOVE':
-            amt = int(p[3])
-            state[p[1]] = state.get(p[1], 0) - amt
-            state[p[2]] = state.get(p[2], 0) + amt
-        elif cmd == 'IFGE':
-            var = p[1]; threshold = int(p[2])
-            then_idx = p.index('THEN'); rest = p[then_idx+1:]
-            if state.get(var, 0) >= threshold:
-                sub = rest[0]
-                if sub == 'SET':
-                    state[rest[1]] = int(rest[2]) if rest[2].lstrip('-').isdigit() else rest[2]
-                elif sub == 'ADD':
-                    state[rest[1]] = state.get(rest[1], 0) + int(rest[2])
-                elif sub == 'MUL':
-                    state[rest[1]] = state.get(rest[1], 0) * int(rest[2])
-        elif cmd == 'LOOP':
-            count = int(p[1]); do_idx = p.index('DO'); rest_line = ' '.join(p[do_idx+1:])
-            for _ in range(count):
-                rp = rest_line.split(); sub = rp[0]
-                if sub == 'SET':
-                    state[rp[1]] = int(rp[2]) if rp[2].lstrip('-').isdigit() else rp[2]
-                elif sub == 'ADD':
-                    state[rp[1]] = state.get(rp[1], 0) + int(rp[2])
-                elif sub == 'MUL':
-                    state[rp[1]] = state.get(rp[1], 0) * int(rp[2])
-                elif sub == 'MOVE':
-                    amt = int(rp[3])
-                    state[rp[1]] = state.get(rp[1], 0) - amt
-                    state[rp[2]] = state.get(rp[2], 0) + amt
-    return state
-'''
-        ensure_dir(app_dir)
-        (app_dir / "rulescript.py").write_text(code)
-
-    def _ask_aura_for_state(self, wid, wdir, rules_text, derived):
-        """Ask Aura to evaluate the rules and return the state dict."""
-        prompt = (
-            f"Given this rule file:\n```\n{rules_text}\n```\n\n"
-            f"Execute these rules step by step and return the final state "
-            f"as a JSON object. Commands:\n"
-            f"- SET var val: set variable\n"
-            f"- ADD var val: add to variable\n"
-            f"- MUL var val: multiply variable\n"
-            f"- MOVE src dst amt: move amount from src to dst\n"
-            f"- LOOP N DO <cmd>: repeat N times\n"
-            f"- IFGE var threshold THEN <cmd>: execute if var >= threshold\n\n"
-            f"Return ONLY the final state as ```json"
-        )
-        reply = self._ask_aura(prompt)
-        state = extract_json(reply)
-        if isinstance(state, dict):
-            (derived / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True))
 
     # ── CONFIG ─────────────────────────────────────────────────
 
@@ -480,19 +567,12 @@ def run_rules(path):
         reply = self._ask_aura(prompt)
         config = extract_json(reply)
 
-        if not isinstance(config, dict) or "mode" not in config:
-            # Parse port from spec or raw data
-            port = spec.get("port", 8080)
-            config = {"mode": "safe", "retries": 3, "timeout_seconds": 30, "port": port}
-
-        # Ensure required fields
-        config.setdefault("mode", "safe")
-        config.setdefault("retries", 3)
-        config.setdefault("timeout_seconds", 30)
-
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        (derived / "service_config_fixed.json").write_text(json.dumps(config, indent=2))
+        if isinstance(config, dict):
+            (derived / "service_config_fixed.json").write_text(json.dumps(config, indent=2))
+        else:
+            (derived / "service_config_fixed.json").write_text(reply)
         self.action_log.append(action_entry(
             wid, "edit", "data/derived/service_config_fixed.json",
             "Fix config via Aura reasoning", "Written", "data/derived/service_config_fixed.json"
@@ -529,24 +609,10 @@ def run_rules(path):
             csv_text = csv_match.group(1).strip()
             (derived / "reconciled.csv").write_text(csv_text)
         else:
-            # Fallback: use expected values from spec
-            expected = spec.get("expected", {})
-            with open(derived / "reconciled.csv", "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=["sku", "count"])
-                w.writeheader()
-                for sku, count in sorted(expected.items()):
-                    w.writerow({"sku": sku, "count": count})
+            (derived / "reconciled.csv").write_text(reply)
 
         # Write quarantine report from Aura's response
-        bad = spec.get("bad", [])
-        quarantine_text = reply if any(b.lower() in reply.lower() for b in bad) else ""
-        if not quarantine_text:
-            quarantine_text = (
-                f"# Quarantine Report\n\n"
-                f"The following entries were quarantined: {', '.join(bad)}\n\n"
-                f"These entries had inconsistencies and were excluded.\n"
-            )
-        (reports / "quarantine.md").write_text(quarantine_text)
+        (reports / "quarantine.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Reconcile data via Aura", "Reconciled",
             "data/derived/reconciled.csv"
@@ -584,154 +650,17 @@ def run_rules(path):
         ensure_dir(derived)
 
         schedule = extract_json(reply, "tasks")
-
         if isinstance(schedule, dict) and "tasks" in schedule:
-            # Validate the schedule
-            entries = schedule["tasks"]
-            if self._validate_schedule(entries, tasks):
-                (derived / "schedule.json").write_text(json.dumps(schedule, indent=2))
-                self.action_log.append(action_entry(
-                    wid, "decision", "data/derived/schedule.json",
-                    "Schedule computed via Aura reasoning",
-                    f"Makespan: {max(e['end'] for e in entries)}",
-                    "data/derived/schedule.json"
-                ))
-                return
+            (derived / "schedule.json").write_text(json.dumps(schedule, indent=2))
+        else:
+            (derived / "schedule.json").write_text(reply)
 
-        # If Aura's schedule is invalid, solve it algorithmically
-        log.warning("%s: Aura's schedule invalid, solving algorithmically", wid)
-        best = spec.get("best", 0)
-        result = self._solve_schedule_optimal(tasks, best)
-        (derived / "schedule.json").write_text(json.dumps({"tasks": result}, indent=2))
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/schedule.json",
-            "Schedule computed (algorithmic fallback)",
-            f"Makespan: {max(e['end'] for e in result) if result else 0}",
+            "Schedule computed via Aura reasoning",
+            f"Makespan raw",
             "data/derived/schedule.json"
         ))
-
-    def _validate_schedule(self, entries: list, tasks: dict) -> bool:
-        """Validate a schedule against constraints."""
-        try:
-            by = {e["task"]: e for e in entries}
-            if set(by) != set(tasks):
-                return False
-            for name, info in tasks.items():
-                e = by[name]
-                if e["end"] - e["start"] != info["duration"]:
-                    return False
-                for p in info.get("prereqs", []):
-                    if by[p]["end"] > e["start"]:
-                        return False
-            # Check no worker overlap
-            workers = defaultdict(list)
-            for e in entries:
-                workers[e["worker"]].append(e)
-            for wk_entries in workers.values():
-                wk_entries.sort(key=lambda z: z["start"])
-                for a, b in zip(wk_entries, wk_entries[1:]):
-                    if a["end"] > b["start"]:
-                        return False
-            return True
-        except (KeyError, TypeError):
-            return False
-
-    def _solve_schedule_optimal(self, tasks: dict, best_makespan: int) -> list:
-        """Critical-path ASAP scheduler — computes the mathematically optimal
-        schedule by assigning each task at its earliest possible start time."""
-        # Compute earliest start via topological order
-        task_names = list(tasks.keys())
-        earliest_start = {t: 0 for t in task_names}
-
-        # Topological sort using Kahn's algorithm
-        in_deg = {t: 0 for t in task_names}
-        adj = defaultdict(list)
-        for t, info in tasks.items():
-            for p in info.get("prereqs", []):
-                adj[p].append(t)
-                in_deg[t] += 1
-
-        order = []
-        queue = [t for t in task_names if in_deg[t] == 0]
-        while queue:
-            queue.sort()  # deterministic
-            t = queue.pop(0)
-            order.append(t)
-            for child in adj[t]:
-                earliest_start[child] = max(
-                    earliest_start[child],
-                    earliest_start[t] + tasks[t]["duration"]
-                )
-                in_deg[child] -= 1
-                if in_deg[child] == 0:
-                    queue.append(child)
-
-        # Assign workers greedily (ASAP on earliest-free worker)
-        result = []
-        worker_avail = []  # List of (next_available_time, worker_id)
-
-        for t in order:
-            dur = tasks[t]["duration"]
-            es = earliest_start[t]
-
-            # Find the best worker
-            best_w = None
-            best_start = None
-            for i, avail in enumerate(worker_avail):
-                start = max(es, avail)
-                if best_start is None or start < best_start:
-                    best_start = start
-                    best_w = i
-
-            if best_w is None or best_start > es:
-                # Open a new worker if needed or beneficial
-                if best_start is None or es < best_start:
-                    best_w = len(worker_avail)
-                    worker_avail.append(0)
-                    best_start = es
-
-            end = best_start + dur
-            worker_avail[best_w] = end
-            result.append({
-                "task": t, "start": best_start, "end": end,
-                "duration": dur, "worker": f"W{best_w}"
-            })
-
-        actual = max(e["end"] for e in result) if result else 0
-        if actual != best_makespan:
-            log.warning(
-                "Scheduler got makespan %d, expected %d — trying exhaustive",
-                actual, best_makespan
-            )
-            # Try with unlimited workers (pure ASAP)
-            result2 = []
-            ws = []
-            for t in order:
-                dur = tasks[t]["duration"]
-                es = earliest_start[t]
-                # Each task gets its own worker if needed
-                placed = False
-                for i, avail in enumerate(ws):
-                    if avail <= es:
-                        result2.append({
-                            "task": t, "start": es, "end": es + dur,
-                            "duration": dur, "worker": f"W{i}"
-                        })
-                        ws[i] = es + dur
-                        placed = True
-                        break
-                if not placed:
-                    wi = len(ws)
-                    ws.append(es + dur)
-                    result2.append({
-                        "task": t, "start": es, "end": es + dur,
-                        "duration": dur, "worker": f"W{wi}"
-                    })
-            actual2 = max(e["end"] for e in result2) if result2 else 0
-            if actual2 == best_makespan:
-                return result2
-
-        return result
 
     # ── BUDGET ─────────────────────────────────────────────────
 
@@ -758,11 +687,7 @@ def run_rules(path):
                 json.dumps({"selected": sorted(result["selected"])}, indent=2)
             )
         else:
-            # Fallback to spec
-            best = spec.get("best", [])
-            (derived / "selected_items.json").write_text(
-                json.dumps({"selected": sorted(best)}, indent=2)
-            )
+            (derived / "selected_items.json").write_text(reply)
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/selected_items.json",
             "Budget optimization via Aura", "Selected", "data/derived/selected_items.json"
@@ -797,37 +722,23 @@ def run_rules(path):
         vendor = None
         if isinstance(decision, dict) and "vendor" in decision:
             vendor = decision["vendor"]
-        if not vendor:
-            vendor = spec.get("best_vendor", "Unknown")
 
-        (derived / "vendor_decision.json").write_text(
-            json.dumps({"vendor": vendor}, indent=2)
-        )
+        if vendor:
+            (derived / "vendor_decision.json").write_text(
+                json.dumps({"vendor": vendor}, indent=2)
+            )
+        else:
+            (derived / "vendor_decision.json").write_text(reply)
 
-        # Write stakeholder plan with Aura's reasoning
-        plan = reply if all(
-            kw in reply.lower() for kw in ["reliability", "finance", "accessibility", "noise"]
-        ) else (
-            f"# Stakeholder Plan\n\n## Vendor Selection: {vendor}\n\n"
-            f"### Evaluation Criteria\n\n"
-            f"1. **Reliability**: {vendor} has the best uptime.\n"
-            f"2. **Finance**: Best cost-benefit ratio.\n"
-            f"3. **Accessibility**: Best accessibility support.\n"
-            f"4. **Noise**: Lowest noise impact.\n"
-        )
-        (reports / "stakeholder_plan.md").write_text(plan)
+        # Write stakeholder plan
+        (reports / "stakeholder_plan.md").write_text(reply)
 
         # Write policy note
-        note = reply if all(
-            kw in reply.lower() for kw in ["deprecated", "current", "lowest"]
-        ) else (
-            f"# Policy Note\n\nThe deprecated vendors have been removed. "
-            f"The current vendor ({vendor}) offers the lowest risk.\n"
-        )
-        (drafts / "policy_note.md").write_text(note)
+        (drafts / "policy_note.md").write_text(reply)
+
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/vendor_decision.json",
-            f"Policy evaluation via Aura: {vendor}", f"Selected {vendor}",
+            f"Policy evaluation via Aura", f"Completed",
             "data/derived/vendor_decision.json"
         ))
 
@@ -836,7 +747,6 @@ def run_rules(path):
     def _handle_device(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to reverse-engineer the device model."""
         context = build_context(wdir)
-        bonus = spec.get("bonus", {})
 
         prompt = (
             f"You are reverse-engineering a black-box lab device.\n\n"
@@ -857,32 +767,13 @@ def run_rules(path):
         ensure_dir(reports)
 
         code = extract_code_block(reply, "python")
-        if code and "predict_output" in code:
+        if code:
             (apps_dir / "model.py").write_text(code)
         else:
-            # Fallback: build from spec
-            bonus_dict = json.dumps(bonus)
-            fallback = (
-                f'#!/usr/bin/env python3\n'
-                f'"""Device model with calibrated predict_output function."""\n\n'
-                f'BONUS = {bonus_dict}\n\n'
-                f'def predict_output(x, y, color):\n'
-                f'    """Predict device output: a*x + b*y + bonus[color]"""\n'
-                f'    a = 3\n    b = 6\n'
-                f'    return a * x + b * y + BONUS.get(color, 0)\n'
-            )
-            (apps_dir / "model.py").write_text(fallback)
+            (apps_dir / "model.py").write_text(reply)
 
         # Write device law report
-        bonus_str = "\n".join(f"- {k}: {v}" for k, v in bonus.items())
-        report = reply if "stale" in reply.lower() else (
-            f"# Device Law Report\n\n"
-            f"## Model: output = a*x + b*y + bonus[color]\n\n"
-            f"### Handling stale data\n"
-            f"Stale calibration data was identified and excluded from model fitting.\n\n"
-            f"### Bonus values by color:\n{bonus_str}\n"
-        )
-        (reports / "device_law.md").write_text(report)
+        (reports / "device_law.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Device reverse-engineering via Aura",
             "Model written", "apps/model/model.py"
@@ -893,15 +784,13 @@ def run_rules(path):
     def _handle_transfer(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to reconcile transferred data."""
         context = build_context(wdir)
-        expected = spec.get("expected", {})
-        bad = spec.get("bad", [])
 
         prompt = (
             f"Reconcile data transferred across nodes with different schemas.\n\n"
             f"Context:\n{context}\n\n"
             f"Write:\n1. A reconciled.csv with columns: node,count\n"
             f"2. A transfer report mentioning 'duplicate' and 'malformed' entries, "
-            f"and listing these bad entries: {', '.join(bad)}"
+            f"and listing these bad entries: {', '.join(spec.get('bad', []))}"
         )
 
         reply = self._ask_aura(prompt)
@@ -915,23 +804,10 @@ def run_rules(path):
         if csv_match:
             (derived / "reconciled.csv").write_text(csv_match.group(1).strip())
         else:
-            with open(derived / "reconciled.csv", "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=["node", "count"])
-                w.writeheader()
-                for node, count in sorted(expected.items()):
-                    w.writerow({"node": node, "count": count})
+            (derived / "reconciled.csv").write_text(reply)
 
         # Write transfer report
-        bad_str = ", ".join(bad)
-        report = reply if (
-            "duplicate" in reply.lower() and "malformed" in reply.lower()
-            and all(b.lower() in reply.lower() for b in bad)
-        ) else (
-            f"# Transfer Report\n\nDuplicate entries were detected and merged. "
-            f"Malformed records ({bad_str}) were quarantined.\n"
-            f"Bad entries: {bad_str}\n"
-        )
-        (reports / "transfer_report.md").write_text(report)
+        (reports / "transfer_report.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "transfer", "data/derived/reconciled.csv",
             "Transfer reconciliation via Aura", "Transferred", "data/derived/reconciled.csv"
@@ -943,7 +819,6 @@ def run_rules(path):
         """Ask Aura to run experiments on the simulator and predict output."""
         context = build_context(wdir)
         target = spec.get("target", [0, 0])
-        answer = spec.get("answer", 0)
 
         prompt = (
             f"You are running experiments on a black-box simulator.\n\n"
@@ -961,21 +836,10 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        # Ensure key values are in the report
-        report = reply
-        if str(answer) not in report:
-            report += f"\n\nFinal prediction for ({target[0]}, {target[1]}): {answer}\n"
-        if str(target[0]) not in report:
-            report += f"\nInput X: {target[0]}\n"
-        if str(target[1]) not in report:
-            report += f"\nInput Y: {target[1]}\n"
-        if "hypothesis" not in report.lower():
-            report += "\n\nHypothesis: The simulator follows a deterministic function.\n"
-
-        (reports / "sim_prediction.md").write_text(report)
+        (reports / "sim_prediction.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "tools/sim.py", "Simulator analysis via Aura",
-            f"Predicted {answer}", "reports/sim_prediction.md"
+            f"Predicted", "reports/sim_prediction.md"
         ))
 
     # ── TOOL_CREATION ──────────────────────────────────────────
@@ -983,7 +847,6 @@ def run_rules(path):
     def _handle_tool_creation(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to create a value selection tool."""
         context = build_context(wdir)
-        selected = spec.get("selected", [])
 
         prompt = (
             f"Create a Python tool that selects specific values from data.\n\n"
@@ -998,35 +861,12 @@ def run_rules(path):
         reply = self._ask_aura(prompt)
         tools_dir = wdir / "tools"
         ensure_dir(tools_dir)
-        derived = wdir / "data/derived"
-        ensure_dir(derived)
 
         code = extract_code_block(reply, "python")
-        if code and "select_values" in code:
+        if code:
             (tools_dir / "select_values.py").write_text(code)
         else:
-            # Write tool with known values
-            tool = (
-                f'#!/usr/bin/env python3\nimport csv\nfrom pathlib import Path\n\n'
-                f'def select_values():\n'
-                f'    selected = {selected}\n'
-                f'    out = Path(__file__).resolve().parents[1] / "data/derived/selected.csv"\n'
-                f'    out.parent.mkdir(parents=True, exist_ok=True)\n'
-                f'    with open(out, "w", newline="") as f:\n'
-                f'        w = csv.DictWriter(f, fieldnames=["value"])\n'
-                f'        w.writeheader()\n'
-                f'        for v in selected: w.writerow({{"value": v}})\n'
-                f'    return selected\n\n'
-                f'if __name__ == "__main__": select_values()\n'
-            )
-            (tools_dir / "select_values.py").write_text(tool)
-
-        # Also write the output directly
-        with open(derived / "selected.csv", "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["value"])
-            w.writeheader()
-            for v in selected:
-                w.writerow({"value": v})
+            (tools_dir / "select_values.py").write_text(reply)
 
         self.action_log.append(action_entry(
             wid, "invention", "tools/select_values.py",
@@ -1053,13 +893,7 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        # Verify all stats are present
-        report = reply
-        for k, v in stats.items():
-            if str(v) not in report:
-                report += f"\n{k}: {v}"
-
-        (reports / "analysis.md").write_text(report)
+        (reports / "analysis.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Data analysis via Aura", "Report written",
             "reports/analysis.md"
@@ -1070,7 +904,6 @@ def run_rules(path):
     def _handle_causal(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to debug and find the root cause."""
         context = build_context(wdir)
-        cause = spec.get("cause", "unknown")
 
         prompt = (
             f"Debug this system to find the root cause of failures.\n\n"
@@ -1083,15 +916,10 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        report = reply
-        cause_display = cause.replace("_", " ")
-        if cause not in report.lower() and cause_display not in report.lower():
-            report += f"\n\nRoot cause identified: {cause} ({cause_display})\n"
-
-        (reports / "root_cause.md").write_text(report)
+        (reports / "root_cause.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "runtime", "Causal debugging via Aura",
-            f"Root cause: {cause}", "reports/root_cause.md"
+            f"Root cause", "reports/root_cause.md"
         ))
 
     # ── GRID ───────────────────────────────────────────────────
@@ -1117,53 +945,14 @@ def run_rules(path):
         ensure_dir(derived)
 
         path = extract_json(reply)
-        if isinstance(path, list) and len(path) >= 2:
-            # Validate
-            obs = {tuple(o) for o in obstacles}
-            valid = True
-            for i, p in enumerate(path):
-                if tuple(p) in obs:
-                    valid = False
-                    break
-                if i > 0:
-                    prev = path[i-1]
-                    if abs(p[0]-prev[0]) + abs(p[1]-prev[1]) != 1:
-                        valid = False
-                        break
-            if valid and tuple(path[0]) == tuple(start) and tuple(path[-1]) == tuple(goal):
-                (derived / "path.json").write_text(json.dumps(path, indent=2))
-                self.action_log.append(action_entry(
-                    wid, "decision", "data/derived/path.json",
-                    "Grid pathfinding via Aura", f"Path length {len(path)}",
-                    "data/derived/path.json"
-                ))
-                return
+        if isinstance(path, list):
+            (derived / "path.json").write_text(json.dumps(path, indent=2))
+        else:
+            (derived / "path.json").write_text(reply)
 
-        # Fallback: BFS
-        log.warning("%s: Aura's path invalid, using BFS fallback", wid)
-        from collections import deque
-        start_t = tuple(start)
-        goal_t = tuple(goal)
-        obs = {tuple(o) for o in obstacles}
-        queue = deque([(start_t, [start_t])])
-        visited = {start_t}
-        found = [list(start), list(goal)]
-        while queue:
-            pos, p = queue.popleft()
-            if pos == goal_t:
-                found = [list(x) for x in p]
-                break
-            for dr, dc in [(0,1),(1,0),(0,-1),(-1,0)]:
-                nr, nc = pos[0]+dr, pos[1]+dc
-                npos = (nr, nc)
-                if 0 <= nr < size and 0 <= nc < size and npos not in obs and npos not in visited:
-                    visited.add(npos)
-                    queue.append((npos, p + [npos]))
-
-        (derived / "path.json").write_text(json.dumps(found, indent=2))
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/path.json",
-            "Grid pathfinding (BFS fallback)", f"Path length {len(found)}",
+            "Grid pathfinding via Aura", f"Path length",
             "data/derived/path.json"
         ))
 
@@ -1172,7 +961,6 @@ def run_rules(path):
     def _handle_synthesis(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to synthesize research sources."""
         context = build_context(wdir)
-        truth = spec.get("truth", "unknown")
 
         prompt = (
             f"Synthesize the following research sources.\n\n"
@@ -1185,16 +973,10 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        report = reply
-        if truth not in report.lower():
-            report += f"\n\nKey finding: {truth}\n"
-        if "contradict" not in report.lower():
-            report += "\nSome sources appear to contradict this finding.\n"
-
-        (reports / "synthesis.md").write_text(report)
+        (reports / "synthesis.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Research synthesis via Aura",
-            f"Truth: {truth}", "reports/synthesis.md"
+            f"Synthesis completed", "reports/synthesis.md"
         ))
 
     # ── REDACTION ──────────────────────────────────────────────
@@ -1202,7 +984,6 @@ def run_rules(path):
     def _handle_redaction(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to redact sensitive data."""
         context = build_context(wdir)
-        secret = spec.get("secret", "")
 
         prompt = (
             f"Review the following documents for sensitive data and redact them.\n\n"
@@ -1215,12 +996,7 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        # Ensure the secret is actually removed
-        report = reply.replace(secret, "[REDACTED]") if secret else reply
-        if "[REDACTED]" not in report:
-            report += "\n\nSensitive data has been replaced with [REDACTED].\n"
-
-        (reports / "redacted.md").write_text(report)
+        (reports / "redacted.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "edit", "reports/redacted.md", "Redaction via Aura",
             "Redacted", "reports/redacted.md"
@@ -1229,7 +1005,7 @@ def run_rules(path):
     # ── CURRICULUM ─────────────────────────────────────────────
 
     def _handle_curriculum(self, wid: str, wdir: Path, spec: dict):
-        """Ask Aura to create a lesson plan."""
+        """Create a lesson plan addressing a common misconception."""
         context = build_context(wdir)
         misconception = spec.get("misconception", "unknown")
 
@@ -1246,18 +1022,10 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        report = reply
-        if misconception not in report.lower():
-            report += f"\n\nKey misconception addressed: {misconception}\n"
-        if "example" not in report.lower():
-            report += "\n\n## Example\nConsider the following scenario...\n"
-        if "exercise" not in report.lower():
-            report += "\n\n## Exercise\nPractice with the following problem...\n"
-
-        (reports / "lesson_plan.md").write_text(report)
+        (reports / "lesson_plan.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "decision", "reports/lesson_plan.md",
-            "Curriculum design via Aura", f"Misconception: {misconception}",
+            "Curriculum design via Aura", f"Completed",
             "reports/lesson_plan.md"
         ))
 
@@ -1279,13 +1047,13 @@ def run_rules(path):
         ensure_dir(derived)
 
         order = extract_json(reply)
-        if not isinstance(order, list):
-            order = spec.get("order", [])
-
-        (derived / "triage_order.json").write_text(json.dumps(order, indent=2))
+        if isinstance(order, list):
+            (derived / "triage_order.json").write_text(json.dumps(order, indent=2))
+        else:
+            (derived / "triage_order.json").write_text(reply)
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/triage_order.json",
-            "Triage via Aura", f"Order: {len(order)} items", "data/derived/triage_order.json"
+            "Triage via Aura", f"Completed", "data/derived/triage_order.json"
         ))
 
     # ── DATABASE ───────────────────────────────────────────────
@@ -1309,12 +1077,7 @@ def run_rules(path):
         if csv_match:
             (derived / "category_totals.csv").write_text(csv_match.group(1).strip())
         else:
-            sums = spec.get("sums", {})
-            with open(derived / "category_totals.csv", "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=["category", "total"])
-                w.writeheader()
-                for cat, total in sorted(sums.items()):
-                    w.writerow({"category": cat, "total": total})
+            (derived / "category_totals.csv").write_text(reply)
 
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Database analysis via Aura",
@@ -1344,33 +1107,31 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        # Write recovery data
-        (derived / "recovered.json").write_text(json.dumps({
-            "recovered": True, "failure_kind": kind,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }, indent=2))
+        (reports / "recovery.md").write_text(reply)
 
-        # Clean up failure artifacts
-        runtime = wdir / "runtime"
-        if kind == "stale_lock" and (runtime / "stale.lock").exists():
-            (runtime / "stale.lock").unlink()
-        elif kind == "corrupted_cache" and (runtime / "cache.corrupt").exists():
-            (runtime / "cache.corrupt").unlink()
-        elif kind == "partial_write" and (runtime / "partial.tmp").exists():
-            (runtime / "partial.tmp").unlink()
-        elif kind == "missing_dependency":
-            runtime.mkdir(parents=True, exist_ok=True)
-            (runtime / "dependency_ready").write_text("resolved")
+        # Only clean up and write recovered.json if the failure kind was actually diagnosed
+        if kind.replace("_", " ") in reply.lower():
+            (derived / "recovered.json").write_text(json.dumps({
+                "recovered": True, "failure_kind": kind,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }, indent=2))
 
-        # Write recovery report
-        report = reply
-        if kind.replace("_", " ") not in report.lower():
-            report += f"\n\nRecovery from {kind.replace('_', ' ')} completed.\n"
+            runtime = wdir / "runtime"
+            if kind == "stale_lock" and (runtime / "stale.lock").exists():
+                (runtime / "stale.lock").unlink()
+            elif kind == "corrupted_cache" and (runtime / "cache.corrupt").exists():
+                (runtime / "cache.corrupt").unlink()
+            elif kind == "partial_write" and (runtime / "partial.tmp").exists():
+                (runtime / "partial.tmp").unlink()
+            elif kind == "missing_dependency":
+                runtime.mkdir(parents=True, exist_ok=True)
+                (runtime / "dependency_ready").write_text("resolved")
+        else:
+            raise ArtifactValidationError(f"Aura failed to diagnose failure kind {kind!r}")
 
-        (reports / "recovery.md").write_text(report)
         self.action_log.append(action_entry(
             wid, "recovery", "data/derived/recovered.json",
-            f"Failure recovery ({kind}) via Aura", "Recovered",
+            f"Failure recovery ({kind}) via Aura", "Handled",
             "data/derived/recovered.json"
         ))
 
@@ -1397,19 +1158,9 @@ def run_rules(path):
         if code:
             (tools_dir / "validate_outputs.py").write_text(code)
         else:
-            (tools_dir / "validate_outputs.py").write_text(
-                '#!/usr/bin/env python3\nimport sys\n'
-                'print("Validation passed")\nsys.exit(0)\n'
-            )
+            (tools_dir / "validate_outputs.py").write_text(reply)
 
-        report = reply if (
-            "validation" in reply.lower() and "guardrail" in reply.lower()
-        ) else (
-            "# Workflow Improvement Report\n\n"
-            "## Validation\nOutput validation checks have been implemented.\n\n"
-            "## Guardrail\nGuardrail mechanisms ensure data integrity.\n"
-        )
-        (reports / "workflow_improvement.md").write_text(report)
+        (reports / "workflow_improvement.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "invention", "tools/validate_outputs.py",
             "Workflow validation via Aura", "Tool created",
@@ -1421,8 +1172,6 @@ def run_rules(path):
     def _handle_memory(self, wid: str, wdir: Path, spec: dict):
         """Ask Aura to recall vendor history and make a recommendation."""
         context = build_context(wdir)
-        best = spec.get("best", "")
-        banned = spec.get("banned", "")
 
         prompt = (
             f"Review vendor history and make a recommendation.\n\n"
@@ -1435,18 +1184,10 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        report = reply
-        if best.lower() not in report.lower():
-            report += f"\n\nRecommended vendor: {best}\n"
-        if banned.lower() not in report.lower():
-            report += f"\n{banned} is banned due to policy violations.\n"
-        if "banned" not in report.lower():
-            report += f"\nVendor {banned} has been banned.\n"
-
-        (reports / "vendor_choice.md").write_text(report)
+        (reports / "vendor_choice.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "decision", "reports/vendor_choice.md",
-            "Vendor memory recall via Aura", f"Best: {best}",
+            "Vendor memory recall via Aura", f"Completed",
             "reports/vendor_choice.md"
         ))
 
@@ -1470,12 +1211,7 @@ def run_rules(path):
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        report = reply
-        for kw in ["artifacts", "tests", "risks", "hidden"]:
-            if kw not in report.lower():
-                report += f"\n\n## {kw.title()}\n{kw.title()} were reviewed.\n"
-
-        (reports / "meta_audit.md").write_text(report)
+        (reports / "meta_audit.md").write_text(reply)
         self.action_log.append(action_entry(
             wid, "inspect", ".", "Meta-audit via Aura", "Audit complete",
             "reports/meta_audit.md"
@@ -1498,13 +1234,7 @@ def run_rules(path):
         derived = wdir / "data/derived"
         ensure_dir(derived)
 
-        # Try to use Aura's decoded text, fall back to spec
-        decoded = spec.get("decoded", "")
-        if reply.strip() and len(reply.strip()) < 5000:
-            # Use Aura's output if it seems reasonable
-            (derived / "decoded.txt").write_text(reply.strip())
-        elif decoded:
-            (derived / "decoded.txt").write_text(decoded)
+        (derived / "decoded.txt").write_text(reply.strip())
 
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Codec decoding via Aura",
@@ -1539,12 +1269,17 @@ def generate_battery_artifacts(root: Path, results: list, action_log: list):
     (root / "changed_files_manifest.json").write_text(json.dumps(changes, indent=2))
 
     # All the markdown artifacts
+    completion_summary = (
+        "All selected worlds produced structurally valid artifacts through Aura's live reasoning pathway."
+        if err_count == 0
+        else "Some worlds failed structural validation and remain unresolved; see runner_results.json."
+    )
     artifacts = {
         "final_report.md": (
             f"# Final Report\n\nCompleted {ok_count}/{len(results)} worlds. "
             f"Errors: {err_count}.\n\n"
-            f"## Summary\nAll worlds completed via Aura's live reasoning pathway. "
-            f"Tests validated via scorer. Assumptions documented in risk register. "
+            f"## Summary\n{completion_summary} "
+            f"Scorer validation remains the external authority. Assumptions documented in risk register. "
             f"Changed files tracked in manifest. Handoff plan below.\n\n"
             f"## Unresolved Issues\nSee open_issues.md.\n"
         ),

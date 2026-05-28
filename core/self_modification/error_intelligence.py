@@ -170,20 +170,26 @@ class StructuredErrorLogger:
             "duration": duration,
             "result": result
         }
-        
-        self._append_to_log(self.execution_log_path, execution_event)
-    
-    async def _append_to_log(self, path: Path, data: Dict[str, Any]):
-        """Append JSON line to log file (Async)"""
+
         try:
-            line = json.dumps(data) + '\n'
-            def _write():
-                with open(path, 'a', encoding='utf-8') as f:
-                    f.write(line)
-            await asyncio.to_thread(_write)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._append_to_log_sync(self.execution_log_path, execution_event)
+        else:
+            loop.create_task(self._append_to_log(self.execution_log_path, execution_event))
+
+    def _append_to_log_sync(self, path: Path, data: Dict[str, Any]) -> None:
+        line = json.dumps(data) + '\n'
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(line)
+
+    async def _append_to_log(self, path: Path, data: Dict[str, Any]) -> None:
+        """Append JSON line to log file without blocking the event loop."""
+        try:
+            await asyncio.to_thread(self._append_to_log_sync, path, data)
         except asyncio.CancelledError:
             logger.debug("Log append cancelled for %s", path)
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
+        except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
             record_degradation('error_intelligence', e)
             logger.error("Failed to append to log %s: %s", path, e)
     

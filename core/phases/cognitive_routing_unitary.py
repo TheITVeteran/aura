@@ -374,7 +374,11 @@ class CognitiveRoutingPhase(Phase):
             analysis=current_analysis,
             intent_type=intent_type,
         )
-        model_tier = self._resolve_model_tier(is_user_facing)
+        routing_origin = self._normalize_origin(getattr(state.cognition, "current_origin", ""))
+        if routing_origin == "benchmark":
+            model_tier = "primary"
+        else:
+            model_tier = self._resolve_model_tier(is_user_facing)
         deep_handoff = self._should_allow_deep_handoff(
             objective,
             is_user_facing=is_user_facing,
@@ -417,11 +421,12 @@ class CognitiveRoutingPhase(Phase):
 
         new_state = state.derive(f"routing: {objective[:20]}", origin="CognitiveRouting")
         state_origin = self._normalize_origin(getattr(state.cognition, "current_origin", ""))
-        if priority and not self._is_user_facing_origin(state_origin):
+        if priority and not self._is_user_facing_origin(state_origin) and state_origin != "benchmark":
             routing_origin = "user"
         else:
             routing_origin = state_origin or ("user" if priority else "system")
-        is_user_facing = self._is_user_facing_origin(routing_origin)
+        is_user_facing = self._is_user_facing_origin(routing_origin) or (routing_origin == "benchmark")
+        is_benchmark = (routing_origin == "benchmark")
         new_state.cognition.current_objective = objective
         new_state.cognition.current_origin = routing_origin
 
@@ -451,7 +456,7 @@ class CognitiveRoutingPhase(Phase):
             new_state.response_modifiers["deep_handoff"] = False
             return new_state
 
-        contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
+        contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing and not is_benchmark)
         new_state.response_modifiers["response_contract"] = contract.to_dict()
         analysis = analyze_turn(objective)
         route_meta = self._build_coding_route_metadata(

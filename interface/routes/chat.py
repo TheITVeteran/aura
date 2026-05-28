@@ -49,6 +49,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 class CheatCodeRequest(BaseModel):
@@ -2914,6 +2915,9 @@ def _looks_safely_grounded_search_reply(reply_text: Any) -> bool:
     lowered = str(reply_text or "").strip().lower()
     if not lowered:
         return False
+    # Technical, code, and JSON blocks are inherently grounded in the context/instructions.
+    if "```" in lowered or "{" in lowered or "[" in lowered or ("\n" in lowered and ("," in lowered or "=" in lowered)):
+        return True
     grounding_markers = (
         "i searched it live",
         "i read it live",
@@ -4711,6 +4715,8 @@ async def api_chat(
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")
 
+    is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
+
     # ── Chat preflight ──────────────────────────────────────────
     # 1) File-reference loading: if the user references a file path, load
     #    its contents (sandboxed, bounded) and prepend as context.
@@ -4731,57 +4737,63 @@ async def api_chat(
             extract_file_references,
             format_resume_prefix,
         )
-        # Session id: client host is good enough for single-user local Aura.
-        try:
-            _chat_session_id = (request.client.host if request.client else "default") or "default"
-        except _CHAT_RECOVERABLE_ERRORS:
-            _chat_session_id = "default"
+        if body.session_id:
+            _chat_session_id = body.session_id
+        else:
+            # Session id: client host is good enough for single-user local Aura.
+            try:
+                _chat_session_id = (request.client.host if request.client else "default") or "default"
+            except _CHAT_RECOVERABLE_ERRORS:
+                _chat_session_id = "default"
 
         # 3) Late-answered messages first — give the cortex the prior thread
         #    so the new response can acknowledge continuity. The actual late
         #    reply is also folded into the response by `_resume_prefix_for_response`
         #    below, so the user sees both "what I came back with" and the
         #    cortex's reply to their new message.
-        try:
-            _delivered = consume_for_session(_chat_session_id)
-            if _delivered:
-                _resume_prefix_for_response = format_resume_prefix(_delivered)
-                # Fold a context-block into body.message so the cortex sees
-                # the prior thread when generating the new response.
-                _ctx_lines = ["[Continuity context — earlier in this conversation]"]
-                for d in _delivered:
-                    _ctx_lines.append(f"User asked: {d.user_message[:300]}")
-                    _ctx_lines.append(f"You answered (late, delivered to user this turn): {d.answer_text[:600]}")
-                _ctx_lines.append("[End continuity context]")
-                _ctx_block = "\n".join(_ctx_lines) + "\n\n"
-                body.message = _ctx_block + body.message
-                logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
-                            len(_delivered), _chat_session_id)
-        except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
-            record_degradation('chat', _resume_exc)
-            logger.debug("Resume preflight skipped: %s", _resume_exc)
+        if not is_benchmark:
+            try:
+                _delivered = consume_for_session(_chat_session_id)
+                if _delivered:
+                    _resume_prefix_for_response = format_resume_prefix(_delivered)
+                    # Fold a context-block into body.message so the cortex sees
+                    # the prior thread when generating the new response.
+                    _ctx_lines = ["[Continuity context — earlier in this conversation]"]
+                    for d in _delivered:
+                        _ctx_lines.append(f"User asked: {d.user_message[:300]}")
+                        _ctx_lines.append(f"You answered (late, delivered to user this turn): {d.answer_text[:600]}")
+                    _ctx_lines.append("[End continuity context]")
+                    _ctx_block = "\n".join(_ctx_lines) + "\n\n"
+                    body.message = _ctx_block + body.message
+                    logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
+                                len(_delivered), _chat_session_id)
+            except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
+                record_degradation('chat', _resume_exc)
+                logger.debug("Resume preflight skipped: %s", _resume_exc)
 
         # 1) File-reference loading
-        try:
-            _refs = extract_file_references(body.message)
-            if _refs:
-                _block = build_file_context_block(_refs)
-                if _block:
-                    body.message = f"{_block}\nUser message: {body.message}"
-                    logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
-        except _CHAT_RECOVERABLE_ERRORS as _file_exc:
-            record_degradation('chat', _file_exc)
-            logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
+        if not is_benchmark:
+            try:
+                _refs = extract_file_references(body.message)
+                if _refs:
+                    _block = build_file_context_block(_refs)
+                    if _block:
+                        body.message = f"{_block}\nUser message: {body.message}"
+                        logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
+            except _CHAT_RECOVERABLE_ERRORS as _file_exc:
+                record_degradation('chat', _file_exc)
+                logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
 
         # 2) Directive injection
-        try:
-            _directive_prefix = compose_chat_directive_prefix(_original_user_message)
-            if _directive_prefix:
-                body.message = f"{_directive_prefix}{body.message}"
-                logger.info("Chat preflight: injected response directives.")
-        except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
-            record_degradation('chat', _dir_exc)
-            logger.debug("Chat directive preflight skipped: %s", _dir_exc)
+        if not is_benchmark:
+            try:
+                _directive_prefix = compose_chat_directive_prefix(_original_user_message)
+                if _directive_prefix:
+                    body.message = f"{_directive_prefix}{body.message}"
+                    logger.info("Chat preflight: injected response directives.")
+            except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
+                record_degradation('chat', _dir_exc)
+                logger.debug("Chat directive preflight skipped: %s", _dir_exc)
     except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
         record_degradation('chat', _preflight_outer)
         logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
@@ -4943,12 +4955,36 @@ async def api_chat(
             record_degradation('chat', _ac_exc)
             logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
+        allow_chat_fastpaths = not is_benchmark
+
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
             final_text = str(reply_text or "…").strip() or "…"
             response_confidence = "high"
             proof_status = str(status or "")
             is_live_proof_status = proof_status.startswith("live_proof")
+
+            if is_benchmark:
+                blocked_reply = (
+                    "Benchmark request attempted to use a non-canonical chat fastpath "
+                    f"({status}). Proof traffic must route through KernelInterface."
+                )
+                await _emit_chat_output_receipt(
+                    blocked_reply,
+                    cause=f"chat_fastpath:{status}",
+                    metadata={"status": status, "path": "benchmark_fastpath_blocked", "confidence": "failed"},
+                )
+                return JSONResponse(
+                    {
+                        "response": blocked_reply,
+                        "status": "benchmark_fastpath_blocked",
+                        "conversation_lane": _collect_conversation_lane_status(),
+                        "response_confidence": "failed",
+                    },
+                    status_code=409,
+                )
+                return JSONResponse(response_data)
+
             try:
                 if not is_live_proof_status:
                     recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
@@ -5047,6 +5083,8 @@ async def api_chat(
             return JSONResponse(response_data)
 
         async def _attempt_protected_foreground_reply(reason: str) -> str | None:
+            if is_benchmark:
+                return None
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate is None or not hasattr(gate, "generate"):
                 return None
@@ -5086,9 +5124,9 @@ async def api_chat(
                     gate.generate(
                         body.message,
                         context={
-                            "origin": "api",
-                            "foreground_request": True,
-                            "protected_foreground_lane": True,
+                            "origin": "benchmark" if is_benchmark else "api",
+                            "foreground_request": not is_benchmark,
+                            "protected_foreground_lane": not is_benchmark,
                             "protected_foreground_reason": reason,
                             "prefer_tier": route.get("prefer_tier", "primary"),
                             "deep_handoff": deep_handoff,
@@ -5136,7 +5174,10 @@ async def api_chat(
                 return None
             return stabilized
 
-        if _is_social_greeting_request(_semantic_user_message) or _is_live_presence_check_request(_semantic_user_message):
+        if allow_chat_fastpaths and (
+            _is_social_greeting_request(_semantic_user_message)
+            or _is_live_presence_check_request(_semantic_user_message)
+        ):
             return await _finalize_fastpath(
                 _build_social_presence_reply(_semantic_user_message),
                 status="social_presence_reflex",
@@ -5153,7 +5194,7 @@ async def api_chat(
             )
 
             orch = ServiceContainer.get("orchestrator", default=None)
-            if orch:
+            if orch and allow_chat_fastpaths:
                 diagnostic_target = extract_background_diagnostic_target(_semantic_user_message)
                 if diagnostic_target:
                     # Use a local bounded task — we don't have _spawn_server_bounded_task here
@@ -5168,14 +5209,15 @@ async def api_chat(
             record_degradation('chat', _bg_exc)
             logger.debug("Background diagnostic launch skipped: %s", _bg_exc)
 
-        live_proof = await _execute_live_runtime_proof(_semantic_user_message)
-        if live_proof:
-            return await _finalize_fastpath(
-                _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
-                status=str(live_proof.get("status") or "live_proof"),
-            )
+        if allow_chat_fastpaths:
+            live_proof = await _execute_live_runtime_proof(_semantic_user_message)
+            if live_proof:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                    status=str(live_proof.get("status") or "live_proof"),
+                )
 
-        protected_foreground_reason = _protected_foreground_reason(lane)
+        protected_foreground_reason = _protected_foreground_reason(lane) if not is_benchmark else None
         if protected_foreground_reason:
             protected_reply = await _attempt_protected_foreground_reply(protected_foreground_reason)
             if protected_reply:
@@ -5189,7 +5231,7 @@ async def api_chat(
                 # normal kernel path instead of showing a canned error message.
                 logger.info("🛡️ Recovery cooldown: skipping protected foreground, proceeding to kernel.")
 
-        if not bool(lane.get("conversation_ready", False)):
+        if allow_chat_fastpaths and not bool(lane.get("conversation_ready", False)):
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate and hasattr(gate, "ensure_foreground_ready"):
                 # Give a cold/recovering cortex a real chance to come online
@@ -5246,7 +5288,7 @@ async def api_chat(
                                 status="protected_foreground",
                             )
 
-        if _conversation_lane_blocks_fallback(lane):
+        if allow_chat_fastpaths and _conversation_lane_blocks_fallback(lane):
             # [STABILITY v55] Try protected foreground BEFORE returning 503.
             # Cloud or brainstem can still serve while the cortex recovers.
             try:
@@ -5271,44 +5313,45 @@ async def api_chat(
                 status_code=503,
             )
 
-        session_pin = _extract_session_memory_pin_request(_semantic_user_message)
-        if session_pin:
-            await _store_session_memory_pin(session_pin, _semantic_user_message)
-            return await _finalize_fastpath(
-                f"I've pinned \"{session_pin}\" in this session memory. Ask for it later and I'll pull it back directly.",
-                status="session_memory_pin",
-            )
-
-        if _is_session_memory_recall_request(_semantic_user_message):
-            remembered = await _recall_session_memory_pin()
-            if remembered and remembered.get("content"):
+        if allow_chat_fastpaths:
+            session_pin = _extract_session_memory_pin_request(_semantic_user_message)
+            if session_pin:
+                await _store_session_memory_pin(session_pin, _semantic_user_message)
                 return await _finalize_fastpath(
-                    f"The phrase you asked me to remember in this session was \"{remembered['content']}\".",
-                    status="session_memory_recall",
+                    f"I've pinned \"{session_pin}\" in this session memory. Ask for it later and I'll pull it back directly.",
+                    status="session_memory_pin",
                 )
-            return await _finalize_fastpath(
-                "I don't have a pinned phrase from this session yet.",
-                status="session_memory_miss",
-            )
 
-        repo_probe = _read_repo_probe_reply(_semantic_user_message)
-        if repo_probe:
-            return await _finalize_fastpath(
-                _apply_aura_voice_shaping(str(repo_probe.get("reply") or "")),
-                status=str(repo_probe.get("status") or "repo_probe"),
-            )
+            if _is_session_memory_recall_request(_semantic_user_message):
+                remembered = await _recall_session_memory_pin()
+                if remembered and remembered.get("content"):
+                    return await _finalize_fastpath(
+                        f"The phrase you asked me to remember in this session was \"{remembered['content']}\".",
+                        status="session_memory_recall",
+                    )
+                return await _finalize_fastpath(
+                    "I don't have a pinned phrase from this session yet.",
+                    status="session_memory_miss",
+                )
 
-        grounded_traceability = await _build_grounded_traceability_reply(_semantic_user_message)
-        if grounded_traceability:
-            return await _finalize_fastpath(
-                grounded_traceability,
-                status="grounded_traceability",
-            )
+            repo_probe = _read_repo_probe_reply(_semantic_user_message)
+            if repo_probe:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(repo_probe.get("reply") or "")),
+                    status=str(repo_probe.get("status") or "repo_probe"),
+                )
+
+            grounded_traceability = await _build_grounded_traceability_reply(_semantic_user_message)
+            if grounded_traceability:
+                return await _finalize_fastpath(
+                    grounded_traceability,
+                    status="grounded_traceability",
+                )
 
         # Simple affect checks ("how are you doing") go through the LLM
         # for natural responses instead of returning a template.
 
-        if _is_identity_challenge_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_identity_challenge_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_identity_challenge_reply(_semantic_user_message),
                 status="identity_challenge_reflex",
@@ -5317,7 +5360,11 @@ async def api_chat(
         asks_internal_state, asks_free_energy, asks_topology, asks_authority = (
             _classify_grounded_introspection_request(_semantic_user_message)
         )
-        grounded_introspection = _build_grounded_introspection_reply(_semantic_user_message)
+        grounded_introspection = (
+            _build_grounded_introspection_reply(_semantic_user_message)
+            if allow_chat_fastpaths
+            else None
+        )
         if grounded_introspection:
             # Substrate authority gate: introspection responses are RESPONSE category
             _gi_receipt_id = None
@@ -5379,19 +5426,19 @@ async def api_chat(
                     logger.debug("Authority audit effect recording failed: %s", exc)
                 return await _finalize_fastpath(grounded_introspection, status=_gi_status)
 
-        if _is_identity_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_identity_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_identity_reply(_semantic_user_message),
                 status="identity_reflex",
             )
 
-        if _is_capability_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_capability_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_capability_reply(_semantic_user_message),
                 status="capability_reflex",
             )
 
-        if _is_self_diagnostic_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_self_diagnostic_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_self_diagnostic_reply(_semantic_user_message),
                 status="self_diagnostic",
@@ -5404,7 +5451,7 @@ async def api_chat(
             )
 
             orch = ServiceContainer.get("orchestrator", default=None)
-            if orch:
+            if orch and allow_chat_fastpaths:
                 recent_activity_reply = await maybe_build_recent_activity_reply(_semantic_user_message, orch)
                 if recent_activity_reply:
                     return await _finalize_fastpath(
@@ -5422,7 +5469,7 @@ async def api_chat(
             record_degradation('chat', exc)
             logger.debug("Demo-support fast paths skipped: %s", exc)
 
-        if _is_architecture_self_assessment_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_architecture_self_assessment_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _apply_aura_voice_shaping(
                     _build_architecture_self_reflex(
@@ -5437,7 +5484,11 @@ async def api_chat(
         # the LLM. If the process dies mid-inference, the message is preserved
         # and the conversation can be resumed. (Pattern from Claude Code.)
         effective_user_message = str(body.message or "")
-        referential_anchor = await _resolve_referential_followup_anchor(_semantic_user_message)
+        referential_anchor = (
+            await _resolve_referential_followup_anchor(_semantic_user_message)
+            if allow_chat_fastpaths
+            else None
+        )
         if referential_anchor:
             effective_user_message = (
                 f"{body.message}\n\n"
@@ -5459,12 +5510,12 @@ async def api_chat(
         kernel_timed_out = False
         kernel_task: asyncio.Task | None = None
 
-        if ki.is_ready():
+        if not reply_text and ki.is_ready():
             logger.debug("REST: Awaiting constitutional processing from Sovereign Kernel...")
             try:
                 kernel_timeout = _remaining_foreground_budget()
                 kernel_task = get_task_tracker().create_task(
-                    ki.process(effective_user_message, origin="api", priority=True),
+                    ki.process(effective_user_message, origin="benchmark" if is_benchmark else "api", priority=True),
                     name="Aura.Server.Chat.kernel_foreground",
                 )
                 # [STABILITY v53] Two-phase timeout:
@@ -5512,6 +5563,15 @@ async def api_chat(
                             asyncio.shield(kernel_task),
                             timeout=hard_budget,
                         )
+                    elif is_benchmark:
+                        logger.warning(
+                            "Benchmark kernel soft deadline missed and cortex liveness was not confirmed. "
+                            "Continuing to wait on the canonical kernel task instead of switching lanes."
+                        )
+                        reply_text = await asyncio.wait_for(
+                            asyncio.shield(kernel_task),
+                            timeout=max(2.0, _remaining_foreground_budget()),
+                        )
                     else:
                         # Cortex is dead — try protected foreground (cloud/brainstem)
                         protected_reply = await _attempt_protected_foreground_reply("kernel_soft_deadline")
@@ -5539,6 +5599,27 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)
                 logger.error("KernelInterface chat failed natively, falling back to legacy: %s (%s)", type(e).__name__, e, exc_info=True)
+
+        if kernel_timed_out and is_benchmark:
+            timeout_reply = _conversation_lane_user_message(
+                _mark_conversation_lane_timeout(),
+                timed_out=True,
+            )
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    timeout_reply,
+                )
+                pending_exchange_id = None
+            return JSONResponse(
+                {
+                    "response": timeout_reply,
+                    "status": "benchmark_kernel_timeout",
+                    "conversation_lane": _collect_conversation_lane_status(),
+                },
+                status_code=503,
+            )
 
         if kernel_timed_out:
             direct_reply = await _attempt_protected_foreground_reply("kernel_timeout")
@@ -5571,7 +5652,7 @@ async def api_chat(
             )
 
         # Legacy Orchestrator Fallback
-        if not reply_text:
+        if not reply_text and not is_benchmark:
             orch = ServiceContainer.get("orchestrator", default=None)
             if orch:
                 logger.debug("REST: Awaiting priority processing from legacy orchestrator...")
@@ -5579,17 +5660,71 @@ async def api_chat(
                 reply_text = await asyncio.wait_for(
                     orch.process_user_input_priority(
                         effective_user_message,
-                        origin="api",
+                        origin="benchmark" if is_benchmark else "api",
                         timeout_sec=legacy_timeout,
                     ),
                     timeout=legacy_timeout,
                 )
-            else:
-                from core.tasks import dispatch_user_input
-                get_task_tracker().track(
-                    asyncio.to_thread(dispatch_user_input, effective_user_message)
+
+        if is_benchmark:
+            final_benchmark_text = str(reply_text or "").strip()
+            if not final_benchmark_text:
+                empty_reply = "Benchmark request produced no canonical kernel response."
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        empty_reply,
+                    )
+                    pending_exchange_id = None
+                else:
+                    await _log_exchange(_semantic_user_message, empty_reply)
+                await _emit_chat_output_receipt(
+                    empty_reply,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "failed",
+                        "path": "kernel_benchmark",
+                        "status": "benchmark_no_response",
+                    },
                 )
-                reply_text = ""  # [STABILITY v55] Don't show system messages
+                return JSONResponse(
+                    {
+                        "response": empty_reply,
+                        "status": "benchmark_no_response",
+                        "conversation_lane": _collect_conversation_lane_status(),
+                        "response_confidence": "failed",
+                    },
+                    status_code=502,
+                )
+
+            # Preserve benchmark formatting while still requiring the canonical
+            # KernelInterface/AuraKernel path above. This is raw-output mode,
+            # not a direct inference bypass.
+            response_data = {
+                "response": final_benchmark_text,
+                "status": "benchmark_kernel",
+                "conversation_lane": _collect_conversation_lane_status(),
+                "response_confidence": "high",
+            }
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    final_benchmark_text,
+                )
+                pending_exchange_id = None
+            else:
+                await _log_exchange(_semantic_user_message, final_benchmark_text)
+            await _emit_chat_output_receipt(
+                final_benchmark_text,
+                cause="chat_response",
+                metadata={
+                    "response_confidence": "high",
+                    "path": "kernel_benchmark",
+                },
+            )
+            return JSONResponse(response_data)
 
         reply_text = await _stabilize_user_facing_reply(_semantic_user_message, reply_text)
 

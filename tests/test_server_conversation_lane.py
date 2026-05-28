@@ -643,6 +643,71 @@ async def test_api_chat_returns_structured_timeout_when_kernel_times_out(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+
+    class _ForbiddenGate:
+        async def generate(self, *_args, **_kwargs):
+            raise AssertionError("benchmark API requests must not bypass KernelInterface")
+
+        def is_alive(self):
+            return True
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, message, **kwargs):
+            kernel_calls.append({"message": message, **kwargs})
+            return '{"ok": true, "source": "kernel"}'
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncMock())
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _ForbiddenGate() if name == "inference_gate" else default),
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message="hi",
+            session_id="benchmark-test",
+        ),
+        SimpleNamespace(headers={"X-Aura-Benchmark": "true"}, client=SimpleNamespace(host="test")),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"kernel" in response.body
+    assert b"benchmark_kernel" in response.body
+    assert kernel_calls
+    assert kernel_calls[0]["origin"] == "benchmark"
+    assert kernel_calls[0]["priority"] is True
+
+
+@pytest.mark.asyncio
 async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

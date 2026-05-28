@@ -1085,9 +1085,39 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     return last_word in _INCOMPLETE_TAIL_WORDS
 
 
+def _is_code_response(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if "```" in raw:
+        return True
+    if raw.startswith(("def ", "import ", "class ", "from ", "print(", "#", "var ", "const ", "let ", "function ")):
+        return True
+
+    # Check lines for code constructs
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) > 2:
+        code_like_lines = 0
+        for line in lines:
+            if (line.startswith(("def ", "import ", "class ", "from ", "return ", "if ", "elif ", "else:", "for ", "while ", "try:", "except", "with ", "#", "print("))
+                or "=" in line
+                or ("(" in line and ")" in line)
+                or ("[" in line and "]" in line)
+                or ("{" in line and "}" in line)
+                or ";" in line
+            ):
+                code_like_lines += 1
+        if code_like_lines / len(lines) > 0.6:
+            return True
+
+    return False
+
+
 def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
     reply = _normalize(reply_text)
     if not reply:
+        return ""
+    if _is_code_response(reply_text):
         return ""
     user = _normalize(user_message)
     if _LOW_INFORMATION_LOOP_RE.search(reply):
@@ -1140,6 +1170,17 @@ def _model_text_integrity_reasons(
     reasons: list[str] = []
     if not raw or _normalize(raw) == "...":
         reasons.append("empty_reply" if user_facing else "empty_model_output")
+        return reasons
+
+    if _is_code_response(raw):
+        if _TRAILING_ESCAPE_RE.search(raw):
+            reasons.append("escaped_control_artifact")
+        if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw):
+            reasons.append("prompt_artifact")
+        if _BROKEN_LANE_BOILERPLATE_RE.search(raw):
+            reasons.append("runtime_boilerplate")
+        if _KNOWN_CORRUPT_RE.search(raw):
+            reasons.append("corrupted_language")
         return reasons
 
     if _TRAILING_ESCAPE_RE.search(raw):
@@ -1251,6 +1292,28 @@ def assess_user_facing_reply(
     """Classify whether a reply is safe to present as a completed chat turn."""
     del recent_user_messages  # reserved for future context-aware checks
     raw = str(reply_text or "").strip()
+
+    if _is_code_response(raw):
+        reasons = _model_text_integrity_reasons(
+            raw,
+            prompt=user_message,
+            user_facing=True,
+        )
+        unique = tuple(dict.fromkeys(reasons))
+        hard_reasons = {
+            "empty_reply",
+            "escaped_control_artifact",
+            "prompt_artifact",
+            "runtime_boilerplate",
+            "corrupted_language",
+        }
+        return ConversationReplyAssessment(
+            ok=not unique,
+            reasons=unique,
+            hard_failure=bool(set(unique) & hard_reasons),
+            retryable=bool(set(unique) & hard_reasons),
+        )
+
     reasons: list[str] = []
 
     reasons.extend(

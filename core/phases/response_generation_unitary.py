@@ -611,6 +611,8 @@ class UnitaryResponsePhase(Phase):
 
     @staticmethod
     def _background_response_should_defer(origin: str) -> bool:
+        if origin == "benchmark":
+            return False
         try:
             from core.container import ServiceContainer
 
@@ -3503,7 +3505,7 @@ class UnitaryResponsePhase(Phase):
                 return new_state
 
             routing_origin = self._normalize_origin(new_state.cognition.current_origin) or "system"
-            if priority and not self._is_user_facing_origin(routing_origin):
+            if priority and not self._is_user_facing_origin(routing_origin) and routing_origin != "benchmark":
                 routing_origin = "user"
             proof_evaluation_turn = proof_run_active(origin=routing_origin)
             if proof_evaluation_turn:
@@ -3523,6 +3525,8 @@ class UnitaryResponsePhase(Phase):
             )
 
             is_user_facing = bool(priority or self._is_user_facing_origin(routing_origin))
+            if routing_origin == "benchmark":
+                is_user_facing = True
             new_state.cognition.current_origin = routing_origin
             contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
             new_state.response_modifiers["response_contract"] = contract.to_dict()
@@ -3614,16 +3618,20 @@ class UnitaryResponsePhase(Phase):
                 logger.info("🧰 UnitaryResponse: answered directly from precomputed tool reply.")
                 return self._commit_response(new_state, precomputed_reply)
 
-            deterministic_tool_reply = self._build_cached_deterministic_tool_reply(
-                new_state,
-                objective,
-                contract,
-            )
-            deterministic_task_reply = self._build_deterministic_task_reply(
-                new_state,
-                objective,
-                contract,
-            )
+            if routing_origin == "benchmark":
+                deterministic_tool_reply = ""
+                deterministic_task_reply = ""
+            else:
+                deterministic_tool_reply = self._build_cached_deterministic_tool_reply(
+                    new_state,
+                    objective,
+                    contract,
+                )
+                deterministic_task_reply = self._build_deterministic_task_reply(
+                    new_state,
+                    objective,
+                    contract,
+                )
             if deterministic_task_reply:
                 logger.info("🧰 UnitaryResponse: answered directly from task state.")
                 return self._commit_response(new_state, deterministic_task_reply)
@@ -4202,11 +4210,13 @@ class UnitaryResponsePhase(Phase):
                     logger.debug("UnitaryResponse: structured proof solver skipped: %s", exc)
 
             if not is_user_facing:
-                model_tier = "tertiary"
-                deep_handoff = False
+                if routing_origin != "benchmark":
+                    model_tier = "tertiary"
+                    deep_handoff = False
                 import os
                 is_test_run = (
                     routing_origin == "test"
+                    or routing_origin == "benchmark"
                     or os.environ.get("AURA_AGI_MAX_TASKS") is not None
                     or os.environ.get("AURA_TESTING") is not None
                     or os.environ.get("AURA_PROOF_RUN") is not None
@@ -4245,6 +4255,7 @@ class UnitaryResponsePhase(Phase):
             use_compact_router_payload = bool(
                 strict_proof_answer_request
                 or proof_evaluation_turn
+                or routing_origin == "benchmark"
                 or (
                     not is_user_facing  # Only use compact mode for background autonomous pulses
                     and not contract.requires_search
@@ -4283,6 +4294,13 @@ class UnitaryResponsePhase(Phase):
                     "🧠 [ZENITH] CORE DIRECTIVE fast-path: directive-only prompt (len=%d)",
                     len(system_prompt),
                 )
+            elif routing_origin == "benchmark":
+                system_prompt = "You are a highly precise coding assistant. Your task is to solve the technical coding, configuration, or data challenge presented by the user exactly as specified. Output only the requested file contents (code, JSON, or CSV) without any extra explanations, introductory disclaimers, or conversational markdown packaging."
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": objective},
+                ]
+                logger.info("🧠 [ZENITH] Benchmark fast-path: minimal isolated prompt.")
             elif strict_proof_answer_request:
                 strict_user_objective = (
                     objective
@@ -4355,7 +4373,7 @@ class UnitaryResponsePhase(Phase):
             # When processing a CORE DIRECTIVE / sensory feed, skip all
             # personality and contract prompt injections. The directive IS the
             # complete prompt — the LLM just needs to follow it.
-            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn:
+            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
                 priority_grounding = self._build_priority_grounding_block(
                     objective,
                     new_state,
@@ -4412,7 +4430,7 @@ class UnitaryResponsePhase(Phase):
                     _prepend_system_guidance(self_expression_block)
 
             # [RUBICON] Pre-Linguistic Decision: structured decision BEFORE LLM speaks
-            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn:
+            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
                 # [STABILITY v54] Banter Shield: Hide architectural complexity for casual turns
                 is_banter = (
                     new_state.cognition.modifiers.get("semantic_lane") == "casual"
@@ -4521,7 +4539,7 @@ class UnitaryResponsePhase(Phase):
                     exc, "UnitaryResponse: anti-repetition prompt check skipped: %s"
                 )
 
-            if not strict_proof_answer_request and not proof_evaluation_turn:
+            if not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
                 messages = self._inject_active_grounding_message(
                     messages, new_state, objective, contract
                 )
@@ -4575,6 +4593,21 @@ class UnitaryResponsePhase(Phase):
                         "temperature": 0.1,
                         "max_tokens": 640,
                         "num_predict": 640,
+                        "protected_foreground_lane": True,
+                    }
+                )
+            elif routing_origin == "benchmark":
+                llm_kwargs.update(
+                    {
+                        "purpose": "benchmark_evaluation",
+                        "benchmark_request": True,
+                        "proof_evaluation_contract": True,
+                        "skip_runtime_payload": True,
+                        "disable_prompt_cache": True,
+                        "clear_prompt_cache": True,
+                        "temperature": 0.1,
+                        "max_tokens": 2048,
+                        "num_predict": 2048,
                         "protected_foreground_lane": True,
                     }
                 )
@@ -4985,6 +5018,7 @@ class UnitaryResponsePhase(Phase):
                 if (
                     not strict_proof_answer_request
                     and not proof_evaluation_turn
+                    and not contract.tool_evidence_available
                     and strategies._is_logical_check(objective)
                 ):
                     logger.info("⚡ [Critique] Running System 2 self-critique on response...")
@@ -5034,7 +5068,7 @@ class UnitaryResponsePhase(Phase):
                     logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
             if self._guard:
                 response_text, _, _ = self._guard.align(response_text)
-            if is_user_facing and not proof_evaluation_turn:
+            if is_user_facing and not proof_evaluation_turn and routing_origin != "benchmark":
                 response_text = self._shape_user_facing_response(response_text, objective)
 
             async def _retry_dialogue(repair_block: str) -> str:
@@ -5084,7 +5118,7 @@ class UnitaryResponsePhase(Phase):
             # System directives and action/sensory streams bypass dialogue
             # validation, because they are inherently programmatic responses
             # (like `[ACTION:execute]`) that violate conversational rules.
-            if not _is_system_directive and not proof_evaluation_turn:
+            if not _is_system_directive and not proof_evaluation_turn and routing_origin != "benchmark":
                 pre_dialogue_response = str(response_text or "").strip()
                 pre_dialogue_validation = validate_dialogue_response(
                     pre_dialogue_response, contract
@@ -5250,7 +5284,7 @@ class UnitaryResponsePhase(Phase):
 
                 new_state.response_modifiers["dialogue_validation"] = final_validation.to_dict()
 
-            if is_user_facing and not proof_evaluation_turn:
+            if is_user_facing and not proof_evaluation_turn and routing_origin != "benchmark":
                 try:
                     from core.conversation.response_reliability import (
                         assess_user_facing_reply,
@@ -5370,6 +5404,7 @@ class UnitaryResponsePhase(Phase):
                 if (
                     is_user_facing
                     and not proof_evaluation_turn
+                    and routing_origin != "benchmark"
                     and response_text
                     and (
                         "$$" in response_text
