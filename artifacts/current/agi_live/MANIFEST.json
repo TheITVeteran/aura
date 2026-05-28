@@ -1,14 +1,14 @@
 {
-  "run_id": "eef2d0f9-f008-49e5-ba84-7598e0a0066a",
-  "commit_sha": "fd69fb379120cfa3c57bd4ea5244159f2f1c2056",
+  "run_id": "55ada34b-2669-4f6e-9826-79e06eb45166",
+  "commit_sha": "5a5bc86bd4c8c74c9e9bcd54024f9655f6388fa7",
   "files": {
     "DNU_AGI_PROOF.json": {
       "path": "artifacts/current/agi_live/DNU_AGI_PROOF.json",
-      "sha256": "50758302d89f026bc4b260a8465716b5162e60b769714e19262777914ef09b99"
+      "sha256": "b96d73199a90c69b97efa494fa5033d6ddf2822c230f79ca6c5b95dc2df541ac"
     },
     "DNU_AGI_PROOF.md": {
       "path": "artifacts/current/agi_live/DNU_AGI_PROOF.md",
-      "sha256": "7fb7999a2bf14f4a126451cc1b6b057aa6c733bf3ad794ea9431ee7a86a7f1b6"
+      "sha256": "a6eff006fd8d80a53132c028947cdcfbaf51289c21a3c06e5254591533450eaa"
     },
     "SCORECARD.json": {
       "path": "artifacts/current/agi_live/SCORECARD.json",
@@ -16,31 +16,31 @@
     },
     "RECEIPTS.jsonl": {
       "path": "artifacts/current/agi_live/RECEIPTS.jsonl",
-      "sha256": "b12fd8247d67f5cbbf372ccf7736e5b54dc2348a32a021778e2bda561334bedb"
+      "sha256": "80defe222f9bdc90a29c16fc65fbbba346c69ac095b0ace254ce12b5360a9c95"
     },
     "GOVERNANCE_REPORT.json": {
       "path": "artifacts/current/agi_live/GOVERNANCE_REPORT.json",
-      "sha256": "1f45eb75a2bd4d7dca173e5dc2c99940853904968b651f3d27b8fe0894505280"
+      "sha256": "8d65d63bcb2332e4674906e0d1d13223188d2659e79e9c6c375a12b833f983a8"
     },
     "LEAKAGE_REPORT.json": {
       "path": "artifacts/current/agi_live/LEAKAGE_REPORT.json",
-      "sha256": "cc4b64f67ab2784482985349d83e24b362da136a279c2343b4bcde2efe90e72c"
+      "sha256": "2693099a46d29a66b7e4b3f9d1595d9274f500f2aa33395b1006e4a5d2da3e84"
     },
     "RUNTIME_MANIFEST.json": {
       "path": "artifacts/current/agi_live/RUNTIME_MANIFEST.json",
-      "sha256": "938d855abeeb524c7f6f3e8f33693d6fc35d83be6f8e6ed7e82f4f050d74f5be"
+      "sha256": "c7239d98e123682b0cb1b3feea2787825ff832aeaebf5a51cfc019b0564310b9"
     },
     "RUNTIME_POLICY.json": {
       "path": "artifacts/current/agi_live/RUNTIME_POLICY.json",
-      "sha256": "0132b05d946bc7d42d63993a34b058c1d0ee1307f571532497477371cef40fb3"
+      "sha256": "ada013db5cb620db0b990b479c022df3e1d414c23d5a0d42518ddf40603887f3"
     },
     "MODEL_LANE_PROBE.json": {
       "path": "artifacts/current/agi_live/MODEL_LANE_PROBE.json",
-      "sha256": "318f62d32da8ef3d3c5ba96cf42eec99a6af42750417b938dbf6839def466cd0"
+      "sha256": "2f99f9f32f2db5024382502a3b58b139c0ccd476e5c33a0e761bd0cd82b24a49"
     },
     "EXCLUSIVE_RUNTIME_PREFLIGHT.json": {
       "path": "artifacts/current/agi_live/EXCLUSIVE_RUNTIME_PREFLIGHT.json",
-      "sha256": "ea5f3383911897eed4215c85079ddefebba30ad271c7e07c751a89776c9d441e"
+      "sha256": "43107e4b2b980bf7eecc3dc3c513948b553ffe8f2ac5d35a43ac01d1bb91fc29"
     },
     "FINAL_VERDICT.txt": {
       "path": "artifacts/current/agi_live/FINAL_VERDICT.txt",

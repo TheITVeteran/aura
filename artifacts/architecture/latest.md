@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1779902795.9906628`
+Generated: `1779938732.428853`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1563
-- Python lines: 451299
+- Python lines: 451590
 - Dependency edges: 670
 - ServiceContainer `.get()` calls: 1445
 - ServiceContainer registrations: 346
@@ -17,9 +17,9 @@ Generated: `1779902795.9906628`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>91 files, 19934 lines"]
+    runtime["runtime<br/>91 files, 19968 lines"]
     utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 41699 lines"]
+    brain["brain<br/>115 files, 41706 lines"]
     consciousness["consciousness<br/>120 files, 56937 lines"]
     resilience["resilience<br/>53 files, 11111 lines"]
     health["health<br/>3 files, 697 lines"]
@@ -28,7 +28,7 @@ graph TD
     adaptation["adaptation<br/>26 files, 11869 lines"]
     senses["senses<br/>23 files, 4911 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
-    self_modification["self_modification<br/>29 files, 10290 lines"]
+    self_modification["self_modification<br/>29 files, 10296 lines"]
     state["state<br/>6 files, 3182 lines"]
     affect["affect<br/>5 files, 1840 lines"]
     observability["observability<br/>3 files, 553 lines"]
@@ -40,9 +40,9 @@ graph TD
     tasks["tasks<br/>3 files, 333 lines"]
     autonomy["autonomy<br/>22 files, 7560 lines"]
     executive["executive<br/>4 files, 2306 lines"]
-    conversation["conversation<br/>8 files, 3844 lines"]
+    conversation["conversation<br/>8 files, 3907 lines"]
     learning["learning<br/>20 files, 6934 lines"]
-    phases["phases<br/>29 files, 16506 lines"]
+    phases["phases<br/>29 files, 16546 lines"]
     reasoning["reasoning<br/>6 files, 2544 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4224 lines"]
@@ -60,7 +60,7 @@ graph TD
     embodiment["embodiment<br/>15 files, 2627 lines"]
     ethics["ethics<br/>1 files, 309 lines"]
     evaluation["evaluation<br/>10 files, 1765 lines"]
-    kernel["kernel<br/>10 files, 5290 lines"]
+    kernel["kernel<br/>10 files, 5291 lines"]
     motivation["motivation<br/>6 files, 1131 lines"]
     promotion["promotion<br/>6 files, 944 lines"]
     resource["resource<br/>2 files, 426 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 60413 lines"]
+    core_root["core_root<br/>182 files, 60553 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -816,29 +816,29 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core_root | 182 | 60413 | 2475538 | 101 | 0 |
+| core_root | 182 | 60553 | 2482309 | 101 | 0 |
 | consciousness | 120 | 56937 | 2398373 | 37 | 28 |
-| brain | 115 | 41699 | 1800017 | 40 | 39 |
-| runtime | 91 | 19934 | 700399 | 37 | 103 |
+| brain | 115 | 41706 | 1800415 | 40 | 39 |
+| runtime | 91 | 19968 | 701968 | 37 | 103 |
 | orchestrator | 42 | 18644 | 823200 | 123 | 8 |
-| phases | 29 | 16506 | 742900 | 32 | 6 |
+| phases | 29 | 16546 | 745432 | 32 | 6 |
 | memory | 64 | 14093 | 569614 | 15 | 20 |
 | skills | 71 | 13396 | 551695 | 24 | 5 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
 | agency | 26 | 11439 | 453217 | 18 | 17 |
 | resilience | 53 | 11111 | 448134 | 16 | 25 |
-| self_modification | 29 | 10290 | 406682 | 11 | 13 |
+| self_modification | 29 | 10296 | 406977 | 11 | 13 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8097 | 329816 | 9 | 4 |
 | autonomy | 22 | 7560 | 310198 | 16 | 7 |
 | learning | 20 | 6934 | 274916 | 14 | 6 |
 | architect | 25 | 5706 | 238326 | 9 | 2 |
-| kernel | 10 | 5290 | 219057 | 19 | 4 |
+| kernel | 10 | 5291 | 219095 | 19 | 4 |
 | utils | 41 | 4956 | 192837 | 17 | 49 |
 | senses | 23 | 4911 | 205779 | 16 | 14 |
 | security | 17 | 4623 | 182059 | 11 | 8 |
 | coordinators | 9 | 4224 | 198441 | 36 | 5 |
-| conversation | 8 | 3844 | 141764 | 10 | 6 |
+| conversation | 8 | 3907 | 143910 | 10 | 6 |
 | social | 10 | 3688 | 158124 | 8 | 1 |
 | cognition | 9 | 3456 | 139831 | 7 | 3 |
 | perception | 15 | 3260 | 129879 | 3 | 2 |
@@ -1243,8 +1243,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2657
-- Log-and-limp candidates: 2463
+- Total `record_degradation()` calls: 2660
+- Log-and-limp candidates: 2466
 - Nearby fail-closed candidates: 194
 
 Top limp-on files:
