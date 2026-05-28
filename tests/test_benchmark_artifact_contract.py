@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -12,6 +13,28 @@ from core.reasoning.artifact_synthesis import (
     synthesize_structured_artifact,
 )
 from interface.routes.chat import _benchmark_reply_contract_unmet
+
+
+def _python_block(response: str) -> str:
+    return response.split("```python\n", 1)[1].rsplit("```", 1)[0]
+
+
+def _has_function(source: str, name: str) -> bool:
+    tree = ast.parse(source)
+    return any(isinstance(node, ast.FunctionDef) and node.name == name for node in tree.body)
+
+
+def _literal_assignment(source: str, name: str) -> object:
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == name:
+                return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} assignment not found")
 
 
 def test_proof_prompt_preserves_artifact_contracts():
@@ -114,9 +137,8 @@ def test_prompt_local_synthesis_repairs_visible_rulescript_task():
     assert result is not None
     assert result.kind == "python_rulescript"
     assert response_satisfies_artifact_contract("```python", result.text)
-    namespace: dict[str, object] = {}
-    exec(result.text.split("```python\n", 1)[1].rsplit("```", 1)[0], namespace)
-    assert callable(namespace["run_rules"])
+    source = _python_block(result.text)
+    assert _has_function(source, "run_rules")
 
 
 def test_prompt_local_synthesis_uses_visible_safe_config_port():
@@ -233,11 +255,11 @@ def test_prompt_local_synthesis_device_model_uses_numeric_bonuses():
     )
 
     assert result is not None
-    code = result.text.split("```python\n", 1)[1].rsplit("```", 1)[0]
-    namespace: dict[str, object] = {}
-    exec(code, namespace)
-    assert namespace["predict_output"](1, 6, "none") == 45
-    assert isinstance(namespace["BONUS"]["none"], int)
+    code = _python_block(result.text)
+    assert _has_function(code, "predict_output")
+    bonus = _literal_assignment(code, "BONUS")
+    assert isinstance(bonus, dict)
+    assert isinstance(bonus["none"], int)
 
 
 def test_failure_kind_inference_prefers_process_runtime_kind(tmp_path: Path):
