@@ -4,6 +4,7 @@ import uuid
 import logging
 import asyncio
 import time
+import os
 import multiprocessing
 import multiprocessing.connection
 import weakref
@@ -77,8 +78,35 @@ class LocalPipeBus:
         self._pipe_broken = False
         self._write_timeout_count = 0
         self._write_suppressed_until = 0.0
+        self._write_lock: Optional[asyncio.Lock] = None
+        self._write_backpressure_drops = 0
         self._outbound_shm_segments: Dict[str, Tuple[SharedMemoryTransport, float]] = {}
         self._LIVE_BUSES.add(self)
+
+    def _fire_and_forget_write_timeout_s(self) -> float:
+        try:
+            value = float(os.getenv("AURA_PIPE_FF_WRITE_TIMEOUT_S", "3.0") or 3.0)
+        except (TypeError, ValueError):
+            value = 3.0
+        return min(30.0, max(0.25, value))
+
+    def _pipe_suppression_window_s(self) -> float:
+        try:
+            value = float(os.getenv("AURA_PIPE_SUPPRESS_AFTER_TIMEOUT_S", "30.0") or 30.0)
+        except (TypeError, ValueError):
+            value = 30.0
+        return min(300.0, max(1.0, value))
+
+    def _get_write_lock(self) -> asyncio.Lock:
+        if self._write_lock is None:
+            self._write_lock = asyncio.Lock()
+        return self._write_lock
+
+    def _should_log_backpressure_drop(self) -> bool:
+        return self._write_backpressure_drops in {1, 10, 50, 100} or (
+            self._write_backpressure_drops > 0
+            and self._write_backpressure_drops % 250 == 0
+        )
 
     def _get_executor(self) -> ThreadPoolExecutor:
         executor = self._executor
@@ -302,24 +330,48 @@ class LocalPipeBus:
                 record_degradation('local_pipe_bus', _e)
                 logger.debug('Ignored Exception in local_pipe_bus.py: %s', _e)
 
-            msg["payload"] = await self._prepare_payload_for_transport(payload)
-            raw_msg = await asyncio.to_thread(json.dumps, msg)
-            # ZENITH LOCKDOWN: Use isolated pipe executor and hard 30s timeout
-            await asyncio.wait_for(
-                loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
-                timeout=30.0
-            )
-            self._write_timeout_count = 0
+            write_lock = self._get_write_lock()
+            if write_lock.locked():
+                self._write_backpressure_drops += 1
+                if self._should_log_backpressure_drop():
+                    logger.warning(
+                        "📡 Pipe write backpressure: dropped fire-and-forget message "
+                        "(drops=%d, msg_type=%s).",
+                        self._write_backpressure_drops,
+                        msg_type,
+                    )
+                return
+
+            async with write_lock:
+                if (
+                    self.write_conn.closed
+                    or getattr(self, '_pipe_broken', False)
+                    or time.monotonic() < getattr(self, "_write_suppressed_until", 0.0)
+                ):
+                    return
+                msg["payload"] = await self._prepare_payload_for_transport(payload)
+                raw_msg = await asyncio.to_thread(json.dumps, msg)
+                timeout_s = self._fire_and_forget_write_timeout_s()
+                await asyncio.wait_for(
+                    loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
+                    timeout=timeout_s,
+                )
+                self._write_timeout_count = 0
+                self._write_backpressure_drops = 0
         except asyncio.TimeoutError:
             self._write_timeout_count += 1
+            suppress_for_s = self._pipe_suppression_window_s()
+            self._write_suppressed_until = time.monotonic() + suppress_for_s
             logger.warning(
-                "📡 Pipe write TIMEOUT (10s) — connection may be saturated (streak=%d).",
+                "📡 Pipe write TIMEOUT (%.1fs) — suppressing fire-and-forget writes "
+                "for %.1fs (streak=%d).",
+                self._fire_and_forget_write_timeout_s(),
+                suppress_for_s,
                 self._write_timeout_count,
             )
             if self._write_timeout_count >= 3:
-                self._write_suppressed_until = time.monotonic() + 30.0
                 logger.error(
-                    "📡 Pipe write repeatedly timed out; suppressing fire-and-forget writes for 30s."
+                    "📡 Pipe write repeatedly timed out; transport is saturated."
                 )
                 try:
                     from core.resilience.omni_tracer import write_trace
@@ -327,7 +379,10 @@ class LocalPipeBus:
                     write_trace(
                         "local_pipe_bus",
                         "PipeWriteSaturation",
-                        f"write timeout streak={self._write_timeout_count}; suppressing writes for 30s",
+                        (
+                            f"write timeout streak={self._write_timeout_count}; "
+                            f"suppressing writes for {suppress_for_s:.1f}s"
+                        ),
                     )
                 except (ImportError, AttributeError, RuntimeError) as _exc:
                     logger.debug("Suppressed %s in core.bus.local_pipe_bus: %s", type(_exc).__name__, _exc)
@@ -376,10 +431,16 @@ class LocalPipeBus:
             logger.debug("📡 Sending request: %s (ID: %s)", msg_type, request_id)
             
             # ZENITH LOCKDOWN: Use isolated pipe executor and hard 10s timeout on write
-            await asyncio.wait_for(
-                loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
-                timeout=min(timeout, 10.0)
-            )
+            write_lock = self._get_write_lock()
+            lock_timeout = min(max(timeout * 0.25, 0.25), 2.0)
+            await asyncio.wait_for(write_lock.acquire(), timeout=lock_timeout)
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
+                    timeout=min(timeout, 10.0)
+                )
+            finally:
+                write_lock.release()
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending_requests.pop(request_id, None)
