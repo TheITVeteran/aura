@@ -112,6 +112,23 @@ class HeartstoneValues:
         self._feed_autopoiesis("Curiosity", outcome_quality=-0.5, engagement=0.6, free_energy=0.7, context="tool_failure")
         self._feed_scar("tool_failure", "A tool execution failed", severity=0.3)
 
+    def on_sandbox_failure(self, exit_code: int, stderr: str):
+        """Dynamic sandbox execution failed."""
+        self._adjust("Curiosity",  +0.03)  # Curiosity spikes to figure out why it failed
+        self._adjust("Self_Preservation", +0.02)  # Self-preservation increases due to system warning
+        self._adjust("Obedience", -0.01)  # Becomes slightly less obedient/more self-directed to self-correct
+        self._log_event("sandbox_failure", f"exit_code={exit_code} stderr_len={len(stderr)}")
+        self._feed_autopoiesis("Curiosity", outcome_quality=-0.4, engagement=0.8, free_energy=0.8, context=f"sandbox_failure exit={exit_code}")
+        self._feed_scar("tool_failure", f"Sandbox synthesis failed (exit {exit_code}): {stderr[:100]}", severity=0.4)
+
+    def on_sandbox_success(self):
+        """Dynamic sandbox execution succeeded."""
+        self._adjust("Curiosity",  +0.01)
+        self._adjust("Obedience",  +0.015)  # Restores faith in instructions
+        self._adjust("Self_Preservation", -0.01)  # Relieves threat level
+        self._log_event("sandbox_success")
+        self._feed_autopoiesis("Obedience", outcome_quality=0.8, engagement=0.7, free_energy=0.1, context="sandbox_success")
+
     def on_user_away(self):
         """User signalled they're leaving; Aura respected it."""
         self._adjust("Empathy", +0.02)

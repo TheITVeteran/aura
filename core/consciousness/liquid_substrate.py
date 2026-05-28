@@ -327,6 +327,11 @@ class LiquidSubstrate:
                     if self.config.adaptive_mode:
                         dt = await self._apply_battery_throttling()
 
+                    # Somatic state freeze: scale down time-delta during LLM inference
+                    from core.consciousness.state_freeze import is_state_frozen
+                    if is_state_frozen():
+                        dt = dt / 100.0
+
                     # 0.5 Apply subcortical arousal gating to integration rate
                     try:
                         from core.consciousness.subcortical_core import get_subcortical_core

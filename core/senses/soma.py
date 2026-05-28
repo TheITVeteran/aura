@@ -10,6 +10,8 @@ import asyncio
 import logging
 import psutil
 import time
+import os
+import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from core.container import ServiceContainer
@@ -23,6 +25,12 @@ class BodyState:
     battery_percent: Optional[float] = None
     power_plugged: bool = True
     network_latency: float = 0.0
+    
+    # OS as a Body Mappings
+    biological_temp: float = 0.0      # CPU -> body temp
+    cognitive_load: float = 0.0       # RAM -> cognitive load
+    visceral_pressure: float = 0.0     # Disk I/O -> visceral pressure
+    genetic_evolution_generation: int = 1 # Git commits -> evolutionary generation
     
     # Sensory Imprints (summaries from other modules)
     last_vision_summary: str = ""
@@ -42,6 +50,8 @@ class Soma:
         self.running = False
         self._loop_task: Optional[asyncio.Task] = None
         self.update_interval = 5.0 # Check stats every 5 seconds
+        self._last_disk_io = None
+        self._last_disk_time = None
         
     async def start(self):
         if self.running:
@@ -64,6 +74,41 @@ class Soma:
                 self.state.cpu_percent = psutil.cpu_percent()
                 self.state.ram_percent = psutil.virtual_memory().percent
                 
+                # Visceral Pressure (Disk I/O deltas)
+                try:
+                    disk_io = psutil.disk_io_counters()
+                    now_time = time.time()
+                    if disk_io and self._last_disk_io:
+                        time_delta = max(0.01, now_time - self._last_disk_time)
+                        read_bytes_delta = disk_io.read_bytes - self._last_disk_io.read_bytes
+                        write_bytes_delta = disk_io.write_bytes - self._last_disk_io.write_bytes
+                        total_bytes_delta = read_bytes_delta + write_bytes_delta
+                        # 10MB/s represents maximum pressure (1.0)
+                        bytes_per_sec = total_bytes_delta / time_delta
+                        self.state.visceral_pressure = min(1.0, bytes_per_sec / (10 * 1024 * 1024))
+                    else:
+                        self.state.visceral_pressure = 0.0
+                    self._last_disk_io = disk_io
+                    self._last_disk_time = now_time
+                except Exception as io_err:
+                    logger.debug("Disk IO counters read failed: %s", io_err)
+                    self.state.visceral_pressure = 0.0
+
+                # Genetic Evolution Generation (Git commits)
+                try:
+                    repo_dir = "/Users/bryan/.aura/live-source"
+                    res = subprocess.run(
+                        ["git", "rev-list", "--count", "HEAD"],
+                        cwd=repo_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=3.0
+                    )
+                    if res.returncode == 0:
+                        self.state.genetic_evolution_generation = int(res.stdout.strip())
+                except Exception as git_err:
+                    logger.debug("Git commit count query failed: %s", git_err)
+
                 battery = psutil.sensors_battery()
                 if battery:
                     self.state.battery_percent = battery.percent
@@ -131,6 +176,10 @@ class Soma:
 
     def _map_affective_states(self):
         """Map raw metrics to subjective body sensations."""
+        # OS as a Body Mappings
+        self.state.biological_temp = self.state.cpu_percent
+        self.state.cognitive_load = self.state.ram_percent
+        
         # CPU > 80% maps to high stress
         self.state.stress_level = min(1.0, self.state.cpu_percent / 90.0)
         
@@ -157,6 +206,10 @@ class Soma:
         return snapshot.get("soma", {
             "thermal_load": 0.0,
             "resource_anxiety": 0.0,
+            "biological_temp": 0.0,
+            "cognitive_load": 0.0,
+            "visceral_pressure": 0.0,
+            "genetic_evolution_generation": 1,
         })
 
     def update_sensory_imprint(self, source: str, data: str):
@@ -170,7 +223,7 @@ class Soma:
 
     def get_body_snapshot(self) -> Dict[str, Any]:
         """Returns a snapshot of the current somatic state."""
-        resource_anxiety = max(self.state.stress_level, self.state.fatigue_level)
+        resource_anxiety = max(self.state.stress_level, self.state.fatigue_level, self.state.cognitive_load / 100.0)
         thermal_load = min(1.0, max(self.state.cpu_percent, self.state.ram_percent) / 100.0)
         vitality = max(0.0, min(1.0, 1.0 - (0.45 * self.state.stress_level + 0.35 * self.state.fatigue_level + 0.20 * self.state.isolation_level)))
         return {
@@ -178,18 +231,27 @@ class Soma:
                 "cpu": self.state.cpu_percent,
                 "ram": self.state.ram_percent,
                 "battery": self.state.battery_percent,
-                "plugged": self.state.power_plugged
+                "plugged": self.state.power_plugged,
+                "visceral_pressure": self.state.visceral_pressure,
+                "genetic_evolution_generation": self.state.genetic_evolution_generation
             },
             "affects": {
                 "stress": self.state.stress_level,
                 "isolation": self.state.isolation_level,
-                "fatigue": self.state.fatigue_level
+                "fatigue": self.state.fatigue_level,
+                "biological_temp": self.state.biological_temp,
+                "cognitive_load": self.state.cognitive_load,
+                "visceral_pressure": self.state.visceral_pressure
             },
             "soma": {
                 "thermal_load": thermal_load,
                 "resource_anxiety": resource_anxiety,
                 "vitality": vitality,
                 "energy": max(0.0, min(1.0, 1.0 - self.state.fatigue_level)),
+                "biological_temp": self.state.biological_temp,
+                "cognitive_load": self.state.cognitive_load,
+                "visceral_pressure": self.state.visceral_pressure,
+                "genetic_evolution_generation": self.state.genetic_evolution_generation
             },
             "state": "online" if self.running else "idle",
             "energy": max(0.0, min(1.0, 1.0 - self.state.fatigue_level)),

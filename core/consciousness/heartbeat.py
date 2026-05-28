@@ -173,6 +173,15 @@ class CognitiveHeartbeat:
 
         while not self._stop_event.is_set():
             tick_start = time.monotonic()
+            
+            # Watchdog Keep-Alive Emitter
+            try:
+                import socket
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.sendto(b"AURA_HEARTBEAT", ("127.0.0.1", 9999))
+            except Exception as e:
+                logger.debug("Failed to emit keep-alive socket message to watchdog: %s", e)
+
             try:
                 await self._tick()
                 self._consecutive_tick_failures = 0

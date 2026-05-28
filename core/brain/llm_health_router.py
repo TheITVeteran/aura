@@ -719,9 +719,11 @@ class HealthAwareLLMRouter:
                     "tokens": 0,
                     "error": "grounding_required_no_tool_result",
                 }
-        return await self._generate_core(
-            prompt, system_prompt, timeout, prefer_tier=prefer_tier, schema=schema, **kwargs
-        )
+        from core.consciousness.state_freeze import state_freeze
+        async with state_freeze():
+            return await self._generate_core(
+                prompt, system_prompt, timeout, prefer_tier=prefer_tier, schema=schema, **kwargs
+            )
 
     async def think(
         self,

@@ -337,6 +337,47 @@ class ReallocateFlowActuator(BaseActuator):
             return ActuatorResult(False, f"Actuator execution failed: {exc}", {})
 
 
+class SandboxActuator(BaseActuator):
+    """Actuator wrapper for the SandboxOperator, enabling dynamic code synthesis."""
+
+    def __init__(self) -> None:
+        from core.actuators.sandbox_operator import SandboxOperator
+        self.operator = SandboxOperator()
+
+    @property
+    def name(self) -> str:
+        return "execute_in_sandbox"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Executes raw Python code synthesized by Aura in a sandbox subprocess. "
+            "Returns a dictionary with 'success', 'stdout', 'stderr', and 'exit_code'."
+        )
+
+    def validate_params(self, params: dict[str, Any]) -> bool:
+        return isinstance(params, dict) and "code" in params and isinstance(params["code"], str)
+
+    def execute(self, params: dict[str, Any]) -> ActuatorResult:
+        if not self.validate_params(params):
+            return ActuatorResult(False, "Parameter validation failed: 'code' string parameter is required.", {})
+
+        code = params["code"]
+        timeout_s = float(params.get("timeout_s", 10.0))
+        
+        res = self.operator.execute_synthesized_tool(code, timeout_s=timeout_s)
+        
+        msg = f"Execution completed with exit code {res['exit_code']}."
+        if not res["success"]:
+            msg = f"Execution failed (exit code {res['exit_code']}): {res['stderr']}"
+            
+        return ActuatorResult(
+            success=res["success"],
+            message=msg,
+            updates={"sandbox_result": res}
+        )
+
+
 class ActuatorRegistry:
     """Registry of executable physical open-ended actuators."""
 
@@ -347,6 +388,7 @@ class ActuatorRegistry:
     def _register_default_actuators(self) -> None:
         self.register(RerouteVesselActuator())
         self.register(ReallocateFlowActuator())
+        self.register(SandboxActuator())
 
     def register(self, actuator: BaseActuator) -> None:
         self.actuators[actuator.name] = actuator

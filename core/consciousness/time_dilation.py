@@ -210,6 +210,12 @@ class TimeDilationEngine:
             # Update dilation factor
             self._dilation_factor = self._smoothed_hz / _BASE_TICK_HZ
 
+            # Somatic state freeze: override dilation factor to 0.01
+            from core.consciousness.state_freeze import is_state_frozen
+            if is_state_frozen():
+                self._dilation_factor = 0.01
+                self._acceleration_reason = "state_freeze"
+
             # Subjective time accounting
             wall_delta = now - self._last_tick_time
             self._subjective_elapsed += wall_delta * self._dilation_factor
@@ -327,6 +333,10 @@ class TimeDilationEngine:
           - Net pressure determines direction and magnitude
           - Map to [_MIN_TICK_HZ, _MAX_TICK_HZ] range
         """
+        from core.consciousness.state_freeze import is_state_frozen
+        if is_state_frozen():
+            self._acceleration_reason = "state_freeze"
+            return _MIN_TICK_HZ
         # --- Acceleration pressures (want to speed up) ---
         accel_factors = []
         reason_parts = []
