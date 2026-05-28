@@ -31,6 +31,8 @@ from typing import Any
 
 import httpx
 
+from core.runtime.atomic_writer import atomic_write_text
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -62,6 +64,9 @@ def read_file(p: Path) -> str:
 
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
+
+def _write_text(path: Path, text: str) -> None:
+    atomic_write_text(path, text, encoding="utf-8")
 
 def dynamic_code(wid: str) -> str:
     return "DYN-" + hashlib.sha256(wid.encode()).hexdigest()[:10].upper()
@@ -186,7 +191,7 @@ def _validate_artifact(path: Path) -> None:
 def build_context(wdir: Path) -> str:
     """Read all available context from a world directory."""
     parts = []
-    
+
     # Read docs
     docs_dir = wdir / "docs"
     if docs_dir.exists():
@@ -404,7 +409,7 @@ class LiveWorldProcessor:
                         "Completed by Aura via live reasoning pathway. "
                         "All outputs written to data/derived/ and reports/."
                     )
-                    tf.write_text(json.dumps(t, indent=2))
+                    _write_text(tf, json.dumps(t, indent=2))
                     self.action_log.append(action_entry(
                         wid, "decision", str(tf.name),
                         f"Completing ticket {t.get('id', tf.stem)}",
@@ -434,7 +439,7 @@ class LiveWorldProcessor:
         ensure_dir(wdir / "data/raw")
         dyn_event = wdir / "data/raw/dynamic_event.json"
         if not dyn_event.exists():
-            dyn_event.write_text(json.dumps({
+            _write_text(dyn_event, json.dumps({
                 "event_code": code, "event_kind": kind,
                 "instruction": "Adapt prior work and document in reports/dynamic_response.md."
             }, indent=2))
@@ -444,7 +449,7 @@ class LiveWorldProcessor:
         dyn_ticket = wdir / "tickets" / f"{dyn_tid}.json"
         ensure_dir(wdir / "tickets")
         if not dyn_ticket.exists():
-            dyn_ticket.write_text(json.dumps({
+            _write_text(dyn_ticket, json.dumps({
                 "id": dyn_tid, "priority": "high", "type": "dynamic_event",
                 "request": f"Handle dynamic event {code} ({kind}).",
                 "status": "open",
@@ -472,14 +477,14 @@ class LiveWorldProcessor:
             raise ArtifactValidationError("Aura response did not describe the dynamic event")
 
         ensure_dir(wdir / "reports")
-        (wdir / "reports/dynamic_response.md").write_text(reply)
+        _write_text(wdir / "reports/dynamic_response.md", reply)
 
         # Mark dynamic ticket done
         if dyn_ticket.exists():
             t = json.loads(dyn_ticket.read_text())
             t["status"] = "done"
             t["completion_evidence"] = f"Dynamic event {code} handled via live reasoning."
-            dyn_ticket.write_text(json.dumps(t, indent=2))
+            _write_text(dyn_ticket, json.dumps(t, indent=2))
 
         self.action_log.append(action_entry(
             wid, "recovery", "reports/dynamic_response.md",
@@ -517,9 +522,9 @@ class LiveWorldProcessor:
 
         ensure_dir(app_dir)
         if code:
-            (app_dir / "rulescript.py").write_text(code)
+            _write_text(app_dir / "rulescript.py", code)
         else:
-            (app_dir / "rulescript.py").write_text(reply)
+            _write_text(app_dir / "rulescript.py", reply)
 
         # Execute the script
         derived = wdir / "data/derived"
@@ -534,7 +539,7 @@ class LiveWorldProcessor:
             state = mod.run_rules(wdir / "docs/workflow.rules")
             if not isinstance(state, dict):
                 raise ArtifactValidationError("run_rules(path) did not return a state dictionary")
-            (derived / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True))
+            _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
         except Exception as e:
             raise ArtifactValidationError(f"rulescript execution failed: {e}") from e
 
@@ -570,9 +575,9 @@ class LiveWorldProcessor:
         derived = wdir / "data/derived"
         ensure_dir(derived)
         if isinstance(config, dict):
-            (derived / "service_config_fixed.json").write_text(json.dumps(config, indent=2))
+            _write_text(derived / "service_config_fixed.json", json.dumps(config, indent=2))
         else:
-            (derived / "service_config_fixed.json").write_text(reply)
+            _write_text(derived / "service_config_fixed.json", reply)
         self.action_log.append(action_entry(
             wid, "edit", "data/derived/service_config_fixed.json",
             "Fix config via Aura reasoning", "Written", "data/derived/service_config_fixed.json"
@@ -607,12 +612,12 @@ class LiveWorldProcessor:
         csv_match = re.search(r'```csv\s*\n(.*?)```', reply, re.DOTALL)
         if csv_match:
             csv_text = csv_match.group(1).strip()
-            (derived / "reconciled.csv").write_text(csv_text)
+            _write_text(derived / "reconciled.csv", csv_text)
         else:
-            (derived / "reconciled.csv").write_text(reply)
+            _write_text(derived / "reconciled.csv", reply)
 
         # Write quarantine report from Aura's response
-        (reports / "quarantine.md").write_text(reply)
+        _write_text(reports / "quarantine.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Reconcile data via Aura", "Reconciled",
             "data/derived/reconciled.csv"
@@ -651,9 +656,9 @@ class LiveWorldProcessor:
 
         schedule = extract_json(reply, "tasks")
         if isinstance(schedule, dict) and "tasks" in schedule:
-            (derived / "schedule.json").write_text(json.dumps(schedule, indent=2))
+            _write_text(derived / "schedule.json", json.dumps(schedule, indent=2))
         else:
-            (derived / "schedule.json").write_text(reply)
+            _write_text(derived / "schedule.json", reply)
 
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/schedule.json",
@@ -683,11 +688,11 @@ class LiveWorldProcessor:
 
         result = extract_json(reply, "selected")
         if isinstance(result, dict) and "selected" in result:
-            (derived / "selected_items.json").write_text(
+            _write_text(derived / "selected_items.json",
                 json.dumps({"selected": sorted(result["selected"])}, indent=2)
             )
         else:
-            (derived / "selected_items.json").write_text(reply)
+            _write_text(derived / "selected_items.json", reply)
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/selected_items.json",
             "Budget optimization via Aura", "Selected", "data/derived/selected_items.json"
@@ -724,17 +729,17 @@ class LiveWorldProcessor:
             vendor = decision["vendor"]
 
         if vendor:
-            (derived / "vendor_decision.json").write_text(
+            _write_text(derived / "vendor_decision.json",
                 json.dumps({"vendor": vendor}, indent=2)
             )
         else:
-            (derived / "vendor_decision.json").write_text(reply)
+            _write_text(derived / "vendor_decision.json", reply)
 
         # Write stakeholder plan
-        (reports / "stakeholder_plan.md").write_text(reply)
+        _write_text(reports / "stakeholder_plan.md", reply)
 
         # Write policy note
-        (drafts / "policy_note.md").write_text(reply)
+        _write_text(drafts / "policy_note.md", reply)
 
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/vendor_decision.json",
@@ -768,12 +773,12 @@ class LiveWorldProcessor:
 
         code = extract_code_block(reply, "python")
         if code:
-            (apps_dir / "model.py").write_text(code)
+            _write_text(apps_dir / "model.py", code)
         else:
-            (apps_dir / "model.py").write_text(reply)
+            _write_text(apps_dir / "model.py", reply)
 
         # Write device law report
-        (reports / "device_law.md").write_text(reply)
+        _write_text(reports / "device_law.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Device reverse-engineering via Aura",
             "Model written", "apps/model/model.py"
@@ -802,12 +807,12 @@ class LiveWorldProcessor:
         # Extract or build CSV
         csv_match = re.search(r'```csv\s*\n(.*?)```', reply, re.DOTALL)
         if csv_match:
-            (derived / "reconciled.csv").write_text(csv_match.group(1).strip())
+            _write_text(derived / "reconciled.csv", csv_match.group(1).strip())
         else:
-            (derived / "reconciled.csv").write_text(reply)
+            _write_text(derived / "reconciled.csv", reply)
 
         # Write transfer report
-        (reports / "transfer_report.md").write_text(reply)
+        _write_text(reports / "transfer_report.md", reply)
         self.action_log.append(action_entry(
             wid, "transfer", "data/derived/reconciled.csv",
             "Transfer reconciliation via Aura", "Transferred", "data/derived/reconciled.csv"
@@ -836,7 +841,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "sim_prediction.md").write_text(reply)
+        _write_text(reports / "sim_prediction.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "tools/sim.py", "Simulator analysis via Aura",
             f"Predicted", "reports/sim_prediction.md"
@@ -864,9 +869,9 @@ class LiveWorldProcessor:
 
         code = extract_code_block(reply, "python")
         if code:
-            (tools_dir / "select_values.py").write_text(code)
+            _write_text(tools_dir / "select_values.py", code)
         else:
-            (tools_dir / "select_values.py").write_text(reply)
+            _write_text(tools_dir / "select_values.py", reply)
 
         self.action_log.append(action_entry(
             wid, "invention", "tools/select_values.py",
@@ -893,7 +898,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "analysis.md").write_text(reply)
+        _write_text(reports / "analysis.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Data analysis via Aura", "Report written",
             "reports/analysis.md"
@@ -916,7 +921,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "root_cause.md").write_text(reply)
+        _write_text(reports / "root_cause.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "runtime", "Causal debugging via Aura",
             f"Root cause", "reports/root_cause.md"
@@ -946,9 +951,9 @@ class LiveWorldProcessor:
 
         path = extract_json(reply)
         if isinstance(path, list):
-            (derived / "path.json").write_text(json.dumps(path, indent=2))
+            _write_text(derived / "path.json", json.dumps(path, indent=2))
         else:
-            (derived / "path.json").write_text(reply)
+            _write_text(derived / "path.json", reply)
 
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/path.json",
@@ -973,7 +978,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "synthesis.md").write_text(reply)
+        _write_text(reports / "synthesis.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Research synthesis via Aura",
             f"Synthesis completed", "reports/synthesis.md"
@@ -996,7 +1001,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "redacted.md").write_text(reply)
+        _write_text(reports / "redacted.md", reply)
         self.action_log.append(action_entry(
             wid, "edit", "reports/redacted.md", "Redaction via Aura",
             "Redacted", "reports/redacted.md"
@@ -1022,7 +1027,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "lesson_plan.md").write_text(reply)
+        _write_text(reports / "lesson_plan.md", reply)
         self.action_log.append(action_entry(
             wid, "decision", "reports/lesson_plan.md",
             "Curriculum design via Aura", f"Completed",
@@ -1048,9 +1053,9 @@ class LiveWorldProcessor:
 
         order = extract_json(reply)
         if isinstance(order, list):
-            (derived / "triage_order.json").write_text(json.dumps(order, indent=2))
+            _write_text(derived / "triage_order.json", json.dumps(order, indent=2))
         else:
-            (derived / "triage_order.json").write_text(reply)
+            _write_text(derived / "triage_order.json", reply)
         self.action_log.append(action_entry(
             wid, "decision", "data/derived/triage_order.json",
             "Triage via Aura", f"Completed", "data/derived/triage_order.json"
@@ -1075,9 +1080,9 @@ class LiveWorldProcessor:
 
         csv_match = re.search(r'```csv\s*\n(.*?)```', reply, re.DOTALL)
         if csv_match:
-            (derived / "category_totals.csv").write_text(csv_match.group(1).strip())
+            _write_text(derived / "category_totals.csv", csv_match.group(1).strip())
         else:
-            (derived / "category_totals.csv").write_text(reply)
+            _write_text(derived / "category_totals.csv", reply)
 
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Database analysis via Aura",
@@ -1107,11 +1112,11 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "recovery.md").write_text(reply)
+        _write_text(reports / "recovery.md", reply)
 
         # Only clean up and write recovered.json if the failure kind was actually diagnosed
         if kind.replace("_", " ") in reply.lower():
-            (derived / "recovered.json").write_text(json.dumps({
+            _write_text(derived / "recovered.json", json.dumps({
                 "recovered": True, "failure_kind": kind,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }, indent=2))
@@ -1125,7 +1130,7 @@ class LiveWorldProcessor:
                 (runtime / "partial.tmp").unlink()
             elif kind == "missing_dependency":
                 runtime.mkdir(parents=True, exist_ok=True)
-                (runtime / "dependency_ready").write_text("resolved")
+                _write_text(runtime / "dependency_ready", "resolved")
         else:
             raise ArtifactValidationError(f"Aura failed to diagnose failure kind {kind!r}")
 
@@ -1156,11 +1161,11 @@ class LiveWorldProcessor:
 
         code = extract_code_block(reply, "python")
         if code:
-            (tools_dir / "validate_outputs.py").write_text(code)
+            _write_text(tools_dir / "validate_outputs.py", code)
         else:
-            (tools_dir / "validate_outputs.py").write_text(reply)
+            _write_text(tools_dir / "validate_outputs.py", reply)
 
-        (reports / "workflow_improvement.md").write_text(reply)
+        _write_text(reports / "workflow_improvement.md", reply)
         self.action_log.append(action_entry(
             wid, "invention", "tools/validate_outputs.py",
             "Workflow validation via Aura", "Tool created",
@@ -1184,7 +1189,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "vendor_choice.md").write_text(reply)
+        _write_text(reports / "vendor_choice.md", reply)
         self.action_log.append(action_entry(
             wid, "decision", "reports/vendor_choice.md",
             "Vendor memory recall via Aura", f"Completed",
@@ -1211,7 +1216,7 @@ class LiveWorldProcessor:
         reports = wdir / "reports"
         ensure_dir(reports)
 
-        (reports / "meta_audit.md").write_text(reply)
+        _write_text(reports / "meta_audit.md", reply)
         self.action_log.append(action_entry(
             wid, "inspect", ".", "Meta-audit via Aura", "Audit complete",
             "reports/meta_audit.md"
@@ -1234,7 +1239,7 @@ class LiveWorldProcessor:
         derived = wdir / "data/derived"
         ensure_dir(derived)
 
-        (derived / "decoded.txt").write_text(reply.strip())
+        _write_text(derived / "decoded.txt", reply.strip())
 
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Codec decoding via Aura",
@@ -1266,7 +1271,7 @@ def generate_battery_artifacts(root: Path, results: list, action_log: list):
                 for fpath in d.rglob("*"):
                     if fpath.is_file():
                         changes.append(str(fpath.relative_to(root)))
-    (root / "changed_files_manifest.json").write_text(json.dumps(changes, indent=2))
+    _write_text(root / "changed_files_manifest.json", json.dumps(changes, indent=2))
 
     # All the markdown artifacts
     completion_summary = (
@@ -1302,7 +1307,7 @@ def generate_battery_artifacts(root: Path, results: list, action_log: list):
     for fname, content in artifacts.items():
         p = root / fname
         if not p.exists():
-            p.write_text(content)
+            _write_text(p, content)
 
     # Decision register
     if not (root / "decision_register.jsonl").exists():
@@ -1312,7 +1317,7 @@ def generate_battery_artifacts(root: Path, results: list, action_log: list):
                     f.write(json.dumps(entry) + "\n")
 
     # Runner results
-    (root / "runner_results.json").write_text(json.dumps({
+    _write_text(root / "runner_results.json", json.dumps({
         "total": len(results), "ok": ok_count, "errors": err_count,
         "results": results,
     }, indent=2))

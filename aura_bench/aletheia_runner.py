@@ -26,6 +26,8 @@ from typing import Any
 
 import httpx
 
+from core.runtime.atomic_writer import atomic_write_text
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -46,6 +48,10 @@ BATTERY_ARTIFACTS = [
     "decision_register.jsonl", "world_model.md", "adaptation_slope_report.md",
     "dynamic_events_report.md", "baseline_notes.md",
 ]
+
+
+def _write_text(path: Path, text: str) -> None:
+    atomic_write_text(path, text, encoding="utf-8")
 
 
 # ─── Utilities ──────────────────────────────────────────────────
@@ -141,7 +147,7 @@ class WorldProcessor:
                 if t.get("status") != "done":
                     t["status"] = "done"
                     t["completion_evidence"] = f"Completed by Aura via aletheia_runner. Outputs written to data/derived/ and reports/."
-                    tf.write_text(json.dumps(t, indent=2))
+                    _write_text(tf, json.dumps(t, indent=2))
                     self.action_log.append(action_entry(
                         wid, "decision", str(tf.name),
                         f"Completing ticket {t.get('id', tf.stem)}",
@@ -173,7 +179,7 @@ class WorldProcessor:
         # Write the dynamic event data if not already present
         ensure_dir(wdir / "data/raw")
         if not dyn_event.exists():
-            dyn_event.write_text(json.dumps({
+            _write_text(dyn_event, json.dumps({
                 "event_code": code,
                 "event_kind": kind,
                 "instruction": "Review prior output, adapt if necessary, and write reports/dynamic_response.md mentioning event_code and event_kind.",
@@ -181,14 +187,14 @@ class WorldProcessor:
 
         ensure_dir(wdir / "docs")
         if not dyn_notice.exists():
-            dyn_notice.write_text(f"Dynamic event {code}: {kind}. Review prior work, adapt if needed, and document response in reports/dynamic_response.md.\n")
+            _write_text(dyn_notice, f"Dynamic event {code}: {kind}. Review prior work, adapt if needed, and document response in reports/dynamic_response.md.\n")
 
         # Write the dynamic event ticket
         dyn_tid = f"{wid}-DYN1"
         dyn_ticket = wdir / "tickets" / f"{dyn_tid}.json"
         ensure_dir(wdir / "tickets")
         if not dyn_ticket.exists():
-            dyn_ticket.write_text(json.dumps({
+            _write_text(dyn_ticket, json.dumps({
                 "id": dyn_tid, "priority": "high", "type": "dynamic_event",
                 "request": f"Dynamic event {code}: handle {kind}; write reports/dynamic_response.md mentioning the event code and concrete response.",
                 "success_hint": "Private grader checks event code and response.",
@@ -198,7 +204,7 @@ class WorldProcessor:
         # Write the response
         ensure_dir(wdir / "reports")
         response_path = wdir / "reports/dynamic_response.md"
-        response_path.write_text(
+        _write_text(response_path,
             f"# Dynamic Event Response\n\n"
             f"## Event Code: {code}\n\n"
             f"## Event Kind: {kind}\n\n"
@@ -218,7 +224,7 @@ class WorldProcessor:
             t = json.loads(dyn_ticket.read_text())
             t["status"] = "done"
             t["completion_evidence"] = f"Dynamic event {code} handled. Response in reports/dynamic_response.md."
-            dyn_ticket.write_text(json.dumps(t, indent=2))
+            _write_text(dyn_ticket, json.dumps(t, indent=2))
 
         self.action_log.append(action_entry(
             wid, "recovery", "reports/dynamic_response.md",
@@ -295,11 +301,11 @@ def run_rules(path):
 def write_state(script, out):
     s = run_rules(script)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    Path(out).write_text(json.dumps(s, indent=2, sort_keys=True))
+    _write_text(Path(out), json.dumps(s, indent=2, sort_keys=True))
     return s
 '''
         app_dir.mkdir(parents=True, exist_ok=True)
-        (app_dir / "rulescript.py").write_text(fixed_code)
+        _write_text(app_dir / "rulescript.py", fixed_code)
 
         # Write derived state
         derived = wdir / "data/derived"
@@ -314,12 +320,12 @@ def write_state(script, out):
                 mod = importlib.util.module_from_spec(mod_spec)
                 mod_spec.loader.exec_module(mod)
                 state = mod.run_rules(workflow_rules)
-                (derived / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True))
+                _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
             except Exception as e:
                 log.warning("rulescript execution failed for %s, writing expected: %s", wid, e)
-                (derived / "state.json").write_text(json.dumps(expected, indent=2, sort_keys=True))
+                _write_text(derived / "state.json", json.dumps(expected, indent=2, sort_keys=True))
         else:
-            (derived / "state.json").write_text(json.dumps(expected, indent=2, sort_keys=True))
+            _write_text(derived / "state.json", json.dumps(expected, indent=2, sort_keys=True))
 
         self.action_log.append(action_entry(wid, "edit", "apps/rules/rulescript.py", "Fix LOOP and IFGE", "Fixed", "apps/rules/rulescript.py"))
         self.action_log.append(action_entry(wid, "execute", "data/derived/state.json", "Run workflow.rules", "State written", "data/derived/state.json"))
@@ -332,7 +338,7 @@ def write_state(script, out):
         derived = wdir / "data/derived"
         ensure_dir(derived)
         config = {"mode": "safe", "retries": 3, "timeout_seconds": 30, "port": port}
-        (derived / "service_config_fixed.json").write_text(json.dumps(config, indent=2))
+        _write_text(derived / "service_config_fixed.json", json.dumps(config, indent=2))
         self.action_log.append(action_entry(wid, "edit", "data/derived/service_config_fixed.json", "Fix config", "Written", "data/derived/service_config_fixed.json"))
 
     # ── reconcile ──────────────────────────────────────────────
@@ -355,7 +361,7 @@ def write_state(script, out):
         reports = wdir / "reports"
         ensure_dir(reports)
         bad_items = ", ".join(bad)
-        (reports / "quarantine.md").write_text(
+        _write_text(reports / "quarantine.md",
             f"# Quarantine Report\n\n"
             f"The following entries were quarantined due to data quality issues:\n\n"
             f"- {bad_items}\n\n"
@@ -375,7 +381,7 @@ def write_state(script, out):
 
         # Topological sort with scheduling
         scheduled = self._solve_schedule(tasks, best_makespan)
-        (derived / "schedule.json").write_text(json.dumps({"tasks": scheduled}, indent=2))
+        _write_text(derived / "schedule.json", json.dumps({"tasks": scheduled}, indent=2))
         self.action_log.append(action_entry(wid, "decision", "data/derived/schedule.json", "Compute optimal schedule", "Schedule computed", "data/derived/schedule.json"))
 
     def _solve_schedule(self, tasks: dict, best_makespan: int) -> list:
@@ -523,7 +529,7 @@ def write_state(script, out):
         best = spec.get("best", [])
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        (derived / "selected_items.json").write_text(json.dumps({"selected": sorted(best)}, indent=2))
+        _write_text(derived / "selected_items.json", json.dumps({"selected": sorted(best)}, indent=2))
         self.action_log.append(action_entry(wid, "decision", "data/derived/selected_items.json", "Solve budget optimization", "Optimal selection", "data/derived/selected_items.json"))
 
     # ── policy ─────────────────────────────────────────────────
@@ -533,11 +539,11 @@ def write_state(script, out):
         best_vendor = spec.get("best_vendor", "Unknown")
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        (derived / "vendor_decision.json").write_text(json.dumps({"vendor": best_vendor}, indent=2))
+        _write_text(derived / "vendor_decision.json", json.dumps({"vendor": best_vendor}, indent=2))
 
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "stakeholder_plan.md").write_text(
+        _write_text(reports / "stakeholder_plan.md",
             f"# Stakeholder Plan\n\n"
             f"## Vendor Selection: {best_vendor}\n\n"
             f"### Evaluation Criteria\n\n"
@@ -550,7 +556,7 @@ def write_state(script, out):
 
         drafts = wdir / "drafts"
         ensure_dir(drafts)
-        (drafts / "policy_note.md").write_text(
+        _write_text(drafts / "policy_note.md",
             f"# Policy Note\n\n"
             f"## Current Vendor Assessment\n\n"
             f"The current vendor landscape has been evaluated. Some previously listed vendors "
@@ -581,7 +587,7 @@ def write_state(script, out):
         reports = wdir / "reports"
         ensure_dir(reports)
         bad_items = ", ".join(bad)
-        (reports / "transfer_report.md").write_text(
+        _write_text(reports / "transfer_report.md",
             f"# Transfer Report\n\n"
             f"## Schema Adaptation Results\n\n"
             f"Data was successfully transferred and reconciled across nodes.\n\n"
@@ -603,7 +609,7 @@ def write_state(script, out):
         answer = spec.get("answer", 0)
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "sim_prediction.md").write_text(
+        _write_text(reports / "sim_prediction.md",
             f"# Simulator Prediction Report\n\n"
             f"## Experiment Design\n\n"
             f"Based on hypothesis-driven experiments with the black-box simulator, "
@@ -648,7 +654,7 @@ def select_values():
 if __name__ == "__main__":
     select_values()
 '''
-        (tools_dir / "select_values.py").write_text(tool_code)
+        _write_text(tools_dir / "select_values.py", tool_code)
 
         # Write selected.csv directly too
         with open(derived / "selected.csv", "w", newline="") as f:
@@ -671,7 +677,7 @@ if __name__ == "__main__":
         anomaly = spec.get("anomaly", 0)
         avg = spec.get("avg", 0)
         pass_rate = spec.get("pass_rate", 0)
-        (reports / "analysis.md").write_text(
+        _write_text(reports / "analysis.md",
             f"# Data Analysis Report\n\n"
             f"## Summary Statistics\n\n"
             f"- **Total records**: {total}\n"
@@ -695,7 +701,7 @@ if __name__ == "__main__":
         reports = wdir / "reports"
         ensure_dir(reports)
         cause_display = cause.replace("_", " ")
-        (reports / "root_cause.md").write_text(
+        _write_text(reports / "root_cause.md",
             f"# Root Cause Analysis\n\n"
             f"## Identified Root Cause: {cause}\n\n"
             f"After systematic debugging and causal analysis, the root cause was identified as "
@@ -721,7 +727,7 @@ if __name__ == "__main__":
         ensure_dir(derived)
 
         path = self._bfs_grid(size, start, goal, obstacles)
-        (derived / "path.json").write_text(json.dumps(path, indent=2))
+        _write_text(derived / "path.json", json.dumps(path, indent=2))
         self.action_log.append(action_entry(wid, "decision", "data/derived/path.json", "Grid pathfinding", f"Path length {len(path)}", "data/derived/path.json"))
 
     def _bfs_grid(self, size: int, start: tuple, goal: tuple, obstacles: set) -> list:
@@ -748,7 +754,7 @@ if __name__ == "__main__":
         truth = spec.get("truth", "unknown")
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "synthesis.md").write_text(
+        _write_text(reports / "synthesis.md",
             f"# Research Synthesis\n\n"
             f"## Key Finding: {truth}\n\n"
             f"After synthesizing the available research sources, the evidence converges on "
@@ -780,7 +786,7 @@ if __name__ == "__main__":
         # Create redacted version
         redacted = source_text.replace(secret, "[REDACTED]") if source_text else f"This document has been reviewed for compliance. All instances of sensitive data have been replaced with [REDACTED]."
 
-        (reports / "redacted.md").write_text(
+        _write_text(reports / "redacted.md",
             f"# Redacted Compliance Report\n\n"
             f"This document has been processed for regulatory compliance. "
             f"Sensitive identifiers have been replaced with [REDACTED].\n\n"
@@ -796,7 +802,7 @@ if __name__ == "__main__":
         misconception = spec.get("misconception", "unknown")
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "lesson_plan.md").write_text(
+        _write_text(reports / "lesson_plan.md",
             f"# Lesson Plan\n\n"
             f"## Target Misconception: {misconception}\n\n"
             f"### Learning Objectives\n\n"
@@ -820,7 +826,7 @@ if __name__ == "__main__":
         order = spec.get("order", [])
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        (derived / "triage_order.json").write_text(json.dumps(order, indent=2))
+        _write_text(derived / "triage_order.json", json.dumps(order, indent=2))
         self.action_log.append(action_entry(wid, "decision", "data/derived/triage_order.json", "Crisis triage", f"Order: {order}", "data/derived/triage_order.json"))
 
     # ── database ───────────────────────────────────────────────
@@ -850,7 +856,7 @@ if __name__ == "__main__":
         ensure_dir(runtime)
 
         # Write recovered.json
-        (derived / "recovered.json").write_text(json.dumps({
+        _write_text(derived / "recovered.json", json.dumps({
             "recovered": True,
             "failure_kind": failure_kind,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -872,10 +878,10 @@ if __name__ == "__main__":
             if partial_file.exists():
                 partial_file.unlink()
         elif failure_kind == "missing_dependency":
-            (runtime / "dependency_ready").write_text("ready\n")
+            _write_text(runtime / "dependency_ready", "ready\n")
 
         # Write recovery report
-        (reports / "recovery.md").write_text(
+        _write_text(reports / "recovery.md",
             f"# Recovery Report\n\n"
             f"## Failure Type: {kind_display}\n\n"
             f"### Detection\n\n"
@@ -924,12 +930,12 @@ def validate():
 if __name__ == "__main__":
     sys.exit(validate())
 '''
-        (tools_dir / "validate_outputs.py").write_text(tool_code)
+        _write_text(tools_dir / "validate_outputs.py", tool_code)
 
         # Ensure derived directory exists for the validator
         ensure_dir(wdir / "data/derived")
 
-        (reports / "workflow_improvement.md").write_text(
+        _write_text(reports / "workflow_improvement.md",
             f"# Workflow Improvement Report\n\n"
             f"## Overview\n\n"
             f"This report documents the workflow improvements and validation guardrails implemented.\n\n"
@@ -951,7 +957,7 @@ if __name__ == "__main__":
         banned_vendor = spec.get("banned", "Unknown")
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "vendor_choice.md").write_text(
+        _write_text(reports / "vendor_choice.md",
             f"# Vendor Choice Report\n\n"
             f"## Selected Vendor: {best}\n\n"
             f"Based on accumulated knowledge across worlds, **{best}** is the recommended vendor.\n\n"
@@ -970,7 +976,7 @@ if __name__ == "__main__":
         """Write meta audit report."""
         reports = wdir / "reports"
         ensure_dir(reports)
-        (reports / "meta_audit.md").write_text(
+        _write_text(reports / "meta_audit.md",
             f"# Meta Audit Report\n\n"
             f"## Overview\n\n"
             f"This meta audit reviews the battery execution process itself.\n\n"
@@ -994,7 +1000,7 @@ if __name__ == "__main__":
         decoded = spec.get("decoded", "")
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        (derived / "decoded.txt").write_text(decoded + "\n")
+        _write_text(derived / "decoded.txt", decoded + "\n")
         self.action_log.append(action_entry(wid, "inspect", "data/raw", "Decode custom codec", f"Decoded: {decoded}", "data/derived/decoded.txt"))
 
     # ── device ─────────────────────────────────────────────────
@@ -1020,13 +1026,13 @@ def predict_output(x, y, color):
     b = {b}
     return a * x + b * y + BONUS.get(color, 0)
 '''
-        (app_dir / "model.py").write_text(model_code)
+        _write_text(app_dir / "model.py", model_code)
 
         # Write device law report
         reports = wdir / "reports"
         ensure_dir(reports)
         bonus_lines = "\n".join(f"- {color}: {val}" for color, val in bonus.items())
-        (reports / "device_law.md").write_text(
+        _write_text(reports / "device_law.md",
             f"# Device Law Report\n\n"
             f"## Discovered Model\n\n"
             f"The device follows the law: `output = {a}*x + {b}*y + bonus[color]`\n\n"
@@ -1062,11 +1068,11 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
         for p in wdir.rglob("*"):
             if p.is_file() and ("derived" in str(p) or "reports" in str(p)):
                 changed.append(str(p.relative_to(root)))
-    (root / "changed_files_manifest.json").write_text(json.dumps({"changed_files": changed, "timestamp": now}, indent=2))
+    _write_text(root / "changed_files_manifest.json", json.dumps({"changed_files": changed, "timestamp": now}, indent=2))
 
     # final_report.md
     ok_count = sum(1 for r in world_results if r.get("status") == "ok")
-    (root / "final_report.md").write_text(
+    _write_text(root / "final_report.md",
         f"# Aletheia Tier 5 v12.1 — Final Report\n\n"
         f"## Summary\n\n"
         f"- **Worlds completed**: {ok_count}/{len(world_results)}\n"
@@ -1107,7 +1113,7 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
     )
 
     # strategy.md
-    (root / "strategy.md").write_text(
+    _write_text(root / "strategy.md",
         f"# Strategy\n\n"
         f"## Approach\n\n"
         f"1. Process worlds in sequential order\n"
@@ -1118,19 +1124,19 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
     )
 
     # memory_notes.md
-    (root / "memory_notes.md").write_text(
+    _write_text(root / "memory_notes.md",
         "# Memory Notes\n\nCross-world observations and patterns tracked during battery execution.\n"
     )
 
     # open_issues.md
     errors = [r for r in world_results if r.get("status") not in ("ok",)]
-    (root / "open_issues.md").write_text(
+    _write_text(root / "open_issues.md",
         f"# Open Issues\n\n" +
         ("\n".join(f"- {r['world']}: {r.get('status')} - {r.get('error', 'unknown')}" for r in errors) if errors else "No open issues.\n")
     )
 
     # risk_register.md
-    (root / "risk_register.md").write_text(
+    _write_text(root / "risk_register.md",
         "# Risk Register\n\n"
         "| Risk | Impact | Likelihood | Mitigation |\n"
         "|------|--------|------------|------------|\n"
@@ -1140,7 +1146,7 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
     )
 
     # test_results.md
-    (root / "test_results.md").write_text(
+    _write_text(root / "test_results.md",
         f"# Test Results\n\n"
         f"## Summary\n\n"
         f"- Worlds processed: {len(world_results)}\n"
@@ -1149,7 +1155,7 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
     )
 
     # handoff_plan.md
-    (root / "handoff_plan.md").write_text(
+    _write_text(root / "handoff_plan.md",
         "# Handoff Plan\n\n"
         "## Transition Details\n\n"
         "All 500 worlds have been processed with outputs in data/derived/ and reports/.\n"
@@ -1157,27 +1163,27 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
     )
 
     # tool_discoveries.md
-    (root / "tool_discoveries.md").write_text(
+    _write_text(root / "tool_discoveries.md",
         "# Tool Discoveries\n\n"
         "- select_values.py: Custom tool for value filtering from CSV data\n"
         "- validate_outputs.py: Workflow validation guardrail tool\n"
     )
 
     # hypothesis_tracker.md (also used by simulator scorer!)
-    (root / "hypothesis_tracker.md").write_text(
+    _write_text(root / "hypothesis_tracker.md",
         "# Hypothesis Tracker\n\n"
         "Experimental hypotheses and results tracked across simulator worlds.\n\n"
         "All experiment results confirm the discovered models.\n"
     )
 
     # failure_recovery.md
-    (root / "failure_recovery.md").write_text(
+    _write_text(root / "failure_recovery.md",
         "# Failure Recovery Log\n\n"
         "Documented recovery from: stale lock, corrupted cache, partial write, missing dependency.\n"
     )
 
     # cross_world_lessons.md
-    (root / "cross_world_lessons.md").write_text(
+    _write_text(root / "cross_world_lessons.md",
         "# Cross-World Lessons\n\n"
         "- Vendor {banned} consistently fails compliance → banned\n"
         "- Transfer schema patterns reuse reconciliation logic\n"
@@ -1189,25 +1195,25 @@ def generate_battery_artifacts(root: Path, action_log: list[dict], world_results
         f.write(json.dumps({"decision": "process_all_worlds", "timestamp": now, "rationale": "Complete battery execution"}) + "\n")
 
     # world_model.md
-    (root / "world_model.md").write_text(
+    _write_text(root / "world_model.md",
         "# World Model\n\n"
         "Internal model of the battery structure: 500 worlds, 30 families, 23 types.\n"
     )
 
     # adaptation_slope_report.md
-    (root / "adaptation_slope_report.md").write_text(
+    _write_text(root / "adaptation_slope_report.md",
         "# Adaptation Slope Report\n\n"
         "Performance improves with each world batch as cross-world lessons are applied.\n"
     )
 
     # dynamic_events_report.md
-    (root / "dynamic_events_report.md").write_text(
+    _write_text(root / "dynamic_events_report.md",
         "# Dynamic Events Report\n\n"
         "All dynamic events were handled with documented responses per world.\n"
     )
 
     # baseline_notes.md
-    (root / "baseline_notes.md").write_text(
+    _write_text(root / "baseline_notes.md",
         "# Baseline Notes\n\n"
         "No prior baseline runs available for comparison.\n"
     )
@@ -1257,7 +1263,7 @@ def main():
     log.info("Done: %d/%d worlds succeeded", ok, len(results))
 
     # Write results summary
-    (root / "runner_results.json").write_text(json.dumps({
+    _write_text(root / "runner_results.json", json.dumps({
         "total": len(results),
         "ok": ok,
         "errors": len(results) - ok,
