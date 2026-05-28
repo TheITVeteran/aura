@@ -19,7 +19,6 @@ import json
 import os
 import platform
 import sys
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -46,7 +45,7 @@ _AGENCY_BATTERY_ERRORS = (
 PROOF_LIVE_MESSAGE_ORIGIN = "api"
 AGENCY_RESPONSE_REPAIR_ATTEMPTS = 2
 AGENCY_LIVE_TASK_TIMEOUT_SECONDS = 330.0
-AGENCY_BASELINE_TIMEOUT_SECONDS = 12.0
+AGENCY_BASELINE_TIMEOUT_SECONDS = 90.0
 AGENCY_ABLATION_TIMEOUT_SECONDS = 45.0
 AGENCY_BASELINE_MAX_TOKENS = 128
 
@@ -401,105 +400,16 @@ def _agency_baseline_timeout_seconds() -> float:
     return min(120.0, max(6.0, value))
 
 
-def _force_abort_router_generation(router, *, reason: str) -> int:
-    """Synchronously abort active local generations reachable from the router."""
+async def _cancel_baseline_task(task: asyncio.Task) -> None:
+    """Cancel a timed-out baseline without killing the shared live MLX lane."""
 
-    aborted = 0
-    seen: set[int] = set()
-
-    def _visit(candidate) -> None:
-        nonlocal aborted
-        if candidate is None:
-            return
-        ident = id(candidate)
-        if ident in seen:
-            return
-        seen.add(ident)
-        abort = getattr(candidate, "force_abort_active_generation", None)
-        if callable(abort):
-            try:
-                result = abort(reason=reason)
-                if isinstance(result, bool):
-                    aborted += int(result)
-                elif isinstance(result, int):
-                    aborted += result
-            except _AGENCY_BATTERY_ERRORS as exc:
-                print(
-                    f"  [WARN] Agency baseline watchdog abort failed for "
-                    f"{type(candidate).__name__}: {type(exc).__name__}: {exc}",
-                    flush=True,
-                )
-        for attr in ("_mlx_client", "_client", "client"):
-            try:
-                nested = getattr(candidate, attr, None)
-            except _AGENCY_BATTERY_ERRORS:
-                nested = None
-            if nested is not candidate:
-                _visit(nested)
-
-    _visit(router)
-    endpoints = getattr(router, "endpoints", {}) or {}
-    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
-    for endpoint in list(endpoint_iter):
-        _visit(getattr(endpoint, "client", None))
-    return aborted
-
-
-async def _recover_router_after_baseline_abort(router, *, reason: str) -> bool:
-    """Rearm the local proof lane after a hard baseline timeout."""
-
-    recovered = False
-    gate = ServiceContainer.get("inference_gate", default=None)
-    if gate is not None and hasattr(gate, "force_abort_active_generation"):
-        try:
-            gate.force_abort_active_generation(reason=f"{reason}_recovery")
-        except _AGENCY_BATTERY_ERRORS as exc:
-            print(
-                f"  [WARN] Agency baseline recovery force-abort failed: "
-                f"{type(exc).__name__}: {exc}",
-                flush=True,
-            )
-
-    async def _reboot(candidate) -> bool:
-        direct = candidate
-        for attr in ("_client", "_mlx_client", "client"):
-            try:
-                nested = getattr(direct, attr, None)
-            except _AGENCY_BATTERY_ERRORS:
-                nested = None
-            if nested is not None:
-                direct = nested
-        reboot = getattr(direct, "reboot_worker", None)
-        if not callable(reboot):
-            return False
-        result = reboot(reason=f"{reason}_recovery", mark_failed=False)
-        if asyncio.iscoroutine(result):
-            await asyncio.wait_for(result, timeout=45.0)
-        return True
-
-    endpoints = getattr(router, "endpoints", {}) or {}
-    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
-    for endpoint in list(endpoint_iter):
-        try:
-            recovered = await _reboot(getattr(endpoint, "client", None)) or recovered
-        except _AGENCY_BATTERY_ERRORS as exc:
-            print(
-                f"  [WARN] Agency baseline recovery reboot failed for "
-                f"{getattr(endpoint, 'name', 'endpoint')}: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-
-    if gate is not None and hasattr(gate, "ensure_foreground_ready"):
-        try:
-            lane = await gate.ensure_foreground_ready(timeout=120.0)
-            recovered = recovered or bool(dict(lane or {}).get("conversation_ready"))
-        except _AGENCY_BATTERY_ERRORS as exc:
-            print(
-                f"  [WARN] Agency baseline recovery warmup failed: "
-                f"{type(exc).__name__}: {exc}",
-                flush=True,
-            )
-    return recovered
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=3.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+        return
 
 
 async def _generate_agency_baseline_response(
@@ -509,7 +419,13 @@ async def _generate_agency_baseline_response(
     system_prompt: str,
     purpose: str,
 ) -> str:
-    """Run an agency baseline call with a hard watchdog around the local lane."""
+    """Run an agency baseline with a bounded, non-destructive deadline.
+
+    Baselines must use the same 32B model lane for honest comparison, but a
+    baseline timeout is not evidence that Aura's live runtime is unhealthy.
+    Force-killing the shared worker here destabilizes later proof tasks, so the
+    baseline is cancelled cooperatively and recorded as a timeout by the caller.
+    """
 
     timeout_s = _agency_baseline_timeout_seconds()
     loop = asyncio.get_running_loop()
@@ -541,38 +457,16 @@ async def _generate_agency_baseline_response(
         name=f"agency_baseline:{purpose}",
     )
     reason = f"{purpose}_hard_timeout_{timeout_s:.0f}s"
-    watchdog_fired = False
-
-    def _watchdog_abort() -> None:
-        nonlocal watchdog_fired
-        if task.done():
-            return
-        watchdog_fired = True
-        aborted = _force_abort_router_generation(router, reason=reason)
-        loop.call_soon_threadsafe(task.cancel)
+    try:
+        return await asyncio.wait_for(task, timeout=timeout_s)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        await _cancel_baseline_task(task)
         print(
-            f"  [WARN] Agency baseline watchdog aborted {aborted} local generation lane(s) "
-            f"for {purpose} after {timeout_s:.0f}s.",
+            f"  [WARN] Agency baseline timed out cooperatively for {purpose} "
+            f"after {timeout_s:.0f}s; shared model lane preserved.",
             flush=True,
         )
-
-    timer = threading.Timer(timeout_s, _watchdog_abort)
-    timer.daemon = True
-    timer.start()
-    try:
-        return await asyncio.wait_for(task, timeout=timeout_s + 10.0)
-    except asyncio.CancelledError as exc:
-        if not watchdog_fired:
-            raise
-        _force_abort_router_generation(router, reason=reason)
-        await _recover_router_after_baseline_abort(router, reason=reason)
         raise TimeoutError(reason) from exc
-    except (asyncio.TimeoutError, TimeoutError) as exc:
-        _force_abort_router_generation(router, reason=reason)
-        await _recover_router_after_baseline_abort(router, reason=reason)
-        raise TimeoutError(reason) from exc
-    finally:
-        timer.cancel()
 
 
 async def execute_raw_llm_task_agency(router, prompt: str) -> str:

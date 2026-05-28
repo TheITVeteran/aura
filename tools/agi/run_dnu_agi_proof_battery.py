@@ -19,7 +19,6 @@ import platform
 import re
 import signal
 import sys
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -590,104 +589,16 @@ def _baseline_timeout_seconds() -> float:
 DNU_BASELINE_MAX_TOKENS = 160
 
 
-def _force_abort_router_generation(router, *, reason: str) -> int:
-    """Synchronously abort active local generations reachable from the router."""
-    aborted = 0
-    seen: set[int] = set()
+async def _cancel_baseline_task(task: asyncio.Task) -> None:
+    """Cancel a timed-out comparison baseline without killing the live model lane."""
 
-    def _visit(candidate) -> None:
-        nonlocal aborted
-        if candidate is None:
-            return
-        ident = id(candidate)
-        if ident in seen:
-            return
-        seen.add(ident)
-        abort = getattr(candidate, "force_abort_active_generation", None)
-        if callable(abort):
-            try:
-                result = abort(reason=reason)
-                if isinstance(result, bool):
-                    aborted += int(result)
-                elif isinstance(result, int):
-                    aborted += result
-            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-                print(
-                    f"  [WARN] Baseline watchdog abort failed for {type(candidate).__name__}: "
-                    f"{type(exc).__name__}: {exc}",
-                    flush=True,
-                )
-        for attr in ("_mlx_client", "_client", "client"):
-            try:
-                nested = getattr(candidate, attr, None)
-            except _DNU_RUN_RECOVERABLE_ERRORS:
-                nested = None
-            if nested is not candidate:
-                _visit(nested)
-
-    _visit(router)
-    endpoints = getattr(router, "endpoints", {}) or {}
-    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
-    for endpoint in list(endpoint_iter):
-        _visit(getattr(endpoint, "client", None))
-    return aborted
-
-
-async def _recover_router_after_baseline_abort(router, *, reason: str) -> bool:
-    """Rearm the local proof lane after a hard baseline watchdog abort."""
-
-    from core.container import ServiceContainer
-
-    recovered = False
-    gate = ServiceContainer.get("inference_gate", default=None)
-    if gate is not None and hasattr(gate, "force_abort_active_generation"):
-        try:
-            gate.force_abort_active_generation(reason=f"{reason}_recovery")
-        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-            print(
-                f"  [WARN] Baseline recovery force-abort failed: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-
-    async def _reboot(candidate) -> bool:
-        direct = candidate
-        for attr in ("_client", "_mlx_client", "client"):
-            try:
-                nested = getattr(direct, attr, None)
-            except _DNU_RUN_RECOVERABLE_ERRORS:
-                nested = None
-            if nested is not None:
-                direct = nested
-        reboot = getattr(direct, "reboot_worker", None)
-        if not callable(reboot):
-            return False
-        result = reboot(reason=f"{reason}_recovery", mark_failed=False)
-        if asyncio.iscoroutine(result):
-            await asyncio.wait_for(result, timeout=45.0)
-        return True
-
-    endpoints = getattr(router, "endpoints", {}) or {}
-    endpoint_iter = endpoints.values() if isinstance(endpoints, dict) else endpoints
-    for endpoint in list(endpoint_iter):
-        try:
-            recovered = await _reboot(getattr(endpoint, "client", None)) or recovered
-        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-            print(
-                f"  [WARN] Baseline recovery reboot failed for "
-                f"{getattr(endpoint, 'name', 'endpoint')}: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-
-    if gate is not None and hasattr(gate, "ensure_foreground_ready"):
-        try:
-            lane = await gate.ensure_foreground_ready(timeout=120.0)
-            recovered = recovered or bool(dict(lane or {}).get("conversation_ready"))
-        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-            print(
-                f"  [WARN] Baseline recovery warmup failed: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-    return recovered
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=3.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+        return
 
 
 async def _generate_baseline_response(
@@ -697,7 +608,13 @@ async def _generate_baseline_response(
     system_prompt: str,
     purpose: str,
 ) -> str:
-    """Run a baseline model call with a hard watchdog around the live model lane."""
+    """Run a baseline model call with bounded, non-destructive isolation.
+
+    The comparison still uses the requested live 32B lane, but a baseline
+    timeout must not kill or reboot Aura's shared foreground-capable worker.
+    Timed-out baselines are recorded as baseline failures while the runtime
+    remains available for the proof battery and normal launch path.
+    """
     timeout_s = _baseline_timeout_seconds()
     loop = asyncio.get_running_loop()
     task = loop.create_task(
@@ -728,38 +645,16 @@ async def _generate_baseline_response(
         name=f"dnu_baseline:{purpose}",
     )
     reason = f"{purpose}_hard_timeout_{timeout_s:.0f}s"
-    watchdog_fired = False
-
-    def _watchdog_abort() -> None:
-        nonlocal watchdog_fired
-        if task.done():
-            return
-        watchdog_fired = True
-        aborted = _force_abort_router_generation(router, reason=reason)
-        loop.call_soon_threadsafe(task.cancel)
+    try:
+        return await asyncio.wait_for(task, timeout=timeout_s)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        await _cancel_baseline_task(task)
         print(
-            f"  [WARN] Baseline watchdog aborted {aborted} local generation lane(s) "
-            f"for {purpose} after {timeout_s:.0f}s.",
+            f"  [WARN] Baseline timed out cooperatively for {purpose} "
+            f"after {timeout_s:.0f}s; shared model lane preserved.",
             flush=True,
         )
-
-    timer = threading.Timer(timeout_s, _watchdog_abort)
-    timer.daemon = True
-    timer.start()
-    try:
-        return await asyncio.wait_for(task, timeout=timeout_s + 10.0)
-    except asyncio.CancelledError as exc:
-        if not watchdog_fired:
-            raise
-        _force_abort_router_generation(router, reason=reason)
-        await _recover_router_after_baseline_abort(router, reason=reason)
         raise TimeoutError(reason) from exc
-    except (asyncio.TimeoutError, TimeoutError) as exc:
-        _force_abort_router_generation(router, reason=reason)
-        await _recover_router_after_baseline_abort(router, reason=reason)
-        raise TimeoutError(reason) from exc
-    finally:
-        timer.cancel()
 
 
 @contextlib.contextmanager
