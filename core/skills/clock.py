@@ -7,6 +7,7 @@ from core.skills.base_skill import BaseSkill
 class ClockSkill(BaseSkill):
     name = "clock"
     description = "Get the current date and time."
+    effect_scope = "status"
     inputs = {}
     output = "Current date and time string"
 

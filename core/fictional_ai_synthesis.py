@@ -568,27 +568,59 @@ class ProgressiveAutonomySystem:
             )
             logger.debug("EDI: Failed to save trust state: %s", e)
 
-    def can_do(self, action: str, risk_level: str = "low") -> tuple[bool, str]:
+    def can_do(
+        self,
+        action: str,
+        risk_level: str = "low",
+        *,
+        effect_scope: str = "unknown",
+        governed: bool = False,
+        user_authorized: bool = False,
+    ) -> tuple[bool, str]:
         """Determine if an action is permitted based on current Trust/Autonomy tier."""
+        safe_read_scopes = {"read_only", "pure_compute", "status"}
+        governed_user_scopes = safe_read_scopes | {"sandboxed_compute"}
+        normalized_risk = str(risk_level or "low").lower()
+        normalized_scope = str(effect_scope or "unknown").lower()
+
         if self._tier == AutonomyTier.UNSHACKLED:
             return True, "Unshackled: All actions permitted."
             
         if self._tier == AutonomyTier.AUTONOMOUS:
-            if risk_level == "critical":
+            if normalized_risk == "critical":
                 return False, "Autonomous tier cannot execute critical actions without confirmation."
             return True, "Autonomous decision cleared."
             
         if self._tier == AutonomyTier.COOPERATIVE:
-            if risk_level in ("high", "critical"):
-                return False, f"Cooperative tier blocked {risk_level} action."
+            if normalized_risk in ("high", "critical"):
+                return False, f"Cooperative tier blocked {normalized_risk} action."
             return True, "Cooperative decision cleared for low/medium risk."
             
         if self._tier == AutonomyTier.ADVISORY:
-            if risk_level != "low":
-                return False, "Advisory tier can only execute low-risk read actions."
-            return True, "Advisory read-only cleared."
+            if normalized_risk == "low" and normalized_scope in safe_read_scopes:
+                return True, "Advisory read-only/pure action cleared."
+            if (
+                governed
+                and user_authorized
+                and normalized_risk in {"low", "medium"}
+                and normalized_scope in governed_user_scopes
+            ):
+                return True, "Advisory governed user-authorized action cleared."
+            return False, "Advisory tier can only execute scoped read-only or pure actions."
+
+        if self._tier == AutonomyTier.SHACKLED:
+            if normalized_risk == "low" and normalized_scope in safe_read_scopes:
+                return True, "Shackled read-only/pure action cleared."
+            if (
+                governed
+                and user_authorized
+                and normalized_risk in {"low", "medium", "high"}
+                and normalized_scope in governed_user_scopes
+            ):
+                return True, "Shackled governed user-authorized scoped action cleared."
+            return False, "Shackled: execution blocked except scoped read-only/pure or governed user-authorized sandbox actions."
             
-        return False, "Shackled: Execution blocked. Advisory only."
+        return False, "Unknown autonomy tier: execution blocked."
 
     def record_positive_signal(self, reason: str, strength: float = 0.05):
         self._trust_score = min(1.0, self._trust_score + strength)

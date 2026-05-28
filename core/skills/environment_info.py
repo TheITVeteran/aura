@@ -13,6 +13,7 @@ from core.skills.base_skill import BaseSkill
 class EnvironmentSkill(BaseSkill):
     name = "environment_info"
     description = "Self-Diagnostic: Returns information about the current server environment, location, and identity."
+    effect_scope = "read_only"
     inputs = {
         "detail": "basic | full (default: basic)"
     }

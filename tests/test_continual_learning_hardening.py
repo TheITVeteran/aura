@@ -124,6 +124,61 @@ def test_proof_tool_context_is_system_source_not_autonomous_background():
     assert engine._resolve_execution_source({"origin": "api"}) == "api"
 
 
+def test_shackled_edi_allows_only_scoped_safe_or_governed_actions(tmp_path: Path):
+    from core.fictional_ai_synthesis import AutonomyTier, ProgressiveAutonomySystem
+
+    edi = ProgressiveAutonomySystem(persist_path=str(tmp_path / "trust_state.json"))
+    edi._tier = AutonomyTier.SHACKLED
+
+    assert edi.can_do(
+        "induced_repeating_shift_decode",
+        risk_level="low",
+        effect_scope="pure_compute",
+    )[0]
+    assert not edi.can_do("unknown_low", risk_level="low", effect_scope="unknown")[0]
+    assert edi.can_do(
+        "run_code",
+        risk_level="high",
+        effect_scope="sandboxed_compute",
+        governed=True,
+        user_authorized=True,
+    )[0]
+    assert not edi.can_do(
+        "run_code",
+        risk_level="critical",
+        effect_scope="sandboxed_compute",
+        governed=True,
+        user_authorized=True,
+    )[0]
+
+
+def test_capability_engine_classifies_learned_and_sandbox_execution_risk():
+    from core.capability_engine import CapabilityEngine, SkillMetadata
+
+    engine = CapabilityEngine.__new__(CapabilityEngine)
+    learned = SkillMetadata(
+        name="induced_repeating_shift_decode",
+        description="learned pure transform",
+        metabolic_cost=1,
+        effect_scope="pure_compute",
+    )
+    run_code = SkillMetadata(
+        name="run_code",
+        description="sandboxed code",
+        metabolic_cost=1,
+        effect_scope="sandboxed_compute",
+    )
+
+    assert engine._edi_risk_for(
+        "induced_repeating_shift_decode",
+        learned,
+        {"text": "abc"},
+        "pure_compute",
+    ) == "low"
+    assert engine._edi_risk_for("run_code", run_code, {"stateful": False}, "sandboxed_compute") == "high"
+    assert engine._edi_risk_for("run_code", run_code, {"stateful": True}, "sandboxed_compute") == "critical"
+
+
 def test_continual_learning_validator_rejects_refused_skill_registration(tmp_path: Path):
     from tools.learning.validate_continual_learning_bundle import main
 

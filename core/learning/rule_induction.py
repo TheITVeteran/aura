@@ -134,6 +134,7 @@ class InducedTextTransformSkill(BaseSkill):
     name = "induced_repeating_shift_decode"
     description = "Decodes text with a repeating character-shift rule learned from examples."
     metabolic_cost = 1
+    effect_scope = "pure_compute"
 
     def __init__(self, rule: RepeatingShiftRule):
         self.rule = rule
@@ -150,4 +151,3 @@ class InducedTextTransformSkill(BaseSkill):
             "text": decoded,
             "rule": self.rule.to_manifest(),
         }
-

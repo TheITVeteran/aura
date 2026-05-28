@@ -65,6 +65,7 @@ class RunCodeSkill(BaseSkill):
     name = "run_code"
     description = "Executes Python code in a secure sandbox. Use for calculation, data processing, or testing."
     input_model = RunCodeParams
+    effect_scope = "sandboxed_compute"
     
     def __init__(self):
         super().__init__()

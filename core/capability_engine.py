@@ -145,6 +145,64 @@ _FOREGROUND_EXCLUSIVE_BACKGROUND_SKILLS = frozenset(
     }
 )
 
+_READ_ONLY_EFFECT_SKILLS = frozenset(
+    {
+        "clock",
+        "environment_info",
+        "query_beliefs",
+        "system_proprioception",
+        "evolution_status",
+    }
+)
+
+_PURE_COMPUTE_EFFECT_SKILLS = frozenset(
+    {
+        "induced_repeating_shift_decode",
+    }
+)
+
+_SANDBOXED_COMPUTE_EFFECT_SKILLS = frozenset(
+    {
+        "run_code",
+        "internal_sandbox",
+    }
+)
+
+_EXTERNAL_IO_EFFECT_SKILLS = frozenset(
+    {
+        "free_search",
+        "grounded_search",
+        "sovereign_browser",
+        "sovereign_network",
+        "web_search",
+    }
+)
+
+_STATEFUL_EFFECT_SKILLS = frozenset(
+    {
+        "add_belief",
+        "file_operation",
+        "memory_ops",
+        "memory_sync",
+        "personality",
+    }
+)
+
+_CRITICAL_ACTION_SKILLS = frozenset(
+    {
+        "auto_refactor",
+        "install_package",
+        "manage_abilities",
+        "os_manipulation",
+        "self_evolution",
+        "self_improvement",
+        "self_modify",
+        "self_repair",
+        "sovereign_terminal",
+        "train_self",
+    }
+)
+
 
 def _record_capability_degradation(
     exc: BaseException,
@@ -421,6 +479,7 @@ class SkillMetadata(BaseModel):
     metabolic_cost: int = 1
     is_core_personality: bool = False
     trigger_patterns: list[str] = Field(default_factory=list)
+    effect_scope: str = "unknown"
 
     # 2026 Transcendence Fields
     execution_profile: str = "cpu"  # cpu, gpu, neural
@@ -1452,6 +1511,7 @@ class CapabilityEngine(AuraBaseModule):
                     execution_profile=meta.get("execution_profile", "cpu"),
                     timeout_seconds=meta.get("timeout_seconds", 30),
                     memory_mb_estimate=meta.get("memory_mb_estimate", 256),
+                    effect_scope=self._declared_effect_scope(name),
                 )
             self.logger.info("⚡ Rust perfect hash index loaded (%d core skills)", len(index))
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -1511,6 +1571,7 @@ class CapabilityEngine(AuraBaseModule):
                                     description=description or "No description provided.",
                                     module_path=f"{module_prefix}.{filename[:-3]}",
                                     class_name=node.name,
+                                    effect_scope=self._declared_effect_scope(name),
                                 )
                 except (OSError, SyntaxError, UnicodeDecodeError) as e:
                     _record_capability_degradation(
@@ -1558,6 +1619,7 @@ class CapabilityEngine(AuraBaseModule):
             input_model = getattr(skill_class, "input_model", None)
             metabolic_cost = getattr(skill_class, "metabolic_cost", 1)
             is_core = getattr(skill_class, "is_core_personality", False)
+            effect_scope = self._declared_effect_scope(skill_name, skill_class)
             instance = None
         else:
             # Instance registration
@@ -1569,6 +1631,7 @@ class CapabilityEngine(AuraBaseModule):
             input_model = getattr(instance, "input_model", None)
             metabolic_cost = getattr(instance, "metabolic_cost", 1)
             is_core = getattr(instance, "is_core_personality", False)
+            effect_scope = self._declared_effect_scope(skill_name, instance)
 
         self.skills[skill_name] = SkillMetadata(
             name=skill_name,
@@ -1581,6 +1644,7 @@ class CapabilityEngine(AuraBaseModule):
             instance=instance,
             metabolic_cost=metabolic_cost,
             is_core_personality=is_core,
+            effect_scope=effect_scope,
         )
 
         # Issue 51: Perform AST validation at registration time
@@ -1700,18 +1764,71 @@ class CapabilityEngine(AuraBaseModule):
         return "managed_async"
 
     def _risk_class_for(self, skill_name: str, meta: SkillMetadata) -> str:
-        critical_tools = {
-            "self_modify",
-            "self_repair",
-            "self_evolution",
-            "self_improvement",
-            "manage_abilities",
-            "computer_use",
-            "os_manipulation",
-            "sovereign_terminal",
-        }
-        if skill_name in critical_tools:
+        if skill_name in _CRITICAL_ACTION_SKILLS or skill_name in {"computer_use"}:
             return "critical"
+        if meta.metabolic_cost >= 3:
+            return "high"
+        if meta.metabolic_cost >= 2:
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _declared_effect_scope(skill_name: str, target: Any | None = None) -> str:
+        declared = str(getattr(target, "effect_scope", "") or "").strip().lower()
+        if declared:
+            return declared
+        if skill_name in _READ_ONLY_EFFECT_SKILLS:
+            return "read_only"
+        if skill_name in _PURE_COMPUTE_EFFECT_SKILLS:
+            return "pure_compute"
+        if skill_name in _SANDBOXED_COMPUTE_EFFECT_SKILLS:
+            return "sandboxed_compute"
+        if skill_name in _EXTERNAL_IO_EFFECT_SKILLS:
+            return "external_io"
+        if skill_name in _STATEFUL_EFFECT_SKILLS:
+            return "state_mutation"
+        if skill_name in _CRITICAL_ACTION_SKILLS:
+            return "privileged_mutation"
+        return "unknown"
+
+    def _effect_scope_for(self, skill_name: str, meta: SkillMetadata) -> str:
+        return self._declared_effect_scope(skill_name, meta.instance or meta.skill_class) or meta.effect_scope
+
+    @staticmethod
+    def _context_user_authorized(ctx: dict[str, Any], exec_source: str) -> bool:
+        if bool(
+            ctx.get("user_requested_action")
+            or ctx.get("user_explicitly_authorized")
+            or ctx.get("proof_evaluation_contract")
+            or ctx.get("sealed_validation")
+        ):
+            return True
+        if exec_source in _USER_FACING_CONTEXT_ORIGINS:
+            return True
+        proof_run = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower()
+        if proof_run in {"1", "true", "yes"} and str(ctx.get("origin") or "").lower() in {
+            "test",
+            "proof",
+        }:
+            return True
+        return False
+
+    def _edi_risk_for(
+        self,
+        skill_name: str,
+        meta: SkillMetadata,
+        params: dict[str, Any],
+        effect_scope: str,
+    ) -> str:
+        if skill_name == "run_code":
+            stateful = True
+            if isinstance(params, dict) and "stateful" in params:
+                stateful = bool(params.get("stateful"))
+            return "critical" if stateful else "high"
+        if skill_name in _CRITICAL_ACTION_SKILLS:
+            return "critical"
+        if effect_scope in {"external_io", "state_mutation"}:
+            return "medium"
         if meta.metabolic_cost >= 3:
             return "high"
         if meta.metabolic_cost >= 2:
@@ -1800,6 +1917,7 @@ class CapabilityEngine(AuraBaseModule):
                     "timeout_seconds": meta.timeout_seconds,
                     "memory_mb_estimate": meta.memory_mb_estimate,
                     "metabolic_cost": meta.metabolic_cost,
+                    "effect_scope": self._effect_scope_for(skill_name, meta),
                 }
             )
 
@@ -2601,14 +2719,18 @@ class CapabilityEngine(AuraBaseModule):
             # 2. EDI Autonomy & Security Check (Phase 23.4)
             edi = resolve_edi(default=None)
             if edi and hasattr(edi, "can_do"):
-                # Infer risk level: > 2 cost is high risk, system mutations are critical
-                risk = "low"
-                if meta.metabolic_cost >= 3:
-                    risk = "high"
-                if skill_name in ["run_bash_command", "self_modify", "manage_abilities"]:
-                    risk = "critical"
+                effect_scope = self._effect_scope_for(skill_name, meta)
+                risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
+                governed_execution = bool((ctx or {}).get("capability_token_id"))
+                user_authorized = self._context_user_authorized(ctx, exec_source)
 
-                allowed, reason = edi.can_do(skill_name, risk_level=risk)
+                allowed, reason = edi.can_do(
+                    skill_name,
+                    risk_level=risk,
+                    effect_scope=effect_scope,
+                    governed=governed_execution,
+                    user_authorized=user_authorized,
+                )
                 if not allowed:
                     self.logger.warning("🛡️ EDI blocked execution of '%s': %s", skill_name, reason)
                     return {
