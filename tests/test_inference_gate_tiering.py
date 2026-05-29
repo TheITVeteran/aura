@@ -31,6 +31,20 @@ class _RecordingClient:
         return self.text
 
 
+class _SequenceRecordingClient(_RecordingClient):
+    def __init__(self, texts: list[str]):
+        super().__init__(texts[-1] if texts else "")
+        self.texts = list(texts)
+
+    async def generate_text_async(self, prompt: str, **kwargs):
+        self.prompts.append(prompt)
+        self.kwargs.append(kwargs)
+        self.deadlines.append(kwargs.get("deadline"))
+        if self.texts:
+            return self.texts.pop(0)
+        return self.text
+
+
 class _NoTextClient:
     def __init__(self):
         self.generate_text_async = AsyncMock(return_value=(False, "", {}))
@@ -429,6 +443,43 @@ async def test_user_facing_primary_restores_foreground_token_floor(monkeypatch):
     assert cortex.kwargs[0]["max_tokens"] >= 1024
 
 
+@pytest.mark.asyncio
+async def test_user_facing_primary_retry_uses_clean_cortex_repair_lane(monkeypatch):
+    gate = InferenceGate()
+    good_reply = (
+        "The bounded objective should guide Aura, use governed tools with a "
+        "receipt and trace, stop when policy or evidence fails, and treat that "
+        "as operational evidence rather than proof of literal personhood."
+    )
+    cortex = _SequenceRecordingClient(["ok", good_reply])
+    brainstem = _RecordingClient("brainstem fallback should not be needed")
+    gate._mlx_client = cortex
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+
+    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=brainstem):
+        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Answer this live operator check: what objective should Aura pursue and when should she stop?",
+                    context={"origin": "api", "prefer_tier": "primary", "history": []},
+                )
+
+    assert result == good_reply
+    assert len(cortex.kwargs) == 2
+    assert cortex.kwargs[0]["clean_user_surface_contract"] is True
+    retry_kwargs = cortex.kwargs[1]
+    assert retry_kwargs["clean_user_surface_contract"] is True
+    assert retry_kwargs["disable_prompt_cache"] is True
+    assert retry_kwargs["clear_prompt_cache"] is True
+    assert retry_kwargs["skip_runtime_payload"] is True
+    assert retry_kwargs["top_p"] <= 0.85
+    assert retry_kwargs["repetition_context_size"] >= 96
+    assert "previous draft" in cortex.prompts[1].lower()
+    assert retry_kwargs["messages"][0]["role"] == "system"
+    assert retry_kwargs["messages"][-1]["role"] == "user"
+    assert brainstem.kwargs == []
+
+
 def test_adaptive_max_tokens_expands_budget_for_compound_prompt():
     prompt = (
         "If you refuse to give receipts or operational details, say exactly why. "
@@ -607,6 +658,47 @@ async def test_protected_primary_chat_failure_does_not_promote_to_solver():
 
     assert result == "Brainstem fallback kept the live turn alive without loading the deep solver."
     assert "/models/deep" not in requested_models
+
+
+@pytest.mark.asyncio
+async def test_operator_evidence_contract_refuses_brainstem_fallback():
+    gate = InferenceGate()
+    cortex = _NoTextReadyClient()
+    brainstem = _FakeClient("brainstem must not satisfy operator proof")
+    gate._mlx_client = cortex
+    gate._ensure_cortex_recovery = AsyncMock()
+    gate._build_compact_system_prompt = MagicMock(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
+
+    requested_models = []
+
+    def _fake_get_mlx_client(model_path=None, **kwargs):
+        requested_models.append(str(model_path))
+        if model_path == "/models/brainstem":
+            return brainstem
+        if model_path == "/models/active":
+            return cortex
+        return cortex
+
+    with patch("core.brain.inference_gate.asyncio.sleep", new=AsyncMock()):
+        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    result = await gate.generate(
+                        "Answer the live operator evidence check.",
+                        context={
+                            "origin": "api",
+                            "prefer_tier": "primary",
+                            "operator_evidence_contract": True,
+                            "protected_foreground_lane": True,
+                            "history": [],
+                            "allow_cloud_fallback": False,
+                        },
+                        timeout=30.0,
+                    )
+
+    assert result is None
+    assert "/models/brainstem" not in requested_models
 
 
 def test_compact_prebuilt_messages_preserves_grounding_system_evidence():

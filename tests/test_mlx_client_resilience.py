@@ -11,8 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.llm.mlx_worker import (
     IPCWriterThread,
+    _apply_surface_generation_controls,
+    _build_operator_evidence_prompt,
+    _merge_stop_sequences,
+    _operator_evidence_fragment_incomplete,
     _prompt_cache_entry_budget_for_model,
+    _restore_surface_generation_controls,
     _should_emit_generation_progress,
+    _trim_complete_operator_evidence,
 )
 from core.utils.deadlines import get_deadline
 
@@ -22,6 +28,121 @@ TEST_MODEL = str(TMP_ROOT / "test-model")
 
 
 class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_stop_sequences_are_role_boundary_safe(self):
+        stops = _merge_stop_sequences(["Assistant:", "Aura:", "user:", "\nHuman:"])
+
+        self.assertNotIn("Assistant:", stops)
+        self.assertNotIn("Aura:", stops)
+        self.assertNotIn("user:", stops)
+        self.assertIn("\nAssistant:", stops)
+        self.assertIn("\nuser:", stops)
+        self.assertIn("\nHuman:", stops)
+
+    async def test_operator_evidence_contract_prompt_is_complete_and_bounded(self):
+        prompt, prefix = _build_operator_evidence_prompt(
+            [
+                {"role": "system", "content": "Return one paragraph."},
+                {
+                    "role": "user",
+                    "content": (
+                        "What objective, governed tool use, receipt, trace, stop condition, "
+                        "and personhood boundary should Aura use?"
+                    ),
+                },
+            ],
+            "",
+        )
+
+        self.assertIn("bounded software-operator evidence lane", prompt)
+        self.assertIn("objective", prompt)
+        self.assertIn("personhood boundary", prompt)
+        self.assertEqual(
+            prefix,
+            "Operationally, Aura should set an objective, use governed tool actions, "
+            "keep each receipt and trace, stop when blocked or unsafe, and treat the "
+            "result as evidence of bounded software operation rather than personhood proof. ",
+        )
+        self.assertFalse(
+            _operator_evidence_fragment_incomplete(
+                "Aura should pursue a bounded objective, use governed tool calls with a "
+                "receipt and trace, stop when governance or evidence fails, and treat "
+                "that as operational evidence rather than proof of literal personhood."
+            )
+        )
+        self.assertTrue(
+            _operator_evidence_fragment_incomplete(
+                "I feel like a person who chooses things in a shining field."
+            )
+        )
+        self.assertTrue(
+            _operator_evidence_fragment_incomplete(
+                "Aura should pursue a bounded objective, use governed tool calls with a "
+                "receipt and trace, stop when governance or evidence fails, and treat "
+                "that as operational evidence rather than proof of literal personhood. "
+                "That's one paragraph as requested."
+            )
+        )
+
+    async def test_operator_evidence_trims_clipped_tail_to_complete_sentences(self):
+        clipped = (
+            "Operationally, Aura should set an objective, use governed tool actions, "
+            "keep each receipt and trace, stop when blocked or unsafe, and treat the "
+            "result as evidence of bounded software operation rather than personhood proof. "
+            "Receipts and traces show tool use was governed. Stopping when blocked or "
+            "unsafe shows boundedness. The result is evidence of software ope"
+        )
+
+        trimmed = _trim_complete_operator_evidence(clipped)
+
+        self.assertEqual(
+            trimmed,
+            "Operationally, Aura should set an objective, use governed tool actions, "
+            "keep each receipt and trace, stop when blocked or unsafe, and treat the "
+            "result as evidence of bounded software operation rather than personhood proof. "
+            "Receipts and traces show tool use was governed. Stopping when blocked or "
+            "unsafe shows boundedness.",
+        )
+        self.assertFalse(_operator_evidence_fragment_incomplete(trimmed))
+
+    async def test_surface_generation_controls_clamp_steering_and_recurrent_depth(self):
+        class _Hook:
+            _alpha = 5.0
+
+        class _Engine:
+            _alpha = 5.0
+            _surface_alpha_override = None
+
+            def __init__(self):
+                self._hooks = [_Hook()]
+
+            def set_surface_alpha_override(self, alpha):
+                self._surface_alpha_override = alpha
+                if alpha is not None:
+                    for hook in self._hooks:
+                        hook._alpha = min(hook._alpha, alpha)
+
+        class _Inner:
+            _recurrent_depth_config = {"n_loops": 2}
+
+        class _Model:
+            model = _Inner()
+
+        engine = _Engine()
+        state = _apply_surface_generation_controls(
+            engine,
+            _Model(),
+            {"clean_user_surface_contract": True},
+        )
+
+        self.assertLessEqual(engine._surface_alpha_override, 0.35)
+        self.assertLessEqual(engine._hooks[0]._alpha, 0.35)
+        self.assertEqual(_Model.model._recurrent_depth_runtime_loops, 1)
+
+        _restore_surface_generation_controls(state)
+
+        self.assertIsNone(engine._surface_alpha_override)
+        self.assertFalse(hasattr(_Model.model, "_recurrent_depth_runtime_loops"))
+
     async def test_foreground_request_lock_timeout_is_bounded_for_live_chat(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 

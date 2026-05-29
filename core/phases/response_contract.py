@@ -639,6 +639,8 @@ def _extract_exact_format_instruction(text: str) -> str:
         if idx >= 0 and (marker_index < 0 or idx < marker_index):
             marker_index = idx
     if marker_index < 0:
+        if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b.{0,40}\blabels?\b", lower):
+            return ""
         if not re.search(r"\b(?:include|use|with)\b.{0,80}\blabels?\b", lower):
             return ""
         marker_index = max(0, lower.find("label"))

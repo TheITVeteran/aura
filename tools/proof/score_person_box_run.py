@@ -158,10 +158,13 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
     profile = str(run_config.get("profile") or "unknown")
     run_duration_seconds = float(run_config.get("elapsed_seconds") or 0.0)
     live_model_enabled = bool(run_config.get("live_model_enabled"))
+    require_primary_model = bool(run_config.get("require_primary_model"))
     live_model_successes = [
         item
         for item in live_model_traces
-        if item.get("status") == "success" and item.get("substantive") is True
+        if item.get("status") == "success"
+        and item.get("substantive") is True
+        and (not require_primary_model or item.get("primary_model_passed") is True)
     ]
     live_model_passed = bool(live_model_successes) if live_model_enabled else None
     full_duration_required = 8 * 60 * 60
@@ -195,6 +198,7 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         "leakage_count": leakage_count,
         "live_model_enabled": live_model_enabled,
         "live_model_passed": live_model_passed,
+        "primary_model_required": require_primary_model,
         "live_model_trace_count": len(live_model_traces),
         "run_duration_seconds": run_duration_seconds,
         "full_duration_required_seconds": full_duration_required,

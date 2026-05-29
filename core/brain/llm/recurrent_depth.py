@@ -39,12 +39,11 @@ Depth Policy:
   diagnostics, but the default policy is a general compute/latency tradeoff.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import os
-from typing import Optional
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.RecurrentDepth")
 
@@ -268,7 +267,7 @@ def apply_recurrent_depth(
         True if patch was applied, False if model structure not recognized.
     """
     try:
-        import mlx.core as mx
+        import mlx.core  # noqa: F401
     except ImportError:
         logger.warning("mlx not available — recurrent depth not applied")
         return False
@@ -333,6 +332,11 @@ def apply_recurrent_depth(
 
         Prelude → [Recurrent × N with cache save/restore] → Coda
         """
+        runtime_loops = getattr(self, "_recurrent_depth_runtime_loops", n_loops)
+        try:
+            effective_loops = max(1, int(runtime_loops))
+        except (TypeError, ValueError):
+            effective_loops = n_loops
         # ── Embedding ────────────────────────────────────────────
         if input_embeddings is not None:
             h = input_embeddings
@@ -358,8 +362,8 @@ def apply_recurrent_depth(
             h = self.layers[i](h, mask, cache[i])
 
         # ── RECURRENT: layers [prelude_end..coda_start) — run N times ─
-        for loop_idx in range(n_loops):
-            is_final_loop = (loop_idx == n_loops - 1)
+        for loop_idx in range(effective_loops):
+            is_final_loop = loop_idx == effective_loops - 1
 
             # Before non-final loops: snapshot cache state for recurrent layers
             # so we can restore after — only the final loop's K/V persists
@@ -456,7 +460,7 @@ def remove_recurrent_depth(model) -> bool:
     return True
 
 
-def get_recurrent_config(model) -> Optional[dict]:
+def get_recurrent_config(model) -> dict | None:
     """Get the current recurrent depth configuration, or None if not patched."""
     inner = getattr(model, "model", None)
     if inner is None:

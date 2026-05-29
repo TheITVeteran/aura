@@ -2394,7 +2394,7 @@ class MLXLocalClient:
     def _check_steering_liveness(self) -> bool:
         """Returns True if the worker subprocess reports steering as active."""
         try:
-            return bool(getattr(self, "_steering_active").value)
+            return bool(self._steering_active.value)
         except (AttributeError, TypeError, ValueError, OSError):
             pass
         try:
@@ -2648,6 +2648,7 @@ class MLXLocalClient:
             kwargs.get("strict_answer_contract", False)
             or kwargs.get("strict_value_contract", False)
             or kwargs.get("proof_evaluation_contract", False)
+            or kwargs.get("operator_evidence_contract", False)
             or kwargs.get("benchmark_request", False)
             or kwargs.get("schema") is not None
         )
@@ -2713,13 +2714,27 @@ class MLXLocalClient:
             "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),
             "strict_value_contract": bool(kwargs.get("strict_value_contract", False)),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
+            "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
+            "clean_user_surface_contract": bool(kwargs.get("clean_user_surface_contract", False)),
+            "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
+            "clean_user_surface_recurrent_loops": kwargs.get("clean_user_surface_recurrent_loops"),
             "benchmark_request": bool(kwargs.get("benchmark_request", False)),
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
         }
 
-        # [STABILITY v57] Add default stop sequences to prevent prompt bleed
-        default_stops = ["<|im_end|>", "<|im_start|>", "user:", "assistant:", "User:", "Assistant:"]
+        # [STABILITY v57/v61] Add default stop sequences to prevent prompt bleed.
+        # Keep human-readable role labels line-boundary anchored. Bare labels
+        # like ``Assistant:`` can occur in normal prose and caused valid live
+        # answers to be clipped before the response reliability gate saw them.
+        default_stops = [
+            "<|im_end|>",
+            "<|im_start|>",
+            "\nuser:",
+            "\nassistant:",
+            "\nUser:",
+            "\nAssistant:",
+        ]
         for stop in default_stops:
             if stop not in req["stop_sequences"]:
                 req["stop_sequences"].append(stop)
@@ -3325,7 +3340,12 @@ class MLXLocalClient:
 
 def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     """Compatibility factory for Aura's active local backend."""
-    from .model_registry import ACTIVE_MODEL, get_local_backend, get_model_path, get_runtime_model_path
+    from .model_registry import (
+        ACTIVE_MODEL,
+        get_local_backend,
+        get_model_path,
+        get_runtime_model_path,
+    )
 
     if model_path is None:
         model_path = get_runtime_model_path()
@@ -3341,6 +3361,7 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
 
     try:
         from core.runtime.proof_policy import proof_model_tier, proof_run_active
+
         from .model_registry import model_identities_compatible
 
         if proof_run_active(origin=kwargs.get("origin", "mlx_client")) and proof_model_tier() == "primary":

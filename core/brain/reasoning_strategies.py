@@ -415,16 +415,18 @@ class ReasoningStrategies:
     def _is_logical_check(cls, query: str) -> bool:
         """Helper to identify logical, mathematical, physical, or trick question patterns."""
         lower_query = query.lower()
-        return "<answer>" in lower_query or any(
-            k in lower_query 
-            for k in (
-                "weigh", "balance", "coin", "train", "smoke", "typist", "page", 
-                "speed", "light", "travel", "math", "logic", "puzzle", "riddle",
-                "haystack", "snail", "match", "candle", "pill", "bat", "ball",
-                "clock", "sheep", "knave", "knight", "socks", "die", "pattern", "letter",
-                "python", "code", "print(", "def ", "lambda", "finally", "class ",
-                "schedule", "duration", "hours", "knapsack", "capacity", "sensor",
-                "river", "wolf", "goat", "cabbage", "boat", "routing", "graph"
+        if "<answer>" in lower_query:
+            return True
+        if any(marker in lower_query for marker in ("print(", "def ", "lambda", "class ")):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:weigh|balance|coin|train|smoke|typist|page|speed|light|travel|"
+                r"math|logic|puzzle|riddle|haystack|snail|match|candle|pill|bat|ball|"
+                r"clock|sheep|knave|knight|socks|die|pattern|letter|python|code|finally|"
+                r"schedule|duration|hours|knapsack|capacity|sensor|river|wolf|goat|"
+                r"cabbage|boat|routing|graph)\b",
+                lower_query,
             )
         )
 

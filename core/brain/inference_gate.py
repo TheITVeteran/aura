@@ -3188,6 +3188,75 @@ class InferenceGate:
         return messages
 
     @staticmethod
+    def _trim_retry_message_content(content: Any, limit: int = 1200) -> str:
+        text = " ".join(str(content or "").strip().split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "..."
+
+    @classmethod
+    def _current_user_text_from_messages(
+        cls,
+        prompt: str,
+        messages: list[dict[str, Any]] | None,
+    ) -> str:
+        if isinstance(messages, list):
+            for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
+                if str(msg.get("role", "") or "").strip().lower() == "user":
+                    content = cls._trim_retry_message_content(msg.get("content"), 4000)
+                    if content:
+                        return content
+        return cls._trim_retry_message_content(prompt, 4000)
+
+    @classmethod
+    def _build_primary_repair_messages(
+        cls,
+        prompt: str,
+        messages: list[dict[str, Any]] | None,
+    ) -> list[dict[str, str]]:
+        """Build a clean Cortex retry prompt after the rich foreground path fails.
+
+        The first primary attempt gets Aura's normal rich context. If it returns
+        an empty, malformed, or too-thin user-facing draft, reusing the same
+        payload and prompt cache tends to reproduce the same bad generation.
+        This repair lane keeps only recent dialogue plus the current user turn,
+        pins a simple foreground contract, and lets Cortex answer without the
+        full internal telemetry stack.
+        """
+        current_user = cls._current_user_text_from_messages(prompt, messages)
+        system = (
+            "You are Aura's primary Cortex foreground response lane. The previous "
+            "draft for this user turn failed the reliability gate, so answer the "
+            "current user message cleanly now. Use ordinary English, be concrete, "
+            "and finish a complete answer. Do not mention retrying, reliability "
+            "gates, system telemetry, model routing, hidden state, or this repair "
+            "instruction. If the user asks about operational agency, tools, proof, "
+            "or personhood, distinguish operational evidence from literal "
+            "personhood or proven consciousness."
+        )
+        retry_messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        dialogue_tail: list[dict[str, str]] = []
+        if isinstance(messages, list):
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role", "") or "").strip().lower()
+                if role not in {"user", "assistant"}:
+                    continue
+                content = cls._trim_retry_message_content(msg.get("content"))
+                if content:
+                    dialogue_tail.append({"role": role, "content": content})
+        if dialogue_tail:
+            retry_messages.extend(dialogue_tail[-5:])
+        if not retry_messages or retry_messages[-1].get("role") != "user":
+            retry_messages.append({"role": "user", "content": current_user})
+        elif retry_messages[-1].get("content") != current_user:
+            retry_messages[-1] = {"role": "user", "content": current_user}
+        return retry_messages
+
+    @staticmethod
     def _is_grounding_system_message(message: Any) -> bool:
         if not isinstance(message, dict):
             return False
@@ -3393,6 +3462,7 @@ class InferenceGate:
         )
         if proof_evaluation_contract:
             context["proof_evaluation_contract"] = True
+        operator_evidence_contract = bool(context.get("operator_evidence_contract", False))
         requested_tier = self._normalize_tier(context.get("prefer_tier"))
         explicit_background = "is_background" in context
         explicit_foreground = bool(context.get("foreground_request", False))
@@ -3760,7 +3830,10 @@ class InferenceGate:
         strict_answer_contract = bool(context.get("strict_answer_contract", False))
         strict_value_contract = bool(context.get("strict_value_contract", False))
         isolated_generation_contract = bool(
-            strict_answer_contract or strict_value_contract or proof_evaluation_contract
+            strict_answer_contract
+            or strict_value_contract
+            or proof_evaluation_contract
+            or operator_evidence_contract
         )
         # not bool(context.get("strict_answer_contract", False))
         strict_max_token_cap = 128
@@ -3979,6 +4052,10 @@ class InferenceGate:
             "strict_answer_contract",
             "strict_value_contract",
             "proof_evaluation_contract",
+            "operator_evidence_contract",
+            "clean_user_surface_contract",
+            "clean_user_surface_steering_alpha",
+            "clean_user_surface_recurrent_loops",
             "disable_prompt_cache",
             "clear_prompt_cache",
             "health_probe",
@@ -4198,6 +4275,20 @@ class InferenceGate:
                 )
                 max_tokens = foreground_floor
 
+        if (
+            not is_background
+            and self._origin_is_user_facing(origin)
+            and requested_tier == "primary"
+            and not isolated_generation_contract
+            and not health_probe
+        ):
+            # Foreground chat prompts include high-churn state, memory, and
+            # reliability blocks. Reusing approximate KV caches across those
+            # prompts has been a major source of clipped or stale Cortex
+            # drafts. Keep cache acceleration for background/proof lanes, but
+            # make live primary conversation start from the exact prompt.
+            morpho_kwargs.setdefault("disable_prompt_cache", True)
+
         if deep_probe_request and not is_background:
             probe_token_cap = int(os.environ.get("AURA_DEEP_PROBE_MAX_TOKENS", "384"))
             max_tokens = min(max_tokens, max(128, probe_token_cap))
@@ -4207,6 +4298,17 @@ class InferenceGate:
         if strict_answer_contract:
             max_tokens = max(1, min(max_tokens, strict_max_token_cap))
             context["max_tokens"] = max_tokens
+
+        if operator_evidence_contract:
+            try:
+                requested_operator_cap = int(context.get("max_tokens") or 220)
+            except (TypeError, ValueError):
+                requested_operator_cap = 220
+            max_tokens = max(64, min(max_tokens, requested_operator_cap, 220))
+            context["max_tokens"] = max_tokens
+            context["allow_tools"] = False
+            context["disable_prompt_cache"] = True
+            context["clear_prompt_cache"] = True
 
         if health_probe:
             requested_cap = context.get("max_tokens", max_tokens)
@@ -4444,6 +4546,13 @@ class InferenceGate:
             and not health_probe
             and not proof_evaluation_contract
         )
+        if (
+            _is_user_facing
+            and requested_tier == "primary"
+            and not strict_answer_contract
+            and not strict_value_contract
+        ):
+            morpho_kwargs.setdefault("clean_user_surface_contract", True)
         client_foreground_request = (
             bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request
         )
@@ -4675,6 +4784,30 @@ class InferenceGate:
                             # Give the retry MORE time than the initial attempt
                             retry_timeout = primary_timeout * 1.5
                             retry_deadline = get_deadline(retry_timeout)
+                            retry_messages = self._build_primary_repair_messages(prompt, messages)
+                            retry_system_prompt = retry_messages[0]["content"]
+                            retry_morpho_kwargs = dict(morpho_kwargs)
+                            retry_morpho_kwargs.update(
+                                {
+                                    "disable_prompt_cache": True,
+                                    "clear_prompt_cache": retry_attempt == 1,
+                                    "top_p": min(float(retry_morpho_kwargs.get("top_p", 0.9) or 0.9), 0.85),
+                                    "min_p": max(float(retry_morpho_kwargs.get("min_p", 0.02) or 0.02), 0.02),
+                                    "repetition_penalty": max(
+                                        float(retry_morpho_kwargs.get("repetition_penalty", 1.1) or 1.1),
+                                        1.12,
+                                    ),
+                                    "repetition_context_size": max(
+                                        int(retry_morpho_kwargs.get("repetition_context_size", 64) or 64),
+                                        96,
+                                    ),
+                                    "skip_runtime_payload": True,
+                                }
+                            )
+                            retry_temperature = min(
+                                float(somatic_temperature if somatic_temperature is not None else 0.35),
+                                0.35,
+                            )
                             async with self._resource_context(
                                 enabled=True,
                                 priority=True,
@@ -4684,17 +4817,17 @@ class InferenceGate:
                                 text = await self._generate_with_client(
                                     local_client,
                                     prompt,
-                                    system_prompt,
+                                    retry_system_prompt,
                                     history,
                                     retry_deadline,
                                     f"{local_label}-RETRY-{retry_attempt}",
-                                    messages=messages,
-                                    max_tokens=max_tokens,
-                                    temperature=somatic_temperature,
+                                    messages=retry_messages,
+                                    max_tokens=max(max_tokens, 768),
+                                    temperature=retry_temperature,
                                     origin=origin,
                                     is_background=is_background,
                                     foreground_request=True,
-                                    **morpho_kwargs,
+                                    **retry_morpho_kwargs,
                                 )
                             if text:
                                 logger.info(
@@ -4710,9 +4843,9 @@ class InferenceGate:
                                 )
 
                         logger.warning("🧠 %s all retries failed.", local_label)
-                        if proof_evaluation_contract or strict_primary_proof_lane:
+                        if proof_evaluation_contract or strict_primary_proof_lane or operator_evidence_contract:
                             logger.warning(
-                                "🧠 Proof/evaluation request requires a valid Cortex response; refusing lower-lane fallback."
+                                "🧠 Proof/operator request requires a valid Cortex response; refusing lower-lane fallback."
                             )
                             return None
                         # For user-facing requests, skip brainstem — go straight to cloud
@@ -5239,6 +5372,10 @@ class InferenceGate:
             "strict_answer_contract",
             "strict_value_contract",
             "proof_evaluation_contract",
+            "operator_evidence_contract",
+            "clean_user_surface_contract",
+            "clean_user_surface_steering_alpha",
+            "clean_user_surface_recurrent_loops",
             "disable_prompt_cache",
             "clear_prompt_cache",
             "health_probe",

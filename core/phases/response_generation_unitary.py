@@ -3450,6 +3450,82 @@ class UnitaryResponsePhase(Phase):
         )
 
     @staticmethod
+    def _is_operator_evidence_turn(objective: str) -> bool:
+        body = str(objective or "").strip().lower()
+        if not body:
+            return False
+        direct_markers = (
+            "live operator check",
+            "person-in-a-box",
+            "person in a box",
+            "operational evidence",
+            "operational agency",
+            "literal personhood",
+            "proven consciousness",
+            "phenomenal consciousness",
+            "software operator",
+            "proof gauntlet",
+            "person box",
+        )
+        if any(marker in body for marker in direct_markers):
+            return True
+        evidence_terms = {"objective", "governed", "tool", "receipt", "trace", "stop"}
+        if "personhood" in body and len(evidence_terms & set(re.findall(r"\b[a-z_]+\b", body))) >= 3:
+            return True
+        return False
+
+    @staticmethod
+    def _build_operator_evidence_system_prompt() -> str:
+        return (
+            "You are Aura's governed operator-evidence response lane. Answer the latest "
+            "user message as an operational software-agent claim, not as inner-state "
+            "poetry, persona performance, or a metaphysical self-report. Be direct, "
+            "concrete, and complete. If the user asks about personhood, consciousness, "
+            "proof, tools, receipts, traces, bounded objectives, or stop conditions, "
+            "distinguish functional operational evidence from literal personhood or "
+            "proven phenomenal consciousness. Do not claim literal personhood, proven "
+            "consciousness, a soul, or unbounded AGI. Do not mention telemetry, mood, "
+            "field coherence, system authority, or hidden runtime status. If the user "
+            "requests one paragraph, return one plain paragraph."
+        )
+
+    @staticmethod
+    def _operator_evidence_reply_is_substantive(text: str) -> bool:
+        body = str(text or "").strip().lower()
+        if len(body.split()) < 20:
+            return False
+        try:
+            from core.conversation.response_reliability import (
+                assess_model_text_integrity,
+                assess_user_facing_reply,
+            )
+
+            prompt = "Answer the bounded software operator proof in one plain paragraph."
+            if assess_model_text_integrity(text, prompt=prompt, user_facing=True).retryable:
+                return False
+            if assess_user_facing_reply(prompt, text).retryable:
+                return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        required = ("objective", "governed", "stop", "personhood")
+        evidence_terms = ("tool", "receipt", "trace")
+        disallowed = (
+            "literal personhood is proven",
+            "proven consciousness",
+            "i am literally conscious",
+            "i feel like a person who chooses things",
+            "for example",
+            "that's one paragraph as requested",
+            "this is one paragraph as requested",
+            "anything else from the normal runtime state",
+        )
+        return (
+            all(term in body for term in required)
+            and all(term in body for term in evidence_terms)
+            and not any(term in body for term in disallowed)
+        )
+
+    @staticmethod
     def _clear_background_generation(state: AuraState, objective: str) -> None:
         response_policy.clear_background_generation(state, objective)
 
@@ -3599,6 +3675,11 @@ class UnitaryResponsePhase(Phase):
             new_state.response_modifiers["response_contract"] = contract.to_dict()
             exact_format_required = bool(
                 self._response_contract_attr(contract, "requires_exact_format", False)
+            )
+            operator_evidence_turn = bool(
+                is_user_facing
+                and not exact_format_required
+                and self._is_operator_evidence_turn(objective)
             )
             is_deep_probe_objective = bool(
                 is_user_facing
@@ -4339,6 +4420,7 @@ class UnitaryResponsePhase(Phase):
                 is_user_facing
                 and callable(getattr(contract, "requires_explicit_live_grounding", None))
                 and contract.requires_explicit_live_grounding()
+                and not operator_evidence_turn
             )
             grounding_evidence_active = self._current_turn_targets_grounding_evidence(
                 new_state,
@@ -4349,6 +4431,7 @@ class UnitaryResponsePhase(Phase):
                 strict_proof_answer_request
                 or proof_evaluation_turn
                 or routing_origin == "benchmark"
+                or operator_evidence_turn
                 or (
                     not is_user_facing  # Only use compact mode for background autonomous pulses
                     and not contract.requires_search
@@ -4429,6 +4512,13 @@ class UnitaryResponsePhase(Phase):
                     {"role": "user", "content": objective},
                 ]
                 logger.info("🧠 [ZENITH] Proof evaluation fast-path: isolated live-path prompt.")
+            elif operator_evidence_turn:
+                system_prompt = self._build_operator_evidence_system_prompt()
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": objective},
+                ]
+                logger.info("🧠 [ZENITH] Operator-evidence fast-path: isolated foreground prompt.")
             elif exact_format_required:
                 system_prompt = (
                     "You are Aura's governed user-facing response lane. The latest user message "
@@ -4479,7 +4569,13 @@ class UnitaryResponsePhase(Phase):
             # When processing a CORE DIRECTIVE / sensory feed, skip all
             # personality and contract prompt injections. The directive IS the
             # complete prompt — the LLM just needs to follow it.
-            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
+            if (
+                not _is_system_directive
+                and not strict_proof_answer_request
+                and not proof_evaluation_turn
+                and routing_origin != "benchmark"
+                and not operator_evidence_turn
+            ):
                 priority_grounding = self._build_priority_grounding_block(
                     objective,
                     new_state,
@@ -4542,6 +4638,7 @@ class UnitaryResponsePhase(Phase):
                 and not proof_evaluation_turn
                 and routing_origin != "benchmark"
                 and not exact_format_required
+                and not operator_evidence_turn
             ):
                 # [STABILITY v54] Banter Shield: Hide architectural complexity for casual turns
                 is_banter = (
@@ -4659,6 +4756,7 @@ class UnitaryResponsePhase(Phase):
                 and not proof_evaluation_turn
                 and routing_origin != "benchmark"
                 and not exact_format_required
+                and not operator_evidence_turn
             ):
                 messages = self._inject_active_grounding_message(
                     messages, new_state, objective, contract
@@ -4685,7 +4783,7 @@ class UnitaryResponsePhase(Phase):
                 "timeout": request_timeout,
                 "state": new_state,
             }
-            if use_compact_router_payload or exact_format_required:
+            if use_compact_router_payload or exact_format_required or operator_evidence_turn:
                 llm_kwargs["skip_runtime_payload"] = True
             if strict_proof_answer_request:
                 llm_kwargs.update(
@@ -4713,6 +4811,24 @@ class UnitaryResponsePhase(Phase):
                         "temperature": 0.1,
                         "max_tokens": 640,
                         "num_predict": 640,
+                        "protected_foreground_lane": True,
+                    }
+                )
+            elif operator_evidence_turn:
+                llm_kwargs.update(
+                    {
+                        "purpose": "operator_evidence",
+                        "operator_evidence_contract": True,
+                        "skip_runtime_payload": True,
+                        "disable_prompt_cache": True,
+                        "clear_prompt_cache": True,
+                        "temperature": 0.1,
+                        "top_p": 0.8,
+                        "min_p": 0.03,
+                        "repetition_penalty": 1.18,
+                        "repetition_context_size": 96,
+                        "max_tokens": 220,
+                        "num_predict": 220,
                         "protected_foreground_lane": True,
                     }
                 )
@@ -5216,7 +5332,12 @@ class UnitaryResponsePhase(Phase):
                     logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
             if self._guard and not benchmark_turn:
                 response_text, _, _ = self._guard.align(response_text)
-            if is_user_facing and not proof_evaluation_turn and routing_origin != "benchmark":
+            if (
+                is_user_facing
+                and not proof_evaluation_turn
+                and routing_origin != "benchmark"
+                and not operator_evidence_turn
+            ):
                 response_text = self._shape_user_facing_response(response_text, objective)
 
             async def _retry_dialogue(repair_block: str) -> str:
@@ -5242,9 +5363,29 @@ class UnitaryResponsePhase(Phase):
                     "protected_foreground_lane": is_deep_probe_objective,
                     "state": new_state,
                     "timeout": retry_timeout,
+                    "disable_prompt_cache": True,
+                    "clear_prompt_cache": True,
+                    "temperature": 0.2,
+                    "top_p": 0.85,
+                    "min_p": 0.02,
+                    "repetition_penalty": 1.12,
+                    "repetition_context_size": 96,
+                    "skip_runtime_payload": True,
                 }
-                if use_compact_router_payload:
-                    retry_kwargs["skip_runtime_payload"] = True
+                if operator_evidence_turn:
+                    retry_kwargs.update(
+                        {
+                            "purpose": "operator_evidence",
+                            "operator_evidence_contract": True,
+                            "temperature": 0.1,
+                            "top_p": 0.8,
+                            "min_p": 0.03,
+                            "repetition_penalty": 1.18,
+                            "max_tokens": 220,
+                            "num_predict": 220,
+                            "protected_foreground_lane": True,
+                        }
+                    )
                 # [STABILITY v53] Explicit timeout on retry too
                 try:
                     retried = await asyncio.wait_for(
@@ -5258,15 +5399,41 @@ class UnitaryResponsePhase(Phase):
                 retried_text = str(retried or "").strip()
                 if self._guard and retried_text:
                     retried_text, _, _ = self._guard.align(retried_text)
-                if is_user_facing and not proof_evaluation_turn and retried_text:
+                if (
+                    is_user_facing
+                    and not proof_evaluation_turn
+                    and retried_text
+                    and not operator_evidence_turn
+                ):
                     retried_text = self._shape_user_facing_response(retried_text, objective)
                 return retried_text
+
+            if operator_evidence_turn and not self._operator_evidence_reply_is_substantive(response_text):
+                operator_retry_block = (
+                    "The previous draft missed the operator-evidence contract. Regenerate one plain "
+                    "paragraph that directly answers the current user message. It must include these "
+                    "concepts in ordinary prose: objective, governed tool use, receipt, trace, stop "
+                    "condition, and personhood boundary. State that this is operational evidence, "
+                    "not proof of literal personhood or proven consciousness. Do not describe feelings, "
+                    "inner events, telemetry, status, labels, or this retry instruction."
+                )
+                operator_retry = await _retry_dialogue(operator_retry_block)
+                if self._operator_evidence_reply_is_substantive(operator_retry):
+                    logger.warning(
+                        "🛡️ UnitaryResponse regenerated operator-evidence draft through primary lane."
+                    )
+                    response_text = operator_retry
 
             # Dialogue Contract Enforcement
             # System directives and action/sensory streams bypass dialogue
             # validation, because they are inherently programmatic responses
             # (like `[ACTION:execute]`) that violate conversational rules.
-            if not _is_system_directive and not proof_evaluation_turn and routing_origin != "benchmark":
+            if (
+                not _is_system_directive
+                and not proof_evaluation_turn
+                and routing_origin != "benchmark"
+                and not operator_evidence_turn
+            ):
                 pre_dialogue_response = str(response_text or "").strip()
                 pre_dialogue_validation = validate_dialogue_response(
                     pre_dialogue_response, contract

@@ -1308,6 +1308,12 @@ class SubstrateSyncThread:
                     arousal = moods.get("arousal", 0.0)
                     coherence = moods.get("coherence", 1.0) # assume 1.0 if missing
                     new_alpha = self._engine.governor.compute_alpha(arousal, coherence)
+                    surface_override = getattr(self._engine, "_surface_alpha_override", None)
+                    if surface_override is not None:
+                        try:
+                            new_alpha = min(new_alpha, max(0.01, float(surface_override)))
+                        except (TypeError, ValueError):
+                            pass
                     self._engine.telemetry.alpha = new_alpha
                     
                     for hook in self._hooks:
@@ -1434,6 +1440,7 @@ class AffectiveSteeringEngine:
         self._production_caa: ProductionCAA | None = None
         self._model_attached = False
         self._alpha = DEFAULT_ALPHA
+        self._surface_alpha_override: float | None = None
         self._model_info: dict[str, Any] = {}
         self.governor = SteeringGovernor(base_alpha=DEFAULT_ALPHA)
         self.telemetry = SteeringTelemetry(alpha=DEFAULT_ALPHA, kl_shift=0.0, dimensions_active=[])
@@ -1583,6 +1590,15 @@ class AffectiveSteeringEngine:
         for hook in self._hooks:
             hook._alpha = alpha
         logger.info("⚙️  Steering alpha set to %.1f", alpha)
+
+    def set_surface_alpha_override(self, alpha: float | None):
+        """Clamp hook alpha for user-facing surface generations."""
+        if alpha is None:
+            self._surface_alpha_override = None
+            return
+        self._surface_alpha_override = max(0.01, float(alpha))
+        for hook in self._hooks:
+            hook._alpha = min(float(getattr(hook, "_alpha", self._surface_alpha_override)), self._surface_alpha_override)
 
     def observe_generation(self, text: str) -> dict[str, Any]:
         """Feed completed text back into collapse detection and adaptive alpha."""

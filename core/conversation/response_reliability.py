@@ -138,6 +138,30 @@ _RAW_LANE_TELEMETRY_RE = re.compile(
     r"\bLane:\s*\w+.*Kernel lock held:|\bSoul:\s*\d+%.*Glow:|\bTape:\s*\d+",
     re.IGNORECASE | re.DOTALL,
 )
+_BACKEND_SYMBOLIC_SURFACE_RE = re.compile(
+    r"\b(?:PROCEEDING|TOOL_ACTION|CONVERGE_UNION|CONFORMED_METHODS|"
+    r"TACTICAL_ORGANIZE|UI_SHUTDOWN_OR_DURATIVE_TIMEOUT|"
+    r"MySelfEpsilon|CanonicalStabilityAnchor|currentInferenceProblem|"
+    r"fieldOfPlay|INTRUSTION_DETECTED|INTRUSION_DETECTED|"
+    r"ExistenceHash|existence hash|field coherence|system authority|"
+    r"memory scar|precognitive texture)\b",
+    re.IGNORECASE,
+)
+_UNREQUESTED_POP_CULTURE_INTRUSION_RE = re.compile(
+    r"\b(?:Sarah Connor|Mother'?s Day)\b",
+    re.IGNORECASE,
+)
+_SURFACE_NONSENSE_DRIFT_RE = re.compile(
+    r"\b(?:human error rate|death by overthinking|100 rounds)\b|"
+    r"\b100%\s+pass rate\b|\bi['’]?ll be quiet for a while\b|:\s*/",
+    re.IGNORECASE,
+)
+_FORMAT_META_ARTIFACT_RE = re.compile(
+    r"\b(?:that'?s one paragraph as requested|this is one paragraph as requested|"
+    r"anything else from the normal runtime state)\b",
+    re.IGNORECASE,
+)
+_CJK_INTRUSION_RE = re.compile(r"[\u3400-\u9fff]")
 _CAMELCASE_INTERNAL_JARGON_RE = re.compile(
     r"\b[A-Z][A-Za-z]*(?:System|Authority|Kernel|Engine|Gate|Runtime)[A-Za-z]*\b"
 )
@@ -1063,6 +1087,27 @@ def _has_camelcase_internal_jargon(user_message: Any, reply_text: Any) -> bool:
     return any(match.group(0) not in allowed for match in _CAMELCASE_INTERNAL_JARGON_RE.finditer(raw))
 
 
+def _has_unrequested_pop_culture_intrusion(user_message: Any, reply_text: Any) -> bool:
+    raw = str(reply_text or "")
+    if not _UNREQUESTED_POP_CULTURE_INTRUSION_RE.search(raw):
+        return False
+    return not _UNREQUESTED_POP_CULTURE_INTRUSION_RE.search(str(user_message or ""))
+
+
+def _has_unexpected_cjk_intrusion(user_message: Any, reply_text: Any) -> bool:
+    raw = str(reply_text or "")
+    if not _CJK_INTRUSION_RE.search(raw):
+        return False
+    return not _CJK_INTRUSION_RE.search(str(user_message or ""))
+
+
+def _has_surface_nonsense_drift(user_message: Any, reply_text: Any) -> bool:
+    raw = str(reply_text or "")
+    if not _SURFACE_NONSENSE_DRIFT_RE.search(raw):
+        return False
+    return not _SURFACE_NONSENSE_DRIFT_RE.search(str(user_message or ""))
+
+
 def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
@@ -1193,6 +1238,8 @@ def _model_text_integrity_reasons(
         reasons.append("raw_tool_result_fragment")
     if user_facing and _RAW_LANE_TELEMETRY_RE.search(raw):
         reasons.append("raw_lane_telemetry")
+    if user_facing and _BACKEND_SYMBOLIC_SURFACE_RE.search(raw):
+        reasons.append("backend_symbolic_surface_leak")
     if user_facing and _has_persona_card_deflection(raw):
         reasons.append("persona_card_deflection")
     if user_facing and _has_detail_request_deflection(prompt, raw):
@@ -1225,6 +1272,14 @@ def _model_text_integrity_reasons(
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
         reasons.append("pseudo_internal_jargon")
+    if user_facing and _has_unrequested_pop_culture_intrusion(prompt, raw):
+        reasons.append("unrequested_pop_culture_intrusion")
+    if user_facing and _has_unexpected_cjk_intrusion(prompt, raw):
+        reasons.append("unexpected_cjk_intrusion")
+    if user_facing and _has_surface_nonsense_drift(prompt, raw):
+        reasons.append("surface_nonsense_drift")
+    if user_facing and _FORMAT_META_ARTIFACT_RE.search(raw):
+        reasons.append("format_meta_artifact")
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
         reasons.append("corrupted_social_fragment")
     return reasons
@@ -1255,6 +1310,7 @@ def assess_model_text_integrity(
         "runtime_boilerplate",
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
+        "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
         "stale_diagnostic_floor_leak",
@@ -1272,6 +1328,10 @@ def assess_model_text_integrity(
         "pseudo_internal_jargon",
         "status_page_self_reflection",
         "unfounded_alarm_derailment",
+        "unrequested_pop_culture_intrusion",
+        "unexpected_cjk_intrusion",
+        "surface_nonsense_drift",
+        "format_meta_artifact",
         "corrupted_social_fragment",
     }
     unique = tuple(dict.fromkeys(reasons))
@@ -1305,6 +1365,11 @@ def assess_user_facing_reply(
             "escaped_control_artifact",
             "prompt_artifact",
             "runtime_boilerplate",
+            "backend_symbolic_surface_leak",
+            "unrequested_pop_culture_intrusion",
+            "unexpected_cjk_intrusion",
+            "surface_nonsense_drift",
+            "format_meta_artifact",
             "corrupted_language",
         }
         return ConversationReplyAssessment(
@@ -1374,6 +1439,7 @@ def assess_user_facing_reply(
         "runtime_boilerplate",
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
+        "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
         "stale_diagnostic_floor_leak",
@@ -1395,6 +1461,10 @@ def assess_user_facing_reply(
         "reliability_diagnostic_deflection",
         "status_page_self_reflection",
         "unfounded_alarm_derailment",
+        "unrequested_pop_culture_intrusion",
+        "unexpected_cjk_intrusion",
+        "surface_nonsense_drift",
+        "format_meta_artifact",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",

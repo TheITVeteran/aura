@@ -605,6 +605,20 @@ def get_adapter_path() -> Path:
     return ADAPTER_PATH
 
 
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _personality_lora_disabled(backend: str) -> bool:
+    backend_key = "AURA_DISABLE_GGUF_LORA" if backend == "gguf" else "AURA_DISABLE_MLX_LORA"
+    return _env_truthy("AURA_DISABLE_PERSONALITY_LORA") or _env_truthy(backend_key)
+
+
+def _default_personality_lora_enabled(backend: str) -> bool:
+    backend_key = "AURA_ENABLE_GGUF_LORA" if backend == "gguf" else "AURA_ENABLE_MLX_LORA"
+    return _env_truthy("AURA_ENABLE_PERSONALITY_LORA") or _env_truthy(backend_key)
+
+
 def resolve_personality_adapter(
     target_model: str | None,
     *,
@@ -616,13 +630,24 @@ def resolve_personality_adapter(
     differently when needed:
       - `AURA_LORA_PATH`, `AURA_LORA_TARGET_MODEL`
       - `AURA_GGUF_LORA_PATH`, `AURA_GGUF_LORA_TARGET_MODEL`
+
+    The bundled personality adapter is opt-in. It has historically been useful
+    for experiments, but live Cortex already runs against Aura-tuned/fused
+    weights and the extra adapter can pollute user-visible prose. Explicit
+    adapter paths still work; the default adapter only loads when an enable env
+    flag is set.
     """
     normalized_backend = str(backend or "mlx").strip().lower()
     target_model = str(target_model or "").strip()
 
+    if _personality_lora_disabled(normalized_backend):
+        return None
+
     if normalized_backend == "gguf":
         adapter_path = os.getenv("AURA_GGUF_LORA_PATH", "").strip()
         if not adapter_path:
+            if not _default_personality_lora_enabled(normalized_backend):
+                return None
             default_path = (
                 BASE_DIR / "training" / "adapters" / "aura-personality" / "aura-personality-lora.gguf"
             )
@@ -642,6 +667,8 @@ def resolve_personality_adapter(
 
     adapter_dir = os.getenv("AURA_LORA_PATH", "").strip()
     if not adapter_dir:
+        if not _default_personality_lora_enabled(normalized_backend):
+            return None
         default_dir = BASE_DIR / "training" / "adapters" / "aura-personality"
         if (default_dir / "adapters.safetensors").exists():
             adapter_dir = str(default_dir)

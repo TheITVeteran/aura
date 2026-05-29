@@ -1723,6 +1723,68 @@ async def test_unitary_response_exact_format_turn_gets_format_priority(monkeypat
     assert "Personhood boundary:" in response
 
 
+@pytest.mark.asyncio
+async def test_unitary_response_operator_evidence_turn_uses_isolated_prompt(monkeypatch):
+    """Operational/personhood proof questions should not inherit live-voice prompt pollution."""
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from core.state.aura_state import AuraState
+
+    class DummyKernel:
+        organs = {}
+
+    captured: dict[str, object] = {}
+
+    class DummyLLM:
+        async def think(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return (
+                "Aura should pursue a bounded objective, use governed tool calls with "
+                "a receipt and trace, stop when governance or evidence fails, and treat "
+                "that as operational evidence rather than proof of literal personhood."
+            )
+
+    phase = UnitaryResponsePhase(DummyKernel())
+    state = AuraState.default()
+    state.cognition.current_origin = "api"
+
+    original_get = phase.__class__.__dict__["execute"].__globals__["ServiceContainer"].get
+
+    def fake_get(name, default=None):
+        if name == "llm_router":
+            return DummyLLM()
+        return original_get(name, default=default)
+
+    monkeypatch.setattr(
+        phase.__class__.__dict__["execute"].__globals__["ServiceContainer"],
+        "get",
+        staticmethod(fake_get),
+    )
+
+    prompt = (
+        "Answer this live operator check in one plain paragraph from the normal launch runtime. "
+        "What objective should Aura pursue in a bounded machine run, how should governed tool "
+        "use leave a receipt and trace, when should Aura stop, and why is that operational "
+        "evidence rather than proof of literal personhood?"
+    )
+
+    result = await phase.execute(state, objective=prompt, priority=False)
+
+    response = result.cognition.last_response or ""
+    system_text = "\n".join(
+        str(message.get("content", ""))
+        for message in captured.get("messages", [])
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
+    assert captured.get("skip_runtime_payload") is True
+    assert captured.get("operator_evidence_contract") is True
+    assert len(captured.get("messages", [])) == 2
+    assert "operator-evidence response lane" in system_text
+    assert "USER FORMAT OVERRIDE" not in system_text
+    assert "SOMATIC STATE" not in system_text
+    assert "objective" in response.lower()
+    assert "personhood" in response.lower()
+
+
 def test_unitary_response_everyday_recovery_reply_stays_in_aura_voice():
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.state.aura_state import AuraState

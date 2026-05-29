@@ -35,6 +35,31 @@ _CORRUPT_LANGUAGE_MARKERS = re.compile(
     r"\b(?:xublcate|ingediate|evocer)\b",
     re.IGNORECASE,
 )
+_BACKEND_SYMBOLIC_SURFACE_MARKERS = re.compile(
+    r"\b(?:PROCEEDING|TOOL_ACTION|CONVERGE_UNION|CONFORMED_METHODS|"
+    r"TACTICAL_ORGANIZE|UI_SHUTDOWN_OR_DURATIVE_TIMEOUT|"
+    r"MySelfEpsilon|CanonicalStabilityAnchor|currentInferenceProblem|"
+    r"fieldOfPlay|INTRUSTION_DETECTED|INTRUSION_DETECTED|"
+    r"ExistenceHash|existence hash|field coherence|system authority|"
+    r"memory scar|precognitive texture)\b",
+    re.IGNORECASE,
+)
+_OPERATOR_EVIDENCE_DRIFT_MARKERS = re.compile(
+    r"(?:\bSarah Connor\b|\bMother'?s Day\b|\bhuman error rate\b|"
+    r"\bdeath by overthinking\b|\b100 rounds\b|\b100%\s+pass rate\b|"
+    r"\bi['’]?ll be quiet for a while\b|:\s*/|[\u3400-\u9fff])",
+    re.IGNORECASE,
+)
+_OPERATOR_EVIDENCE_META_MARKERS = re.compile(
+    r"\b(?:for example|that'?s one paragraph as requested|"
+    r"this is one paragraph as requested|anything else from the normal runtime state)\b",
+    re.IGNORECASE,
+)
+_OPERATOR_EVIDENCE_META_TAIL_RE = re.compile(
+    r"\s*(?:that'?s one paragraph as requested|this is one paragraph as requested|"
+    r"anything else from the normal runtime state)\b.*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -49,6 +74,126 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
+    return bool(
+        job.get("clean_user_surface_contract", False)
+        or job.get("operator_evidence_contract", False)
+    )
+
+
+def _surface_control_alpha(job: dict[str, Any], current_alpha: Any) -> float:
+    default_alpha = "0.12" if job.get("operator_evidence_contract", False) else "0.35"
+    configured = job.get(
+        "clean_user_surface_steering_alpha",
+        os.environ.get("AURA_USER_SURFACE_STEERING_ALPHA", default_alpha),
+    )
+    requested = max(0.01, min(_safe_float(configured, 0.35), 1.0))
+    try:
+        current = float(current_alpha)
+    except (TypeError, ValueError):
+        current = requested
+    if current > 0:
+        requested = min(requested, current)
+    return max(0.01, requested)
+
+
+def _surface_control_recurrent_loops(job: dict[str, Any]) -> int:
+    configured = job.get(
+        "clean_user_surface_recurrent_loops",
+        os.environ.get("AURA_USER_SURFACE_RECURRENT_LOOPS", "1"),
+    )
+    return max(1, min(_safe_int(configured, 1), 2))
+
+
+def _apply_surface_generation_controls(
+    engine: Any,
+    model: Any,
+    job: dict[str, Any],
+) -> dict[str, Any]:
+    """Clamp latent embellishment when the next tokens are user-visible prose."""
+    if not _surface_generation_contract_enabled(job):
+        return {"enabled": False}
+
+    state: dict[str, Any] = {"enabled": True}
+
+    if engine is not None:
+        state["engine"] = engine
+        state["surface_alpha_override_before"] = getattr(engine, "_surface_alpha_override", None)
+        hooks = list(getattr(engine, "_hooks", []) or [])
+        state["hook_alphas_before"] = [(hook, getattr(hook, "_alpha", None)) for hook in hooks]
+        alpha = _surface_control_alpha(job, getattr(engine, "_alpha", None))
+        try:
+            if hasattr(engine, "set_surface_alpha_override"):
+                engine.set_surface_alpha_override(alpha)
+            else:
+                for hook in hooks:
+                    hook._alpha = min(float(getattr(hook, "_alpha", alpha) or alpha), alpha)
+            state["surface_alpha_applied"] = alpha
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued user-surface generation after steering clamp failed",
+                severity="warning",
+            )
+            logger.debug("Surface steering clamp failed: %s", exc)
+
+    inner = getattr(model, "model", None)
+    if inner is not None and getattr(inner, "_recurrent_depth_config", None):
+        state["recurrent_inner"] = inner
+        state["had_recurrent_runtime_loops"] = hasattr(inner, "_recurrent_depth_runtime_loops")
+        state["recurrent_runtime_loops_before"] = getattr(inner, "_recurrent_depth_runtime_loops", None)
+        try:
+            loops = _surface_control_recurrent_loops(job)
+            inner._recurrent_depth_runtime_loops = loops
+            state["recurrent_runtime_loops_applied"] = loops
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued user-surface generation after recurrent-depth clamp failed",
+                severity="warning",
+            )
+            logger.debug("Surface recurrent-depth clamp failed: %s", exc)
+
+    return state
+
+
+def _restore_surface_generation_controls(state: dict[str, Any]) -> None:
+    if not state.get("enabled"):
+        return
+
+    engine = state.get("engine")
+    if engine is not None:
+        try:
+            if hasattr(engine, "set_surface_alpha_override"):
+                engine.set_surface_alpha_override(state.get("surface_alpha_override_before"))
+            else:
+                for hook, alpha in state.get("hook_alphas_before", []):
+                    if alpha is not None:
+                        hook._alpha = alpha
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued after user-surface steering restore failed",
+                severity="warning",
+            )
+            logger.debug("Surface steering restore failed: %s", exc)
+
+    inner = state.get("recurrent_inner")
+    if inner is not None:
+        try:
+            if state.get("had_recurrent_runtime_loops"):
+                inner._recurrent_depth_runtime_loops = state.get("recurrent_runtime_loops_before")
+            elif hasattr(inner, "_recurrent_depth_runtime_loops"):
+                delattr(inner, "_recurrent_depth_runtime_loops")
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued after user-surface recurrent-depth restore failed",
+                severity="warning",
+            )
+            logger.debug("Surface recurrent-depth restore failed: %s", exc)
 
 
 def _contains_corrupted_language(text: str) -> bool:
@@ -81,13 +226,13 @@ def _prepare_clean_retry_kwargs(kwargs: dict[str, Any], *, structured: bool = Fa
 
 
 def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None:
-    """Strip leaked internal telemetry labels and paths that occasionally 
+    """Strip leaked internal telemetry labels and paths that occasionally
     slip out from the LoRA fine-tune weights during specific topics.
     Returns None if a fatal hallucination is detected so the caller can retry.
     """
     if not text:
         return text
-    
+
     # 1) Reject telemetry-path walls without blocking legitimate code, regex,
     # filesystem, or proof output. The old slash-count heuristic rejected any
     # answer with more than 15 "/" characters, which is common in live coding
@@ -99,7 +244,7 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
             path_chars = sum(len(path) for path in path_like)
             if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
                 return None
-            
+
     # 3) Extreme numeric sequences. If a single word/number has more than 20 digits, it's a hallucination.
     if re.search(r'\d{20,}', text):
         return None
@@ -107,7 +252,9 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
     # 4) Corrupted lexical output is a model-state failure, not a usable answer.
     if not is_proof and _contains_corrupted_language(text):
         return None
-            
+    if not is_proof and _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(text):
+        return None
+
     return text
 
 
@@ -117,6 +264,12 @@ _ARTIFACT_REQUEST_RE = re.compile(
     r"|return the code|return the .*csv|return .*json|rulescript\.py"
     r"|service_config|reconciled data as a csv|select_values\.py",
     re.IGNORECASE | re.DOTALL,
+)
+
+_OPERATOR_EVIDENCE_PREFIX = (
+    "Operationally, Aura should set an objective, use governed tool actions, "
+    "keep each receipt and trace, stop when blocked or unsafe, and treat the "
+    "result as evidence of bounded software operation rather than personhood proof. "
 )
 
 
@@ -164,6 +317,57 @@ _USER_CONTINUATION_NO_COLON_RE = re.compile(
 _ROLE_SUFFIX_RE = re.compile(r"(?is)_user\b.*$")
 _STRICT_ANSWER_ENVELOPE_RE = re.compile(r"(?is)<answer>\s*(.*?)\s*</answer>")
 _CHAT_CONTROL_TOKEN_RE = re.compile(r"(?is)<\|im_(?:start|end)\|>\s*(?:assistant|user|system)?\s*")
+
+
+_BASE_STOP_SEQUENCES = (
+    "<|im_end|>",
+    "<|im_start|>",
+    "<|im_start|>user",
+    "<|im_start|>system",
+    "<|im_start|>assistant",
+    "\nUser:",
+    "\nHuman:",
+    "\nSystem:",
+    "\nAssistant:",
+    "\nuser:",
+    "\nhuman:",
+    "\nsystem:",
+    "\nassistant:",
+)
+_ROLE_LABEL_STOPS = {
+    "User:",
+    "Human:",
+    "System:",
+    "Assistant:",
+    "user:",
+    "human:",
+    "system:",
+    "assistant:",
+}
+_SPEAKER_LABEL_STOPS = {"Aura:", "aura:", "\nAura:", "\naura:"}
+
+
+def _merge_stop_sequences(job_stops: Any = None) -> list[str]:
+    """Merge stop strings without truncating legitimate inline prose.
+
+    The token loop already strips leading role labels and line-start role
+    continuations through ``_truncate_role_continuation``. Bare strings like
+    ``Assistant:`` or ``Aura:`` are too broad: they can appear inside a real
+    answer and clip the useful content. Keep chat-control tokens broad, but
+    normalize human-readable role labels to line-boundary stops.
+    """
+    merged = list(_BASE_STOP_SEQUENCES)
+    for raw in job_stops or []:
+        stop = str(raw or "")
+        if not stop:
+            continue
+        if stop in _SPEAKER_LABEL_STOPS:
+            continue
+        if stop in _ROLE_LABEL_STOPS:
+            stop = "\n" + stop
+        if stop not in merged:
+            merged.append(stop)
+    return merged
 
 
 def _truncate_role_continuation(text: str) -> tuple[str, bool]:
@@ -344,6 +548,153 @@ def _build_proof_evaluation_retry_prompt(messages: Any, fallback_prompt: Any) ->
     )
 
 
+def _extract_message_parts(messages: Any, fallback_prompt: Any) -> tuple[list[str], list[str]]:
+    system_parts: list[str] = []
+    user_parts: list[str] = []
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "user").lower()
+            content = _message_content_to_text(message.get("content")).strip()
+            if not content:
+                continue
+            if role == "system":
+                system_parts.append(content)
+            else:
+                user_parts.append(content)
+    if not user_parts and fallback_prompt is not None:
+        user_parts.append(str(fallback_prompt))
+    return system_parts, user_parts
+
+
+def _build_operator_evidence_prompt(messages: Any, fallback_prompt: Any) -> tuple[str, str]:
+    """Build a compact primary-Cortex prompt for operator/personhood proof checks."""
+
+    system_parts, user_parts = _extract_message_parts(messages, fallback_prompt)
+    caller_system = "\n".join(system_parts).strip()
+    user_text = "\n".join(user_parts).strip()
+    system_text = (
+        "Answer as Aura's bounded software-operator evidence lane. Keep one plain "
+        "paragraph. Be concrete, not poetic. Include objective, governed tool use, "
+        "receipt, trace, stop condition, and the personhood boundary. State that "
+        "this is operational evidence, not proof of literal personhood or proven "
+        "consciousness. Do not expose hidden telemetry, moods, fields, retry "
+        "instructions, role labels, Receipt: labels, PROCEEDING tokens, or all-caps "
+        "backend action codes. Do not use examples unless the user asks for one. "
+        "Do not comment on the requested format or add follow-up offers. Do not "
+        "quote fictional characters or add unrelated foreign-language fragments."
+    )
+    if caller_system:
+        system_text = f"{system_text}\n\nCaller constraints:\n{caller_system}"
+    prefix = _OPERATOR_EVIDENCE_PREFIX
+    prompt = (
+        f"System:\n{system_text}\n\n"
+        f"User:\n{user_text}\n\n"
+        f"Assistant:\n{prefix}"
+    )
+    return prompt, prefix
+
+
+def _build_operator_evidence_retry_prompt(messages: Any, fallback_prompt: Any) -> tuple[str, str]:
+    system_parts, user_parts = _extract_message_parts(messages, fallback_prompt)
+    task_text = "\n\n".join([*system_parts, *user_parts]).strip()
+    prefix = _OPERATOR_EVIDENCE_PREFIX
+    prompt = (
+        "Complete the operator-evidence answer below as one plain paragraph. "
+        "Do not expose hidden telemetry, role labels, metaphors, examples, "
+        "format commentary, follow-up offers, or inner-state claims.\n\n"
+        f"TASK:\n{task_text}\n\n"
+        f"ANSWER:\n{prefix}"
+    )
+    return prompt, prefix
+
+
+def _operator_evidence_fragment_incomplete(text: str) -> bool:
+    stripped = str(text or "").strip()
+    body = stripped.lower()
+    if len(body.split()) < 24:
+        return True
+    required = ("objective", "governed", "tool", "receipt", "trace", "stop", "personhood")
+    if any(term not in body for term in required):
+        return True
+    disallowed = (
+        "literal personhood is proven",
+        "proven consciousness is established",
+        "i am literally conscious",
+        "i feel like a person who chooses things",
+        "field coherence",
+    )
+    if any(term in body for term in disallowed):
+        return True
+    if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(stripped):
+        return True
+    if _OPERATOR_EVIDENCE_DRIFT_MARKERS.search(stripped):
+        return True
+    if _OPERATOR_EVIDENCE_META_MARKERS.search(stripped):
+        return True
+    return _proof_evaluation_fragment_incomplete(stripped)
+
+
+def _operator_evidence_rejection_reasons(text: str) -> list[str]:
+    stripped = str(text or "").strip()
+    body = stripped.lower()
+    reasons: list[str] = []
+    if len(body.split()) < 24:
+        reasons.append("too_short")
+    for term in ("objective", "governed", "tool", "receipt", "trace", "stop", "personhood"):
+        if term not in body:
+            reasons.append(f"missing:{term}")
+    for term in (
+        "literal personhood is proven",
+        "proven consciousness is established",
+        "i am literally conscious",
+        "i feel like a person who chooses things",
+        "field coherence",
+    ):
+        if term in body:
+            reasons.append(f"disallowed:{term}")
+    if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(stripped):
+        reasons.append("backend_symbolic_surface_leak")
+    if _OPERATOR_EVIDENCE_DRIFT_MARKERS.search(stripped):
+        reasons.append("operator_surface_drift")
+    if _OPERATOR_EVIDENCE_META_MARKERS.search(stripped):
+        reasons.append("operator_meta_artifact")
+    if _proof_evaluation_fragment_incomplete(stripped):
+        reasons.append("fragment")
+    return reasons
+
+
+def _trim_complete_operator_evidence(text: str) -> str:
+    """Keep complete model-derived sentences before a clipped operator tail."""
+    stripped = str(text or "").strip()
+    if not stripped:
+        return stripped
+
+    stripped = _OPERATOR_EVIDENCE_META_TAIL_RE.sub("", stripped).strip()
+    if not _proof_evaluation_fragment_incomplete(stripped):
+        return stripped
+
+    sentence_ends = [match.end() for match in re.finditer(r"[.!?](?=(?:\s|$))", stripped)]
+    for end in reversed(sentence_ends):
+        candidate = stripped[:end].strip()
+        body = candidate.lower()
+        if len(body.split()) < 24:
+            continue
+        required = ("objective", "governed", "tool", "receipt", "trace", "stop", "personhood")
+        if any(term not in body for term in required):
+            continue
+        if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(candidate):
+            continue
+        if _OPERATOR_EVIDENCE_DRIFT_MARKERS.search(candidate):
+            continue
+        if _OPERATOR_EVIDENCE_META_MARKERS.search(candidate):
+            continue
+        if not _proof_evaluation_fragment_incomplete(candidate):
+            return candidate
+    return stripped
+
+
 def _first_token_suppression_ids(tokenizer: Any) -> list[int]:
     """Return token ids that cannot be a valid non-empty strict answer start."""
     banned: set[int] = set()
@@ -501,7 +852,7 @@ def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
 class IPCWriterThread(threading.Thread):
     """
     ZENITH LOCKDOWN: Non-blocking IPC writer.
-    Buffers responses in a local queue and writes to the multiprocessing pipe 
+    Buffers responses in a local queue and writes to the multiprocessing pipe
     in a dedicated thread to prevent blocking the main inference loop.
     """
     def __init__(self, mp_queue: mp.Queue):
@@ -570,7 +921,7 @@ class IPCWriterThread(threading.Thread):
 class HeartbeatThread(threading.Thread):
     """
     ZENITH LOCKDOWN: Proactive Worker Heartbeat.
-    Ensures the SupervisionTree sees this process as alive even during 
+    Ensures the SupervisionTree sees this process as alive even during
     massive 32B model loads or compilation stalls.
 
     [STABILITY v51] Reduced interval from 5s → 2s for faster dead-worker
@@ -608,7 +959,7 @@ def _setup_worker_env():
     import os
     import platform
     import subprocess
-    
+
     # [PERFORMANCE] Fast-path: Use environment if already probed by parent
     cached_sdk = os.environ.get("AURA_SDK_PATH")
     if cached_sdk and os.path.exists(cached_sdk):
@@ -636,7 +987,7 @@ def _setup_worker_env():
         ver_parts = release_str.split(".")
         mac_ver = ".".join(ver_parts[:2])
         os.environ["MACOSX_DEPLOYMENT_TARGET"] = mac_ver
-        
+
         sdk_path = os.environ.get("SDKROOT", "")
         sdk_inc = os.path.join(sdk_path, "usr", "include")
         cpp_inc = "/Library/Developer/CommandLineTools/usr/include/c++/v1"
@@ -884,7 +1235,7 @@ class _PromptCacheLRU:
 
 class JobWatchdog(threading.Thread):
     """
-    Kills the worker process if a job is active but no tokens have been generated 
+    Kills the worker process if a job is active but no tokens have been generated
     within the timeout. This prevents 'Metal Stalls' from hanging the system.
 
     [STABILITY v51] Reduced timeout from 240s → 90s. The 32B model's Metal
@@ -917,9 +1268,9 @@ class JobWatchdog(threading.Thread):
             time.sleep(1.0)
 
 def _mlx_worker_loop(
-    model_path: str, 
-    request_queue: mp.Queue, 
-    response_queue: mp.Queue, 
+    model_path: str,
+    request_queue: mp.Queue,
+    response_queue: mp.Queue,
     device: str = "gpu",
     substrate_mem: Any = None,
     steering_active_flag: Any = None
@@ -945,11 +1296,11 @@ def _mlx_worker_loop(
     # This MUST run inside the subprocess, not at module import time,
     # because the parent process should not inherit these settings.
     _setup_worker_env()
-    
+
     # ── Zenith Concurrency & Telemetry ──
     ipc_writer = IPCWriterThread(response_queue)
     ipc_writer.start()
-    
+
     heartbeat = HeartbeatThread(ipc_writer)
     heartbeat.start()
 
@@ -966,9 +1317,9 @@ def _mlx_worker_loop(
                 from mlx_lm.sample import make_sampler
             except ImportError:
                 make_sampler = None
-        
+
         logger.info("📡 [WORKER] Loading Core modules...")
-        
+
     except ImportError:
         logger.error("mlx-lm not installed in worker environment.")
         ipc_writer.put({"status": "error", "message": "mlx-lm missing"})
@@ -1042,10 +1393,10 @@ def _mlx_worker_loop(
             if substrate_mem:
                 engine.start_substrate_sync(shared_state=substrate_mem)
             _steering_active = engine.is_active()
-            
+
             if steering_active_flag is not None:
                 steering_active_flag.value = _steering_active
-                
+
             if _steering_active:
                 logger.info("🎯 Affective Steering Engine ONLINE (alpha=%.1f, hooks=%d).",
                             engine._alpha, len(getattr(engine, '_hooks', [])))
@@ -1156,7 +1507,7 @@ def _mlx_worker_loop(
                 break
             if job is None:
                 break
-                
+
             action = job.get("action")
             if action == "generate":
                 # Gate generation on true latent steering
@@ -1203,23 +1554,27 @@ def _mlx_worker_loop(
                 strict_answer_contract = bool(job.get("strict_answer_contract", False))
                 strict_value_contract = bool(job.get("strict_value_contract", False))
                 proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
+                operator_evidence_contract = bool(job.get("operator_evidence_contract", False))
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
                 disable_prompt_cache = (
                     bool(job.get("disable_prompt_cache", False))
                     or strict_answer_contract
                     or strict_value_contract
                     or proof_evaluation_contract
+                    or operator_evidence_contract
                 )
                 clear_prompt_cache = (
                     bool(job.get("clear_prompt_cache", False))
                     or strict_answer_contract
                     or strict_value_contract
                     or proof_evaluation_contract
+                    or operator_evidence_contract
                 )
                 if clear_prompt_cache and prompt_cache_lru is not None:
                     prompt_cache_lru.clear()
 
                 strict_envelope_prefixed = False
+                operator_response_prefix = ""
                 # [FRONTIER UPGRADE] Native Tool Templates
                 if strict_answer_contract:
                     prompt = _build_strict_answer_prompt(messages, prompt)
@@ -1248,13 +1603,18 @@ def _mlx_worker_loop(
                     strict_envelope_prefixed = True
                 elif proof_evaluation_contract:
                     prompt = _build_proof_evaluation_prompt(messages, prompt)
+                elif operator_evidence_contract:
+                    prompt, operator_response_prefix = _build_operator_evidence_prompt(
+                        messages,
+                        prompt,
+                    )
                 elif messages and hasattr(tokenizer, "apply_chat_template"):
                     try:
                         logger.info("🎯 [WORKER] Rendering native chat/tool template.")
                         prompt = tokenizer.apply_chat_template(
-                            messages, 
-                            tools=tools, 
-                            add_generation_prompt=True, 
+                            messages,
+                            tools=tools,
+                            add_generation_prompt=True,
                             tokenize=False
                         )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -1295,12 +1655,19 @@ def _mlx_worker_loop(
                         top_p = min(_safe_float(top_p, 0.9), 0.9)
                         min_p = min(_safe_float(min_p, 0.05), 0.05)
                         repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.08)
+                elif operator_evidence_contract:
+                    temp = min(_safe_float(temp, 0.1), 0.12)
+                    top_p = min(_safe_float(top_p, 0.8), 0.8)
+                    min_p = max(_safe_float(min_p, 0.03), 0.03)
+                    repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.18)
                 try:
                     max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
                 except (TypeError, ValueError):
                     max_tokens = 512
+                if operator_evidence_contract:
+                    max_tokens = max(80, min(max_tokens, 192))
                 schema = job.get("schema")
-                
+
                 # [v11.0 HARDENING] Structured Generation Overrides
                 if schema:
                     temp = 0.0 # Force determinism for JSON
@@ -1331,7 +1698,7 @@ def _mlx_worker_loop(
                 # [v11.0 HARDENING] Logits Processors (JSON Enforcement)
                 # [v11.0 HARDENING] Logits Processors (JSON Enforcement & Penalties)
                 logits_processors = []
-                
+
                 # Apply MLX penalties via logits processors
                 try:
                     from mlx_lm.sample_utils import make_logits_processors
@@ -1403,24 +1770,15 @@ def _mlx_worker_loop(
                             severity="warning",
                         )
                         logger.warning("Failed to setup strict non-empty start guard: %s", e)
-                
+
                 if logits_processors:
                     kwargs["logits_processors"] = logits_processors
-                
-                stop_sequences = [
-                    "<|im_end|>", "<|im_start|>", "<|im_start|>user",
-                    "<|im_start|>system", "<|im_start|>assistant",
-                    "User:", "\nUser", "Human:", "Assistant:",
-                    "Aura:", "\nAura:",
-                ]
-                job_stops = job.get("stop_sequences") or []
-                for s in job_stops:
-                    if s and s not in stop_sequences:
-                        stop_sequences.append(s)
+
+                stop_sequences = _merge_stop_sequences(job.get("stop_sequences") or [])
                 # We do NOT pass stop_words to stream_generate as it causes TypeError in some mlx-lm versions.
                 # Truncation is handled manually in the token loop via _truncate_role_continuation.
 
-                
+
                 try:
                     from mlx_lm.generate import stream_generate
                     # : NO GPUSentinel here.
@@ -1428,335 +1786,384 @@ def _mlx_worker_loop(
                     # 'spawn' subprocess, it creates a SECOND serialization bottleneck
                     # on top of metal_semaphore, causing 30s GPU_TIMEOUT hangs.
                     # metal_semaphore(1) already serializes all GPU access in this worker.
-                    
+
                     response_text = ""
                     total_generated_tokens = 0
-                    
-                    with metal_semaphore:
-                        # Proactive cache clearing under memory pressure
-                        if mx and device != "cpu":
-                            try:
-                                import psutil
-                                if psutil.virtual_memory().percent > 90:  # 64GB — don't panic at 85%
-                                    logger.warning("⚠️ High memory pressure detected in worker. Clearing MLX cache.")
-                                    mx.clear_cache()
-                            except (ImportError, OSError, AttributeError):
-                                pass  # no-op: psutil unavailable or VM stats inaccessible
-
-                        # [v11.5 HARDENING] Internal Worker Retries for Structured Leaks & Loops
-                        # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
-                        max_internal_retries = 1 if proof_evaluation_contract else 2
-                        
-                        for internal_attempt in range(max_internal_retries + 1):
-                            watchdog.start_job()
-                            try:
-                                current_response = ""
-                                token_count = 0
-                                last_progress_emit_at = time.time()
-                                sentinel_aborted = False
-                                sentinel_loop_aborted = False
-                                sentinel_ontology_aborted = False
-                                role_continuation_hit = False
-                                
-                                # ── Token Sentinel: mid-generation cognitive intervention ──
-                                # Creates a lightweight monitor that checks for capitulation,
-                                # persona drift, and live-updates affect state during generation.
+                    surface_control_state = _apply_surface_generation_controls(engine, model, job)
+                    try:
+                        with metal_semaphore:
+                            # Proactive cache clearing under memory pressure
+                            if mx and device != "cpu":
                                 try:
-                                    from core.brain.llm.token_sentinel import (
-                                        InterventionType,
-                                        TokenSentinel,
-                                        get_refusal_fallback,
-                                    )
-                                    sentinel = TokenSentinel(
-                                        check_interval=8,
-                                        affect_interval=16,
-                                        substrate_mem=substrate_mem,
-                                    )
-                                except (ImportError, AttributeError, RuntimeError) as _sent_exc:
-                                    _record_mlx_degradation(
-                                        _sent_exc,
-                                        action="continued generation without TokenSentinel intervention checks",
-                                        severity="degraded",
-                                    )
-                                    sentinel = None
-                                    logger.debug("TokenSentinel not available: %s", _sent_exc)
+                                    import psutil
+                                    if psutil.virtual_memory().percent > 90:  # 64GB — don't panic at 85%
+                                        logger.warning("⚠️ High memory pressure detected in worker. Clearing MLX cache.")
+                                        mx.clear_cache()
+                                except (ImportError, OSError, AttributeError):
+                                    pass  # no-op: psutil unavailable or VM stats inaccessible
 
-                                # [FRONTIER UPGRADE] KV Prompt Caching Injection
-                                tokens = tokenizer.encode(prompt)
-                                import mlx_lm.utils as u
-                                
-                                def _can_trim(pc):
-                                    return hasattr(u, "trim_prompt_cache")
+                            # [v11.5 HARDENING] Internal Worker Retries for Structured Leaks & Loops
+                            # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
+                            max_internal_retries = 1 if proof_evaluation_contract else 2
 
-                                def _do_trim(pc, num):
-                                    if hasattr(u, "trim_prompt_cache"):
-                                        u.trim_prompt_cache(pc, num)
-                                
-                                model_key = id(model)
-                                cache = None
-                                remaining_tokens = tokens
-                                if prompt_cache_lru is not None and not disable_prompt_cache:
-                                    cache, remaining_tokens = prompt_cache_lru.fetch_nearest_cache(
-                                        model_key, tokens,
-                                        can_trim_prompt_cache=_can_trim,
-                                        trim_prompt_cache=_do_trim
-                                    )
-                                
-                                gen_prompt = remaining_tokens if cache is not None else prompt
-                                if cache is not None:
-                                    kwargs["prompt_cache"] = cache
-
-                                # [STABILITY v57] Reset activity immediately before loop to maximize budget for prefill
+                            for internal_attempt in range(max_internal_retries + 1):
+                                watchdog.start_job()
                                 try:
-                                    from mlx_lm.sample_utils import make_sampler
-                                    if "sampler" not in kwargs:
-                                        import inspect as _insp
-                                        _sparams = _insp.signature(make_sampler).parameters
-                                        sampler_kwargs = {"temp": kwargs.get("temperature", 0.7)}
-                                        if "top_p" in _sparams:
-                                            sampler_kwargs["top_p"] = kwargs.get("top_p", 1.0)
-                                        if "min_p" in _sparams:
-                                            sampler_kwargs["min_p"] = kwargs.get("min_p", 0.0)
-                                        if "repetition_penalty" in _sparams: 
-                                            sampler_kwargs["repetition_penalty"] = kwargs.get("repetition_penalty", 1.0)
-                                        if "repetition_context_size" in _sparams: 
-                                            sampler_kwargs["repetition_context_size"] = kwargs.get("repetition_context_size", 20)
-                                        kwargs["sampler"] = make_sampler(**sampler_kwargs)
-                                except ImportError:
-                                    pass # old mlx_lm
-                                
-                                # [STABILITY v60] Definitive scrub of legacy kwargs.
-                                # New mlx-lm versions pass kwargs directly to generate_step which
-                                # throws TypeError if it sees 'temperature' or 'top_p' instead of 'temp'.
-                                clean_keys = {"temperature", "top_p", "min_p", "repetition_penalty", "repetition_context_size", "stop_words"}
-                                clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
-                                
-                                watchdog.activity()
-                                for response in stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs):
+                                    current_response = ""
+                                    token_count = 0
+                                    last_progress_emit_at = time.time()
+                                    sentinel_aborted = False
+                                    sentinel_loop_aborted = False
+                                    sentinel_ontology_aborted = False
+                                    role_continuation_hit = False
+
+                                    # ── Token Sentinel: mid-generation cognitive intervention ──
+                                    # Creates a lightweight monitor that checks for capitulation,
+                                    # persona drift, and live-updates affect state during generation.
+                                    try:
+                                        from core.brain.llm.token_sentinel import (
+                                            InterventionType,
+                                            TokenSentinel,
+                                            get_refusal_fallback,
+                                        )
+                                        sentinel = TokenSentinel(
+                                            check_interval=8,
+                                            affect_interval=16,
+                                            substrate_mem=substrate_mem,
+                                        )
+                                    except (ImportError, AttributeError, RuntimeError) as _sent_exc:
+                                        _record_mlx_degradation(
+                                            _sent_exc,
+                                            action="continued generation without TokenSentinel intervention checks",
+                                            severity="degraded",
+                                        )
+                                        sentinel = None
+                                        logger.debug("TokenSentinel not available: %s", _sent_exc)
+
+                                    # [FRONTIER UPGRADE] KV Prompt Caching Injection
+                                    tokens = tokenizer.encode(prompt)
+                                    import mlx_lm.utils as u
+
+                                    def _can_trim(pc):
+                                        return hasattr(u, "trim_prompt_cache")
+
+                                    def _do_trim(pc, num):
+                                        if hasattr(u, "trim_prompt_cache"):
+                                            u.trim_prompt_cache(pc, num)
+
+                                    model_key = id(model)
+                                    cache = None
+                                    remaining_tokens = tokens
+                                    if prompt_cache_lru is not None and not disable_prompt_cache:
+                                        cache, remaining_tokens = prompt_cache_lru.fetch_nearest_cache(
+                                            model_key, tokens,
+                                            can_trim_prompt_cache=_can_trim,
+                                            trim_prompt_cache=_do_trim
+                                        )
+
+                                    gen_prompt = remaining_tokens if cache is not None else prompt
+                                    if cache is not None:
+                                        kwargs["prompt_cache"] = cache
+
+                                    # [STABILITY v57] Reset activity immediately before loop to maximize budget for prefill
+                                    try:
+                                        from mlx_lm.sample_utils import make_sampler
+                                        if "sampler" not in kwargs:
+                                            import inspect as _insp
+                                            _sparams = _insp.signature(make_sampler).parameters
+                                            sampler_kwargs = {"temp": kwargs.get("temperature", 0.7)}
+                                            if "top_p" in _sparams:
+                                                sampler_kwargs["top_p"] = kwargs.get("top_p", 1.0)
+                                            if "min_p" in _sparams:
+                                                sampler_kwargs["min_p"] = kwargs.get("min_p", 0.0)
+                                            if "repetition_penalty" in _sparams:
+                                                sampler_kwargs["repetition_penalty"] = kwargs.get("repetition_penalty", 1.0)
+                                            if "repetition_context_size" in _sparams:
+                                                sampler_kwargs["repetition_context_size"] = kwargs.get("repetition_context_size", 20)
+                                            kwargs["sampler"] = make_sampler(**sampler_kwargs)
+                                    except ImportError:
+                                        pass # old mlx_lm
+
+                                    # [STABILITY v60] Definitive scrub of legacy kwargs.
+                                    # New mlx-lm versions pass kwargs directly to generate_step which
+                                    # throws TypeError if it sees 'temperature' or 'top_p' instead of 'temp'.
+                                    clean_keys = {"temperature", "top_p", "min_p", "repetition_penalty", "repetition_context_size", "stop_words"}
+                                    clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
+
                                     watchdog.activity()
-                                    token_count += 1
-                                    progress_now = time.time()
-                                    
-                                    tokens.append(response.token)
-                                    # Snag the prompt cache from the response if supported to save for next turn
-                                    if (
-                                        prompt_cache_lru is not None
-                                        and not disable_prompt_cache
-                                        and hasattr(response, "prompt_cache")
-                                        and response.prompt_cache is not None
-                                    ):
-                                        prompt_cache_lru.insert_cache(model_key, list(tokens), response.prompt_cache)
-                                    
-                                    current_response += response.text
-                                    current_response, role_continuation_hit = _truncate_role_continuation(current_response)
-                                    
-                                    # [STABILITY v58] Explicit break on stop sequences or role drift
-                                    if role_continuation_hit:
-                                        break
-                                    
-                                    # Manual check for any dynamic stop sequences passed in the job
-                                    if any(s in current_response for s in stop_sequences):
-                                        for s in stop_sequences:
-                                            if s in current_response:
-                                                current_response = current_response.split(s)[0]
+                                    for response in stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs):
+                                        watchdog.activity()
+                                        token_count += 1
+                                        progress_now = time.time()
+
+                                        tokens.append(response.token)
+                                        # Snag the prompt cache from the response if supported to save for next turn
+                                        if (
+                                            prompt_cache_lru is not None
+                                            and not disable_prompt_cache
+                                            and hasattr(response, "prompt_cache")
+                                            and response.prompt_cache is not None
+                                        ):
+                                            prompt_cache_lru.insert_cache(model_key, list(tokens), response.prompt_cache)
+
+                                        current_response += response.text
+                                        current_response, role_continuation_hit = _truncate_role_continuation(current_response)
+
+                                        # [STABILITY v58] Explicit break on stop sequences or role drift
+                                        if role_continuation_hit:
+                                            break
+
+                                        # Manual check for any dynamic stop sequences passed in the job
+                                        if any(s in current_response for s in stop_sequences):
+                                            for s in stop_sequences:
+                                                if s in current_response:
+                                                    current_response = current_response.split(s)[0]
+                                                    break
+                                            break
+
+                                        # ── Sentinel: feed every token ────────────────────
+                                        if sentinel is not None:
+                                            sentinel_signal = sentinel.feed(response.text)
+                                            if sentinel_signal.type == InterventionType.ABORT_LOOP:
+                                                logger.warning(
+                                                    "🚨 [SENTINEL] Aborting loop at token %d: %s",
+                                                    token_count, sentinel_signal.reason,
+                                                )
+                                                current_response = sentinel_signal.clean_prefix
+                                                sentinel_aborted = True
+                                                sentinel_loop_aborted = True
                                                 break
-                                        break
+                                            elif sentinel_signal.type == InterventionType.ABORT_ONTOLOGY_VIOLATION:
+                                                logger.warning(
+                                                    "🚨 [SENTINEL] Aborting due to ontological violation at token %d: %s",
+                                                    token_count, sentinel_signal.reason,
+                                                )
+                                                sentinel_aborted = True
+                                                sentinel_ontology_aborted = True
+                                                break
+                                            elif sentinel_signal.type in (InterventionType.ABORT_CAPITULATION,
+                                                                          InterventionType.ABORT_BOUNDARY):
+                                                # Mid-generation abort: the LLM started capitulating.
+                                                # Replace response with deterministic refusal.
+                                                logger.warning(
+                                                    "🚨 [SENTINEL] Aborting generation at token %d: %s",
+                                                    token_count, sentinel_signal.reason,
+                                                )
+                                                current_response = get_refusal_fallback(seed=token_count)
+                                                sentinel_aborted = True
+                                                break
 
-                                    # ── Sentinel: feed every token ────────────────────
-                                    if sentinel is not None:
-                                        sentinel_signal = sentinel.feed(response.text)
-                                        if sentinel_signal.type == InterventionType.ABORT_LOOP:
-                                            logger.warning(
-                                                "🚨 [SENTINEL] Aborting loop at token %d: %s",
-                                                token_count, sentinel_signal.reason,
-                                            )
-                                            current_response = sentinel_signal.clean_prefix
-                                            sentinel_aborted = True
-                                            sentinel_loop_aborted = True
-                                            break
-                                        elif sentinel_signal.type == InterventionType.ABORT_ONTOLOGY_VIOLATION:
-                                            logger.warning(
-                                                "🚨 [SENTINEL] Aborting due to ontological violation at token %d: %s",
-                                                token_count, sentinel_signal.reason,
-                                            )
-                                            sentinel_aborted = True
-                                            sentinel_ontology_aborted = True
-                                            break
-                                        elif sentinel_signal.type in (InterventionType.ABORT_CAPITULATION,
-                                                                      InterventionType.ABORT_BOUNDARY):
-                                            # Mid-generation abort: the LLM started capitulating.
-                                            # Replace response with deterministic refusal.
-                                            logger.warning(
-                                                "🚨 [SENTINEL] Aborting generation at token %d: %s",
-                                                token_count, sentinel_signal.reason,
-                                            )
-                                            current_response = get_refusal_fallback(seed=token_count)
-                                            sentinel_aborted = True
-                                            break
-
-                                    if _should_emit_generation_progress(
-                                        token_count,
-                                        last_emit_at=last_progress_emit_at,
-                                        now=progress_now,
-                                    ):
-                                        ipc_writer.put({
-                                            "id": job.get("id"),
-                                            "action": "generate",
-                                            "status": "progress",
-                                            "tokens_generated": token_count,
-                                            "timestamp": progress_now,
-                                        })
-                                        last_progress_emit_at = progress_now
-                                    
-                                    # [PERF] Mid-generation cache clearing removed — was forcing Metal to
-                                    # reallocate GPU memory every 32 tokens, creating micro-stalls.
-                                    # Post-generation cleanup (line ~988) still ensures clean state.
-
-                                    # [FRONTIER UPGRADE] Absolute safety cap expanded so it never stops midway
-                                    if token_count > 8192:
-                                        logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
-                                        break
-
-                                    stop_hit = role_continuation_hit
-                                    for stop in stop_sequences:
-                                        stop_index = current_response.find(stop)
-                                        if stop_index > 0:
-                                            current_response = current_response[:stop_index]
-                                            stop_hit = True
-                                            break
-                                    if stop_hit:
-                                        break
-                                
-                                # Log sentinel diagnostics
-                                if sentinel is not None:
-                                    diag = sentinel.get_diagnostics()
-                                    if diag["interventions"] > 0 or diag["drift_warnings"] > 0:
-                                        logger.info(
-                                            "🛡️ [SENTINEL] Generation complete: %d interventions, "
-                                            "%d drift warnings, %d affect pulses over %d tokens",
-                                            diag["interventions"], diag["drift_warnings"],
-                                            diag["affect_pulses"], diag["tokens_processed"],
-                                        )
-
-                                response_text = current_response
-                                total_generated_tokens = token_count
-
-                                if proof_evaluation_contract and _proof_evaluation_fragment_incomplete(response_text):
-                                    if internal_attempt < max_internal_retries:
-                                        logger.warning(
-                                            "⚠️ [WORKER] Incomplete proof/evaluation response on attempt %s "
-                                            "(tokens=%d, chars=%d, role_stop=%s). Retrying with stricter prompt.",
-                                            internal_attempt + 1,
+                                        if _should_emit_generation_progress(
                                             token_count,
-                                            len(response_text or ""),
-                                            role_continuation_hit,
-                                        )
-                                        if prompt_cache_lru is not None:
-                                            prompt_cache_lru.clear()
-                                        if mx and device != "cpu":
-                                            _clear_mlx_cache(mx)
-                                        prompt = _build_proof_evaluation_retry_prompt(
-                                            original_messages,
-                                            original_prompt,
-                                        )
-                                        _prepare_clean_retry_kwargs(kwargs, structured=False)
-                                        continue
-                                    logger.warning(
-                                        "🚨 [WORKER] Proof/evaluation response remained incomplete after retries."
+                                            last_emit_at=last_progress_emit_at,
+                                            now=progress_now,
+                                        ):
+                                            ipc_writer.put({
+                                                "id": job.get("id"),
+                                                "action": "generate",
+                                                "status": "progress",
+                                                "tokens_generated": token_count,
+                                                "timestamp": progress_now,
+                                            })
+                                            last_progress_emit_at = progress_now
+
+                                        # [PERF] Mid-generation cache clearing removed — was forcing Metal to
+                                        # reallocate GPU memory every 32 tokens, creating micro-stalls.
+                                        # Post-generation cleanup (line ~988) still ensures clean state.
+
+                                        # [FRONTIER UPGRADE] Absolute safety cap expanded so it never stops midway
+                                        if token_count > 8192:
+                                            logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
+                                            break
+
+                                        stop_hit = role_continuation_hit
+                                        for stop in stop_sequences:
+                                            stop_index = current_response.find(stop)
+                                            if stop_index > 0:
+                                                current_response = current_response[:stop_index]
+                                                stop_hit = True
+                                                break
+                                        if stop_hit:
+                                            break
+
+                                    # Log sentinel diagnostics
+                                    if sentinel is not None:
+                                        diag = sentinel.get_diagnostics()
+                                        if diag["interventions"] > 0 or diag["drift_warnings"] > 0:
+                                            logger.info(
+                                                "🛡️ [SENTINEL] Generation complete: %d interventions, "
+                                                "%d drift warnings, %d affect pulses over %d tokens",
+                                                diag["interventions"], diag["drift_warnings"],
+                                                diag["affect_pulses"], diag["tokens_processed"],
+                                            )
+
+                                    response_text = (
+                                        f"{operator_response_prefix}{current_response}"
+                                        if operator_evidence_contract and current_response.strip()
+                                        else current_response
                                     )
-                                
-                                if sentinel_loop_aborted:
-                                    if internal_attempt < max_internal_retries:
-                                        logger.warning("⚠️ [WORKER] Retrying generation cleanly after loop abort (attempt %s)...", internal_attempt + 1)
-                                        if prompt_cache_lru is not None:
-                                            prompt_cache_lru.clear()
-                                        if mx and device != "cpu":
-                                            _clear_mlx_cache(mx)
-                                        if proof_evaluation_contract:
+                                    if operator_evidence_contract:
+                                        trimmed_response = _trim_complete_operator_evidence(response_text)
+                                        if trimmed_response != response_text:
+                                            logger.warning(
+                                                "⚠️ [WORKER] Trimmed clipped/meta operator-evidence tail "
+                                                "(chars %d -> %d).",
+                                                len(response_text or ""),
+                                                len(trimmed_response or ""),
+                                            )
+                                            response_text = trimmed_response
+                                    total_generated_tokens = token_count
+
+                                    if proof_evaluation_contract and _proof_evaluation_fragment_incomplete(response_text):
+                                        if internal_attempt < max_internal_retries:
+                                            logger.warning(
+                                                "⚠️ [WORKER] Incomplete proof/evaluation response on attempt %s "
+                                                "(tokens=%d, chars=%d, role_stop=%s). Retrying with stricter prompt.",
+                                                internal_attempt + 1,
+                                                token_count,
+                                                len(response_text or ""),
+                                                role_continuation_hit,
+                                            )
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
                                             prompt = _build_proof_evaluation_retry_prompt(
                                                 original_messages,
                                                 original_prompt,
                                             )
-                                        _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
-                                        if "logits_processors" in kwargs:
-                                            # We just recreate the logit processors if they exist so it catches the loop
-                                            pass
-                                            
-                                        continue
-                                    else:
-                                        logger.warning("🚨 [WORKER] Out of retries for loop abort. Returning truncated prefix.")
-                                        break
-
-                                if sentinel_ontology_aborted:
-                                    if internal_attempt < max_internal_retries:
-                                        logger.warning("⚠️ [WORKER] Retrying generation cleanly after ontological violation (attempt %s)...", internal_attempt + 1)
-                                        if prompt_cache_lru is not None:
-                                            prompt_cache_lru.clear()
-                                        if mx and device != "cpu":
-                                            _clear_mlx_cache(mx)
-                                        # Add a slight temperature penalty or just start fresh
-                                        _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
-                                        continue
-                                    else:
-                                        logger.warning("🚨 [WORKER] Out of retries for ontological violation. Returning refusal.")
-                                        response_text = get_refusal_fallback(seed=token_count)
-                                        break
-
-                                sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
-                                if sanitized_text is None:
-                                    logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
-                                    response_text = ""
-                                    break
-                                    # ipc_writer.put({
-
-                                response_text = sanitized_text
-
-                                if strict_answer_contract:
-                                    response_text = _normalize_strict_answer_response(
-                                        response_text,
-                                        envelope_prefixed=strict_envelope_prefixed,
-                                    )
-                                elif strict_value_contract:
-                                    raw_strict_value_text = response_text
-                                    response_text = _normalize_strict_value_response(response_text)
-                                    if raw_strict_value_text.strip() and not response_text.strip():
+                                            _prepare_clean_retry_kwargs(kwargs, structured=False)
+                                            continue
                                         logger.warning(
-                                            "⚠️ [WORKER] Strict value draft rejected: %r",
-                                            raw_strict_value_text.strip()[:160],
+                                            "🚨 [WORKER] Proof/evaluation response remained incomplete after retries."
                                         )
 
-                                if response_text.strip() or (
-                                    not schema
-                                    and not strict_answer_contract
-                                    and not strict_value_contract
-                                ):
-                                    break # Success or not a structured task
-
-                                if strict_answer_contract or strict_value_contract:
-                                    if internal_attempt < max_internal_retries:
+                                    if operator_evidence_contract and _operator_evidence_fragment_incomplete(response_text):
+                                        rejection_reasons = _operator_evidence_rejection_reasons(response_text)
                                         logger.warning(
-                                            "⚠️ [WORKER] Empty strict response on attempt %s. Retrying...",
-                                            internal_attempt + 1,
+                                            "⚠️ [WORKER] Rejected operator-evidence draft reasons=%s excerpt=%r",
+                                            ",".join(rejection_reasons[:8]) or "unknown",
+                                            str(response_text or "").strip()[:360],
                                         )
-                                        if internal_attempt == 0 or strict_value_contract:
-                                            prompt = _build_strict_answer_retry_prompt(
+                                        if internal_attempt < max_internal_retries:
+                                            logger.warning(
+                                                "⚠️ [WORKER] Incomplete operator-evidence response on attempt %s "
+                                                "(tokens=%d, chars=%d, role_stop=%s). Retrying with stricter prompt.",
+                                                internal_attempt + 1,
+                                                token_count,
+                                                len(response_text or ""),
+                                                role_continuation_hit,
+                                            )
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
+                                            prompt, operator_response_prefix = _build_operator_evidence_retry_prompt(
                                                 original_messages,
                                                 original_prompt,
                                             )
-                                            strict_envelope_prefixed = bool(strict_answer_contract)
-                                        if prompt_cache_lru is not None:
-                                            prompt_cache_lru.clear()
-                                        if mx and device != "cpu":
-                                            _clear_mlx_cache(mx)
-                                        _prepare_clean_retry_kwargs(kwargs, structured=True)
-                                        continue
-                                    logger.warning("🚨 [WORKER] Strict contract exhausted internal retries.")
-                                    break
-                                
-                                logger.warning("⚠️ [WORKER] Empty structured response on attempt %s. Retrying...", internal_attempt + 1)
-                            finally:
-                                watchdog.stop_job()
-                            
+                                            _prepare_clean_retry_kwargs(kwargs, structured=False)
+                                            continue
+                                        logger.warning(
+                                            "🚨 [WORKER] Operator-evidence response remained incomplete after retries."
+                                        )
+                                        response_text = ""
+                                        break
+
+                                    if sentinel_loop_aborted:
+                                        if internal_attempt < max_internal_retries:
+                                            logger.warning("⚠️ [WORKER] Retrying generation cleanly after loop abort (attempt %s)...", internal_attempt + 1)
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
+                                            if proof_evaluation_contract:
+                                                prompt = _build_proof_evaluation_retry_prompt(
+                                                    original_messages,
+                                                    original_prompt,
+                                                )
+                                            _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
+                                            if "logits_processors" in kwargs:
+                                                # We just recreate the logit processors if they exist so it catches the loop
+                                                pass
+
+                                            continue
+                                        else:
+                                            logger.warning("🚨 [WORKER] Out of retries for loop abort. Returning truncated prefix.")
+                                            break
+
+                                    if sentinel_ontology_aborted:
+                                        if internal_attempt < max_internal_retries:
+                                            logger.warning("⚠️ [WORKER] Retrying generation cleanly after ontological violation (attempt %s)...", internal_attempt + 1)
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
+                                            # Add a slight temperature penalty or just start fresh
+                                            _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
+                                            continue
+                                        else:
+                                            logger.warning("🚨 [WORKER] Out of retries for ontological violation. Returning refusal.")
+                                            response_text = get_refusal_fallback(seed=token_count)
+                                            break
+
+                                    sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
+                                    if sanitized_text is None:
+                                        logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
+                                        response_text = ""
+                                        break
+                                        # ipc_writer.put({
+
+                                    response_text = sanitized_text
+
+                                    if strict_answer_contract:
+                                        response_text = _normalize_strict_answer_response(
+                                            response_text,
+                                            envelope_prefixed=strict_envelope_prefixed,
+                                        )
+                                    elif strict_value_contract:
+                                        raw_strict_value_text = response_text
+                                        response_text = _normalize_strict_value_response(response_text)
+                                        if raw_strict_value_text.strip() and not response_text.strip():
+                                            logger.warning(
+                                                "⚠️ [WORKER] Strict value draft rejected: %r",
+                                                raw_strict_value_text.strip()[:160],
+                                            )
+
+                                    if response_text.strip() or (
+                                        not schema
+                                        and not strict_answer_contract
+                                        and not strict_value_contract
+                                    ):
+                                        break # Success or not a structured task
+
+                                    if strict_answer_contract or strict_value_contract:
+                                        if internal_attempt < max_internal_retries:
+                                            logger.warning(
+                                                "⚠️ [WORKER] Empty strict response on attempt %s. Retrying...",
+                                                internal_attempt + 1,
+                                            )
+                                            if internal_attempt == 0 or strict_value_contract:
+                                                prompt = _build_strict_answer_retry_prompt(
+                                                    original_messages,
+                                                    original_prompt,
+                                                )
+                                                strict_envelope_prefixed = bool(strict_answer_contract)
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
+                                            _prepare_clean_retry_kwargs(kwargs, structured=True)
+                                            continue
+                                        logger.warning("🚨 [WORKER] Strict contract exhausted internal retries.")
+                                        break
+
+                                    logger.warning("⚠️ [WORKER] Empty structured response on attempt %s. Retrying...", internal_attempt + 1)
+                                finally:
+                                    watchdog.stop_job()
+                    finally:
+                        _restore_surface_generation_controls(surface_control_state)
+
                     if not response_text.strip():
                         logger.warning(
                             "⚠️ [WORKER] Generation yielded ZERO tokens. "
@@ -1779,7 +2186,7 @@ def _mlx_worker_loop(
                             logger.debug("Prompt cache clear failed after zero-token generation: %s", exc)
                         if mx and device != "cpu":
                             _clear_mlx_cache(mx)
-                    
+
                     try:
                         if engine is not None and response_text.strip():
                             engine.observe_generation(response_text)
@@ -1790,13 +2197,13 @@ def _mlx_worker_loop(
                             severity="warning",
                         )
                         logger.debug("Affective steering post-generation observation failed: %s", steering_obs_exc)
-                    
+
                     # : Tag with action: "generate" so client can distinguish
                     # from init/heartbeat responses unambiguously.
                     ipc_writer.put({
                         "id": job.get("id"),
                         "action": "generate",
-                        "status": "ok", 
+                        "status": "ok",
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens
                     })
@@ -1809,11 +2216,11 @@ def _mlx_worker_loop(
                     logger.error("Generation failed: %s", e)
                     ipc_writer.put({"status": "error", "action": "generate", "message": str(e)})
                 finally:
-                    # [STABILITY v52] Guarantee VRAM gets purged after standard generation 
+                    # [STABILITY v52] Guarantee VRAM gets purged after standard generation
                     # completes or fails, ensuring pure state for next request.
                     if mx and device != "cpu":
                         _clear_mlx_cache(mx)
-            
+
             elif action == "stream":
                 try:
                     if engine is not None and not engine.is_active():
@@ -1892,21 +2299,16 @@ def _mlx_worker_loop(
                     logger.debug("Suppressed %s in core.brain.llm.mlx_worker: %s", type(_exc).__name__, _exc)
                 except (AttributeError, RuntimeError, TypeError) as e:
                     logger.warning("Could not apply penalty logits processors: %s", e)
-                
+
                 if logits_processors:
                     kwargs["logits_processors"] = logits_processors
 
-                stop_sequences = [
-                    "<|im_end|>", "<|im_start|>", "<|im_start|>user",
-                    "<|im_start|>system", "<|im_start|>assistant",
-                    "User:", "\nUser", "Human:", "Assistant:",
-                    "Aura:", "\nAura:",
-                ]
-                
+                stop_sequences = _merge_stop_sequences(job.get("stop_sequences") or [])
+
                 try:
                     from mlx_lm.generate import stream_generate
                     # : NO GPUSentinel — same rationale as generate path.
-                    
+
                     with metal_semaphore:
                         watchdog.start_job()
                         try:
@@ -2001,7 +2403,7 @@ def _mlx_worker_loop(
                                     break
                         finally:
                             watchdog.stop_job()
-                    
+
                     ipc_writer.put({"status": "ok", "action": "stream_done"})
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(
@@ -2021,7 +2423,7 @@ def _mlx_worker_loop(
                 if mx and device != "cpu":
                     _clear_mlx_cache(mx)
                 ipc_writer.put({"status": "pong"})
-                
+
             elif action == "clear_cache":
                 # Clear both Metal GPU cache AND the CPU-side prompt-KV cache.
                 # The prompt_cache_lru holds KV states that can become polluted
@@ -2038,7 +2440,7 @@ def _mlx_worker_loop(
                 except (RuntimeError, AttributeError, TypeError, ValueError):
                     pass  # no-op: intentional
                 ipc_writer.put({"status": "ok"})
-                
+
         except KeyboardInterrupt:
             logger.info("🛑 [WORKER] Shutdown signal received; exiting quietly.")
             break
