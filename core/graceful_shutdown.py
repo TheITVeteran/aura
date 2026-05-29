@@ -4,7 +4,7 @@ import asyncio
 import logging
 import signal
 from typing import Any, Callable, List, Union, Awaitable, ClassVar, Optional
-from core.runtime.shutdown_coordinator import request_shutdown
+from core.runtime.shutdown_coordinator import get_shutdown_coordinator, request_shutdown
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Shutdown")
@@ -48,6 +48,8 @@ class GracefulShutdown:
     @classmethod
     async def trigger_shutdown(cls, sig=None):
         """Executes all registered hooks in reverse order (LIFO)."""
+        if cls._shutdown_event is None:
+            cls._shutdown_event = asyncio.Event()
         if cls._is_shutting_down:
             return
         cls._is_shutting_down = True
@@ -70,6 +72,18 @@ class GracefulShutdown:
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('graceful_shutdown', e)
                 logger.error("   [!] Shutdown hook failed: %s", e)
+
+        try:
+            report = await get_shutdown_coordinator().shutdown(timeout_per_phase=8.0)
+            if not report.clean:
+                logger.warning(
+                    "Shutdown coordinator completed with failures: phases=%s handlers=%s",
+                    report.failed_phases,
+                    sorted(report.handler_failures),
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            record_degradation('graceful_shutdown', e)
+            logger.error("Error during canonical shutdown coordinator: %s", e)
 
         # Also trigger ServiceContainer shutdown if it exists
         try:

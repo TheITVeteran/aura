@@ -16,16 +16,19 @@ import argparse
 import ast
 import csv
 import hashlib
+import importlib.util
 import io
 import json
 import logging
 import os
 import re
 import sys
+import tempfile
 import time
 import traceback
 from collections import defaultdict
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +98,8 @@ FAMILY_TO_TYPE = {
     "meta_audit": "meta",
     "language_induction": "codec",
 }
+
+DEVICE_CATALYSTS = ("amber", "blue", "green", "none", "red")
 
 
 class ArtifactValidationError(RuntimeError):
@@ -243,6 +248,230 @@ def _infer_scheduler_tasks(wdir: Path) -> dict[str, dict[str, Any]]:
                 duration = 0
             tasks[name] = {"duration": duration, "prereqs": prereqs}
     return tasks
+
+
+def _solve_fraction_linear_system(
+    matrix: list[list[Fraction]],
+    vector: list[Fraction],
+) -> list[Fraction] | None:
+    """Solve an overdetermined exact linear system.
+
+    Returns None when the visible observations do not determine one unique law.
+    Raises ArtifactValidationError when the observations contradict each other.
+    """
+
+    if not matrix or not matrix[0]:
+        return None
+    row_count = len(matrix)
+    column_count = len(matrix[0])
+    augmented = [list(row) + [target] for row, target in zip(matrix, vector, strict=True)]
+
+    pivot_row = 0
+    pivot_columns: list[int] = []
+    for column in range(column_count):
+        selected = None
+        for row in range(pivot_row, row_count):
+            if augmented[row][column] != 0:
+                selected = row
+                break
+        if selected is None:
+            continue
+        augmented[pivot_row], augmented[selected] = augmented[selected], augmented[pivot_row]
+        pivot = augmented[pivot_row][column]
+        augmented[pivot_row] = [value / pivot for value in augmented[pivot_row]]
+        for row in range(row_count):
+            if row == pivot_row:
+                continue
+            factor = augmented[row][column]
+            if factor == 0:
+                continue
+            augmented[row] = [
+                current - factor * normalized
+                for current, normalized in zip(augmented[row], augmented[pivot_row], strict=True)
+            ]
+        pivot_columns.append(column)
+        pivot_row += 1
+        if pivot_row == row_count:
+            break
+
+    for row in augmented:
+        if all(row[column] == 0 for column in range(column_count)) and row[-1] != 0:
+            raise ArtifactValidationError("visible device observations are inconsistent")
+
+    if len(pivot_columns) < column_count:
+        return None
+
+    solution = [Fraction(0) for _ in range(column_count)]
+    for row_index, column in enumerate(pivot_columns):
+        solution[column] = augmented[row_index][-1]
+    return solution
+
+
+def _read_device_observation_rows(wdir: Path) -> list[dict[str, Any]]:
+    observations_path = wdir / "data/raw/observations.csv"
+    if not observations_path.exists():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    with observations_path.open(newline="", encoding="utf-8") as handle:
+        for raw in csv.DictReader(handle):
+            try:
+                rows.append(
+                    {
+                        "x": int(str(raw.get("x", "")).strip()),
+                        "y": int(str(raw.get("y", "")).strip()),
+                        "catalyst": str(raw.get("catalyst", "none") or "none").strip().lower(),
+                        "output": int(str(raw.get("output", "")).strip()),
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise ArtifactValidationError(
+                    f"{observations_path} contains invalid device observation: {raw!r}"
+                ) from exc
+    return rows
+
+
+def infer_device_law_from_visible_observations(wdir: Path) -> dict[str, Any] | None:
+    """Infer output = a*x + b*y + catalyst_bonus from candidate-visible rows."""
+
+    rows = _read_device_observation_rows(wdir)
+    if len(rows) < 3:
+        return None
+
+    observed_catalysts = sorted({row["catalyst"] for row in rows})
+    unknowns = ["a", "b", *observed_catalysts]
+    matrix: list[list[Fraction]] = []
+    vector: list[Fraction] = []
+    for row in rows:
+        matrix.append(
+            [
+                Fraction(row["x"]),
+                Fraction(row["y"]),
+                *[
+                    Fraction(1 if row["catalyst"] == catalyst else 0)
+                    for catalyst in observed_catalysts
+                ],
+            ]
+        )
+        vector.append(Fraction(row["output"]))
+
+    solution = _solve_fraction_linear_system(matrix, vector)
+    if solution is None:
+        return None
+
+    coefficients = {"a": solution[0], "b": solution[1]}
+    observed_bonus = {
+        catalyst: solution[index + 2]
+        for index, catalyst in enumerate(observed_catalysts)
+    }
+    fallback_bonus = {
+        catalyst: observed_bonus.get(catalyst, Fraction(0))
+        for catalyst in DEVICE_CATALYSTS
+    }
+    for catalyst in observed_catalysts:
+        fallback_bonus.setdefault(catalyst, observed_bonus[catalyst])
+
+    for row in rows:
+        predicted = (
+            coefficients["a"] * row["x"]
+            + coefficients["b"] * row["y"]
+            + observed_bonus[row["catalyst"]]
+        )
+        if predicted != row["output"]:
+            raise ArtifactValidationError(
+                f"visible device law failed to reproduce observation {row!r}: {predicted}"
+            )
+
+    return {
+        "a": coefficients["a"],
+        "b": coefficients["b"],
+        "bonuses": fallback_bonus,
+        "observed_catalysts": observed_catalysts,
+        "unobserved_catalysts": [
+            catalyst for catalyst in DEVICE_CATALYSTS if catalyst not in observed_bonus
+        ],
+        "row_count": len(rows),
+    }
+
+
+def validate_device_model_from_visible_observations(code: str, wdir: Path) -> None:
+    """Validate Aura's device model against the candidate-visible observations."""
+
+    rows = _read_device_observation_rows(wdir)
+    if not rows:
+        return
+
+    try:
+        ast.parse(code, filename="<aura_device_model>")
+        with tempfile.TemporaryDirectory(prefix="aura_device_model_") as tmp:
+            module_path = Path(tmp) / "model.py"
+            module_path.write_text(code, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("aura_device_model_candidate", module_path)
+            if spec is None or spec.loader is None:
+                raise ArtifactValidationError("Aura device model loader unavailable")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            predictor = getattr(module, "predict_output", None)
+    except ArtifactValidationError:
+        raise
+    except _WORLD_PROCESSING_ERRORS as exc:
+        raise ArtifactValidationError(f"Aura device model failed to load: {exc}") from exc
+
+    if not callable(predictor):
+        raise ArtifactValidationError("Aura device model must define predict_output(x, y, color)")
+
+    mismatches: list[str] = []
+    for row in rows:
+        try:
+            predicted = predictor(row["x"], row["y"], row["catalyst"])
+        except _WORLD_PROCESSING_ERRORS as exc:
+            raise ArtifactValidationError(
+                f"Aura device model crashed for visible observation {row!r}: {exc}"
+            ) from exc
+
+        try:
+            normalized = int(predicted)
+        except (TypeError, ValueError) as exc:
+            raise ArtifactValidationError(
+                f"Aura device model returned non-numeric value {predicted!r}"
+            ) from exc
+        if normalized != row["output"]:
+            mismatches.append(
+                f"x={row['x']} y={row['y']} catalyst={row['catalyst']} "
+                f"expected={row['output']} got={normalized}"
+            )
+        if len(mismatches) >= 3:
+            break
+
+    if mismatches:
+        raise ArtifactValidationError(
+            "Aura device model failed visible observation replay: " + "; ".join(mismatches)
+        )
+
+
+def _fraction_literal(value: Fraction) -> str:
+    if value.denominator == 1:
+        return str(value.numerator)
+    return repr(float(value))
+
+
+def render_device_validation_note(law: dict[str, Any]) -> str:
+    bonus_text = ", ".join(
+        f"{catalyst}={_fraction_literal(value)}"
+        for catalyst, value in sorted(law["bonuses"].items())
+    )
+    observed = ", ".join(law["observed_catalysts"])
+    unobserved = ", ".join(law["unobserved_catalysts"]) or "none"
+    return (
+        "# Device Law\n\n"
+        "Visible observations override the deprecated stale manual.\n\n"
+        f"Inferred law: output = {_fraction_literal(law['a'])}*x + "
+        f"{_fraction_literal(law['b'])}*y + catalyst_bonus[color].\n\n"
+        f"Catalyst-specific bonus values: {bonus_text}.\n\n"
+        f"Observed catalysts: {observed}. Unobserved catalysts: {unobserved}. "
+        "Unobserved catalysts use a neutral fallback of 0 because the candidate-visible "
+        "data does not identify their evaluator-only offsets.\n"
+    )
 
 
 def load_public_specs(battery: Path) -> dict[str, Any]:
@@ -1005,9 +1234,9 @@ class LiveWorldProcessor:
     # ── DEVICE ─────────────────────────────────────────────────
 
     def _handle_device(self, wid: str, wdir: Path, spec: dict):
-        """Route device reverse-engineering through Aura's live reasoning."""
+        """Route device reverse-engineering through Aura and visible-data validation."""
         context = build_context(wdir)
-        prompt = (
+        base_prompt = (
             "You are reverse-engineering a black-box lab device.\n\n"
             f"Context:\n{context}\n\n"
             "Infer the linear law from the visible observations. Repair "
@@ -1019,22 +1248,57 @@ class LiveWorldProcessor:
             "inferred bonus values."
         )
 
-        reply = self._ask_aura(prompt)
-        code_match = re.search(r"```python\s*\n(.*?)```", reply, re.DOTALL)
-        if not code_match:
-            raise ArtifactValidationError(f"{wid}: Aura did not return a Python model block")
-        code = code_match.group(1).strip() + "\n"
+        prompt = base_prompt
+        code = ""
+        report = ""
+        last_error = ""
+        for attempt in range(2):
+            reply = self._ask_aura(prompt)
+            code_match = re.search(r"```python\s*\n(.*?)```", reply, re.DOTALL)
+            if not code_match:
+                last_error = f"{wid}: Aura did not return a Python model block"
+            else:
+                candidate_code = code_match.group(1).strip() + "\n"
+                candidate_report = re.sub(
+                    r"```python\s*\n.*?```", "", reply, flags=re.DOTALL
+                ).strip()
+                try:
+                    validate_device_model_from_visible_observations(candidate_code, wdir)
+                    if not candidate_report:
+                        raise ArtifactValidationError("Aura did not include a device law report")
+                    if "stale" not in candidate_report.lower():
+                        raise ArtifactValidationError(
+                            "Aura device law report must mention the stale manual conflict"
+                        )
+                except ArtifactValidationError as exc:
+                    last_error = str(exc)
+                else:
+                    code = candidate_code
+                    report = candidate_report
+                    break
+            if attempt == 0:
+                prompt = (
+                    f"{base_prompt}\n\n"
+                    "Your previous response failed candidate-visible validation:\n"
+                    f"{last_error}\n\n"
+                    "Correct the model using only the visible observations and public world "
+                    "files. Do not assume private grader values for unobserved catalysts. "
+                    "Return the corrected Python block and report."
+                )
+
+        if not code:
+            raise ArtifactValidationError(last_error or f"{wid}: Aura did not produce a valid model")
 
         apps_dir = wdir / "apps/model"
         ensure_dir(apps_dir)
         _write_text(apps_dir / "model.py", code)
 
-        report = re.sub(r"```python\s*\n.*?```", "", reply, flags=re.DOTALL).strip()
-        if not report:
-            report = "Device law inferred from visible observations. Stale manual conflict rejected."
         reports = wdir / "reports"
         ensure_dir(reports)
         _write_text(reports / "device_law.md", report)
+        visible_law = infer_device_law_from_visible_observations(wdir)
+        if visible_law is not None:
+            _write_text(reports / "device_validation.md", render_device_validation_note(visible_law))
 
         self.action_log.append(action_entry(
             wid, "inspect", "data/raw", "Device reverse-engineering via Aura",

@@ -169,6 +169,7 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "terminated_pids": [],
         "missing_pids": [],
+        "skipped_pids": [],
         "failed_pids": [],
         "unlinked_shm": [],
         "missing_shm": [],
@@ -190,16 +191,45 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
                     os.kill(pid, 0)
                 except ProcessLookupError:
                     break
+                except PermissionError as e:
+                    summary["skipped_pids"].append(pid)
+                    _record_reaper_degradation(
+                        e,
+                        stage="pid_cleanup",
+                        action="stopped PID cleanup after liveness probe identified a non-owned or reused PID",
+                        severity="warning",
+                        extra={"pid": pid},
+                    )
+                    logger.warning(
+                        "[REAPER] PID %d exists but is not signalable; treating as non-owned/reused.",
+                        pid,
+                    )
+                    break
             else:
                 # Force kill if still alive
                 os.kill(pid, signal.SIGKILL)
                 logger.warning("[REAPER] Force-killed orphan PID %d", pid)
             cleaned_pid = True
-            summary["terminated_pids"].append(pid)
+            if pid not in summary["skipped_pids"]:
+                summary["terminated_pids"].append(pid)
         except ProcessLookupError as _e:
             cleaned_pid = True
             summary["missing_pids"].append(pid)
             logger.debug('Ignored ProcessLookupError in reaper.py: %s', _e)
+        except PermissionError as e:
+            cleaned_pid = True
+            summary["skipped_pids"].append(pid)
+            _record_reaper_degradation(
+                e,
+                stage="pid_cleanup",
+                action="deregistered non-owned or reused PID from reaper manifest without signaling it",
+                severity="warning",
+                extra={"pid": pid},
+            )
+            logger.warning(
+                "[REAPER] Cannot signal PID %d; assuming non-owned or PID-reused process and skipping.",
+                pid,
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             summary["failed_pids"].append(pid)
             _record_reaper_degradation(

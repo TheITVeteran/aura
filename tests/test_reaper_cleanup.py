@@ -27,6 +27,28 @@ def test_reaper_keeps_pid_manifest_entry_when_kill_fails(monkeypatch, tmp_path):
     get_degradation_tracker().reset()
 
 
+def test_reaper_deregisters_non_owned_or_reused_pid(monkeypatch, tmp_path):
+    get_degradation_tracker().reset()
+    manifest = ReaperManifest(tmp_path / "reaper.json")
+    manifest.register_pid(4242)
+
+    def _kill(pid, sig):
+        assert pid == 4242
+        assert sig == signal.SIGTERM
+        raise PermissionError("operation not permitted")
+
+    monkeypatch.setattr(reaper.os, "kill", _kill)
+
+    summary = reaper._execute_cleanup(manifest)
+
+    assert summary["skipped_pids"] == [4242]
+    assert manifest._data["child_pids"] == []
+    assert summary["manifest_removed"] is True
+    last = get_degradation_tracker().recent(subsystem="reaper")[-1]
+    assert last.action == "deregistered non-owned or reused PID from reaper manifest without signaling it"
+    get_degradation_tracker().reset()
+
+
 def test_reaper_keeps_shared_memory_manifest_entry_when_unlink_fails(monkeypatch, tmp_path):
     get_degradation_tracker().reset()
     manifest = ReaperManifest(tmp_path / "reaper.json")

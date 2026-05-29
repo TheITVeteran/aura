@@ -1180,6 +1180,39 @@ async def run_server_async(host: str, port: int):
     server = uvicorn.Server(server_config)
     await server.serve()
 
+
+async def _stop_orchestrator_once(orchestrator: Any, *, reason: str, timeout_s: float = 30.0) -> None:
+    """Stop the canonical runtime owner exactly once before process exit."""
+
+    if orchestrator is None or getattr(orchestrator, "_aura_stop_invoked", False):
+        return
+    setattr(orchestrator, "_aura_stop_invoked", True)
+    request_shutdown(reason)
+    stop = getattr(orchestrator, "stop", None)
+    if not callable(stop):
+        return
+    try:
+        result = stop()
+        if asyncio.iscoroutine(result) or hasattr(result, "__await__"):
+            await asyncio.wait_for(result, timeout=timeout_s)
+    except TimeoutError as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued process shutdown after orchestrator stop exceeded bounded timeout",
+            severity="degraded",
+        )
+        logger.error("Orchestrator stop timed out after %.1fs", timeout_s)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued process shutdown after orchestrator stop failed",
+            severity="degraded",
+        )
+        logger.error("Orchestrator stop failed: %s", exc, exc_info=True)
+
+
 async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
     """Wait for internal API server to return 200 OK and report ready status."""
     start = time.time()
@@ -1818,7 +1851,14 @@ def main():
                 from core.utils.task_tracker import get_task_tracker
 
                 get_task_tracker().create_task(orchestrator.run(), name="OrchestratorMainLoop")
-                await run_server_async(host, args.port)
+                try:
+                    await run_server_async(host, args.port)
+                finally:
+                    from core.graceful_shutdown import GracefulShutdown
+
+                    await _stop_orchestrator_once(orchestrator, reason="server_exit")
+                    await GracefulShutdown.trigger_shutdown("server_exit")
+                    await GracefulShutdown.wait_for_shutdown()
             asyncio.run(_run_server_with_bootstrap())
         elif args.desktop:
             # For desktop, we'll need a way to bootstrap the loop if uvicorn starts it
