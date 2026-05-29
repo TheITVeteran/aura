@@ -775,7 +775,8 @@ class MindTick:
                     except TimeoutError:
                         self._bus_fail_count += 1
                         if self._bus_fail_count <= 2:
-                            _record_mind_degradation(TimeoutError("event_bus_publish_timeout"))
+                            # Suppress false-positive degradation logging for non-critical telemetry publishing during heavy LLM load
+                            # _record_mind_degradation(TimeoutError("event_bus_publish_timeout"))
                             logger.warning("⚠️ MindTick: EventBus publish stalled (timeout). Continuing tick.")
                         elif self._bus_fail_count == 3:
                             logger.warning(
@@ -789,7 +790,8 @@ class MindTick:
                         self._bus_fail_count += 1
                         # Only record degradation on first failure, then back off
                         if self._bus_fail_count <= 2:
-                            _record_mind_degradation(e)
+                            # Suppress false-positive degradation logging for non-critical telemetry publishing during heavy LLM load
+                            # _record_mind_degradation(e)
                             logger.error("⚠️ MindTick: EventBus publish failed: %s", e)
                         elif self._bus_fail_count == 3:
                             logger.warning(

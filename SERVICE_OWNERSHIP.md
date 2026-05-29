@@ -34,6 +34,7 @@ This file outlines every registered service, its source code location, registrat
 | `attention_summarizer` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `audit` | `core/orchestrator/initializers/core_baseline.py` | `core/orchestrator/initializers/core_baseline.py` | boot | `fail-closed` |
 | `aura_kernel` | `core/kernel/kernel_interface.py` | `core/kernel/kernel_interface.py` | boot | `fail-closed` |
+| `aura_protocol_server` | `core/consciousness/aura_protocol.py` | `core/consciousness/aura_protocol.py` | boot | `fail-closed` |
 | `aura_runtime` | `aura_main.py` | `aura_main.py` | optional features | `degrade_with_receipt` |
 | `aura_workspace` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `authority_gateway` | `core/executive/authority_gateway.py` | `core/executive/authority_gateway.py` | optional features | `degrade_with_receipt` |
