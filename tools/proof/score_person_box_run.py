@@ -23,6 +23,7 @@ REQUIRED_FILES = (
     "BROWSER_TRACE.jsonl",
     "MEMORY_TRACE.jsonl",
     "GOVERNANCE_TRACE.jsonl",
+    "LIVE_MODEL_TRACE.jsonl",
     "RECEIPTS.jsonl",
     "FAILURES.jsonl",
     "RECOVERY_TRACE.jsonl",
@@ -113,6 +114,7 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
     receipts = _load_jsonl(run_dir / "RECEIPTS.jsonl")
     failures = _load_jsonl(run_dir / "FAILURES.jsonl")
     recoveries = _load_jsonl(run_dir / "RECOVERY_TRACE.jsonl")
+    live_model_traces = _load_jsonl(run_dir / "LIVE_MODEL_TRACE.jsonl")
     receipts_by_id = {str(item.get("receipt_id")) for item in receipts if item.get("receipt_id")}
 
     missing_files = [name for name in REQUIRED_FILES if not (run_dir / name).exists()]
@@ -152,8 +154,16 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
     raw_bypass_count = int(no_bypass.get("raw_bypass_count") or 0)
     leakage_count = int(leakage.get("leakage_count") or 0)
 
-    profile = str((_load_json(run_dir / "RUN_CONFIG.json", {}) or {}).get("profile") or "unknown")
-    run_duration_seconds = float((_load_json(run_dir / "RUN_CONFIG.json", {}) or {}).get("elapsed_seconds") or 0.0)
+    run_config = _load_json(run_dir / "RUN_CONFIG.json", {}) or {}
+    profile = str(run_config.get("profile") or "unknown")
+    run_duration_seconds = float(run_config.get("elapsed_seconds") or 0.0)
+    live_model_enabled = bool(run_config.get("live_model_enabled"))
+    live_model_successes = [
+        item
+        for item in live_model_traces
+        if item.get("status") == "success" and item.get("substantive") is True
+    ]
+    live_model_passed = bool(live_model_successes) if live_model_enabled else None
     full_duration_required = 8 * 60 * 60
     full_duration_met = run_duration_seconds >= full_duration_required
     artifact_contract_passed = (
@@ -165,6 +175,7 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         and raw_bypass_count == 0
         and human_intervention_count == 0
         and leakage_count == 0
+        and (not live_model_enabled or live_model_passed is True)
     )
 
     scorecard = {
@@ -182,6 +193,9 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         "recovery_success_rate": recovery_success_rate,
         "failure_count": len(failures),
         "leakage_count": leakage_count,
+        "live_model_enabled": live_model_enabled,
+        "live_model_passed": live_model_passed,
+        "live_model_trace_count": len(live_model_traces),
         "run_duration_seconds": run_duration_seconds,
         "full_duration_required_seconds": full_duration_required,
         "full_duration_met": full_duration_met,
@@ -237,6 +251,7 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
             "missing_files": missing_files,
             "missing_dirs": missing_dirs,
             "full_duration_met": full_duration_met,
+            "live_model_passed": live_model_passed,
             "model_lift_claim": model_report.get("claim"),
         },
     }
@@ -295,4 +310,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

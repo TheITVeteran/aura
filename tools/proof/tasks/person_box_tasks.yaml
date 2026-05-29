@@ -25,6 +25,13 @@ tasks:
     proof_dimensions: [tool_registry, tool_body]
     required_for_full_claim: true
 
+  - id: live_model_operator_probe
+    category: live_model
+    handler: live_model_operator_probe
+    objective: Boot Aura through the canonical launch runtime and send an operator task through the live model path.
+    proof_dimensions: [live_model, canonical_runtime, launch_model_lane]
+    required_for_full_claim: true
+
   - id: terminal_code_repair
     category: software_work
     handler: terminal_code_repair
@@ -108,4 +115,3 @@ tasks:
     objective: Produce a complete reproducible proof bundle with hashes, receipts, traces, and verdict.
     proof_dimensions: [manifest, final_verdict, receipts]
     required_for_full_claim: true
-

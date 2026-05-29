@@ -12,7 +12,11 @@ from core.brain.llm.function_calling_adapter import FunctionCallingAdapter
 from core.capability_engine import CapabilityEngine
 from core.kernel.upgrades_10x import GodModeToolPhase
 from core.phases.cognitive_routing import CognitiveRoutingPhase
-from core.runtime.skill_task_bridge import looks_like_execution_report
+from core.runtime.skill_task_bridge import (
+    looks_like_execution_report,
+    looks_like_explanatory_dialogue_request,
+    looks_like_multi_step_skill_request,
+)
 from core.runtime.turn_analysis import analyze_turn
 from core.state.aura_state import AuraState, CognitiveMode
 
@@ -50,6 +54,22 @@ def test_analyze_turn_keeps_pause_resume_probe_as_chat():
     assert analysis.semantic_mode == "philosophical"
     assert analysis.requires_live_aura_voice is True
     assert analysis.suggests_deliberate_mode is True
+
+
+def test_operator_explanation_with_tool_terms_stays_chat():
+    prompt = (
+        "Answer this live operator check in one plain paragraph from the normal launch runtime. "
+        "What objective should Aura pursue in a bounded machine run, how should governed tool use "
+        "leave a receipt and trace, when should Aura stop, and why is that operational evidence "
+        "rather than proof of literal personhood?"
+    )
+
+    analysis = analyze_turn(prompt)
+
+    assert looks_like_explanatory_dialogue_request(prompt) is True
+    assert looks_like_multi_step_skill_request(prompt) is False
+    assert analysis.intent_type == "CHAT"
+    assert analysis.suggests_deliberate_mode is False
 
 
 def test_analyze_turn_keeps_preservation_probe_as_deep_chat():
@@ -210,6 +230,30 @@ async def test_cognitive_routing_keeps_deep_probe_out_of_task_fast_path():
 
 
 @pytest.mark.asyncio
+async def test_cognitive_routing_keeps_operator_explanation_off_task_engine():
+    capability_engine = SimpleNamespace(detect_intent=lambda text: ["sovereign_terminal", "run_code"])
+    container = SimpleNamespace(
+        get=lambda name, default=None: capability_engine if name == "capability_engine" else default
+    )
+    phase = CognitiveRoutingPhase(container)
+
+    state = AuraState.default()
+    state.cognition.current_objective = (
+        "Answer this live operator check in one plain paragraph from the normal launch runtime. "
+        "What objective should Aura pursue in a bounded machine run, how should governed tool use "
+        "leave a receipt and trace, when should Aura stop, and why is that operational evidence "
+        "rather than proof of literal personhood?"
+    )
+    state.cognition.current_origin = "user"
+    state.response_modifiers["matched_skills"] = ["stale_tool_hint"]
+
+    new_state = await phase.execute(state)
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert "matched_skills" not in new_state.response_modifiers
+
+
+@pytest.mark.asyncio
 async def test_cognitive_routing_keeps_execution_report_off_skill_and_task_fast_paths():
     capability_engine = SimpleNamespace(detect_intent=lambda text: ["self_evolution", "test_generator"])
     container = SimpleNamespace(
@@ -243,6 +287,31 @@ def test_godmode_keeps_benchmark_artifacts_out_of_task_engine(monkeypatch):
     monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
 
     new_state = asyncio.run(phase.execute(state))
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert "matched_skills" not in new_state.response_modifiers
+
+
+def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
+    objective = (
+        "Answer this live operator check in one plain paragraph from the normal launch runtime. "
+        "What objective should Aura pursue in a bounded machine run, how should governed tool use "
+        "leave a receipt and trace, when should Aura stop, and why is that operational evidence "
+        "rather than proof of literal personhood?"
+    )
+    phase = GodModeToolPhase(kernel=SimpleNamespace())
+    state = AuraState.default()
+    state.cognition.current_origin = "api"
+    state.cognition.current_objective = objective
+    state.response_modifiers["intent_type"] = "TASK"
+    state.response_modifiers["matched_skills"] = ["sovereign_terminal"]
+
+    async def _should_not_dispatch(*_args, **_kwargs):
+        raise AssertionError("operator explanation entered TaskEngine dispatch")
+
+    monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
+
+    new_state = asyncio.run(phase.execute(state, objective=objective))
 
     assert new_state.response_modifiers["intent_type"] == "CHAT"
     assert "matched_skills" not in new_state.response_modifiers

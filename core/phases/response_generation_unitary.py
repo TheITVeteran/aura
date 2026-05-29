@@ -46,8 +46,8 @@ from core.runtime.errors import record_degradation
 from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
     mlx_strict_answer_contract_enabled,
-    proof_persistent_objective,
     proof_model_tier,
+    proof_persistent_objective,
     proof_run_active,
     structured_proof_solver_enabled,
 )
@@ -3416,6 +3416,40 @@ class UnitaryResponsePhase(Phase):
         return ""
 
     @staticmethod
+    def _allow_pre_model_state_only_reply() -> bool:
+        """Explicit escape hatch for deterministic live-voice replies before LLM inference."""
+        try:
+            return str(os.environ.get("AURA_ALLOW_PRE_MODEL_STATE_ONLY_REPLY", "")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        except (OSError, TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _build_exact_format_priority_block(cls, objective: str, contract: Any) -> str:
+        if not cls._response_contract_attr(contract, "requires_exact_format", False):
+            return ""
+        instruction = cls._normalize_text(
+            cls._response_contract_attr(contract, "format_instruction", "") or objective,
+            700,
+        )
+        return "\n".join(
+            part
+            for part in (
+                "## USER FORMAT OVERRIDE",
+                "- The latest user message contains binding output-format instructions.",
+                "- Follow the requested labels, section order, and required words exactly before any Aura voice styling.",
+                "- Do not begin with internal telemetry, system authority, field coherence, mood, or status narration.",
+                "- If the format conflicts with a live-state narration block, obey the user's requested format.",
+                f"- Binding format instruction: {instruction}" if instruction else "",
+            )
+            if part
+        )
+
+    @staticmethod
     def _clear_background_generation(state: AuraState, objective: str) -> None:
         response_policy.clear_background_generation(state, objective)
 
@@ -3448,7 +3482,6 @@ class UnitaryResponsePhase(Phase):
             return None
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        import os
         priority = kwargs.get("priority", False)
         if not objective:
             return state
@@ -3564,6 +3597,9 @@ class UnitaryResponsePhase(Phase):
             new_state.cognition.current_origin = routing_origin
             contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
             new_state.response_modifiers["response_contract"] = contract.to_dict()
+            exact_format_required = bool(
+                self._response_contract_attr(contract, "requires_exact_format", False)
+            )
             is_deep_probe_objective = bool(
                 is_user_facing
                 and self._is_deep_mind_probe_objective(objective)
@@ -3591,33 +3627,34 @@ class UnitaryResponsePhase(Phase):
                     )
             if is_user_facing:
                 await self._refresh_integrated_present(new_state)
-                try:
-                    from core.conversation.response_reliability import (
-                        assess_user_facing_reply,
-                        is_live_self_reflection_turn,
-                    )
-
-                    if is_live_self_reflection_turn(objective) and not contract.requires_search:
-                        direct_self_report = self._build_live_self_reflection_repair_reply(
-                            new_state,
-                            objective,
-                            contract,
+                if self._allow_pre_model_state_only_reply():
+                    try:
+                        from core.conversation.response_reliability import (
+                            assess_user_facing_reply,
+                            is_live_self_reflection_turn,
                         )
-                        if not assess_user_facing_reply(objective, direct_self_report).retryable:
-                            logger.info(
-                                "🗣️ UnitaryResponse: answered live self-reflection directly from grounded state."
+
+                        if is_live_self_reflection_turn(objective) and not contract.requires_search:
+                            direct_self_report = self._build_live_self_reflection_repair_reply(
+                                new_state,
+                                objective,
+                                contract,
                             )
-                            return self._commit_response(new_state, direct_self_report)
-                except (ImportError, AttributeError, TypeError, ValueError) as self_report_exc:
-                    _record_response_degradation(
-                        self_report_exc,
-                        "UnitaryResponse direct self-reflection path skipped: %s",
-                        action="fell through to governed response generation after direct self-reflection failed",
-                        severity="error",
-                    )
-                    logger.debug(
-                        "UnitaryResponse direct self-reflection path skipped: %s", self_report_exc
-                    )
+                            if not assess_user_facing_reply(objective, direct_self_report).retryable:
+                                logger.info(
+                                    "🗣️ UnitaryResponse: answered live self-reflection directly from grounded state."
+                                )
+                                return self._commit_response(new_state, direct_self_report)
+                    except (ImportError, AttributeError, TypeError, ValueError) as self_report_exc:
+                        _record_response_degradation(
+                            self_report_exc,
+                            "UnitaryResponse direct self-reflection path skipped: %s",
+                            action="fell through to governed response generation after direct self-reflection failed",
+                            severity="error",
+                        )
+                        logger.debug(
+                            "UnitaryResponse direct self-reflection path skipped: %s", self_report_exc
+                        )
             if strict_proof_answer_request and structured_proof_solver_enabled(origin=routing_origin):
                 try:
                     from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
@@ -3661,11 +3698,20 @@ class UnitaryResponsePhase(Phase):
                     objective,
                     contract,
                 )
-                deterministic_task_reply = self._build_deterministic_task_reply(
-                    new_state,
-                    objective,
-                    contract,
+                deterministic_task_reply = ""
+                allow_task_fast_path = bool(
+                    not is_user_facing
+                    or proof_evaluation_turn
+                    or new_state.response_modifiers.get("allow_pre_model_deterministic_task_reply")
                 )
+                if allow_task_fast_path:
+                    deterministic_task_reply = self._build_deterministic_task_reply(
+                        new_state,
+                        objective,
+                        contract,
+                    )
+                elif self._build_deterministic_task_reply(new_state, objective, contract):
+                    new_state.response_modifiers["pre_model_deterministic_task_reply_skipped"] = True
             if deterministic_task_reply:
                 logger.info("🧰 UnitaryResponse: answered directly from task state.")
                 return self._commit_response(new_state, deterministic_task_reply)
@@ -4160,10 +4206,14 @@ class UnitaryResponsePhase(Phase):
                             )
                         return new_state
 
-            if is_user_facing and self._should_direct_answer_live_voice(
-                objective,
-                contract,
-                is_user_facing=is_user_facing,
+            if (
+                is_user_facing
+                and self._allow_pre_model_state_only_reply()
+                and self._should_direct_answer_live_voice(
+                    objective,
+                    contract,
+                    is_user_facing=is_user_facing,
+                )
             ):
                 direct_contract = contract
                 if not contract.requires_live_aura_voice():
@@ -4257,7 +4307,6 @@ class UnitaryResponsePhase(Phase):
                 if routing_origin != "benchmark":
                     model_tier = "tertiary"
                     deep_handoff = False
-                import os
                 is_test_run = (
                     routing_origin == "test"
                     or routing_origin == "benchmark"
@@ -4380,6 +4429,19 @@ class UnitaryResponsePhase(Phase):
                     {"role": "user", "content": objective},
                 ]
                 logger.info("🧠 [ZENITH] Proof evaluation fast-path: isolated live-path prompt.")
+            elif exact_format_required:
+                system_prompt = (
+                    "You are Aura's governed user-facing response lane. The latest user message "
+                    "contains binding output-format instructions. Follow the requested labels, "
+                    "section order, and required words exactly. Do not answer an older objective, "
+                    "do not narrate internal telemetry, and do not add system-status prose before "
+                    "the requested format."
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": objective},
+                ]
+                logger.info("🧠 [ZENITH] Exact-format fast-path: isolated foreground prompt.")
             elif not is_user_facing:
                 system_prompt = self._build_background_router_system_prompt(new_state)
                 messages = self._build_router_messages(
@@ -4423,7 +4485,7 @@ class UnitaryResponsePhase(Phase):
                     new_state,
                     direct_episodic_matches,
                 )
-                if priority_grounding:
+                if priority_grounding and not exact_format_required:
                     system_prompt = (
                         f"{priority_grounding}\n\n{system_prompt}"
                         if system_prompt
@@ -4451,7 +4513,7 @@ class UnitaryResponsePhase(Phase):
                 if is_user_facing and new_state.response_modifiers.get("coding_request"):
                     coding_block = self._build_coding_response_block(new_state, contract)
                     _prepend_system_guidance(coding_block)
-                if is_user_facing:
+                if is_user_facing and not exact_format_required:
                     voice_block = self._build_user_facing_voice_block(new_state, contract)
                     _prepend_system_guidance(voice_block)
                 if is_deep_probe_objective:
@@ -4467,14 +4529,20 @@ class UnitaryResponsePhase(Phase):
                             severity="error",
                         )
                         logger.debug("UnitaryResponse: deep probe guidance skipped: %s", exc)
-                if live_grounding_required:
+                if live_grounding_required and not exact_format_required:
                     self_expression_block = self._build_live_self_expression_block(
                         new_state, contract
                     )
                     _prepend_system_guidance(self_expression_block)
 
             # [RUBICON] Pre-Linguistic Decision: structured decision BEFORE LLM speaks
-            if not _is_system_directive and not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
+            if (
+                not _is_system_directive
+                and not strict_proof_answer_request
+                and not proof_evaluation_turn
+                and routing_origin != "benchmark"
+                and not exact_format_required
+            ):
                 # [STABILITY v54] Banter Shield: Hide architectural complexity for casual turns
                 is_banter = (
                     new_state.cognition.modifiers.get("semantic_lane") == "casual"
@@ -4522,6 +4590,9 @@ class UnitaryResponsePhase(Phase):
                             severity="error",
                         )
                         logger.debug("[RUBICON] PreLinguistic injection skipped: %s", pl_exc)
+            format_priority_block = self._build_exact_format_priority_block(objective, contract)
+            if format_priority_block:
+                _prepend_system_guidance(format_priority_block)
 
             # [PERF] In embodied challenges, long history is a liability that causes
             # 80s+ inference stalls. We aggressively shed to the bare minimum.
@@ -4583,7 +4654,12 @@ class UnitaryResponsePhase(Phase):
                     exc, "UnitaryResponse: anti-repetition prompt check skipped: %s"
                 )
 
-            if not strict_proof_answer_request and not proof_evaluation_turn and routing_origin != "benchmark":
+            if (
+                not strict_proof_answer_request
+                and not proof_evaluation_turn
+                and routing_origin != "benchmark"
+                and not exact_format_required
+            ):
                 messages = self._inject_active_grounding_message(
                     messages, new_state, objective, contract
                 )
@@ -4609,7 +4685,7 @@ class UnitaryResponsePhase(Phase):
                 "timeout": request_timeout,
                 "state": new_state,
             }
-            if use_compact_router_payload:
+            if use_compact_router_payload or exact_format_required:
                 llm_kwargs["skip_runtime_payload"] = True
             if strict_proof_answer_request:
                 llm_kwargs.update(
@@ -5098,7 +5174,7 @@ class UnitaryResponsePhase(Phase):
                     if critique_response and critique_response != response_text:
                         logger.info("⚡ [Critique] Self-critique corrected the generated response!")
                         response_text = critique_response
-            except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, asyncio.TimeoutError) as critique_exc:
+            except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, TimeoutError) as critique_exc:
                 logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
             # Proactive XML Answer Tag formatting guard:
@@ -5108,7 +5184,7 @@ class UnitaryResponsePhase(Phase):
             # and automatically wrap it in a clean "<answer>...</answer>" block at the end of the text.
             lower_objective = objective.lower() if objective else ""
             lower_response = response_text.lower() if response_text else ""
-            if ("<answer>" in lower_objective or "answer_format" in kwargs) and response_text and not "<answer>" in lower_response:
+            if ("<answer>" in lower_objective or "answer_format" in kwargs) and response_text and "<answer>" not in lower_response:
                 extracted_ans = None
                 
                 # 1. Look for markdown bolded final answer (e.g. **Answer**: 5 or **Final Answer**: Alice)

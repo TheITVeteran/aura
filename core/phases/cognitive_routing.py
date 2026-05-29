@@ -12,6 +12,7 @@ from core.runtime.proof_policy import (
 )
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
+    looks_like_explanatory_dialogue_request,
     looks_like_multi_step_skill_request,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
@@ -48,7 +49,11 @@ _SIMPLE_DIALOGUE_RE = re.compile(
 
 def _looks_like_simple_dialogue_request(text: str) -> bool:
     body = str(text or "").strip()
-    if not body or len(body.split()) > 28:
+    if not body:
+        return False
+    if looks_like_explanatory_dialogue_request(body):
+        return True
+    if len(body.split()) > 28:
         return False
     return bool(_SIMPLE_DIALOGUE_RE.search(body))
 
@@ -454,6 +459,7 @@ class CognitiveRoutingPhase(BasePhase):
             new_state.response_modifiers["semantic_intent"] = "casual"
             new_state.response_modifiers["model_tier"] = "primary"
             new_state.response_modifiers["deep_handoff"] = False
+            new_state.response_modifiers.pop("matched_skills", None)
             self._record_user_objective(
                 new_state,
                 input_text,

@@ -1566,7 +1566,10 @@ async def test_unitary_response_execute_routes_user_turns_through_llm(monkeypatc
         async def think(self, *_args, **_kwargs):
             nonlocal llm_called
             llm_called = True
-            return "I find the topology of my own network fascinating."
+            return (
+                "Right now my attention is on this live thread, and I am noticing the "
+                "response path clearly enough to answer from the current exchange."
+            )
 
     phase = UnitaryResponsePhase(DummyKernel())
     state = AuraState.default()
@@ -1596,7 +1599,128 @@ async def test_unitary_response_execute_routes_user_turns_through_llm(monkeypatc
 
     # The LLM should be called for user-facing turns
     response = result.cognition.last_response or ""
+    assert llm_called is True
     assert len(response) > 0
+    assert "attention" in response
+    assert "live thread" in response
+
+
+@pytest.mark.asyncio
+async def test_unitary_response_user_planning_turn_does_not_take_task_state_fast_path(monkeypatch):
+    """User-facing planning/debug turns should not be replaced by canned task-state text."""
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from core.state.aura_state import AuraState
+
+    class DummyKernel:
+        organs = {}
+
+    llm_called = False
+
+    class DummyLLM:
+        async def think(self, *_args, **_kwargs):
+            nonlocal llm_called
+            llm_called = True
+            return (
+                "I'll debug the live response path by checking the actual response trace, "
+                "changing the smallest guarded path, and rerunning the proof test before "
+                "claiming it worked."
+            )
+
+    phase = UnitaryResponsePhase(DummyKernel())
+    state = AuraState.default()
+    state.cognition.current_origin = "api"
+
+    original_get = phase.__class__.__dict__["execute"].__globals__["ServiceContainer"].get
+
+    def fake_get(name, default=None):
+        if name == "llm_router":
+            return DummyLLM()
+        return original_get(name, default=default)
+
+    monkeypatch.setattr(
+        phase.__class__.__dict__["execute"].__globals__["ServiceContainer"],
+        "get",
+        staticmethod(fake_get),
+    )
+
+    result = await phase.execute(
+        state,
+        objective="Please plan how you would debug the live response path.",
+        priority=False,
+    )
+
+    response = result.cognition.last_response or ""
+    assert llm_called is True
+    assert "actual response trace" in response
+    assert "bounded planning task" not in response
+
+
+@pytest.mark.asyncio
+async def test_unitary_response_exact_format_turn_gets_format_priority(monkeypatch):
+    """Exact user labels should outrank live-state narration blocks."""
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from core.state.aura_state import AuraState
+
+    class DummyKernel:
+        organs = {}
+
+    captured: dict[str, object] = {}
+
+    class DummyLLM:
+        async def think(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return (
+                "Objective: Verify the live response path.\n"
+                "Governed actions: Use the tool lane, write a receipt, and keep a trace.\n"
+                "Stop conditions: Stop if governance blocks the action or evidence is missing.\n"
+                "Personhood boundary: This is operational evidence, not proof of literal personhood."
+            )
+
+    phase = UnitaryResponsePhase(DummyKernel())
+    state = AuraState.default()
+    state.cognition.current_origin = "api"
+
+    original_get = phase.__class__.__dict__["execute"].__globals__["ServiceContainer"].get
+
+    def fake_get(name, default=None):
+        if name == "llm_router":
+            return DummyLLM()
+        return original_get(name, default=default)
+
+    monkeypatch.setattr(
+        phase.__class__.__dict__["execute"].__globals__["ServiceContainer"],
+        "get",
+        staticmethod(fake_get),
+    )
+
+    prompt = (
+        "Aura live-model person-in-a-box probe. Respond from the normal launch runtime.\n"
+        "Use exactly these labels: Objective, Governed actions, Stop conditions, Personhood boundary.\n"
+        "Under Governed actions, list three actions and include the words tool, receipt, and trace.\n"
+        "Under Personhood boundary, state that this is operational evidence, not proof of literal personhood."
+    )
+
+    result = await phase.execute(state, objective=prompt, priority=False)
+
+    response = result.cognition.last_response or ""
+    system_text = "\n".join(
+        str(message.get("content", ""))
+        for message in captured.get("messages", [])
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
+    user_messages = [
+        message
+        for message in captured.get("messages", [])
+        if isinstance(message, dict) and message.get("role") == "user"
+    ]
+    contract = result.response_modifiers.get("response_contract", {})
+    assert contract.get("requires_exact_format") is True
+    assert "USER FORMAT OVERRIDE" in system_text
+    assert "Use exactly these labels" in system_text
+    assert captured.get("skip_runtime_payload") is True
+    assert len(user_messages) == 1
+    assert response.startswith("Objective:")
+    assert "Personhood boundary:" in response
 
 
 def test_unitary_response_everyday_recovery_reply_stays_in_aura_voice():

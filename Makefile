@@ -143,15 +143,21 @@ person-box-proof:
 	SOAK_INTERVAL="$${AURA_PERSON_BOX_SOAK_INTERVAL_SECONDS:-300}"; \
 	NETWORK_FLAG=""; \
 	CONTAINER_FLAG=""; \
+	LIVE_MODEL_FLAG=""; \
 	if [ "$${AURA_PERSON_BOX_NETWORK:-1}" = "1" ]; then NETWORK_FLAG="--network"; fi; \
 	if [ "$${AURA_PERSON_BOX_REQUIRE_CONTAINER:-0}" = "1" ]; then CONTAINER_FLAG="--require-container"; fi; \
+	if [ "$${AURA_PERSON_BOX_LIVE_MODEL:-1}" = "1" ]; then LIVE_MODEL_FLAG="--live-model"; fi; \
 	$(PYTHON) tools/proof/run_person_in_box_gauntlet.py \
 	  --profile "$$PROFILE" \
 	  --out "$$OUT" \
 	  --max-seconds "$$MAX_SECONDS" \
 	  --soak-interval-seconds "$$SOAK_INTERVAL" \
+	  --runtime-profile "$${AURA_PERSON_BOX_RUNTIME_PROFILE:-desktop}" \
+	  --live-origin "$${AURA_PERSON_BOX_LIVE_ORIGIN:-api}" \
+	  --live-timeout-seconds "$${AURA_PERSON_BOX_LIVE_TIMEOUT_SECONDS:-240}" \
 	  $$NETWORK_FLAG \
-	  $$CONTAINER_FLAG; \
+	  $$CONTAINER_FLAG \
+	  $$LIVE_MODEL_FLAG; \
 	$(PYTHON) tools/proof/score_person_box_run.py "$$OUT"; \
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest tests/proof/test_person_box_artifacts.py -q
 	@echo "✅ Person-in-a-box proof artifacts written to $${AURA_PERSON_BOX_OUT:-artifacts/current/person_box_proof}"

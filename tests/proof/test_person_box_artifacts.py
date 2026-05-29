@@ -44,6 +44,7 @@ def test_person_box_gauntlet_smoke_artifacts(tmp_path):
         "BROWSER_TRACE.jsonl",
         "MEMORY_TRACE.jsonl",
         "GOVERNANCE_TRACE.jsonl",
+        "LIVE_MODEL_TRACE.jsonl",
         "RECEIPTS.jsonl",
         "FAILURES.jsonl",
         "RECOVERY_TRACE.jsonl",
@@ -110,4 +111,3 @@ def test_model_bottleneck_report_withholds_missing_raw_model_claim(tmp_path):
     assert report["raw_llm_success"] is None
     assert report["runtime_lift_over_raw_model"] is None
     assert report["claim"] == "runtime_lift_not_established_without_live_raw_model_comparison"
-

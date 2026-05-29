@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from core.utils.intent_normalization import normalize_memory_intent_text
-
 
 _ACTION_VERBS = (
     "open",
@@ -122,9 +121,25 @@ _REPORTBACK_VERB_RE = re.compile(
 )
 
 _FIRST_PERSON_REPORT_RE = re.compile(r"\b(?:i|we)\b", re.IGNORECASE)
+_DIRECT_EXECUTION_PREFIX_RE = re.compile(
+    r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|i need you to\s+|"
+    r"help me\s+|go\s+)?(?:open|launch|run|execute|click|tap|press|type|"
+    r"search|look up|read|inspect|download|save|fix|implement|create|build|"
+    r"set up|automate|organize)\b",
+    re.IGNORECASE,
+)
+_EXPLANATORY_PREFIX_RE = re.compile(
+    r"^\s*(?:answer|explain|describe|tell me|walk me through|give me your take)\b",
+    re.IGNORECASE,
+)
+_QUESTION_WORD_RE = re.compile(r"\b(?:what|why|how|when|where|which)\b", re.IGNORECASE)
+_CONCEPTUAL_SHOULD_RE = re.compile(
+    r"\b(?:what|why|how|when)\s+(?:should|would|is|are|do|does|can|could)\b",
+    re.IGNORECASE,
+)
 
 
-def normalize_matched_skills(matched_skills: object) -> List[str]:
+def normalize_matched_skills(matched_skills: object) -> list[str]:
     if matched_skills is True:
         return ["*"]
     if not matched_skills:
@@ -132,7 +147,7 @@ def normalize_matched_skills(matched_skills: object) -> List[str]:
     if isinstance(matched_skills, str):
         return [matched_skills]
     if isinstance(matched_skills, Iterable):
-        normalized: List[str] = []
+        normalized: list[str] = []
         for item in matched_skills:
             text = str(item or "").strip()
             if text:
@@ -160,6 +175,35 @@ def looks_like_execution_report(text: str) -> bool:
     return False
 
 
+def looks_like_explanatory_dialogue_request(text: str) -> bool:
+    """Return true for questions about how an action should work, not a request to do it.
+
+    Tool-heavy explanations often contain words like "run", "launch", "tool",
+    "report", and "trace". Those are evidence terms in a question, not always
+    an instruction to enter the AutonomousTaskEngine. Direct imperatives still
+    route to SKILL/TASK.
+    """
+    normalized = normalize_memory_intent_text(text)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    has_question_shape = "?" in lowered or _EXPLANATORY_PREFIX_RE.search(lowered)
+    if not has_question_shape:
+        return False
+    if _DIRECT_EXECUTION_PREFIX_RE.search(lowered) and not _EXPLANATORY_PREFIX_RE.search(lowered):
+        return False
+    if _CONCEPTUAL_SHOULD_RE.search(lowered):
+        return True
+    if _EXPLANATORY_PREFIX_RE.search(lowered) and _QUESTION_WORD_RE.search(lowered):
+        return True
+    if (
+        "operational evidence" in lowered
+        and any(term in lowered for term in ("personhood", "consciousness", "proof"))
+    ):
+        return True
+    return False
+
+
 def looks_like_multi_step_skill_request(
     text: str,
     matched_skills: object = None,
@@ -168,6 +212,8 @@ def looks_like_multi_step_skill_request(
     if not normalized:
         return False
     if looks_like_execution_report(normalized):
+        return False
+    if looks_like_explanatory_dialogue_request(normalized):
         return False
 
     lowered = normalized.lower()

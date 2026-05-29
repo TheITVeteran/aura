@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
-import re
-from typing import Any, Dict
+from typing import Any
 
 from core.runtime.structured_input import analyze_prompt_shape, looks_like_learning_resource_bundle
 from core.state.aura_state import AuraState
@@ -390,6 +390,8 @@ class ResponseContract:
     requires_search: bool = False
     required_skill: str | None = None
     requires_exact_dates: bool = False
+    requires_exact_format: bool = False
+    format_instruction: str = ""
     requires_memory_grounding: bool = False
     requires_biographical_grounding: bool = False
     requires_state_reflection: bool = False
@@ -439,7 +441,7 @@ class ResponseContract:
             )
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_prompt_block(self) -> str:
@@ -475,6 +477,13 @@ class ResponseContract:
             directives.append(
                 "- If the user says today, tomorrow, yesterday, latest, current, or recent, anchor the answer with exact dates."
             )
+
+        if self.requires_exact_format:
+            directives.append(
+                "- The user requested an exact output format. Follow the requested labels, sections, ordering, and required words before any voice, style, or internal-state narration."
+            )
+            if self.format_instruction:
+                directives.append(f"- Exact format instruction: {self.format_instruction[:600]}")
 
         if self.requires_memory_grounding:
             directives.append(
@@ -606,6 +615,34 @@ def _matches_any(text: str, patterns: tuple[re.Pattern, ...] | tuple[str, ...]) 
             if re.search(pattern, normalized_text, re.IGNORECASE):
                 return True
     return False
+
+
+def _extract_exact_format_instruction(text: str) -> str:
+    raw = re.sub(r"\s+", " ", str(text or "").strip())
+    if not raw:
+        return ""
+    lower = raw.lower()
+    format_markers = (
+        "use exactly these labels",
+        "use these labels",
+        "exactly these labels",
+        "respond in this format",
+        "answer in this format",
+        "return in this format",
+        "format your response",
+        "format the response",
+        "use this format",
+    )
+    marker_index = -1
+    for marker in format_markers:
+        idx = lower.find(marker)
+        if idx >= 0 and (marker_index < 0 or idx < marker_index):
+            marker_index = idx
+    if marker_index < 0:
+        if not re.search(r"\b(?:include|use|with)\b.{0,80}\blabels?\b", lower):
+            return ""
+        marker_index = max(0, lower.find("label"))
+    return raw[marker_index : marker_index + 600].strip()
 
 
 def _looks_like_search_capability_question(text: str) -> bool:
@@ -835,6 +872,8 @@ def build_response_contract(
     prompt_shape = analyze_prompt_shape(text)
     is_embodied_control = "[embodied control contract]" in lower
     is_learning_bundle = looks_like_learning_resource_bundle(text)
+    exact_format_instruction = _extract_exact_format_instruction(text) if is_user_facing else ""
+    requires_exact_format = bool(exact_format_instruction)
 
     explicit_search = _matches_any(lower, _EXPLICIT_SEARCH_PATTERNS)
     factual_lookup = _matches_any(lower, _FACTUAL_LOOKUP_PATTERNS)
@@ -993,12 +1032,16 @@ def build_response_contract(
         reasons.append("invited_aura_questions")
     if prompt_shape.question_parts >= 2:
         reasons.append("compound_prompt")
+    if requires_exact_format:
+        reasons.append("exact_format")
 
     return ResponseContract(
         is_user_facing=is_user_facing,
         requires_search=requires_search,
         required_skill="web_search" if requires_search else None,
         requires_exact_dates=requires_exact_dates,
+        requires_exact_format=requires_exact_format,
+        format_instruction=exact_format_instruction,
         requires_memory_grounding=requires_memory,
         requires_biographical_grounding=biographical_grounding,
         requires_state_reflection=requires_state,

@@ -10,6 +10,7 @@ from core.phases.response_contract import build_response_contract
 from core.runtime.errors import record_degradation
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
+    looks_like_explanatory_dialogue_request,
     looks_like_multi_step_skill_request,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
@@ -129,7 +130,11 @@ _SIMPLE_DIALOGUE_RE = re.compile(
 
 def _looks_like_simple_dialogue_request(text: str) -> bool:
     body = str(text or "").strip()
-    if not body or len(body.split()) > 28:
+    if not body:
+        return False
+    if looks_like_explanatory_dialogue_request(body):
+        return True
+    if len(body.split()) > 28:
         return False
     return bool(_SIMPLE_DIALOGUE_RE.search(body))
 
@@ -388,6 +393,8 @@ class CognitiveRoutingPhase(Phase):
                 route_meta=metadata,
             )
         state.response_modifiers["intent_type"] = intent_type
+        if intent_type == "CHAT":
+            state.response_modifiers.pop("matched_skills", None)
         state.response_modifiers["model_tier"] = model_tier
         state.response_modifiers["deep_handoff"] = deep_handoff
         state.response_modifiers["coding_request"] = bool(metadata.get("coding_request"))

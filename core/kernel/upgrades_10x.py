@@ -18,6 +18,7 @@ from core.phases.response_contract import (
 from core.runtime.background_policy import background_activity_allowed
 from core.runtime.errors import record_degradation
 from core.runtime.skill_task_bridge import (
+    looks_like_explanatory_dialogue_request,
     looks_like_multi_step_skill_request,
     normalize_matched_skills,
 )
@@ -67,7 +68,11 @@ _SIMPLE_DIALOGUE_RE = re.compile(
 
 def _looks_like_simple_dialogue_request(text: str) -> bool:
     body = str(text or "").strip()
-    if not body or len(body.split()) > 28:
+    if not body:
+        return False
+    if looks_like_explanatory_dialogue_request(body):
+        return True
+    if len(body.split()) > 28:
         return False
     return bool(_SIMPLE_DIALOGUE_RE.search(body))
 

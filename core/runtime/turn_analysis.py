@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
+    looks_like_explanatory_dialogue_request,
     looks_like_multi_step_skill_request,
     normalize_matched_skills,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.utils.intent_normalization import normalize_memory_intent_text
-
 
 _CLASSIFIER_INPUT = re.compile(
     r"\binput:\s*(.+?)(?:\n\s*(?:classification|respond only|output only)\b|\Z)",
@@ -268,6 +268,8 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
     elif is_execution_report:
         intent_type = "CHAT"
     elif word_count <= 18 and _matches_any(lower, _SIMPLE_DIALOGUE_PATTERNS):
+        intent_type = "CHAT"
+    elif looks_like_explanatory_dialogue_request(normalized):
         intent_type = "CHAT"
     elif looks_like_multi_step_skill_request(normalized, matched_skill_list):
         intent_type = "TASK"
