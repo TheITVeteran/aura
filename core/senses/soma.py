@@ -11,10 +11,12 @@ import logging
 import psutil
 import time
 import os
-import subprocess
+from pathlib import Path
+from subprocess import SubprocessError
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from core.container import ServiceContainer
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.Senses.Soma")
 
@@ -90,23 +92,23 @@ class Soma:
                         self.state.visceral_pressure = 0.0
                     self._last_disk_io = disk_io
                     self._last_disk_time = now_time
-                except Exception as io_err:
+                except (RuntimeError, OSError, AttributeError, TypeError, ValueError) as io_err:
                     logger.debug("Disk IO counters read failed: %s", io_err)
                     self.state.visceral_pressure = 0.0
 
                 # Genetic Evolution Generation (Git commits)
                 try:
-                    repo_dir = "/Users/bryan/.aura/live-source"
-                    res = subprocess.run(
+                    repo_dir = Path(os.getenv("AURA_ROOT") or Path(__file__).resolve().parents[2])
+                    res = get_subprocess_gateway().run(
                         ["git", "rev-list", "--count", "HEAD"],
-                        cwd=repo_dir,
-                        capture_output=True,
-                        text=True,
-                        timeout=3.0
+                        cwd=str(repo_dir),
+                        timeout=3.0,
+                        read_only=True,
+                        source="soma_git_generation",
                     )
                     if res.returncode == 0:
                         self.state.genetic_evolution_generation = int(res.stdout.strip())
-                except Exception as git_err:
+                except (SubprocessError, OSError, ValueError) as git_err:
                     logger.debug("Git commit count query failed: %s", git_err)
 
                 battery = psutil.sensors_battery()

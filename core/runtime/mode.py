@@ -1,7 +1,7 @@
 """core/runtime/mode.py -- Canonical Runtime Mode Enforcement
 ================================================================
 
-Aura supports exactly five runtime modes. Production mode is the default.
+Aura supports exactly five strict runtime modes, plus backward compatibility for research/safe.
 Every module that needs to check "am I in production?" or "is research enabled?"
 must use these helpers. No ad-hoc os.environ checks.
 
@@ -9,14 +9,14 @@ Modes:
     production  — Default. Research features disabled. Fail-closed. Unsigned
                   skills do not load. Self-modification disabled. Cloud fallback
                   requires explicit opt-in.
-    research    — Research features enabled. Self-repair allowed (sandboxed).
-                  Experimental subsystems active. Must be explicitly set.
+    live        — Strictly live mode. No simulation or mocking. Fail-closed.
+    simulated   — Sandboxed environment for testing. No real side effects.
+                  All tool calls are mocked.
+    test        — Sandboxed environment specifically for pytest and unit tests.
     dev         — Full access. Self-modification allowed (sandboxed). Debug
-                  endpoints active. Hot-reload enabled. Must be explicitly set.
-    simulation  — Sandboxed environment for testing. No real side effects.
-                  All tool calls are mocked. Must be explicitly set.
+                  endpoints active. Hot-reload enabled.
+    research    — Research features enabled. Self-repair allowed (sandboxed).
     safe        — Emergency lockdown. All autonomous behavior disabled. No tools.
-                  No cloud. No background tasks. Foreground-only chat.
 
 Invariant:
     os.environ["AURA_MODE"] is the single source of truth.
@@ -33,26 +33,155 @@ logger = logging.getLogger("Aura.Runtime.Mode")
 
 
 class AuraMode(StrEnum):
-    """The five canonical runtime modes."""
+    """The canonical runtime modes."""
     PRODUCTION = "production"
-    RESEARCH = "research"
+    LIVE = "live"
+    SIMULATED = "simulated"
+    TEST = "test"
     DEV = "dev"
-    SIMULATION = "simulation"
+    RESEARCH = "research"
     SAFE = "safe"
 
 
 _VALID_MODES = frozenset(m.value for m in AuraMode)
 
-# Modes that allow potentially dangerous features
-_RESEARCH_MODES = frozenset({AuraMode.RESEARCH, AuraMode.DEV})
-_DANGEROUS_MODES = frozenset({AuraMode.DEV})
-_SANDBOXED_MODES = frozenset({AuraMode.SIMULATION})
-_RESTRICTED_MODES = frozenset({AuraMode.SAFE})
+# Mode Manifests defining exact capability sets
+MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
+    AuraMode.PRODUCTION: {
+        "runtime_mode": "production",
+        "llm_backend": "primary_instruct",
+        "tools_live": True,
+        "network_live": True,
+        "filesystem_live": True,
+        "computer_use_live": False,
+        "worlds_simulated": False,
+        "worlds_external": True,
+        "allows_research": False,
+        "allows_self_modification": False,
+        "allows_autonomous": True,
+        "allows_tools": True,
+        "allows_cloud": True,
+        "allows_unsigned_skills": False,
+        "fail_closed_on_degradation": True,
+        "max_autonomy_level": 2,
+    },
+    AuraMode.LIVE: {
+        "runtime_mode": "live",
+        "llm_backend": "primary_instruct",
+        "tools_live": True,
+        "network_live": True,
+        "filesystem_live": True,
+        "computer_use_live": False,
+        "worlds_simulated": False,
+        "worlds_external": True,
+        "allows_research": False,
+        "allows_self_modification": False,
+        "allows_autonomous": True,
+        "allows_tools": True,
+        "allows_cloud": True,
+        "allows_unsigned_skills": False,
+        "fail_closed_on_degradation": True,
+        "max_autonomy_level": 2,
+    },
+    AuraMode.DEV: {
+        "runtime_mode": "dev",
+        "llm_backend": "mlx_client",
+        "tools_live": True,
+        "network_live": True,
+        "filesystem_live": True,
+        "computer_use_live": True,
+        "worlds_simulated": True,
+        "worlds_external": False,
+        "allows_research": True,
+        "allows_self_modification": True,
+        "allows_autonomous": True,
+        "allows_tools": True,
+        "allows_cloud": True,
+        "allows_unsigned_skills": True,
+        "fail_closed_on_degradation": False,
+        "max_autonomy_level": 5,
+    },
+    AuraMode.SIMULATED: {
+        "runtime_mode": "simulated",
+        "llm_backend": "mock_client",
+        "tools_live": False,
+        "network_live": False,
+        "filesystem_live": False,
+        "computer_use_live": False,
+        "worlds_simulated": True,
+        "worlds_external": False,
+        "allows_research": True,
+        "allows_self_modification": False,
+        "allows_autonomous": True,
+        "allows_tools": True,
+        "allows_cloud": False,
+        "allows_unsigned_skills": True,
+        "fail_closed_on_degradation": False,
+        "max_autonomy_level": 3,
+    },
+    AuraMode.TEST: {
+        "runtime_mode": "test",
+        "llm_backend": "mock_client",
+        "tools_live": False,
+        "network_live": False,
+        "filesystem_live": False,
+        "computer_use_live": False,
+        "worlds_simulated": True,
+        "worlds_external": False,
+        "allows_research": True,
+        "allows_self_modification": False,
+        "allows_autonomous": False,
+        "allows_tools": True,
+        "allows_cloud": False,
+        "allows_unsigned_skills": True,
+        "fail_closed_on_degradation": False,
+        "max_autonomy_level": 1,
+    },
+    AuraMode.RESEARCH: {
+        "runtime_mode": "research",
+        "llm_backend": "primary_instruct",
+        "tools_live": True,
+        "network_live": True,
+        "filesystem_live": True,
+        "computer_use_live": False,
+        "worlds_simulated": True,
+        "worlds_external": False,
+        "allows_research": True,
+        "allows_self_modification": False,
+        "allows_autonomous": True,
+        "allows_tools": True,
+        "allows_cloud": True,
+        "allows_unsigned_skills": True,
+        "fail_closed_on_degradation": False,
+        "max_autonomy_level": 4,
+    },
+    AuraMode.SAFE: {
+        "runtime_mode": "safe",
+        "llm_backend": "mock_client",
+        "tools_live": False,
+        "network_live": False,
+        "filesystem_live": False,
+        "computer_use_live": False,
+        "worlds_simulated": True,
+        "worlds_external": False,
+        "allows_research": False,
+        "allows_self_modification": False,
+        "allows_autonomous": False,
+        "allows_tools": False,
+        "allows_cloud": False,
+        "allows_unsigned_skills": False,
+        "fail_closed_on_degradation": True,
+        "max_autonomy_level": 0,
+    },
+}
 
 
 def get_mode() -> AuraMode:
     """Return the current runtime mode. Default is production."""
     raw = os.environ.get("AURA_MODE", "production").strip().lower()
+    # Backward compatibility mappings
+    if raw == "simulation":
+        raw = "simulated"
     if raw not in _VALID_MODES:
         logger.warning(
             "Unknown AURA_MODE=%r; falling back to 'production'. Valid modes: %s",
@@ -63,14 +192,20 @@ def get_mode() -> AuraMode:
     return AuraMode(raw)
 
 
+def get_active_manifest() -> dict[str, Any]:
+    """Return the capability manifest for the current runtime mode."""
+    mode = get_mode()
+    return MODE_MANIFESTS.get(mode, MODE_MANIFESTS[AuraMode.PRODUCTION])
+
+
 def is_production() -> bool:
     """True if running in production mode (default)."""
     return get_mode() == AuraMode.PRODUCTION
 
 
 def is_research() -> bool:
-    """True if running in research mode."""
-    return get_mode() in _RESEARCH_MODES
+    """True if running in research or dev or test mode."""
+    return get_mode() in (AuraMode.RESEARCH, AuraMode.DEV, AuraMode.TEST)
 
 
 def is_dev() -> bool:
@@ -80,7 +215,7 @@ def is_dev() -> bool:
 
 def is_simulation() -> bool:
     """True if running in simulation mode (all side effects mocked)."""
-    return get_mode() == AuraMode.SIMULATION
+    return get_mode() in (AuraMode.SIMULATION, AuraMode.SIMULATED)
 
 
 def is_safe() -> bool:
@@ -90,82 +225,70 @@ def is_safe() -> bool:
 
 def allows_self_modification() -> bool:
     """True if the current mode allows self-modification."""
-    return get_mode() in _DANGEROUS_MODES
+    return get_active_manifest()["allows_self_modification"]
 
 
 def allows_research_features() -> bool:
     """True if the current mode allows research/experimental features."""
-    return get_mode() in _RESEARCH_MODES
+    return get_active_manifest()["allows_research"]
 
 
 def allows_autonomous_behavior() -> bool:
     """True if the current mode allows autonomous background behavior."""
-    return get_mode() not in _RESTRICTED_MODES
+    return get_active_manifest()["allows_autonomous"]
 
 
 def allows_tool_execution() -> bool:
     """True if the current mode allows tool/skill execution."""
-    mode = get_mode()
-    if mode == AuraMode.SAFE:
-        return False
-    return True
+    return get_active_manifest()["allows_tools"]
 
 
 def allows_cloud_fallback() -> bool:
     """True if the current mode allows cloud model fallback."""
-    mode = get_mode()
-    if mode in (AuraMode.SAFE, AuraMode.SIMULATION):
-        return False
-    return True
+    return get_active_manifest()["allows_cloud"]
 
 
 def allows_unsigned_skills() -> bool:
     """True if the current mode allows unsigned/unmanifested skills."""
-    return get_mode() in (AuraMode.DEV, AuraMode.RESEARCH)
+    return get_active_manifest()["allows_unsigned_skills"]
 
 
 def max_autonomy_level() -> int:
-    """Return the maximum autonomy level for the current mode.
-
-    0 = disabled, 1 = passive, 2 = maintenance, 3 = proactive,
-    4 = self-repair, 5 = self-modification
-    """
-    mode = get_mode()
-    return {
-        AuraMode.SAFE: 0,
-        AuraMode.PRODUCTION: 2,
-        AuraMode.SIMULATION: 3,
-        AuraMode.RESEARCH: 4,
-        AuraMode.DEV: 5,
-    }.get(mode, 2)
+    """Return the maximum autonomy level for the current mode."""
+    return get_active_manifest()["max_autonomy_level"]
 
 
 def enforce_production_gate(feature_name: str) -> None:
-    """Raise RuntimeError if a research/dev feature is used in production mode.
-
-    Call this at the entry point of any feature that must be gated in production.
-    """
+    """Raise RuntimeError if a research/dev feature is used in production mode."""
     mode = get_mode()
-    if mode == AuraMode.PRODUCTION:
+    if mode in (AuraMode.PRODUCTION, AuraMode.LIVE):
         raise RuntimeError(
-            f"Feature '{feature_name}' is not available in production mode. "
+            f"Feature '{feature_name}' is not available in production or live mode. "
             f"Set AURA_MODE=research or AURA_MODE=dev to enable it."
         )
 
 
 def mode_context() -> dict[str, Any]:
     """Return a dict describing the current mode for logging/diagnostics."""
-    mode = get_mode()
-    return {
-        "mode": mode.value,
-        "allows_research": allows_research_features(),
-        "allows_self_modification": allows_self_modification(),
-        "allows_autonomous": allows_autonomous_behavior(),
-        "allows_tools": allows_tool_execution(),
-        "allows_cloud": allows_cloud_fallback(),
-        "allows_unsigned_skills": allows_unsigned_skills(),
-        "max_autonomy_level": max_autonomy_level(),
+    manifest = get_active_manifest()
+    ctx = {
+        "mode": manifest["runtime_mode"],
+        "allows_research": manifest["allows_research"],
+        "allows_self_modification": manifest["allows_self_modification"],
+        "allows_autonomous": manifest["allows_autonomous"],
+        "allows_tools": manifest["allows_tools"],
+        "allows_cloud": manifest["allows_cloud"],
+        "allows_unsigned_skills": manifest["allows_unsigned_skills"],
+        "max_autonomy_level": manifest["max_autonomy_level"],
+        "llm_backend": manifest["llm_backend"],
+        "tools_live": manifest["tools_live"],
+        "network_live": manifest["network_live"],
+        "filesystem_live": manifest["filesystem_live"],
+        "computer_use_live": manifest["computer_use_live"],
+        "worlds_simulated": manifest["worlds_simulated"],
+        "worlds_external": manifest["worlds_external"],
     }
+    return ctx
 
 
 def validate_mode_at_startup() -> None:

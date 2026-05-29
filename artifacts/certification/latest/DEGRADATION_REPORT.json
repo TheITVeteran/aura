@@ -1,0 +1,30 @@
+{
+  "timestamp": 1780027098.787328,
+  "status": {
+    "total_degradations": 1,
+    "counts_by_subsystem": {
+      "aura_protocol": {
+        "degraded": 1
+      }
+    },
+    "last_5": [
+      {
+        "subsystem": "aura_protocol",
+        "severity": "degraded",
+        "error": "[Errno 48] error while attempting to bind on address ('127.0.0.1', 9900): [errno 48] address already in use",
+        "action": "kept aura protocol server offline after bind failure",
+        "at": 1780027087.541278
+      }
+    ]
+  },
+  "critical_degradation_count": 0,
+  "degradations_logged": [
+    {
+      "subsystem": "aura_protocol",
+      "severity": "degraded",
+      "error": "[Errno 48] error while attempting to bind on address ('127.0.0.1', 9900): [errno 48] address already in use",
+      "action": "kept aura protocol server offline after bind failure",
+      "timestamp": 1780027087.541278
+    }
+  ]
+}

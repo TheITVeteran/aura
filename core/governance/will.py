@@ -1046,6 +1046,44 @@ class UnifiedWill:
         if ownership_confidence < 0.45:
             constraints.append(f"ownership_ambiguity: confidence={ownership_confidence:.3f}")
 
+        # --- Actuator Trust Score check for TOOL_EXECUTION domain ---
+        if domain == ActionDomain.TOOL_EXECUTION:
+            try:
+                from core.actuators.actuator_registry import get_actuator_registry
+                registry = get_actuator_registry()
+                skill_name = None
+                if context and isinstance(context, dict):
+                    skill_name = context.get("skill") or context.get("tool")
+                if not skill_name:
+                    # Find if any actuator name matches in content
+                    for name in registry.actuators.keys():
+                        if name in content:
+                            skill_name = name
+                            break
+                if skill_name:
+                    actuator = registry.get_actuator(skill_name)
+                    if actuator:
+                        if actuator.trust_score < 0.4:
+                            if priority < 0.7:
+                                reasons.append(f"trust_block: Actuator '{skill_name}' trust score {actuator.trust_score:.2f} is too low for priority {priority:.2f} (requires priority >= 0.7)")
+                                return WillOutcome.REFUSE, "; ".join(reasons), constraints
+                            else:
+                                constraints.append(f"low_trust_actuator:{skill_name}(trust={actuator.trust_score:.2f})")
+                        elif actuator.trust_score < 0.7:
+                            if priority < 0.4:
+                                reasons.append(f"trust_block: Actuator '{skill_name}' trust score {actuator.trust_score:.2f} is too low for priority {priority:.2f} (requires priority >= 0.4)")
+                                return WillOutcome.REFUSE, "; ".join(reasons), constraints
+                            else:
+                                constraints.append(f"medium_trust_actuator:{skill_name}(trust={actuator.trust_score:.2f})")
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+                record_degradation(
+                    "will",
+                    e,
+                    severity="warning",
+                    action="kept will decision conservative after actuator trust lookup failure",
+                )
+                constraints.append("actuator_trust_check_unavailable")
+
         consequential_domains = {
             ActionDomain.TOOL_EXECUTION,
             ActionDomain.EXTERNAL_ACTION,

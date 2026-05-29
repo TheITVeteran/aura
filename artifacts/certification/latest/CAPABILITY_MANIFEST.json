@@ -1,0 +1,31 @@
+{
+  "timestamp": 1780027098.787051,
+  "runtime_mode": "live",
+  "mode_capabilities": {
+    "mode": "live",
+    "allows_research": false,
+    "allows_self_modification": false,
+    "allows_autonomous": true,
+    "allows_tools": true,
+    "allows_cloud": true,
+    "allows_unsigned_skills": false,
+    "max_autonomy_level": 2,
+    "llm_backend": "primary_instruct",
+    "tools_live": true,
+    "network_live": true,
+    "filesystem_live": true,
+    "computer_use_live": false,
+    "worlds_simulated": false,
+    "worlds_external": true
+  },
+  "gateways": {
+    "UnifiedWill": true,
+    "AuthorityGateway": true,
+    "MemoryGateway": true,
+    "StateMutationGateway": true,
+    "ToolExecutionGateway": true,
+    "InferenceBackend": true,
+    "Substrate": true,
+    "Workspace": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "timestamp": 1780027121.751603,
+  "checked_files": [
+    "WORLD_RESULTS.jsonl",
+    "TICKET_RESULTS.jsonl"
+  ],
+  "found_markers": []
+}

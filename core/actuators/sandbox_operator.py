@@ -8,8 +8,10 @@ Grounds success and failure signals directly into Heartstone Values and the Liqu
 import subprocess
 import tempfile
 import os
+import sys
 import logging
 from typing import Dict, Any
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SandboxOperator")
 
@@ -18,8 +20,12 @@ class SandboxOperator:
     The ultimate motor organ for a Person-in-a-Box.
     Allows the model to synthesize, run, and debug its own arbitrary tools.
     """
-    def __init__(self, sandbox_dir: str = "/tmp/aura_sandbox"):
-        self.sandbox_dir = sandbox_dir
+    def __init__(self, sandbox_dir: str | None = None):
+        self.sandbox_dir = os.path.abspath(
+            sandbox_dir
+            or os.getenv("AURA_SANDBOX_DIR")
+            or os.path.join(tempfile.gettempdir(), "aura_sandbox")
+        )
         os.makedirs(self.sandbox_dir, exist_ok=True)
 
     def execute_synthesized_tool(self, code: str, timeout_s: float = 10.0) -> Dict[str, Any]:
@@ -36,11 +42,11 @@ class SandboxOperator:
         result_dict = {}
 
         try:
-            result = subprocess.run(
-                ["python3", temp_path],
-                capture_output=True,
-                text=True,
-                timeout=timeout_s
+            result = get_subprocess_gateway().run(
+                [sys.executable, temp_path],
+                timeout=timeout_s,
+                cwd=self.sandbox_dir,
+                source="sandbox_operator",
             )
             
             success = result.returncode == 0
@@ -61,7 +67,7 @@ class SandboxOperator:
                 "exit_code": -1,
                 "file_path": temp_path
             }
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
             result_dict = {
                 "success": False,
                 "stdout": "",
@@ -111,7 +117,7 @@ class SandboxOperator:
                         delta_frustration=delta_frustration,
                         _caller="sandbox_operator"
                     ))
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Sandbox affect grounding update failed: %s", exc)
 
         return result_dict

@@ -264,40 +264,69 @@ class OvertActionLoop:
             goal_id=str(goal.get("id") or initiative.get("metadata", {}).get("goal_id") or ""),
         )
 
-        engine = self._capability_engine()
-        if engine is None or not hasattr(engine, "execute"):
-            result.status = "failed"
-            result.error = "capability_engine_unavailable"
-            return self._finish(result, raw_result={})
+        from core.actuators.actuator_registry import get_actuator_registry
+        registry = get_actuator_registry()
 
-        try:
-            raw = await engine.execute(
-                skill,
-                params,
-                context={
-                    "origin": "overt_action_loop",
-                    "source": "overt_action_loop",
-                    "objective": objective,
-                    "will_receipt_id": will_receipt_id,
-                    "autonomous": True,
-                    "initiative": initiative,
-                },
-            )
-        except (sqlite3.Error, OSError) as exc:
-            result.status = "failed"
-            result.error = f"{type(exc).__name__}: {exc}"
-            record_degradation(
-                "overt_action_loop",
-                exc,
-                severity="warning",
-                action="failed overt initiative execution and preserved action receipt for review",
-                extra={
-                    "action_id": action_id,
-                    "skill": skill,
-                    "objective": objective[:240],
-                },
-            )
-            raw = {"ok": False, "error": result.error}
+        if registry.get_actuator(skill) is not None:
+            try:
+                actuator_res = registry.execute_action(
+                    skill,
+                    params,
+                    context={
+                        "origin": "overt_action_loop",
+                        "source": "overt_action_loop",
+                        "objective": objective,
+                        "will_receipt_id": will_receipt_id,
+                        "autonomous": True,
+                        "initiative": initiative,
+                        "priority": float(initiative.get("urgency", 0.7) or 0.7),
+                    },
+                )
+                raw = {
+                    "ok": actuator_res.success,
+                    "message": actuator_res.message,
+                    "updates": actuator_res.updates,
+                    "success": actuator_res.success
+                }
+            except (ImportError, RuntimeError, OSError, AttributeError, TypeError, ValueError) as exc:
+                result.status = "failed"
+                result.error = f"Actuator {skill} failed: {exc}"
+                raw = {"ok": False, "error": result.error}
+        else:
+            engine = self._capability_engine()
+            if engine is None or not hasattr(engine, "execute"):
+                result.status = "failed"
+                result.error = "capability_engine_unavailable"
+                return self._finish(result, raw_result={})
+
+            try:
+                raw = await engine.execute(
+                    skill,
+                    params,
+                    context={
+                        "origin": "overt_action_loop",
+                        "source": "overt_action_loop",
+                        "objective": objective,
+                        "will_receipt_id": will_receipt_id,
+                        "autonomous": True,
+                        "initiative": initiative,
+                    },
+                )
+            except (sqlite3.Error, OSError) as exc:
+                result.status = "failed"
+                result.error = f"{type(exc).__name__}: {exc}"
+                record_degradation(
+                    "overt_action_loop",
+                    exc,
+                    severity="warning",
+                    action="failed overt initiative execution and preserved action receipt for review",
+                    extra={
+                        "action_id": action_id,
+                        "skill": skill,
+                        "objective": objective[:240],
+                    },
+                )
+                raw = {"ok": False, "error": result.error}
 
         result.verified = self._verify(skill, params, raw)
         result.status = "verified" if result.verified else "failed"
@@ -336,6 +365,58 @@ class OvertActionLoop:
         ]
         normalized_required = {self._normalize_skill_name(item) for item in required}
 
+        # Check new actuators dynamically
+        from core.actuators.actuator_registry import get_actuator_registry
+        registry = get_actuator_registry()
+        
+        mapping = {
+            "code_execution": ["code_execution", "run_code", "execute_code", "python"],
+            "web_search": ["web_search", "search", "lookup"],
+            "web_fetch": ["web_fetch", "fetch", "download"],
+            "git_operation": ["git_operation", "git", "clone", "commit", "checkout"],
+            "package_install": ["package_install", "pip", "install"],
+            "process_supervisor": ["process_supervisor", "process", "spawn", "background"],
+            "document_ingest": ["document_ingest", "doc_ingest", "ingest", "pdf", "html"]
+        }
+        
+        for actuator_name, aliases in mapping.items():
+            if registry.get_actuator(actuator_name) is not None:
+                if any(alias in normalized_required for alias in aliases) or any(alias in text for alias in aliases):
+                    params = dict(metadata.get("params") or goal.get("params") or initiative.get("params") or {})
+                    if actuator_name == "code_execution":
+                        if not isinstance(params.get("code"), str) or not params["code"].strip():
+                            continue
+                    elif actuator_name == "web_search":
+                        if "query" not in params:
+                            params["query"] = initiative.get("goal") or goal.get("objective") or ""
+                    elif actuator_name == "web_fetch":
+                        if not isinstance(params.get("url"), str) or not params["url"].strip():
+                            continue
+                    elif actuator_name == "git_operation":
+                        if "action" not in params:
+                            params["action"] = "status"
+                        if params.get("action") in {"branch", "commit", "checkout"} and not params.get("allow_mutation"):
+                            continue
+                        if params.get("action") == "clone" and not params.get("allow_external_clone"):
+                            continue
+                    elif actuator_name == "package_install":
+                        if not isinstance(params.get("package_name"), str) or not params["package_name"].strip():
+                            continue
+                        if not params.get("allow_install"):
+                            continue
+                    elif actuator_name == "process_supervisor":
+                        if "action" not in params:
+                            params["action"] = "list"
+                        if params.get("action") == "spawn" and (not params.get("command") or not params.get("allow_spawn")):
+                            continue
+                    elif actuator_name == "document_ingest":
+                        if not isinstance(params.get("path"), str) or not params["path"].strip():
+                            continue
+                    actuator = registry.get_actuator(actuator_name)
+                    if actuator is not None and not actuator.validate_params(params):
+                        continue
+                    return actuator_name, params
+
         if "auto_refactor" in normalized_required or any(token in text for token in ("repair", "refactor", "architecture", "codebase", "bug")):
             return "auto_refactor", {"path": ".", "run_tests": False}
         if "proof" in text or "bundle" in text or "canonical" in text:
@@ -369,6 +450,12 @@ class OvertActionLoop:
     def _verify(skill: str, params: dict[str, Any], raw: Any) -> bool:
         if not isinstance(raw, dict) or not bool(raw.get("ok", False)):
             return False
+        
+        # Check if skill is registered in actuator registry
+        from core.actuators.actuator_registry import get_actuator_registry
+        if get_actuator_registry().get_actuator(skill) is not None:
+            return bool(raw.get("ok", False) or raw.get("success", False))
+
         if skill == "file_operation" and params.get("action") == "exists":
             return "exists" in raw
         if skill == "auto_refactor":

@@ -252,6 +252,24 @@ def record_degradation(
         else:
             raise StateCoherenceFailure(f"Fail-Closed: State corruption risk detected in {subsystem}. original_error={error}")
 
+    # ── Fail-closed policy enforcement ──
+    try:
+        from core.container import ServiceContainer
+        from core.runtime.mode import get_mode, AuraMode
+        if get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
+            resolved = ServiceContainer._resolve_name(subsystem)
+            with ServiceContainer._lock:
+                desc = ServiceContainer._services.get(resolved)
+            if desc and getattr(desc, "failure_policy", "") == "fail-closed":
+                raise RuntimeError(
+                    f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
+                    f"Original error: {type(error).__name__}: {error}"
+                )
+    except (ImportError, RuntimeError) as exc:
+        if "CRITICAL SERVICE FAILURE" in str(exc):
+            raise
+
+
     error_type = type(error).__qualname__
     error_msg = str(error)[:500]
     

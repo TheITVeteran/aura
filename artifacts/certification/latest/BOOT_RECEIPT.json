@@ -1,0 +1,21 @@
+{
+  "verdict": "PASS",
+  "timestamp": 1780027098.785273,
+  "uptime_seconds": 13.882479374995455,
+  "runtime_mode": "live",
+  "passed_gateways": [
+    "UnifiedWill",
+    "AuthorityGateway",
+    "MemoryGateway",
+    "StateMutationGateway",
+    "ToolExecutionGateway",
+    "InferenceBackend",
+    "Substrate",
+    "Workspace"
+  ],
+  "failed_gateways": [],
+  "critical_degradation_count": 0,
+  "unowned_service_count": 0,
+  "unknown_runtime_mode": false,
+  "pass_criteria_satisfied": true
+}

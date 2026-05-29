@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +49,7 @@ class BaseActuator(ABC):
 
     synthesized: bool = False
     trust_score: float = 1.0
+    requires_authority: bool = False
     generation: int = 0
     source_code: str | None = None
 
@@ -340,6 +343,8 @@ class ReallocateFlowActuator(BaseActuator):
 class SandboxActuator(BaseActuator):
     """Actuator wrapper for the SandboxOperator, enabling dynamic code synthesis."""
 
+    requires_authority = True
+
     def __init__(self) -> None:
         from core.actuators.sandbox_operator import SandboxOperator
         self.operator = SandboxOperator()
@@ -359,6 +364,8 @@ class SandboxActuator(BaseActuator):
         return isinstance(params, dict) and "code" in params and isinstance(params["code"], str)
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
+        if not params.get("_aura_authorized"):
+            return ActuatorResult(False, "Sandbox execution requires ActuatorRegistry/AuthorityGateway authorization.", {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Parameter validation failed: 'code' string parameter is required.", {})
 
@@ -390,6 +397,38 @@ class ActuatorRegistry:
         self.register(ReallocateFlowActuator())
         self.register(SandboxActuator())
 
+        try:
+            from core.actuators.code_execution_actuator import CodeExecutionActuator
+            self.register(CodeExecutionActuator())
+        except ImportError as e:
+            logger.error("Failed to register CodeExecutionActuator: %s", e)
+
+        try:
+            from core.actuators.web_actuators import WebSearchActuator, WebFetchActuator
+            self.register(WebSearchActuator())
+            self.register(WebFetchActuator())
+        except ImportError as e:
+            logger.error("Failed to register web actuators: %s", e)
+
+        try:
+            from core.actuators.git_pkg_actuators import GitActuator, PackageInstallActuator
+            self.register(GitActuator())
+            self.register(PackageInstallActuator())
+        except ImportError as e:
+            logger.error("Failed to register git or package actuators: %s", e)
+
+        try:
+            from core.actuators.process_supervisor import ProcessSupervisorActuator
+            self.register(ProcessSupervisorActuator())
+        except ImportError as e:
+            logger.error("Failed to register ProcessSupervisorActuator: %s", e)
+
+        try:
+            from core.actuators.doc_ingest import DocumentIngestActuator
+            self.register(DocumentIngestActuator())
+        except ImportError as e:
+            logger.error("Failed to register DocumentIngestActuator: %s", e)
+
     def register(self, actuator: BaseActuator) -> None:
         self.actuators[actuator.name] = actuator
         logger.info("Registered actuator: %s (%s)", actuator.name, actuator.description)
@@ -417,11 +456,75 @@ class ActuatorRegistry:
         """List all runtime-synthesized actuators."""
         return [act for act in self.actuators.values() if getattr(act, "synthesized", False)]
 
-    def execute_action(self, name: str, params: dict[str, Any]) -> ActuatorResult:
+    @staticmethod
+    def _run_coroutine_sync(coro: Any) -> Any:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coro).result()
+
+    @staticmethod
+    def _authorize_actuator(name: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
+        from core.executive.authority_gateway import get_authority_gateway
+
+        gateway = get_authority_gateway()
+        return ActuatorRegistry._run_coroutine_sync(
+            gateway.authorize_tool_execution(
+                name,
+                params,
+                source=str(context.get("source") or "actuator_registry"),
+                priority=float(context.get("priority", 0.7) or 0.7),
+                is_critical=bool(context.get("is_critical", False)),
+            )
+        )
+
+    def execute_action(
+        self,
+        name: str,
+        params: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> ActuatorResult:
         """Safely retrieves and executes a physical action primitive."""
         actuator = self.get_actuator(name)
         if not actuator:
             return ActuatorResult(False, f"Actuator '{name}' not found", {})
+
+        exec_params = dict(params or {})
+        authority_decision = None
+        capability_token_id = None
+
+        if getattr(actuator, "requires_authority", False):
+            try:
+                authority_decision = self._authorize_actuator(name, exec_params, dict(context or {}))
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                return ActuatorResult(
+                    False,
+                    f"AuthorityGateway unavailable for actuator '{name}': {type(exc).__name__}: {exc}",
+                    {},
+                )
+            if not getattr(authority_decision, "approved", False):
+                return ActuatorResult(
+                    False,
+                    f"Actuator '{name}' refused by AuthorityGateway: {getattr(authority_decision, 'reason', '')}",
+                    {},
+                )
+            capability_token_id = getattr(authority_decision, "capability_token_id", None)
+            try:
+                from core.executive.authority_gateway import get_authority_gateway
+
+                if not get_authority_gateway().verify_tool_access(name, capability_token_id):
+                    return ActuatorResult(False, f"Capability token rejected for actuator '{name}'", {})
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                return ActuatorResult(
+                    False,
+                    f"Capability token verification failed for actuator '{name}': {type(exc).__name__}: {exc}",
+                    {},
+                )
+            exec_params["_aura_authorized"] = True
+            exec_params["_capability_token_id"] = capability_token_id
 
         # Trust score gating: if synthesized and trust is extremely low, additional checks
         if getattr(actuator, "synthesized", False):
@@ -443,7 +546,25 @@ class ActuatorRegistry:
                         False, "Low-trust actuator requires non-empty parameters", {}
                     )
 
-        return actuator.execute(params)
+        if authority_decision is not None:
+            from core.governance_context import governed_scope_sync
+
+            with governed_scope_sync(authority_decision):
+                result = actuator.execute(exec_params)
+        else:
+            result = actuator.execute(exec_params)
+        if authority_decision is not None:
+            try:
+                from core.executive.authority_gateway import get_authority_gateway
+
+                get_authority_gateway().finalize_tool_execution(
+                    executive_intent_id=getattr(authority_decision, "executive_intent_id", None),
+                    capability_token_id=capability_token_id,
+                    success=bool(result.success),
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
+        return result
 
 
 # Singleton Pattern

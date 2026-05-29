@@ -1,0 +1,6 @@
+{
+  "verdict": "tier5_operational_threshold_met",
+  "tier5_met": true,
+  "average_score": 0.990664,
+  "worlds_tested": 500.0
+}

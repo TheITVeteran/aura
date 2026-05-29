@@ -16,6 +16,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.goals.goal_text import is_actionable_goal_text, is_intrinsic_goal_text
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.state.aura_state import _origin_is_user_anchored
 
@@ -215,6 +216,8 @@ class GoalEngine:
         self._reconcile_interval_s = 15.0
         self._reconciling = False
         self._initialize()
+        self.subgoals_stack_path = self._db_path.parent / "subgoals_stack.json"
+        self._subgoals_stack = self._load_subgoals_stack()
         logger.info("GoalEngine initialized with durable store at %s", self._db_path)
 
     @staticmethod
@@ -254,6 +257,68 @@ class GoalEngine:
             )
             logger.error("GoalEngine initialization failed: %s", exc)
             self._conn = None
+
+    def _load_subgoals_stack(self) -> list[dict[str, Any]]:
+        if not self.subgoals_stack_path.exists():
+            return []
+        try:
+            loaded = json.loads(self.subgoals_stack_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                return [item for item in loaded if isinstance(item, dict)]
+            raise ValueError("subgoals stack must be a list")
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
+            _record_goal_degradation(
+                e,
+                severity="warning",
+                action="started with empty subgoal stack after loading failure",
+                extra={"path": str(self.subgoals_stack_path)},
+            )
+            return []
+
+    def _save_subgoals_stack(self) -> None:
+        try:
+            self.subgoals_stack_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                self.subgoals_stack_path,
+                json.dumps(self._subgoals_stack, indent=2, sort_keys=True, default=str),
+            )
+        except (OSError, TypeError, ValueError) as e:
+            _record_goal_degradation(
+                e,
+                severity="warning",
+                action="kept subgoal stack in memory after durable save failure",
+                extra={"path": str(self.subgoals_stack_path)},
+            )
+
+    async def push_subgoal(
+        self,
+        parent_goal_id: str,
+        objective: str,
+        success_criteria: str = "",
+        priority: float = 0.5
+    ) -> dict[str, Any]:
+        sub_goal = await self.add_goal(
+            name=f"Subgoal: {objective[:40]}",
+            objective=objective,
+            parent_goal_id=parent_goal_id,
+            priority=priority,
+            success_criteria=success_criteria
+        )
+        self._subgoals_stack.append(sub_goal)
+        self._save_subgoals_stack()
+        logger.info("⚡ [GOAL] Pushed subgoal to stack: '%s' (parent=%s)", objective, parent_goal_id)
+        return sub_goal
+
+    async def pop_subgoal(self) -> dict[str, Any] | None:
+        if not self._subgoals_stack:
+            return None
+        sub_goal = self._subgoals_stack.pop()
+        self._save_subgoals_stack()
+        logger.info("⚡ [GOAL] Popped subgoal from stack: '%s'", sub_goal.get("objective"))
+        return sub_goal
+
+    def get_subgoal_stack(self) -> list[dict[str, Any]]:
+        return list(self._subgoals_stack)
 
     @property
     def state_repo(self):
@@ -939,6 +1004,32 @@ class GoalEngine:
         if existing is None:
             return None
         normalized_status = self._coerce_status(status)
+
+        if normalized_status == GoalStatus.FAILED.value and existing.status != GoalStatus.FAILED.value:
+            logger.warning("⚡ [GOAL] Goal failure detected: '%s'. Initiating counterfactual replanning...", existing.objective)
+            try:
+                from core.will import get_will, ActionDomain, WillOutcome
+                will = get_will()
+                decision = will.decide(
+                    content=f"defer_and_replan_on_goal_failure:{goal_id}",
+                    source="goal_engine",
+                    domain=ActionDomain.INITIATIVE,
+                    priority=0.8
+                )
+                if decision.outcome in (WillOutcome.PROCEED, WillOutcome.CONSTRAIN):
+                    await self.push_subgoal(
+                        parent_goal_id=existing.id,
+                        objective=f"Diagnose failure of: '{existing.objective}' and check prerequisites",
+                        success_criteria="Verify error causes from logs and repair environment/tools",
+                        priority=existing.priority + 0.1
+                    )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
+                _record_goal_degradation(
+                    e,
+                    severity="warning",
+                    action="kept failed goal state without automatic subgoal replanning",
+                    extra={"goal_id": goal_id},
+                )
         record = await asyncio.to_thread(
             self._upsert_goal,
             goal_id=existing.id,

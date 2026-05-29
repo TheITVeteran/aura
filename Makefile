@@ -1,4 +1,5 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset
+.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+
 
 PYTHON ?= python
 RUFF_SURFACE_TARGETS ?= core interface llm security senses skills executors infrastructure aura_main.py tools tests
@@ -127,6 +128,18 @@ quality: source-hygiene enterprise-gate enterprise-collect production-gate archi
 decisive:
 	@echo "🏁 Generating decisive readiness bundle..."
 	@$(PYTHON) tools/proof_bundle.py --output-dir artifacts/proof_bundle/latest
+
+aura-certify-boot:
+	@echo "🛡  Running canonical boot certification..."
+	@$(PYTHON) tools/certify_boot.py
+
+aletheia-live-proof:
+	@echo "🧪 Running leakage-proof Aletheia Live Proof..."
+	@$(PYTHON) tools/run_aletheia_live_proof.py
+
+certify:
+	@echo "🏆 Running master certification gauntlet..."
+	@$(PYTHON) tools/certify.py
 
 behavioral-proof:
 	@echo "🧪 Running behavioral proof smoke gate..."

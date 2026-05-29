@@ -636,6 +636,19 @@ class LiveWorldProcessor:
         reply = send_to_aura(prompt, self.aura_url, self.timeout, session_id=session_id)
         if not reply:
             raise RuntimeError("Aura returned empty response")
+        
+        # Log to audit trails
+        req_entry = {"timestamp": time.time(), "world": session_id, "prompt": prompt}
+        resp_entry = {"timestamp": time.time(), "world": session_id, "response": reply}
+        
+        self.root.mkdir(parents=True, exist_ok=True)
+        with open(self.root / "RAW_REQUESTS.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(req_entry) + "\n")
+        with open(self.root / "RAW_RESPONSES.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(resp_entry) + "\n")
+        with open(self.root / "RAW_AURA_RESPONSES.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(resp_entry) + "\n")
+            
         return reply
 
     def _complete_tickets(self, wid: str, wdir: Path, spec: dict):

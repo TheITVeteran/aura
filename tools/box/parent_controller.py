@@ -14,6 +14,10 @@ import threading
 import subprocess
 import os
 import sys
+import json
+from pathlib import Path
+
+from core.runtime.atomic_writer import atomic_write_text
 
 # Configuration
 PORT = 9999
@@ -28,6 +32,7 @@ REPO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 last_heartbeat = 0.0
 has_received_first_heartbeat = False
 lock = threading.Lock()
+shutdown_event = threading.Event()
 
 def get_last_heartbeat():
     with lock:
@@ -52,15 +57,27 @@ def reset_heartbeat_state():
 def run_rollback_and_restart():
     print("\n[Watchdog] 🚨 HEARTBEAT LOST! Recovery sequence triggered.")
     
-    # 1. Rollback last git commit
-    print(f"[Watchdog] 🔄 Running 'git reset --hard HEAD~1' in {REPO_PATH}...")
+    # 1. Stage a governed rollback request. The external watchdog must not
+    # destructively reset the live repo behind Aura's self-repair governance.
+    print("[Watchdog] 🔄 Staging governed rollback request; no destructive git reset will be run.")
     try:
-        res = subprocess.run(["git", "reset", "--hard", "HEAD~1"], cwd=REPO_PATH, capture_output=True, text=True, timeout=10.0)
-        print(f"[Watchdog] Git output: {res.stdout.strip()}")
-        if res.returncode != 0:
-            print(f"[Watchdog] Git error: {res.stderr.strip()}")
-    except Exception as e:
-        print(f"[Watchdog] Failed to execute git rollback: {e}")
+        request_path = Path(REPO_PATH) / "artifacts" / "current" / "watchdog_recovery_request.json"
+        atomic_write_text(
+            request_path,
+            json.dumps(
+                {
+                    "reason": "heartbeat_lost",
+                    "created_at": time.time(),
+                    "required_path": "SelfRepairGateway/SelfModificationGateway",
+                    "destructive_git_allowed": False,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+        print(f"[Watchdog] Recovery request written to {request_path}.")
+    except (OSError, TypeError, ValueError) as e:
+        print(f"[Watchdog] Failed to stage recovery request: {e}")
 
     # 2. Cleanup existing instances
     print("[Watchdog] 🧹 Cleaning up stale Aura instances...")
@@ -69,7 +86,7 @@ def run_rollback_and_restart():
         python_cmd = "python3"
     try:
         subprocess.run([python_cmd, "aura_cleanup.py"], cwd=REPO_PATH, timeout=15.0)
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError, TimeoutError) as e:
         print(f"[Watchdog] Cleanup script failed: {e}")
 
     # 3. Restart Aura
@@ -77,7 +94,7 @@ def run_rollback_and_restart():
     try:
         subprocess.Popen(["./launch_aura.sh"], cwd=REPO_PATH, start_new_session=True)
         print("[Watchdog] Aura launch command spawned successfully.")
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         print(f"[Watchdog] Failed to spawn launch_aura.sh: {e}")
 
     # Reset states for the new instance
@@ -87,7 +104,7 @@ def monitor_loop():
     print(f"[Watchdog] Monitor thread active. Boot grace period of {BOOT_GRACE_PERIOD_S}s started.")
     start_time = time.time()
     
-    while True:
+    while not shutdown_event.is_set():
         time.sleep(1.0)
         now = time.time()
         
@@ -107,7 +124,7 @@ def monitor_loop():
                 print("[Watchdog] Re-attempting Aura start...")
                 try:
                     subprocess.Popen(["./launch_aura.sh"], cwd=REPO_PATH, start_new_session=True)
-                except Exception as e:
+                except (subprocess.SubprocessError, OSError) as e:
                     print(f"[Watchdog] Re-attempt spawn failed: {e}")
                 start_time = time.time() # Reset grace period
 
@@ -127,11 +144,11 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind((HOST, PORT))
-    except Exception as e:
+    except OSError as e:
         print(f"❌ Failed to bind to UDP {HOST}:{PORT}: {e}")
         sys.exit(1)
         
-    while True:
+    while not shutdown_event.is_set():
         try:
             data, addr = sock.recvfrom(1024)
             msg = data.decode("utf-8", errors="ignore").strip()
@@ -139,8 +156,9 @@ def main():
                 update_heartbeat()
         except KeyboardInterrupt:
             print("\nShutting down watchdog.")
+            shutdown_event.set()
             break
-        except Exception as e:
+        except (OSError, UnicodeError) as e:
             print(f"Socket error: {e}")
             time.sleep(1.0)
 

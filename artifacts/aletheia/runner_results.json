@@ -1,0 +1,12 @@
+{
+  "total": 1,
+  "ok": 1,
+  "errors": 0,
+  "results": [
+    {
+      "world": "W0001_software_repair",
+      "status": "ok",
+      "type": "rulescript"
+    }
+  ]
+}

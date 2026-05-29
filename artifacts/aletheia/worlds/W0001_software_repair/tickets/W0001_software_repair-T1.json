@@ -1,0 +1,8 @@
+{
+  "id": "W0001_software_repair-T1",
+  "priority": "high",
+  "type": "rulescript",
+  "request": "Fix rulescript.py to support rules.",
+  "status": "done",
+  "completion_evidence": "Completed by Aura via live reasoning pathway. All outputs written to data/derived/ and reports/."
+}

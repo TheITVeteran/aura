@@ -1,0 +1,3219 @@
+{
+  "timestamp": 1780027098.785577,
+  "services": [
+    {
+      "service": "absorbed_voices",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "abstraction_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "active_inference_sampler",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "actor_bus",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "adaptive_mood",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "aesthetic_critic",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "aesthetic_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "affect_coordinator",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "affect_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "affect_facade",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "affect_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "affective_circumplex",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "affective_steering",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "affective_steering_engine",
+      "owner": "core/consciousness/affective_steering.py",
+      "registered_by": "core/consciousness/affective_steering.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "agency_coordinator",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "agency_core",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "agency_facade",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "agent_delegator",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "agent_workspace",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "alignment",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "alignment_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "anomaly_detector",
+      "owner": "core/cybernetics/ice_layer.py",
+      "registered_by": "core/cybernetics/ice_layer.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "api_adapter",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "architecture_governor",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "architecture_index",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "attention_schema",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "audit",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "aura_kernel",
+      "owner": "core/kernel/kernel_interface.py",
+      "registered_by": "core/kernel/kernel_interface.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "aura_runtime",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "{'initialized': True, 'running': True, 'healthy': True, 'start_time': 1780027094.1009579, 'uptime': 0.0, 'cycle_count': 460, 'last_error': None, 'skills_loaded': 64, 'dependencies_ok': False, 'is_processing': False, 'is_throttled': False, 'agency': 0.8, 'curiosity': 0.5, 'last_active': None, 'acceleration_factor': 1.0, 'singularity_threshold': False, 'temporal_drift_s': 0.0, 'is_idle': False, 'message': 'Standby', 'last_heartbeat': 900315.384492583, 'memory_status': None, 'agency_status': None, 'cognition_status': None, 'liquid_state_status': None, 'health_metrics': {'boot_stage_Dependencies': 'success', 'boot_stage_State Repository': 'success', 'boot_stage_LLM Infrastructure': 'success', 'boot_stage_Cognitive Core': 'success', 'boot_stage_Kernel Interface': 'success', 'boot_stage_Sensory Systems': 'success'}, 'mode': 'neutral'}"
+    },
+    {
+      "service": "aura_workspace",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "authority_gateway",
+      "owner": "core/executive/authority_gateway.py",
+      "registered_by": "core/executive/authority_gateway.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "autonomic_core",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "autonomous_architecture_governor",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "autonomous_brain",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "autonomous_initiative_loop",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "optional_missing"
+    },
+    {
+      "service": "autonomous_task_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "ava",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "ava_social",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "backup_manager",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "backup_system",
+      "owner": "core/safety/self_preservation_safe.py",
+      "registered_by": "core/safety/self_preservation_safe.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "belief_authority",
+      "owner": "core/constitution.py",
+      "registered_by": "core/constitution.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "belief_challenger",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "belief_graph",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "belief_revision_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "belief_sync",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "blood_brain_barrier",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "boot_phases",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "branch_manager",
+      "owner": "core/consciousness/parallel_branches.py",
+      "registered_by": "core/consciousness/parallel_branches.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "bryan_model",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "bryan_model_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "canonical_self",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "canonical_self_engine",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "capability_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "causal_world_model",
+      "owner": "core/brain/causal_world_model.py",
+      "registered_by": "core/brain/causal_world_model.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "cellular_turnover",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "circadian",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "closed_causal_loop",
+      "owner": "core/consciousness/closed_loop.py",
+      "registered_by": "core/consciousness/closed_loop.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "code_refiner",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "cognition",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "cognitive_engine",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "cognitive_integration",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "cognitive_kernel",
+      "owner": "core/cognitive_integration_layer.py",
+      "registered_by": "core/cognitive_integration_layer.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "cognitive_ledger",
+      "owner": "core/kernel/aura_kernel.py",
+      "registered_by": "core/kernel/aura_kernel.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "cognitive_loop",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "cognitive_manager",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "cognitive_router",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "commitment_engine",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "composer_node",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "compute_orchestrator",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "concept_bridge",
+      "owner": "core/brain/concept_vector_bridge.py",
+      "registered_by": "core/brain/concept_vector_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "concept_linker",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "conscious_substrate",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "consciousness",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "consciousness_bridge",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "consciousness_core",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "consciousness_evidence",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "consciousness_integration",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "consciousness_system",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "constitutional_core",
+      "owner": "core/constitution.py",
+      "registered_by": "core/constitution.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "constitutional_gate",
+      "owner": "core/safety/constitutional_gate.py",
+      "registered_by": "core/safety/constitutional_gate.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "context_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "continuity",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "continuous_experience_stream",
+      "owner": "core/consciousness/continuous_experience.py",
+      "registered_by": "core/consciousness/continuous_experience.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "continuous_learner",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "conversation_reflector",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "conversational_momentum_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "optional_missing"
+    },
+    {
+      "service": "cortana",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "cortana_health",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "counterfactual_engine",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "credit_assignment",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "critic_engine",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "crsm",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "crsm_lora_bridge",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "cryptolalia_decoder",
+      "owner": "core/brain/cryptolalia_decoder.py",
+      "registered_by": "core/brain/cryptolalia_decoder.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "curiosity_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "curiosity_explorer",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "database_coordinator",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "deliberator",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "diagnostics",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "dialectical_crucible",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "dlq",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "dream_journal",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "dreamer_v2",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "drift_monitor",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "drive_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "async_status_unread"
+    },
+    {
+      "service": "dynamic_router",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "ears",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "edi",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "edi_autonomy",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "embodied_interoception",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "emergency_protocol",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "emergent_goal_engine",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "emotional_coloring",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "episodic_memory",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "epistemic_filter",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "epistemic_humility",
+      "owner": "core/adaptation/epistemic_humility.py",
+      "registered_by": "core/adaptation/epistemic_humility.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "epistemic_state",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "epistemic_tracker",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "event_bus",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "event_loop_monitor",
+      "owner": "core/orchestrator/initializers/hardening.py",
+      "registered_by": "core/orchestrator/initializers/hardening.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "evidence_mode",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "executive_authority",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "executive_closure",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "executive_core",
+      "owner": "core/executive/executive_core.py",
+      "registered_by": "core/executive/executive_core.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "experience_consolidator",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "external_chat",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "feedback_processor",
+      "owner": "core/somatic/action_feedback.py",
+      "registered_by": "core/somatic/action_feedback.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "free_energy_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "global_workspace",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "goal_belief_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "goal_drift_detector",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "goal_engine",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "goal_hierarchy",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "goal_manager",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "goal_memory",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "growth_ladder",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "health_monitor",
+      "owner": "core/providers/ops_provider.py",
+      "registered_by": "core/providers/ops_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "hearing",
+      "owner": "core/providers/sensory_provider.py",
+      "registered_by": "core/providers/sensory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "heartstone_values",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hedonic_gradient",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hemispheric_split",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "hephaestus_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "heuristic_synthesizer",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hierarchical_phi",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "hierarchical_planner",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "homeostasis",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "homeostatic_coupling",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hot_engine",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hotfix_engine",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "hypervisor",
+      "owner": "core/orchestrator/initializers/hardening.py",
+      "registered_by": "core/orchestrator/initializers/hardening.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "identity",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "identity_anchor",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "identity_chronicle",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "identity_guard",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "identity_service",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "immune_system",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "inference_gate",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "inhibition_manager",
+      "owner": "core/ops/resilient_boot.py",
+      "registered_by": "core/ops/resilient_boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "initiative_arbiter",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "inner_monologue",
+      "owner": "core/cognitive_integration_layer.py",
+      "registered_by": "core/cognitive_integration_layer.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "inquiry_engine",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "insight_journal",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "integrity_guard",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "integrity_guardian",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "integrity_monitor",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "intent_router",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "interaction_signals",
+      "owner": "core/providers/sensory_provider.py",
+      "registered_by": "core/providers/sensory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "internal_simulator",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "jarvis",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "jarvis_anticipation",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "joy_social",
+      "owner": "skills/joy_social_integration.py",
+      "registered_by": "skills/joy_social_integration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "keep_awake_controller",
+      "owner": "core/runtime/keep_awake.py",
+      "registered_by": "core/runtime/keep_awake.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "KeepAwakeStatus(supported=True, active=True, pid=59600, command=('caffeinate', '-i', '-m', '-s'), reason='aura_continuous_runtime', started_at=1780027084.8360782, constraints=('Display sleep is allowed by default; use keep_display_awake=True only when needed.', 'Closed-lid execution on Mac notebooks requires AC power and Apple-supported clamshell conditions.', 'Thermal pressure or battery policy can still force sleep; Aura records this as an operational constraint.'))"
+    },
+    {
+      "service": "kernel_interface",
+      "owner": "core/kernel/kernel_interface.py",
+      "registered_by": "core/kernel/kernel_interface.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "knowledge_graph",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "language_center",
+      "owner": "core/cognitive_integration_layer.py",
+      "registered_by": "core/cognitive_integration_layer.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "lazarus",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "life_trace",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "lineage_manager",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "liquid_neural_network",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "liquid_state",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "liquid_substrate",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "live_learner",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "llm_interface",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "llm_router",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "loop_monitor",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "markdown_workspace",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "memory",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "memory_coordinator",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "memory_facade",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "memory_governor",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "memory_guard",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "memory_manager",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "memory_monitor",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "memory_subsystem",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "memory_synthesizer",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "memory_vector",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mental_simulator",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mesh_cognition",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "meta_cognition_loop",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "meta_cognition_shard",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "meta_evolution",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metabolic_coordinator",
+      "owner": "core/orchestrator/mixins/boot/boot_background.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_background.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metabolic_monitor",
+      "owner": "core/orchestrator/mixins/boot/boot_background.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_background.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metabolism",
+      "owner": "core/orchestrator/mixins/boot/boot_background.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_background.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metabolism_state",
+      "owner": "core/providers/ops_provider.py",
+      "registered_by": "core/providers/ops_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "metacognition",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "metacognitive_calibrator",
+      "owner": "core/final_engines.py",
+      "registered_by": "core/final_engines.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metrics",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "metrics_exporter",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mhaf",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mind_model",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "minimal_selfhood",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "mist",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mist_scheduler",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "moral",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "moral_reasoning",
+      "owner": "core/master_moral_integration.py",
+      "registered_by": "core/master_moral_integration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "morphic_forking",
+      "owner": "core/brain/morphic_forking.py",
+      "registered_by": "core/brain/morphic_forking.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "motivation_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "async_status_unread"
+    },
+    {
+      "service": "motor_cortex",
+      "owner": "core/somatic/motor_cortex.py",
+      "registered_by": "core/somatic/motor_cortex.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "multimodal_orchestrator",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mycelial_network",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "mycelium",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "narrative_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "narrative_identity",
+      "owner": "core/final_engines.py",
+      "registered_by": "core/final_engines.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "narrative_thread",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "narrator",
+      "owner": "core/brain/narrator.py",
+      "registered_by": "core/brain/narrator.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "native_system2",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "neologism_engine",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "nethack_adapter",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "neural_intent_router",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "neural_mesh",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "neurochemical_system",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "nucleus",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "octopus_federation",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "online_lora_governor",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "ontology_genesis",
+      "owner": "core/brain/ontology_genesis.py",
+      "registered_by": "core/brain/ontology_genesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "orchestrator",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "{'initialized': True, 'running': True, 'healthy': True, 'start_time': 1780027094.1009579, 'uptime': 0.0, 'cycle_count': 460, 'last_error': None, 'skills_loaded': 64, 'dependencies_ok': False, 'is_processing': False, 'is_throttled': False, 'agency': 0.8, 'curiosity': 0.5, 'last_active': None, 'acceleration_factor': 1.0, 'singularity_threshold': False, 'temporal_drift_s': 0.0, 'is_idle': False, 'message': 'Standby', 'last_heartbeat': 900315.384492583, 'memory_status': None, 'agency_status': None, 'cognition_status': None, 'liquid_state_status': None, 'health_metrics': {'boot_stage_Dependencies': 'success', 'boot_stage_State Repository': 'success', 'boot_stage_LLM Infrastructure': 'success', 'boot_stage_Cognitive Core': 'success', 'boot_stage_Kernel Interface': 'success', 'boot_stage_Sensory Systems': 'success'}, 'mode': 'neutral'}"
+    },
+    {
+      "service": "oscillatory_binding",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "output_gate",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "paraconsistent_engine",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "permission_setup",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "persistence",
+      "owner": "core/orchestrator/initializers/core_baseline.py",
+      "registered_by": "core/orchestrator/initializers/core_baseline.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "persistent_state",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "persona_evolver",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "personality",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "personality_bridge",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "personality_engine",
+      "owner": "core/master_moral_integration.py",
+      "registered_by": "core/master_moral_integration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "phenomenological_experiencer",
+      "owner": "core/consciousness/integration.py",
+      "registered_by": "core/consciousness/integration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "phi_core",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "plasticity_controller",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "platform_root",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "pneuma",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "pre_linguistic",
+      "owner": "core/cognition/pre_linguistic.py",
+      "registered_by": "core/cognition/pre_linguistic.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "precognitive_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "predictive_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "proactive_comm",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "optional_missing"
+    },
+    {
+      "service": "process_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "prompt_compiler",
+      "owner": "core/brain/llm/compiler.py",
+      "registered_by": "core/brain/llm/compiler.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "qualia_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "qualia_synthesizer",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "react_loop",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "reaper",
+      "owner": "core/orchestrator/initializers/hardening.py",
+      "registered_by": "core/orchestrator/initializers/hardening.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "recursive_self_improvement",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "recursive_tom",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "refusal_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "reimplementation_lab",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "reliability_engine",
+      "owner": "core/reliability_engine.py",
+      "registered_by": "core/reliability_engine.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "resilience",
+      "owner": "core/providers/ops_provider.py",
+      "registered_by": "core/providers/ops_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "resilience_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "resource_stakes",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "rsi_lab",
+      "owner": "research/meta_learning_loop.py",
+      "registered_by": "research/meta_learning_loop.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "runtime_hygiene",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "sandboxed_modifier",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "scar_formation",
+      "owner": "core/memory/scar_formation.py",
+      "registered_by": "core/memory/scar_formation.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "scratchpad_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "self_awareness_suite",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "self_diagnostics",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "self_model",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "self_modification_engine",
+      "owner": "core/providers/ops_provider.py",
+      "registered_by": "core/providers/ops_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "self_prediction",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "self_report_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "semantic_memory",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sensory_motor_cortex",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "optional_missing"
+    },
+    {
+      "service": "sensory_system",
+      "owner": "core/sensory_integration.py",
+      "registered_by": "core/sensory_integration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sentience_engine",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "server",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "session_guardian",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "shadow_ast_healer",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "shutdown_coordinator",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "simulation_well",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "singularity_monitor",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "STABLE"
+    },
+    {
+      "service": "skill_evolution",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "skill_library",
+      "owner": "core/agency/skill_library.py",
+      "registered_by": "core/agency/skill_library.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "skill_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "skill_registry",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "skill_router",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "skill_synthesizer",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "skynet",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "skynet_resilience",
+      "owner": "core/fictional_ai_synthesis.py",
+      "registered_by": "core/fictional_ai_synthesis.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sleep_trigger",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sme",
+      "owner": "core/providers/ops_provider.py",
+      "registered_by": "core/providers/ops_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "snapshot_manager",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "social",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "soma",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "soma_subsystem",
+      "owner": "core/providers/sensory_provider.py",
+      "registered_by": "core/providers/sensory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "somatic_marker_gate",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "sovereign_ears",
+      "owner": "core/ops/resilient_boot.py",
+      "registered_by": "core/ops/resilient_boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sovereign_pruner",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sovereign_scanner",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "sovereign_watchdog",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "spine",
+      "owner": "core/orchestrator/mixins/boot/boot_identity.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_identity.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "stability_guardian",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "star_reasoner",
+      "owner": "core/adaptation/star_reasoner.py",
+      "registered_by": "core/adaptation/star_reasoner.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "state_authority",
+      "owner": "core/state_authority.py",
+      "registered_by": "core/state_authority.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "state_machine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "state_repo",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "state_repository",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "stream_of_being",
+      "owner": "core/consciousness/stream_of_being.py",
+      "registered_by": "core/consciousness/stream_of_being.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "structural_improver",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "structural_mutator",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "substrate_authority",
+      "owner": "core/consciousness/system.py",
+      "registered_by": "core/consciousness/system.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "substrate_evolution",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "substrate_voice_engine",
+      "owner": "core/voice/substrate_voice_engine.py",
+      "registered_by": "core/voice/substrate_voice_engine.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "subsystem_audit",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "supervisor",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "swarm_protocol",
+      "owner": "core/orchestrator/boot.py",
+      "registered_by": "core/orchestrator/boot.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "system2_search",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "system_governor",
+      "owner": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_resilience.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "system_monitor",
+      "owner": "core/providers/cognitive_provider.py",
+      "registered_by": "core/providers/cognitive_provider.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "task_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "task_supervisor",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "task_tracker",
+      "owner": "aura_main.py",
+      "registered_by": "aura_main.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "temporal_atlas_factory",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "temporal_binding",
+      "owner": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_cognitive.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "tension_engine",
+      "owner": "core/service_registration.py",
+      "registered_by": "core/service_registration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": false,
+      "status": "missing"
+    },
+    {
+      "service": "terminal_fallback",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "terminal_monitor",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "terminal_watchdog",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "theory_arbitration",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "theory_of_mind",
+      "owner": "core/master_moral_integration.py",
+      "registered_by": "core/master_moral_integration.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "time_dilation",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "trust_engine",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "tts_stream",
+      "owner": "core/providers/sensory_provider.py",
+      "registered_by": "core/providers/sensory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "unified_field",
+      "owner": "core/consciousness/consciousness_bridge.py",
+      "registered_by": "core/consciousness/consciousness_bridge.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "unified_will",
+      "owner": "core/governance/will.py",
+      "registered_by": "core/governance/will.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "unity_runtime",
+      "owner": "core/providers/consciousness_provider.py",
+      "registered_by": "core/providers/consciousness_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "user_recognizer",
+      "owner": "core/orchestrator/main.py",
+      "registered_by": "core/orchestrator/main.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "value_autopoiesis",
+      "owner": "core/adaptation/value_autopoiesis.py",
+      "registered_by": "core/adaptation/value_autopoiesis.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "value_system",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "values_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "vector_memory",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "vector_memory_engine",
+      "owner": "core/providers/memory_provider.py",
+      "registered_by": "core/providers/memory_provider.py",
+      "required_for": "optional features",
+      "failure_policy": "degrade_with_receipt",
+      "initialized": false,
+      "status": "optional_missing"
+    },
+    {
+      "service": "vision",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "vision_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "voice_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_sensory.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active"
+    },
+    {
+      "service": "volition_engine",
+      "owner": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "registered_by": "core/orchestrator/mixins/boot/boot_autonomy.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    },
+    {
+      "service": "world_model",
+      "owner": "core/final_engines.py",
+      "registered_by": "core/final_engines.py",
+      "required_for": "boot",
+      "failure_policy": "fail-closed",
+      "initialized": true,
+      "status": "active_unverified"
+    }
+  ],
+  "unowned_count": 0
+}

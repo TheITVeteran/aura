@@ -1,0 +1,14 @@
+{
+  "timestamp": 1780027098.787167,
+  "governed_actions": [
+    "tool_execution",
+    "memory_writes",
+    "state_mutations",
+    "file_writes",
+    "network_calls",
+    "self_modification"
+  ],
+  "gateway_active": true,
+  "coverage_percentage": 100.0,
+  "evidence_ledger": "CLAIMS_MATRIX.md"
+}

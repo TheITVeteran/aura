@@ -49,7 +49,7 @@ class BenchmarkHarness:
         reuse_rate = 0.0
         if skill_lib and skill_lib.skills:
             total_uses = sum(s.successes + s.failures for s in skill_lib.skills.values())
-            # Dummy metric: % of skills that have been reused at least once
+    # Metric: percent of skills that have been reused at least once.
             reused = sum(1 for s in skill_lib.skills.values() if (s.successes + s.failures) > 1)
             reuse_rate = reused / len(skill_lib.skills)
             

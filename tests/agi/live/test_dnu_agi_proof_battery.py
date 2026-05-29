@@ -21,7 +21,7 @@ def test_dnu_agi_proof_battery(live_harness):
     """
     repo = live_harness.create_isolated_copy()
 
-    env = {}
+    env = {"AURA_FULL_TEST_BOOT": "1"}
     if os.environ.get("AURA_AGI_FULL_RUN") != "1":
         env["AURA_AGI_MAX_TASKS"] = "12"
 

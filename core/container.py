@@ -81,11 +81,29 @@ class ServiceLifetime(Enum):
     SINGLETON = "singleton"
     TRANSIENT = "transient"
 
+def _determine_caller() -> str:
+    import traceback
+    from pathlib import Path
+    stack = traceback.extract_stack(limit=10)
+    for frame in reversed(stack):
+        if "core/container.py" not in frame.filename and "traceback.py" not in frame.filename:
+            try:
+                p = Path(frame.filename).resolve()
+                if "live-source" in p.parts:
+                    idx = p.parts.index("live-source")
+                    return "/".join(p.parts[idx+1:])
+                return p.name
+            except Exception:
+                return Path(frame.filename).name
+    return "unknown"
+
 class ServiceDescriptor:
     """Describes how to create and manage a service."""
     def __init__(self, name: str, factory: Callable, lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
                  instance: Any = None, required: bool = True, initialized: bool = False,
-                 dependencies: list[str] | None = None):
+                 dependencies: list[str] | None = None, owner: str | None = None,
+                 registered_by: str | None = None, required_for: str | None = None,
+                 failure_policy: str | None = None):
         self.name = name
         self.factory = factory
         self.lifetime = lifetime
@@ -94,6 +112,11 @@ class ServiceDescriptor:
         self.initialized = initialized
         self._async_initialized = False
         self.dependencies = list(dependencies or [])
+        caller = _determine_caller()
+        self.owner = owner or caller
+        self.registered_by = registered_by or caller
+        self.required_for = required_for or ("boot" if required else "optional features")
+        self.failure_policy = failure_policy or ("fail-closed" if required else "degrade_with_receipt")
 
 
 def _callable_attr(instance: Any, attr_name: str) -> Callable[..., Any] | None:
@@ -202,6 +225,10 @@ class ServiceContainer:
         lifetime=ServiceLifetime.SINGLETON,
         required=True,
         dependencies: list[str] | None = None,
+        owner: str | None = None,
+        registered_by: str | None = None,
+        required_for: str | None = None,
+        failure_policy: str | None = None,
     ):
         """Register a service factory."""
         if cls._registration_locked:
@@ -220,6 +247,10 @@ class ServiceContainer:
                     required=required,
                     initialized=True,
                     dependencies=[],
+                    owner=owner,
+                    registered_by=registered_by,
+                    required_for=required_for,
+                    failure_policy=failure_policy,
                 )
                 logger.debug("Registered legacy pre-built instance via register(): %s", name)
             return
@@ -230,6 +261,10 @@ class ServiceContainer:
                 lifetime,
                 required=required,
                 dependencies=dependencies,
+                owner=owner,
+                registered_by=registered_by,
+                required_for=required_for,
+                failure_policy=failure_policy,
             )
             logger.debug("Registered static service: %s", name)
     @classmethod
@@ -271,7 +306,7 @@ class ServiceContainer:
             logger.info("🔒 ServiceContainer registration LOCKED")
 
     @classmethod
-    def register_instance(cls, name: str, instance: Any, required=True):
+    def register_instance(cls, name: str, instance: Any, required=True, owner: str | None = None, registered_by: str | None = None, required_for: str | None = None, failure_policy: str | None = None):
         """Register a pre-built instance.
 
         Unlike factory-based ``register()``, pre-built instances are safe to
@@ -325,7 +360,11 @@ class ServiceContainer:
                 lifetime=ServiceLifetime.SINGLETON,
                 instance=instance,
                 required=required,
-                initialized=True
+                initialized=True,
+                owner=owner,
+                registered_by=registered_by,
+                required_for=required_for,
+                failure_policy=failure_policy,
             )
             logger.debug("Registered pre-built instance: %s", name)
 
@@ -837,6 +876,28 @@ class ServiceContainer:
         return str(stored.get("hash", "")) == current
 
     @classmethod
+    def write_service_ownership_manifest(cls, project_root: Path) -> Path:
+        with cls._lock:
+            items = sorted(list(cls._services.items()))
+        
+        lines = [
+            "# Aura Subsystem and Service Ownership Manifest",
+            "",
+            "This file outlines every registered service, its source code location, registration origin, failure policy, and operational requirements.",
+            "",
+            "| Service | Owner File | Registered By | Required For | Failure Policy |",
+            "|---|---|---|---|---|",
+        ]
+        for name, desc in items:
+            lines.append(
+                f"| `{name}` | `{getattr(desc, 'owner', 'unknown')}` | `{getattr(desc, 'registered_by', 'unknown')}` | {getattr(desc, 'required_for', 'general utility')} | `{getattr(desc, 'failure_policy', 'degrade_with_receipt')}` |"
+            )
+        
+        path = project_root / "SERVICE_OWNERSHIP.md"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    @classmethod
     def _emit_absent_event(cls, service_name: str) -> None:
         """Emit a quiet breadcrumb when an explicitly optional service is absent.
 
@@ -856,3 +917,4 @@ class ServiceContainer:
 
 def get_container() -> type[ServiceContainer]:
     return ServiceContainer
+

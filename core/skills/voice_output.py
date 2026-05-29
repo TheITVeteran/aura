@@ -16,7 +16,6 @@ This closes the "voice output" gap in the senses polish layer.
 import asyncio
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -27,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.VoiceOutput")
@@ -134,10 +134,11 @@ class VoiceOutputSkill(BaseSkill):
             return self._piper_available
         self._piper_checked = True
         try:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 ["piper", "--help"],
-                capture_output=True,
                 timeout=5,
+                read_only=True,
+                source="voice_output_piper_probe",
             )
             self._piper_available = result.returncode == 0
         except _VOICE_RECOVERABLE_ERRORS:

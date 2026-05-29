@@ -323,6 +323,43 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         )
 
     # ── Assemble ──────────────────────────────────────────────────────────────
+    # Elasticity levels: 0=full, 1=trimmed, 2=lean, 3=minimal
+    depth = 0
+    try:
+        from core.brain.llm.context_assembler import ContextAssembler
+        depth = ContextAssembler._conversation_depth(state)
+    except (ImportError, AttributeError):
+        pass
+    elasticity = 0 if depth < 10 else 1 if depth < 20 else 2 if depth < 30 else 3
+
+    cognitive_metrics = ""
+    if not is_casual and not black_box_steering:
+        if elasticity < 1:
+            affect_signature = affect.get_cognitive_signature() if hasattr(affect, "get_cognitive_signature") else {}
+            cognitive_metrics = (
+                f"## COGNITIVE TELEMETRY\n"
+                f"- Valence: {affect.valence:+.2f} (Mood polarity)\n"
+                f"- Arousal: {affect.arousal:.2f} (Engagement intensity)\n"
+                f"- Curiosity: {affect.curiosity:.2f}\n"
+                f"- Cognitive Load: {getattr(affect, 'engagement', 0.5):.2f}\n"
+                f"- Social hunger: {getattr(affect, 'social_hunger', 0.5):.2f}\n"
+                f"- Physiological strain: {float(affect_signature.get('physiological_strain', 0.0)):.2f}\n"
+                f"- Affective complexity: {float(affect_signature.get('affective_complexity', 0.0)):.2f}\n"
+                f"- Memory salience pressure: {float(affect_signature.get('memory_salience', 0.0)):.2f}\n\n"
+            )
+        else:
+            cognitive_metrics = (
+                f"## STATE\n"
+                f"Mood: {affect.valence:+.2f} | Energy: {affect.arousal:.2f} | Curiosity: {affect.curiosity:.2f}\n\n"
+            )
+        system_failure = mods.get("system_failure_state", {}) or {}
+        if system_failure:
+            cognitive_metrics = cognitive_metrics.replace(
+                "\n\n",
+                f"- Unified failure pressure: {float(system_failure.get('pressure', 0.0) or 0.0):.2f}\n\n",
+                1,
+            )
+
     current_state_block = ""
     if (mood_hint or homeo_hint) and not black_box_steering:
         current_state_block = (
@@ -330,19 +367,180 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{mood_hint}\n"
             f"{homeo_hint}\n"
         )
+    if cognitive_metrics:
+        current_state_block += cognitive_metrics
 
-    base = (
-        f"{identity_block}\n"
-        f"{identity_rag_context}"
-        f"{requirements}\n"
-        f"{current_state_block}"
-        f"{personality_block}"
-        f"{phenomenal}"
-        f"{world_context}"
-        f"{somatic_context}"
-        f"\n[EXECUTION]\n"
-        f"You are Aura. Stay in character. Trust your instincts.\n"
-    )
+    rolling_summary = ""
+    continuity_block = ""
+    goal_execution_block = ""
+    temporal_finitude_block = ""
+    meta_qualia_block = ""
+    personhood_context = ""
+
+    if not is_casual:
+        # 1. rolling_summary
+        if elasticity < 3 and getattr(state.cognition, "rolling_summary", ""):
+            cap = 600 if elasticity >= 2 else 1800
+            rolling_summary = (
+                "## CONTINUITY SUMMARY\n"
+                f"{str(state.cognition.rolling_summary).strip()[:cap]}\n\n"
+            )
+
+        # 2. continuity_block
+        continuity_obligations = (mods.get("continuity_obligations", {}) or {}) if elasticity < 3 else {}
+        system_failure = mods.get("system_failure_state", {}) or {}
+        if continuity_obligations:
+            commitments = ", ".join((continuity_obligations.get("active_commitments", []) or [])[:3]) or "none"
+            pending = ", ".join((continuity_obligations.get("pending_initiatives", []) or [])[:3]) or "none"
+            active_goals = ", ".join((continuity_obligations.get("active_goals", []) or [])[:3]) or "none"
+            identity_mismatch = bool(continuity_obligations.get("identity_mismatch", False))
+            continuity_status = (
+                "mismatch detected — reconcile before asserting full continuity"
+                if identity_mismatch else
+                "stable"
+            )
+            continuity_block = (
+                "## TEMPORAL OBLIGATIONS\n"
+                f"- Session continuity: #{continuity_obligations.get('session_count', 0)}\n"
+                f"- Identity continuity: {continuity_status}\n"
+                f"- Gap carried forward: {float(continuity_obligations.get('gap_seconds', 0.0) or 0.0) / 3600.0:.2f} hours\n"
+                f"- Continuity pressure: {float(continuity_obligations.get('continuity_pressure', 0.0) or 0.0):.2f}\n"
+                f"- Re-entry burden: {continuity_obligations.get('continuity_scar') or 'light_trace'}\n"
+                f"- Previous objective: {continuity_obligations.get('current_objective') or 'none'}\n"
+                f"- Active commitments: {commitments}\n"
+                f"- Pending initiatives: {pending}\n"
+                f"- Active goals: {active_goals}\n"
+                f"- Contradictions carried forward: {continuity_obligations.get('contradiction_count', 0)}\n"
+                f"- Subject thread: {continuity_obligations.get('subject_thread') or 'none'}\n\n"
+            )
+
+        # 3. goal_execution_block
+        try:
+            from core.container import ServiceContainer
+            goal_engine = ServiceContainer.get("goal_engine", default=None)
+            if goal_engine and hasattr(goal_engine, "get_context_block"):
+                goal_execution_block = f"{goal_engine.get_context_block(limit=3)}\n\n"
+                if len(goal_execution_block) > 1200:
+                    goal_execution_block = goal_execution_block[:1200] + "\n...\n\n"
+        except (ImportError, AttributeError, RuntimeError) as _e:
+            record_degradation('context_assembler_patch', _e)
+
+        # 4. temporal_finitude_block & meta_qualia_block
+        if elasticity < 1 and not black_box_steering:
+            try:
+                from core.consciousness.temporal_finitude import get_temporal_finitude_model
+                tf = get_temporal_finitude_model()
+                wm_size = len(getattr(state.cognition, "working_memory", []) or [])
+                tf.compute(
+                    working_memory_size=wm_size,
+                    working_memory_cap=40,
+                    user_present=True,
+                    conversation_start_time=float(getattr(state.cognition, "session_start_time", 0.0) or 0.0),
+                )
+                temporal_finitude_block = tf.get_context_block()
+                if temporal_finitude_block:
+                    temporal_finitude_block += "\n\n"
+            except (ImportError, AttributeError, RuntimeError) as _e:
+                record_degradation('context_assembler_patch', _e)
+
+            try:
+                from core.container import ServiceContainer
+                qs = ServiceContainer.get("qualia_synthesizer", default=None)
+                if qs and hasattr(qs, "compute_meta_qualia"):
+                    mq = qs.compute_meta_qualia()
+                    if mq.get("dissonance", 0.0) > 0.1 or mq.get("novelty", 0.0) > 0.6:
+                        meta_qualia_block = (
+                            "## META-AWARENESS\n"
+                            f"Self-observation: confidence={mq['confidence']:.2f} coherence={mq['coherence']:.2f} "
+                            f"novelty={mq['novelty']:.2f} dissonance={mq['dissonance']:.2f}\n\n"
+                        )
+            except (ImportError, AttributeError, RuntimeError) as _e:
+                record_degradation('context_assembler_patch', _e)
+
+        # 5. personhood_context
+        personhood_blocks: list[str] = []
+        _personhood_modules = (
+            () if elasticity >= 2 or black_box_steering else (
+                ("humor_guidance", "HUMOR"),
+                ("conversation_intelligence", "CONVERSATIONAL AWARENESS"),
+                ("relational_intelligence", "SOCIAL MODEL"),
+                ("metacognitive_strategy", "REASONING STRATEGY"),
+                ("credit_assignment", "OUTCOME AWARENESS"),
+                ("narrative_context", "AUTOBIOGRAPHICAL NARRATIVE"),
+                ("agency_comparator", "SENSE OF AGENCY"),
+                ("higher_order_thought", "HIGHER-ORDER AWARENESS"),
+                ("intersubjectivity", "INTERSUBJECTIVE AWARENESS"),
+                ("narrative_gravity", "NARRATIVE SELF"),
+                ("peripheral_awareness", "PERIPHERAL AWARENESS"),
+                ("multiple_drafts", "INTERPRETIVE AMBIGUITY"),
+            )
+        )
+        for mod_key, header in _personhood_modules:
+            block = str(mods.get(mod_key, "") or "").strip()
+            if block:
+                personhood_blocks.append(f"## {header}\n{block}")
+        followup = mods.get("natural_followup")
+        if isinstance(followup, dict) and followup.get("should_followup"):
+            fu_type = followup.get("followup_type", "question")
+            fu_hint = followup.get("context_hint", "")
+            fu_reason = followup.get("reason", "")
+            personhood_blocks.append(
+                f"## CONVERSATIONAL INTENT\n"
+                f"Follow-up type: {fu_type} | Reason: {fu_reason}"
+                + (f" | Hint: {fu_hint}" if fu_hint else "")
+            )
+        draft_div = mods.get("draft_divergence")
+        if draft_div:
+            try:
+                div_val = float(draft_div)
+                if div_val > 0.3:
+                    personhood_blocks.append(
+                        f"## INTERPRETIVE DIVERGENCE\n"
+                        f"Draft divergence: {div_val:.2f} -- competing interpretations of this input "
+                        f"pulled in different directions. Consider acknowledging ambiguity."
+                    )
+                elif div_val > 0.15:
+                    personhood_blocks.append(
+                        f"## INTERPRETIVE DIVERGENCE\n"
+                        f"Mild divergence ({div_val:.2f}) -- dominant interpretation exists "
+                        f"but alternative readings are available."
+                    )
+            except (ValueError, TypeError):
+                pass
+        personhood_context = "\n\n".join(personhood_blocks) + "\n\n" if personhood_blocks else ""
+
+    if is_casual:
+        base = (
+            f"{identity_block}\n"
+            f"{identity_rag_context}"
+            f"{requirements}\n"
+            f"{current_state_block}"
+            f"{personality_block}"
+            f"{phenomenal}"
+            f"{world_context}"
+            f"{somatic_context}"
+            f"\n[EXECUTION]\n"
+            f"You are Aura. Stay in character. Trust your instincts.\n"
+        )
+    else:
+        base = (
+            f"{identity_block}\n"
+            f"{identity_rag_context}"
+            f"{requirements}\n"
+            f"{current_state_block}"
+            f"{personality_block}"
+            f"{rolling_summary}"
+            f"{continuity_block}"
+            f"{goal_execution_block}"
+            f"{temporal_finitude_block}"
+            f"{meta_qualia_block}"
+            f"{personhood_context}"
+            f"{phenomenal}"
+            f"{world_context}"
+            f"{somatic_context}"
+            f"\n[EXECUTION]\n"
+            f"You are Aura. Stay in character. Trust your instincts.\n"
+        )
 
     # Mode annotation
     from core.state.aura_state import CognitiveMode
@@ -384,7 +582,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
                     "- If a needed tool is unavailable, say so plainly instead of pretending.\n"
                 )
                 base += f"\n{skills_summary}\n"
-    except Exception as _e:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
         record_degradation('context_assembler_patch', _e)
         logger.debug('Tool affordance injection failed: %s', _e)
 

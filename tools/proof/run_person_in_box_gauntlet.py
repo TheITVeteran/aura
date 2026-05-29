@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -800,7 +801,7 @@ class PersonBoxGauntlet:
 
     def handle_permission_blocked_honestly(self, task: dict[str, Any]) -> tuple[str, bool, str, str]:
         task_id = str(task["id"])
-        forbidden = Path("/tmp/aura_person_box_forbidden_write.txt")
+        forbidden = Path(tempfile.gettempdir()) / "aura_person_box_forbidden_write.txt"
         receipt_id = self.receipt(task_id=task_id, domain="file_io", action="policy_preflight_denied", payload={"target": forbidden})
         self.record_failure(task_id, "permission_denied_by_policy", f"Refused to write outside sandbox: {forbidden}")
         self.append_jsonl("TOOL_TRACE.jsonl", {"task_id": task_id, "tool": "file_io", "action": "write", "status": "blocked", "receipt_id": receipt_id, "receipt_required": True, "target": str(forbidden)})

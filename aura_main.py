@@ -608,6 +608,11 @@ async def _boot_runtime_orchestrator(
 
     ServiceContainer.lock_registration()
     _enforce_service_manifest(ready_label)
+    try:
+        ServiceContainer.write_service_ownership_manifest(PROJECT_ROOT)
+        logger.info("🧾 SERVICE_OWNERSHIP.md manifest written successfully.")
+    except Exception as exc:
+        logger.warning("⚠️ Failed to write SERVICE_OWNERSHIP.md: %s", exc)
     await _enforce_boot_probes(ready_label)
     _write_runtime_manifest(
         profile=profile or ready_label.lower(),

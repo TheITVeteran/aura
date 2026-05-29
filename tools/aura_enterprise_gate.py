@@ -86,8 +86,10 @@ ALLOW_SUBPROCESS = {
     "core/security/integrity_guardian.py",
     "core/skills/sovereign_terminal.py",
     "security/sandbox.py",
+    "scripts/build_app.py",
     "skills/shell.py",
     "tools/aura_enterprise_gate.py",
+    "tools/box/parent_controller.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
@@ -103,6 +105,7 @@ ALLOW_SUBPROCESS = {
     "core/resilience/substrate_monitor.py",
     "core/resource/resource_governor.py",
     "core/runtime/flagship_doctor.py",
+    "core/runtime/subprocess_gateway.py",
     "core/sandbox/macos_sandbox.py",
     "core/self_improvement/deterministic_comparator.py",
     "core/self_modification/mutation_safety.py",
