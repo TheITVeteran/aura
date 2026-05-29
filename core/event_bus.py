@@ -173,6 +173,11 @@ class AuraEventBus:
         except RuntimeError:
             return
 
+        # ONLY perform loop mismatch check on the main loop.
+        # Secondary loops should not touch or reset the main loop's Redis connection.
+        if self._loop and current_loop is not self._loop:
+            return
+
         redis_loop = getattr(self, "_redis_loop", None)
         if redis_loop is None:
             self._redis_loop = current_loop
@@ -193,19 +198,17 @@ class AuraEventBus:
             if old_task:
                 try:
                     old_task.cancel()
-                except RuntimeError as exc:
-                    record_degradation('event_bus', exc)
+                except Exception as exc:
                     logger.debug("AuraEventBus: failed to cancel stale Redis listener task: %s", exc)
             if old_redis:
                 async def safe_close(r):
                     try:
                         await r.aclose()
-                    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                        record_degradation('event_bus', exc)
+                    except Exception as exc:
                         logger.debug("AuraEventBus: stale Redis close failed: %s", exc)
                 try:
                     current_loop.create_task(safe_close(old_redis))
-                except RuntimeError as e:
+                except Exception as e:
                     logger.debug("AuraEventBus: Error scheduling old Redis close: %s", e)
 
     async def _setup_redis(self):
@@ -214,7 +217,11 @@ class AuraEventBus:
             return
             
         try:
-            self._redis_loop = asyncio.get_running_loop()
+            current_loop = asyncio.get_running_loop()
+            if self._loop and current_loop is not self._loop:
+                # Do not set up Redis on a secondary loop
+                return
+            self._redis_loop = current_loop
             self._redis = redis.from_url(self._redis_url, decode_responses=True)
             await self._redis.ping()
             self._pubsub_task = get_task_tracker().create_task(
@@ -222,14 +229,12 @@ class AuraEventBus:
                 name="event_bus.redis_listener",
             )
             logger.info("AuraEventBus: Redis Pub/Sub connection established.")
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('event_bus', e)
-            logger.error("AuraEventBus: Failed to connect to Redis: %s", e)
+        except Exception as e:
+            logger.warning("AuraEventBus: Failed to connect to Redis (falling back to local mode): %s", e)
             if self._redis:
                 try:
                     await self._redis.aclose()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                    record_degradation('event_bus', _exc)
+                except Exception as _exc:
                     logger.debug("Suppressed Exception: %s", _exc)
                 self._redis = None
             self._use_redis = False
@@ -261,8 +266,7 @@ class AuraEventBus:
                         logger.warning("AuraEventBus: Received malformed JSON from Redis for topic %s", topic)
         except asyncio.CancelledError as _e:
             logger.debug('Ignored asyncio.CancelledError in event_bus.py: %s', _e)
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('event_bus', e)
+        except Exception as e:
             self._last_error = e
             self._error_count += 1
             self.degraded = True
@@ -272,19 +276,16 @@ class AuraEventBus:
             self._pubsub_task = None
             try:
                 await pubsub.punsubscribe("aura/events/*")
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('event_bus', _exc)
+            except Exception as _exc:
                 logger.debug("Suppressed Exception: %s", _exc)
             try:
                 await pubsub.aclose()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('event_bus', _exc)
+            except Exception as _exc:
                 logger.debug("Suppressed Exception: %s", _exc)
             if not self._use_redis and self._redis:
                 try:
                     await self._redis.aclose()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                    record_degradation('event_bus', _exc)
+                except Exception as _exc:
                     logger.debug("Suppressed Exception: %s", _exc)
                 self._redis = None
 
@@ -302,15 +303,13 @@ class AuraEventBus:
                 await pubsub_task
             except asyncio.CancelledError as _exc:
                 logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('event_bus', exc)
+            except Exception as exc:
                 logger.debug("AuraEventBus: pubsub shutdown failed: %s", exc)
 
         if self._redis:
             try:
                 await self._redis.aclose()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('event_bus', exc)
+            except Exception as exc:
                 logger.debug("AuraEventBus: redis close failed: %s", exc)
             finally:
                 self._redis = None
@@ -372,12 +371,18 @@ class AuraEventBus:
         # Ensure we're on the correct loop before doing anything
         try:
             current_loop = asyncio.get_running_loop()
-            if self._loop is None:
-                self._loop = current_loop
-            elif self._loop is not current_loop:
+            if self._loop is None or not self._loop.is_running():
                 self._loop = current_loop
         except RuntimeError:
-            pass
+            current_loop = None
+
+        # Delegate to the main loop if we are called on a secondary loop
+        if current_loop and self._loop and self._loop is not current_loop and self._loop.is_running():
+            fut = asyncio.run_coroutine_threadsafe(
+                self.publish(topic, data, priority), self._loop
+            )
+            await asyncio.wrap_future(fut)
+            return
 
         self._check_loop_mismatch()
 
@@ -408,8 +413,7 @@ class AuraEventBus:
                     await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
                 except asyncio.TimeoutError:
                     logger.debug("AuraEventBus: Redis publish STALLED (timeout).")
-                except (ImportError, AttributeError, RuntimeError) as e:
-                    record_degradation('event_bus', e)
+                except Exception as e:
                     logger.debug("AuraEventBus: Redis publish failed: %s", e)
 
     async def _publish_local(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
@@ -474,13 +478,11 @@ class AuraEventBus:
                     stale_subscribers.append((q, loop))
                     logger.debug("EventBus: Removing stale subscriber (loop mismatch) on topic '%s'", topic)
                 else:
-                    record_degradation('event_bus', e)
                     with self._stats_lock:
                         self._error_count += 1
                         self._last_error = e
                     logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
-            except (AttributeError, TypeError, ValueError) as e:
-                record_degradation('event_bus', e)
+            except Exception as e:
                 with self._stats_lock:
                     self._error_count += 1
                     self._last_error = e
@@ -507,8 +509,7 @@ class AuraEventBus:
         except asyncio.QueueFull:
             with self._stats_lock:
                 self._dropped_count += 1
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('event_bus', e)
+        except Exception as e:
             with self._stats_lock:
                 self._error_count += 1
                 self._last_error = e
@@ -557,8 +558,7 @@ async def reset_event_bus() -> AuraEventBus:
     global _bus
     try:
         await _bus.shutdown()
-    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation('event_bus', exc)
+    except Exception as exc:
         logger.debug("EventBus reset shutdown failed: %s", exc)
     _bus = AuraEventBus()
     return _bus
