@@ -607,6 +607,8 @@ async def test_unitary_response_answers_live_self_reflection_without_retrying(mo
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.state.aura_state import AuraState
 
+    monkeypatch.setenv("AURA_ALLOW_PRE_MODEL_STATE_ONLY_REPLY", "1")
+
     bad_self_report = (
         "My self-prediction accuracy is 0.98. My memory texture drift is 0.02. "
         "My affect baseline is stable."
@@ -657,6 +659,24 @@ async def test_unitary_response_answers_live_self_reflection_without_retrying(mo
     assert "memory texture" not in reply
     assert "attention" in reply
     assert "continuity" in reply
+
+
+def test_dialogue_repetition_with_speaker_labels_is_not_rejected_as_loop():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    dialogue = (
+        "Mainframe: First statement.\n"
+        "Quantum Processor: First response.\n"
+        "Mainframe: Second statement.\n"
+        "Quantum Processor: Second response.\n"
+        "Mainframe: Third statement.\n"
+        "Quantum Processor: Third response."
+    )
+    assessment = assess_user_facing_reply(
+        "Write a dialogue between Mainframe and Quantum Processor.",
+        dialogue,
+    )
+    assert not assessment.retryable
 
 
 @pytest.mark.asyncio

@@ -1186,6 +1186,19 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
         "to", "and", "but", "then", "is", "are", "was", "were", "be", "being",
         "with", "on", "in", "of", "for", "as", "so", "my", "your",
     }
+    
+    # Detect structured dialogue speaker names / headings to avoid false positive loops on speaker prefixes (e.g. "Mainframe", "Quantum Processor")
+    speaker_labels = set()
+    for line in str(reply_text or "").splitlines():
+        # Match "Mainframe:", "Quantum Processor:", "[Mainframe]", "[Quantum Processor]", "Alice (excited):", etc.
+        match = re.match(r"^\s*(?:\*\*|###*|[-*+]\s+)?(?:\[\s*([A-Za-z][A-Za-z0-9_'\s-]{1,30})\s*\]|([A-Za-z][A-Za-z0-9_'\s-]{1,30})\s*[:：])", line)
+        if match:
+            label_text = (match.group(1) or match.group(2) or "").lower()
+            if label_text:
+                for w in _WORD_RE.findall(label_text):
+                    speaker_labels.add(w)
+    if speaker_labels:
+        stop_words = stop_words.union(speaker_labels)
     for n in (4, 3, 2):
         counts: dict[tuple[str, ...], int] = {}
         for i in range(0, max(0, len(lower_words) - n + 1)):
