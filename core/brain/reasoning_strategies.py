@@ -455,13 +455,13 @@ class ReasoningStrategies:
         
         # Prevent infinite recursion by passing bypass_critique=True
         # Use the highly capable and already resident PRIMARY (Cortex 32B) tier to prevent OOM/timeouts on local 72B loading.
-        # Set reasoning_timeout_s = 25.0 to guarantee critique finishes or falls back fast without timing out the outer AGI task.
+        # Set reasoning_timeout_s = 90.0 to guarantee critique finishes or falls back fast without timing out the outer AGI task.
         critique_kwargs = dict(kwargs)
         critique_kwargs["bypass_critique"] = True
         critique_kwargs["prefer_tier"] = "primary"
         critique_kwargs["deep_handoff"] = False
         critique_kwargs["allow_cloud_fallback"] = True
-        critique_kwargs["reasoning_timeout_s"] = 25.0
+        critique_kwargs["reasoning_timeout_s"] = 90.0
         
         critique_result = await self._generate_text(critique_prompt, **critique_kwargs)
         if critique_result and len(critique_result.strip()) > 0:
