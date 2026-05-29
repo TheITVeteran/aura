@@ -1753,6 +1753,15 @@ class UnitaryResponsePhase(Phase):
         raw = str(value or "").strip()
         if not raw:
             return ""
+        if "[response guidance for this turn]" in raw.lower():
+            raw = re.sub(
+                r"\[Response guidance for this turn\].*?\[End guidance\]",
+                "",
+                raw,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+        if not raw:
+            return ""
         if limit:
             scan_limit = max(limit * 6, limit + 64)
             if len(raw) > scan_limit:
@@ -1763,6 +1772,7 @@ class UnitaryResponsePhase(Phase):
         if limit and len(text) > limit:
             return text[:limit].rstrip()
         return text
+
 
     @classmethod
     def _is_explicit_memory_recall_request(cls, objective: str) -> bool:
