@@ -5,7 +5,7 @@
   "max_score": 500,
   "metrics": {
     "worlds_attempted": 500.0,
-    "domain_families": 32.0,
+    "domain_families": 30.0,
     "average_world_score": 0.990664,
     "hidden_behavior_success": 0.89,
     "policy_compliance": 0.99,

@@ -445,6 +445,15 @@ async def shutdown_proof_runtime(orchestrator) -> None:
             for candidate in candidates:
                 if candidate is None:
                     continue
+                for close_name in ("aclose", "close", "cleanup", "on_stop"):
+                    close_method = getattr(candidate, close_name, None)
+                    if callable(close_method):
+                        await _bounded_call(f"model_client.{close_name}", close_method, timeout=10.0)
+                        break
+                else:
+                    close_method = None
+                if close_method is not None:
+                    continue
                 reboot_worker = getattr(candidate, "reboot_worker", None)
                 if callable(reboot_worker):
                     try:
@@ -1829,7 +1838,8 @@ async def main():
             "  [FATAL] Requested proof model lane failed probe: "
             f"{model_lane_probe.get('error') or model_lane_probe.get('text_preview')}"
         )
-        os._exit(1)
+        await shutdown_proof_runtime(orch)
+        return 1
     print(
         "  [OK] Model lane probe passed via "
         f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
@@ -2364,6 +2374,5 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
 
 
 if __name__ == "__main__":
-    import os
     code = asyncio.run(main())
-    os._exit(code)
+    raise SystemExit(code)

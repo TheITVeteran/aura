@@ -490,6 +490,36 @@ def test_sensory_client_defers_async_lock_creation():
 
     assert client._lock is None
     assert client._start_lock is None
+    assert client._req_q is None
+    assert client._res_q is None
+
+
+def test_sensory_client_releases_ipc_queues():
+    class FakeQueue:
+        def __init__(self):
+            self.closed = False
+            self.joined = False
+
+        def close(self):
+            self.closed = True
+
+        def join_thread(self):
+            self.joined = True
+
+    client = SensoryLocalClient()
+    req_q = FakeQueue()
+    res_q = FakeQueue()
+    client._req_q = req_q
+    client._res_q = res_q
+
+    client._close_queues()
+
+    assert req_q.closed
+    assert req_q.joined
+    assert res_q.closed
+    assert res_q.joined
+    assert client._req_q is None
+    assert client._res_q is None
 
 
 def test_sensory_instincts_respects_substrate_authority_block(monkeypatch):

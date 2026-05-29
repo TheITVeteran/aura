@@ -547,6 +547,52 @@ class InferenceGate:
                 logger.warning("Force-abort failed for local inference client: %s", exc)
         return aborted
 
+    def cleanup(self) -> None:
+        """Release managed local inference clients during ServiceContainer shutdown."""
+        for task_attr in ("_prewarm_task", "_deferred_prewarm_task", "_maintenance_task"):
+            task = getattr(self, task_attr, None)
+            if task is not None and not task.done():
+                task.cancel()
+            setattr(self, task_attr, None)
+
+        candidates: list[Any] = []
+        if self._mlx_client is not None:
+            candidates.append(self._mlx_client)
+        candidates.extend(self._iter_local_clients().values())
+
+        seen: set[int] = set()
+        for client in candidates:
+            if client is None:
+                continue
+            ident = id(client)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            close = getattr(client, "close", None)
+            if not callable(close):
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    coroutine_close = getattr(result, "close", None)
+                    if callable(coroutine_close):
+                        coroutine_close()
+                    raise RuntimeError(
+                        f"{type(client).__name__}.close returned an awaitable during sync shutdown"
+                    )
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action=f"continued inference shutdown after {type(client).__name__}.close failed",
+                    severity="warning",
+                )
+                logger.debug("Inference client close failed for %s: %s", type(client).__name__, exc)
+
+        self._mlx_client = None
+        self._initialized = False
+
+    on_stop = cleanup
+
     async def _enforce_foreground_admission(
         self,
         requested_tier: str,
@@ -5038,26 +5084,10 @@ class InferenceGate:
                                 proc.wait(timeout=2.0)
                         if hasattr(self._mlx_client, "_drain_queue"):
                             self._mlx_client._drain_queue()
-                        # Replace queues to sever any stuck feeder threads
-                        _safe_close = getattr(self._mlx_client, "_safe_close_queue", None)
-                        import multiprocessing as _mp
-
-                        if hasattr(self._mlx_client, "_req_q"):
-                            try:
-                                self._mlx_client._req_q.close()
-                            except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                                logger.debug(
-                                    "Request queue close skipped during cascade cleanup: %s", exc
-                                )
-                            self._mlx_client._req_q = _mp.Queue(maxsize=10)
-                        if hasattr(self._mlx_client, "_res_q"):
-                            try:
-                                self._mlx_client._res_q.close()
-                            except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                                logger.debug(
-                                    "Response queue close skipped during cascade cleanup: %s", exc
-                                )
-                            self._mlx_client._res_q = _mp.Queue(maxsize=10)
+                        # Replace queues to sever any stuck feeder threads.
+                        replace_queues = getattr(self._mlx_client, "_replace_ipc_queues", None)
+                        if callable(replace_queues):
+                            replace_queues()
                         self._mlx_client._process = None
                         self._mlx_client._init_done = False
                         logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")

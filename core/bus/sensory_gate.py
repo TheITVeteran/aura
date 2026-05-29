@@ -102,6 +102,8 @@ class SensoryGateActor:
             self.bus.register_handler("shutdown", self._handle_shutdown)
 
             self.bus.start()
+            if not self._is_active:
+                self._request_shutdown()
             self._track_task(self._heartbeat_loop(), name="sensory_gate.heartbeat")
 
             logger.info("👁️ SensoryGate Actor ready.")

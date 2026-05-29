@@ -31,6 +31,7 @@ from core.learning.rule_induction import (
     RepeatingShiftRule,
     infer_repeating_shift_rule,
 )
+from core.health.degraded_events import isolated_degraded_event_scope
 from core.runtime.proof_policy import proof_model_tier
 from core.will import ActionDomain, WillOutcome, get_will
 from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
@@ -82,6 +83,8 @@ async def model_attempt_without_learning(router: Any, ciphertext: str) -> str:
                     proof_primary_lane_required=tier == "primary",
                     proof_evaluation_contract=True,
                     allow_cloud_fallback=False,
+                    max_tokens=32,
+                    clean_user_surface_recurrent_loops=1,
                     timeout=120.0 if tier == "primary" else 45.0,
                 ),
                 timeout=135.0 if tier == "primary" else 60.0,
@@ -121,6 +124,26 @@ def skill_registration_authorized(decision: Any) -> bool:
         WillOutcome.CONSTRAIN.value,
         WillOutcome.CRITICAL_PASS.value,
     }
+
+
+def restore_transient_probe_circuits(router: Any, *, started_at: float) -> list[str]:
+    """Close transient zero-failure circuits opened by an isolated proof probe."""
+
+    restored: list[str] = []
+    endpoints = getattr(router, "endpoints", {}) or {}
+    for name, endpoint in dict(endpoints).items():
+        state = getattr(endpoint, "state", None)
+        state_value = str(getattr(state, "value", state) or "").lower()
+        failure_count = int(getattr(endpoint, "failure_count", 0) or 0)
+        last_failure = float(getattr(endpoint, "last_failure", 0.0) or 0.0)
+        if state_value != "open" or failure_count != 0 or last_failure < started_at:
+            continue
+
+        closed_state = getattr(type(state), "CLOSED", "closed")
+        setattr(endpoint, "state", closed_state)
+        setattr(endpoint, "last_failure", 0.0)
+        restored.append(str(name))
+    return restored
 
 
 async def verify_retention_no_regression(engine: Any, cap_engine: Any) -> dict[str, Any]:
@@ -208,9 +231,14 @@ async def async_main(argv: list[str] | None = None) -> int:
         await will.start()
 
         baseline_target = HELD_OUT_TASKS[9]
-        baseline_response = await model_attempt_without_learning(
+        with isolated_degraded_event_scope("continual_learning.no_learning_baseline") as baseline_scope:
+            baseline_response = await model_attempt_without_learning(
+                router,
+                baseline_target["ciphertext"],
+            )
+        restored_probe_circuits = restore_transient_probe_circuits(
             router,
-            baseline_target["ciphertext"],
+            started_at=float(baseline_scope["started_at"]),
         )
         baseline_passed = baseline_target["plaintext"] in baseline_response.lower()
         print(f"Baseline without learned rule passed={baseline_passed}")
@@ -311,13 +339,19 @@ async def async_main(argv: list[str] | None = None) -> int:
         write_json(dest_dir / "SCORECARD.json", scorecard)
 
         baselines = {
-            "no_learning_raw_model": {
-                "status": "RUN",
-                "pass_rate": 1.0 if baseline_passed else 0.0,
-                "passed": 1 if baseline_passed else 0,
-                "response_hash": sha_text(baseline_response),
-            }
-        }
+              "no_learning_raw_model": {
+                  "status": "RUN",
+                  "pass_rate": 1.0 if baseline_passed else 0.0,
+                  "passed": 1 if baseline_passed else 0,
+                  "response_hash": sha_text(baseline_response),
+                  "isolation": {
+                      "degraded_events_restored": bool(baseline_scope.get("restored")),
+                      "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
+                      "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
+                      "transient_circuits_restored": restored_probe_circuits,
+                  },
+              }
+          }
         write_json(dest_dir / "BASELINES.json", baselines)
 
         ablations = {
@@ -338,11 +372,17 @@ async def async_main(argv: list[str] | None = None) -> int:
             "skill_registration_receipt_id": getattr(learning_decision, "receipt_id", ""),
             "skill_registration_domain": ActionDomain.STATE_MUTATION.value,
             "skill_registration_outcome": decision_outcome_value(learning_decision),
-            "restart_persistence_passed": restart_persistence_passed,
-            "retention_passed": retention_passed,
-            "retention": retention,
-            "no_learning_ablation_degraded": not baseline_passed,
-            "rule": rule.to_manifest(),
+              "restart_persistence_passed": restart_persistence_passed,
+              "retention_passed": retention_passed,
+              "retention": retention,
+              "baseline_isolation": {
+                  "degraded_events_restored": bool(baseline_scope.get("restored")),
+                  "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
+                  "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
+                  "transient_circuits_restored": restored_probe_circuits,
+              },
+              "no_learning_ablation_degraded": not baseline_passed,
+              "rule": rule.to_manifest(),
             "training_example_hashes": [
                 {"plaintext": sha_text(ex.plaintext), "ciphertext": sha_text(ex.ciphertext)}
                 for ex in TRAINING_EXAMPLES

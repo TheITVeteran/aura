@@ -3,7 +3,7 @@ import json
 import logging
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -134,7 +134,7 @@ class StateManager:
         """Archives corrupted data for later analysis without halting the system."""
         autopsy_dir = self.snapshot_dir / "autopsy"
         autopsy_dir.mkdir(exist_ok=True)
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         target_path = autopsy_dir / f"corrupted_state_{timestamp}_{corrupted_file_path.name}"
         try:
             shutil.move(str(corrupted_file_path), str(target_path))
@@ -165,9 +165,22 @@ class StateManager:
                     
                     if checksum_from_file != calculated_checksum:
                         self._initiate_autopsy(path)
-                        raise ValueError(f"State checksum mismatch in {path.name}! File corrupted.")
+                        logger.error("State checksum mismatch in %s. Snapshot quarantined.", path.name)
+                        return None
                         
-            snapshot = json.loads(data_bytes.decode('utf-8'))
+            try:
+                snapshot = json.loads(data_bytes.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as decode_error:
+                self._initiate_autopsy(path)
+                record_degradation(
+                    "state_manager_snapshot_decode",
+                    decode_error,
+                    severity="warning",
+                    action="quarantined unreadable snapshot and continued without recovery state",
+                    extra={"path": str(path)},
+                )
+                logger.error("Snapshot %s was unreadable and has been quarantined: %s", path, decode_error)
+                return None
                 
             meta = snapshot.get("meta", {})
             data = snapshot.get("data", {})
@@ -175,7 +188,7 @@ class StateManager:
             logger.info("Loaded snapshot from %s (Reason: %s)", meta.get('iso_time'), meta.get('reason'))
             return data
             
-        except (OSError, ConnectionError, TimeoutError) as e:
+        except (OSError, ConnectionError, TimeoutError, zlib.error, ValueError) as e:
             record_degradation('state_manager', e)
             logger.error("Failed to load snapshot from %s: %s", path, e)
             return None

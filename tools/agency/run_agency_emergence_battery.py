@@ -734,6 +734,15 @@ async def shutdown_agency_runtime(orchestrator) -> None:
             for candidate in candidates:
                 if candidate is None:
                     continue
+                for close_name in ("aclose", "close", "cleanup", "on_stop"):
+                    close_method = getattr(candidate, close_name, None)
+                    if callable(close_method):
+                        await _bounded_call(f"model_client.{close_name}", close_method, timeout=10.0)
+                        break
+                else:
+                    close_method = None
+                if close_method is not None:
+                    continue
                 reboot_worker = getattr(candidate, "reboot_worker", None)
                 if callable(reboot_worker):
                     try:

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.brain.llm.mlx_client import MLXLocalClient
+from core.brain.llm.mlx_vision_client import MLXVisionClient
 from core.brain.llm.mlx_worker import (
     IPCWriterThread,
     _apply_surface_generation_controls,
@@ -28,6 +29,99 @@ TEST_MODEL = str(TMP_ROOT / "test-model")
 
 
 class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
+    class _FakeQueue:
+        def __init__(self):
+            self.closed = False
+            self.joined = False
+
+        def empty(self):
+            return True
+
+        def close(self):
+            self.closed = True
+
+        def join_thread(self):
+            self.joined = True
+
+    def _attach_local_ipc_queues(self, client):
+        client._req_q = queue.Queue()
+        client._res_q = queue.Queue()
+
+    def test_close_releases_worker_and_ipc_queues(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        req_q = self._FakeQueue()
+        res_q = self._FakeQueue()
+        proc = MagicMock()
+        proc.is_alive.return_value = True
+        client._req_q = req_q
+        client._res_q = res_q
+        client._process = proc
+        client._init_done = True
+
+        client.close()
+
+        proc.kill.assert_called_once()
+        proc.join.assert_called_once_with(timeout=2.0)
+        self.assertTrue(req_q.closed)
+        self.assertTrue(req_q.joined)
+        self.assertTrue(res_q.closed)
+        self.assertTrue(res_q.joined)
+        self.assertIsNone(client._req_q)
+        self.assertIsNone(client._res_q)
+        self.assertFalse(client._init_done)
+        self.assertEqual(client.get_lane_status()["state"], "closed")
+
+    def test_client_constructor_defers_ipc_queue_allocation(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+
+        self.assertIsNone(client._req_q)
+        self.assertIsNone(client._res_q)
+        self.assertFalse(hasattr(client._substrate_mem, "get_lock"))
+        self.assertFalse(hasattr(client._steering_active, "get_lock"))
+
+    def test_replace_ipc_queues_closes_previous_queues_before_recreation(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        old_req_q = self._FakeQueue()
+        old_res_q = self._FakeQueue()
+        new_req_q = self._FakeQueue()
+        new_res_q = self._FakeQueue()
+        client._req_q = old_req_q
+        client._res_q = old_res_q
+        client._mp_context = MagicMock()
+        client._mp_context.Queue.side_effect = [new_req_q, new_res_q]
+
+        client._replace_ipc_queues()
+
+        self.assertTrue(old_req_q.closed)
+        self.assertTrue(old_req_q.joined)
+        self.assertTrue(old_res_q.closed)
+        self.assertTrue(old_res_q.joined)
+        self.assertIs(client._req_q, new_req_q)
+        self.assertIs(client._res_q, new_res_q)
+        self.assertFalse(client._closed)
+
+    def test_vision_client_releases_worker_and_ipc_queues(self):
+        client = MLXVisionClient(model_path=TEST_MODEL)
+        req_q = self._FakeQueue()
+        res_q = self._FakeQueue()
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+        client._req_q = req_q
+        client._res_q = res_q
+        client._process = proc
+        client._init_done = True
+
+        client.stop()
+
+        proc.join.assert_called_with(timeout=3.0)
+        self.assertTrue(req_q.closed)
+        self.assertTrue(req_q.joined)
+        self.assertTrue(res_q.closed)
+        self.assertTrue(res_q.joined)
+        self.assertIsNone(client._req_q)
+        self.assertIsNone(client._res_q)
+        self.assertFalse(client._init_done)
+
     async def test_worker_stop_sequences_are_role_boundary_safe(self):
         stops = _merge_stop_sequences(["Assistant:", "Aura:", "user:", "\nHuman:"])
 
@@ -328,6 +422,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         proc.is_alive.return_value = True
         client._process = proc
         client._init_done = True
+        self._attach_local_ipc_queues(client)
         client._set_lane_state("ready")
         client._last_heartbeat = client._last_progress_at = client._last_ready_at = 10_000.0
 
@@ -345,6 +440,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_expected_cancelled_generation_does_not_mark_worker_unhealthy(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
+        self._attach_local_ipc_queues(client)
         client._expected_cancel_reason = "yield_to_Qwen2.5-72B-Instruct-4bit"
         client._expected_cancel_budget = 1
         client._expected_cancel_recorded_at = 10_000.0
@@ -507,6 +603,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_listener_routes_init_error_without_action_to_init_future(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
+        self._attach_local_ipc_queues(client)
         client._init_future = asyncio.get_running_loop().create_future()
 
         listener = asyncio.create_task(client._response_listener_loop())
@@ -625,6 +722,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         import core.brain.llm.mlx_client as mlx_module
 
         client = MLXLocalClient(model_path=QWEN32_MODEL)
+        self._attach_local_ipc_queues(client)
         current_future = mlx_module._new_shared_future()
         client._current_gen_future = current_future
         client._current_request_id = "new-req"
@@ -667,6 +765,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._process = MagicMock()
         client._process.is_alive.return_value = True
         client._init_done = True
+        self._attach_local_ipc_queues(client)
         client._set_lane_state("ready")
 
         with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):

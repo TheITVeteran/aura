@@ -6,8 +6,9 @@ import logging
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from threading import Lock
-from typing import Any
+from typing import Any, Iterator
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
@@ -237,6 +238,66 @@ def clear_degraded_events() -> None:
         _EVENTS.clear()
         _SUMMARIES.clear()
         _LAST_FORWARDED.clear()
+
+
+def capture_degraded_events_state() -> dict[str, Any]:
+    """Capture degraded-event pressure state for isolated proof probes."""
+
+    with _LOCK:
+        return {
+            "events": [dict(event) for event in _EVENTS],
+            "summaries": {
+                key: dict(summary)
+                for key, summary in _SUMMARIES.items()
+            },
+            "last_forwarded": dict(_LAST_FORWARDED),
+        }
+
+
+def restore_degraded_events_state(snapshot: dict[str, Any]) -> None:
+    """Restore degraded-event pressure state captured by capture_degraded_events_state."""
+
+    events = snapshot.get("events", [])
+    summaries = snapshot.get("summaries", {})
+    last_forwarded = snapshot.get("last_forwarded", {})
+    with _LOCK:
+        _EVENTS.clear()
+        _EVENTS.extend(dict(event) for event in events)
+        _SUMMARIES.clear()
+        _SUMMARIES.update(
+            {
+                key: dict(summary)
+                for key, summary in dict(summaries).items()
+            }
+        )
+        _LAST_FORWARDED.clear()
+        _LAST_FORWARDED.update(dict(last_forwarded))
+
+
+@contextmanager
+def isolated_degraded_event_scope(label: str = "isolated_probe") -> Iterator[dict[str, Any]]:
+    """Run an expected negative-control probe without poisoning live failure pressure.
+
+    This is for proof/evaluation probes that intentionally drive a baseline or
+    ablated lane into failure. The caller must still record the probe result in
+    its artifact bundle; this only prevents expected control failures from
+    causing unrelated live-runtime lockdowns.
+    """
+
+    snapshot = capture_degraded_events_state()
+    scope = {
+        "label": str(label or "isolated_probe"),
+        "started_at": time.time(),
+        "restored": False,
+    }
+    try:
+        yield scope
+    finally:
+        with _LOCK:
+            scope["events_observed"] = max(0, len(_EVENTS) - len(snapshot.get("events", [])))
+            scope["summaries_observed"] = max(0, len(_SUMMARIES) - len(snapshot.get("summaries", {})))
+        restore_degraded_events_state(snapshot)
+        scope["restored"] = True
 
 
 def _forward_to_terminal_monitor(event: dict[str, Any]) -> None:

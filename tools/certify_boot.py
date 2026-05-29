@@ -58,7 +58,7 @@ async def run_certification():
         )
     except Exception as exc:
         print(f"❌ CRITICAL: Aura failed to boot: {exc}")
-        sys.exit(1)
+        return False
 
     uptime = time.monotonic() - start_time
     print(f"✅ Aura booted successfully in {uptime:.2f}s.")
@@ -233,9 +233,7 @@ async def run_certification():
     except Exception as shutdown_exc:
         logger.debug("Shutdown coordinator finished: %s", shutdown_exc)
 
-    # Force immediate process termination to avoid hanging on background daemon threads
-    import os
-    os._exit(0 if cert_passed else 1)
+    return cert_passed
 
 
 

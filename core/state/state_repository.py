@@ -74,6 +74,28 @@ def _record_state_degradation(
     record_degradation(_STATE_SUBSYSTEM, error, severity=severity, action=action)
 
 
+def _record_proxy_transport_degradation(
+    error: BaseException,
+    *,
+    action: str = "state proxy transport deferred commit to durable outbox",
+    severity: str = "degraded",
+) -> None:
+    """Record proxy transport issues without converting durable deferral into data loss.
+
+    The canonical state repository remains fail-closed for real persistence and
+    coherence failures. A proxy-to-vault transport timeout is different when the
+    commit payload is retained in the local durable outbox for replay; escalating
+    that as a state_repository failure aborts foreground work before the repair
+    path can do its job.
+    """
+    record_degradation(
+        "state_repository_proxy_transport",
+        error,
+        severity=severity,
+        action=action,
+    )
+
+
 def _close_if_possible(awaitable: Any) -> None:
     try:
         close = awaitable.close
@@ -551,7 +573,7 @@ class StateRepository:
                 transport = self._resolve_transport()
             if transport is None:
                 last_error = RuntimeError("state_vault transport unavailable")
-                _record_state_degradation(
+                _record_proxy_transport_degradation(
                     last_error,
                     action="state proxy commit deferred because vault transport was unavailable",
                 )
@@ -560,15 +582,23 @@ class StateRepository:
                     continue
                 return False, None, last_error
             try:
-                await transport.request(
+                response = await transport.request(
                     "state_vault",
                     "commit",
                     payload,
                     timeout=_state_proxy_commit_timeout_seconds(),
                 )
+                if isinstance(response, dict) and (
+                    response.get("failed") is True
+                    or response.get("ok") is False
+                    or response.get("error")
+                ):
+                    raise RuntimeError(
+                        f"state_vault commit failed: {response.get('error') or response}"
+                    )
                 return True, transport, None
             except (BrokenPipeError, ConnectionError) as exc:
-                _record_state_degradation(exc)
+                _record_proxy_transport_degradation(exc)
                 last_error = exc
                 logger.warning(
                     "⚠️ [STATE] Vault pipe broken (attempt %d/2): %s — commit deferred for replay.",
@@ -581,13 +611,14 @@ class StateRepository:
                     await asyncio.sleep(0.3)
                     continue
             except _STATE_BOUNDARY_ERRORS as exc:
-                _record_state_degradation(exc)
+                _record_proxy_transport_degradation(exc)
                 last_error = exc
                 logger.warning(
                     "❌ [STATE] Proxy Commit Request FAILED (attempt %d/2): %s", attempt + 1, exc
                 )
-                self._transport = None
-                transport = self._resolve_transport()
+                if not isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                    self._transport = None
+                    transport = self._resolve_transport()
                 if attempt == 0:
                     await asyncio.sleep(0.2)
                     continue

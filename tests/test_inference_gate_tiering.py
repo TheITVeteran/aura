@@ -1274,6 +1274,34 @@ async def test_foreground_admission_sheds_background_workers_before_retry():
     gc_collect.assert_called_once()
 
 
+def test_cleanup_closes_primary_and_registered_local_clients_once():
+    gate = InferenceGate()
+    primary = MagicMock()
+    registered = MagicMock()
+    duplicate = primary
+    gate._mlx_client = primary
+    gate._initialized = True
+    prewarm_task = MagicMock()
+    prewarm_task.done.return_value = False
+    gate._prewarm_task = prewarm_task
+    gate._deferred_prewarm_task = None
+    gate._maintenance_task = None
+
+    with patch.object(
+        gate,
+        "_iter_local_clients",
+        return_value={"/models/primary": duplicate, "/models/secondary": registered},
+    ):
+        gate.cleanup()
+
+    primary.close.assert_called_once()
+    registered.close.assert_called_once()
+    prewarm_task.cancel.assert_called_once()
+    assert gate._prewarm_task is None
+    assert gate._mlx_client is None
+    assert gate._initialized is False
+
+
 @pytest.mark.asyncio
 async def test_recycle_idle_local_clients_reboots_fragmented_spare():
     gate = InferenceGate()

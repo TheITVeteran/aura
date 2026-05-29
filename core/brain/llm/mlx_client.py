@@ -121,7 +121,7 @@ def _safe_close_queue(q: mp.Queue | None) -> None:
     try:
         q.close()
         q.join_thread()
-    except (OSError, ValueError, BrokenPipeError):
+    except (OSError, ValueError, BrokenPipeError, TypeError, AttributeError):
         return
 
 
@@ -675,8 +675,14 @@ class MLXLocalClient:
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
         self._process: mp.Process | None = None
-        self._req_q = mp.Queue(maxsize=10)
-        self._res_q = mp.Queue(maxsize=10)
+        self._mp_context = (
+            mp.get_context("spawn")
+            if os.uname().sysname == "Darwin"
+            else mp.get_context("forkserver")
+        )
+        self._req_q: Any | None = None
+        self._res_q: Any | None = None
+        self._closed = False
         self._init_done = False
 
         # Concurrency Hardening
@@ -717,10 +723,10 @@ class MLXLocalClient:
         # Darwin spawn context, so workers get a small multiprocessing bridge
         # instead of the repository transport itself. The last slot is reserved
         # for steering liveness.
-        self._substrate_mem = mp.Array("d", 16)
+        self._substrate_mem = self._mp_context.Array("d", 16, lock=False)
 
         # Shared memory flag to track if affective steering successfully attached
-        self._steering_active = mp.Value("b", False)
+        self._steering_active = self._mp_context.Value("b", False, lock=False)
 
     def _is_primary_or_deep_lane(self) -> bool:
         lowered = os.path.basename(self.model_path).lower()
@@ -1348,6 +1354,21 @@ class MLXLocalClient:
                 )
                 logger.warning("Error killing process: %s", e)
 
+    def _replace_ipc_queues(self, *, maxsize: int = 10) -> None:
+        """Replace IPC queues after closing the old semaphores and feeder threads."""
+        _safe_close_queue(self._req_q)
+        _safe_close_queue(self._res_q)
+        self._req_q = self._mp_context.Queue(maxsize=maxsize)
+        self._res_q = self._mp_context.Queue(maxsize=maxsize)
+        self._closed = False
+
+    def _close_ipc_queues(self) -> None:
+        """Close IPC queues without recreating them during final client shutdown."""
+        _safe_close_queue(self._req_q)
+        _safe_close_queue(self._res_q)
+        self._req_q = None
+        self._res_q = None
+
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
         """Thread-safe emergency abort for a wedged generation.
 
@@ -1408,10 +1429,7 @@ class MLXLocalClient:
             if process is not None and process.is_alive():
                 self._kill_and_join_blocking(process)
 
-            _safe_close_queue(self._req_q)
-            _safe_close_queue(self._res_q)
-            self._req_q = mp.Queue(maxsize=10)
-            self._res_q = mp.Queue(maxsize=10)
+            self._replace_ipc_queues()
             self._release_request_lock()
             gc.collect()
         finally:
@@ -1469,11 +1487,9 @@ class MLXLocalClient:
             )
             logger.debug("Orphan reclamation scan failed (non-fatal): %s", orphan_exc)
 
-        ctx = (
-            mp.get_context("spawn")
-            if os.uname().sysname == "Darwin"
-            else mp.get_context("forkserver")
-        )
+        if self._req_q is None or self._res_q is None:
+            raise RuntimeError("MLX IPC queues must be created before worker spawn")
+        ctx = self._mp_context
 
         lock_dir = Path.home() / ".aura" / "run"
         lock_dir.mkdir(parents=True, exist_ok=True)
@@ -1521,6 +1537,8 @@ class MLXLocalClient:
 
         _consecutive_errors = 0
         while not _runtime_shutdown_requested():
+            if self._res_q is None:
+                break
             try:
                 # Use polling instead of infinite block to avoid executor thread leaks and zombie stealing
                 res = await run_io_bound(self._res_q.get, True, 0.5)
@@ -1878,8 +1896,7 @@ class MLXLocalClient:
                     self._last_heartbeat = 0.0
                     self._last_progress_at = 0.0
                     self._drain_queue()
-                    self._req_q = mp.Queue()
-                    self._res_q = mp.Queue()
+                    self._replace_ipc_queues()
                     # Fall through into the missing-init-lifecycle path on
                     # the next iteration of caller's outer loop.
 
@@ -1907,8 +1924,7 @@ class MLXLocalClient:
                     self._drain_queue()
 
                     # Prevent zombie threads from stealing messages
-                    self._req_q = mp.Queue()
-                    self._res_q = mp.Queue()
+                    self._replace_ipc_queues()
 
                     init_future = _new_shared_future()
                     self._init_future = init_future
@@ -1971,10 +1987,7 @@ class MLXLocalClient:
                 self._drain_queue()
 
                 # Prevent zombie threads from stealing messages
-                _safe_close_queue(self._req_q)
-                _safe_close_queue(self._res_q)
-                self._req_q = mp.Queue(maxsize=10)
-                self._res_q = mp.Queue(maxsize=10)
+                self._replace_ipc_queues()
 
                 init_future = _new_shared_future()
                 self._init_future = init_future
@@ -2104,12 +2117,12 @@ class MLXLocalClient:
         """Safe non-blocking drain."""
         import queue as _queue_mod
 
-        while not self._res_q.empty():
+        while self._res_q is not None and not self._res_q.empty():
             try:
                 self._res_q.get_nowait()
             except (_queue_mod.Empty, OSError, ValueError):
                 break
-        while not self._req_q.empty():
+        while self._req_q is not None and not self._req_q.empty():
             try:
                 self._req_q.get_nowait()
             except (_queue_mod.Empty, OSError, ValueError):
@@ -2759,6 +2772,8 @@ class MLXLocalClient:
         )
         enqueue_timeout = max(0.5, min(2.0, deadline.remaining or 2.0))
         try:
+            if self._req_q is None:
+                raise BrokenPipeError("MLX request queue is closed")
             await run_io_bound(self._req_q.put, req, True, enqueue_timeout)
         except (BrokenPipeError, OSError) as exc:
             self._pending_generations.pop(req_id, None)
@@ -3289,10 +3304,7 @@ class MLXLocalClient:
             gc.collect()
 
             # RECREATE QUEUES TO PREVENT ZOMBIE THREADS STEALING MESSAGES
-            _safe_close_queue(self._req_q)
-            _safe_close_queue(self._res_q)
-            self._req_q = mp.Queue(maxsize=10)
-            self._res_q = mp.Queue(maxsize=10)
+            self._replace_ipc_queues()
 
             pending_futures = {
                 id(future): future
@@ -3333,9 +3345,59 @@ class MLXLocalClient:
                 self._lock.release()
         self._set_lane_state("failed" if mark_failed else "cold", reason if mark_failed else "")
 
+    def close(self) -> None:
+        """Release worker process and multiprocessing IPC resources."""
+        pending_futures = {
+            id(future): future
+            for future in list(self._pending_generations.values())
+            + [self._current_gen_future, self._init_future]
+            if future is not None and not future.done()
+        }
+        acquired = self._lock.acquire(timeout=1.0)
+        try:
+            for future in pending_futures.values():
+                _cancel_shared_future(future)
+            self._pending_generations.clear()
+            self._current_gen_future = None
+            self._init_future = None
+            self._active_generations = 0
+            self._init_done = False
+            self._warmup_in_flight = False
+            self._deferred_reboot_reason = None
+            if self._listener_task is not None:
+                _cancel_task_threadsafe(self._listener_task)
+                self._listener_task = None
+            process = self._process
+            self._process = None
+            if process is not None and process.is_alive():
+                self._kill_and_join_blocking(process)
+            self._drain_queue()
+            self._close_ipc_queues()
+            self._release_request_lock()
+            self._closed = True
+            self._set_lane_state("closed", "shutdown")
+        finally:
+            if acquired:
+                try:
+                    self._lock.release()
+                except RuntimeError:
+                    logger.debug(
+                        "Loop-agnostic lifecycle lock for %s was already released.",
+                        os.path.basename(self.model_path),
+                    )
+
+    async def aclose(self) -> None:
+        """Async shutdown hook for runtime coordinators."""
+        await asyncio.to_thread(self.close)
+
+    cleanup = close
+    on_stop = close
+
     def __del__(self):
-        if self._process and self._process.is_alive():
-            self._process.kill()
+        try:
+            self.close()
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+            return
 
 
 def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:

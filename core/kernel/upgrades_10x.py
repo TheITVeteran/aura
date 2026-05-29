@@ -590,6 +590,98 @@ class GodModeToolPhase(Phase):
         return expr
 
     @staticmethod
+    def _is_stateless_diagnostic_python(objective: str, code: str) -> bool:
+        """Return true when a snippet is safe to run as isolated diagnostic compute."""
+        raw_code = str(code or "").strip()
+        if not raw_code:
+            return False
+        objective_lower = str(objective or "").lower()
+        if any(
+            marker in objective_lower
+            for marker in (
+                "keep state",
+                "keep variables",
+                "persist variables",
+                "reuse variables",
+                "stateful",
+                "session state",
+            )
+        ):
+            return False
+        try:
+            import ast
+
+            tree = ast.parse(raw_code)
+        except (SyntaxError, ValueError):
+            return False
+
+        banned_import_roots = {
+            "asyncio",
+            "httpx",
+            "os",
+            "pathlib",
+            "requests",
+            "shutil",
+            "socket",
+            "subprocess",
+            "sys",
+            "tempfile",
+            "urllib",
+        }
+        banned_calls = {
+            "__import__",
+            "compile",
+            "delattr",
+            "eval",
+            "exec",
+            "globals",
+            "input",
+            "locals",
+            "open",
+            "setattr",
+            "vars",
+        }
+        banned_attr_calls = {
+            "check_call",
+            "check_output",
+            "chmod",
+            "mkdir",
+            "open",
+            "popen",
+            "post",
+            "put",
+            "read_bytes",
+            "read_text",
+            "remove",
+            "rename",
+            "replace",
+            "request",
+            "rmdir",
+            "run",
+            "system",
+            "unlink",
+            "write",
+            "write_bytes",
+            "write_text",
+        }
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".", 1)[0] in banned_import_roots:
+                        return False
+            elif isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".", 1)[0] in banned_import_roots:
+                    return False
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in banned_calls:
+                    return False
+                if isinstance(func, ast.Attribute) and func.attr in banned_attr_calls:
+                    return False
+        return True
+
+    @staticmethod
     def _looks_like_direct_run_code_request(objective: str) -> bool:
         text = str(objective or "")
         lower = text.lower()
@@ -801,6 +893,8 @@ class GodModeToolPhase(Phase):
                 code = GodModeToolPhase._extract_python_code_payload(objective)
                 if code:
                     normalized["code"] = code
+                    if GodModeToolPhase._is_stateless_diagnostic_python(objective, code):
+                        normalized.setdefault("stateful", False)
                 else:
                     expression = GodModeToolPhase._extract_safe_arithmetic_expression(objective)
                     if expression:

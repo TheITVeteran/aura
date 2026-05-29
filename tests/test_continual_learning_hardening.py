@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -111,6 +112,94 @@ def test_skill_registration_provenance_rejects_refused_will_decision():
 
     assert skill_registration_authorized(refused) is False
     assert skill_registration_authorized(approved) is True
+
+
+def test_isolated_baseline_degradation_does_not_poison_failure_pressure():
+    from core.health.degraded_events import (
+        clear_degraded_events,
+        get_recent_degraded_events,
+        get_unified_failure_state,
+        isolated_degraded_event_scope,
+        record_degraded_event,
+    )
+
+    clear_degraded_events()
+    try:
+        with isolated_degraded_event_scope("test.no_learning_baseline") as scope:
+            record_degraded_event(
+                "llm_router",
+                "expected_negative_control_timeout",
+                severity="critical",
+                classification="foreground_blocking",
+            )
+            assert get_unified_failure_state()["pressure"] > 0.0
+
+        assert scope["restored"] is True
+        assert scope["events_observed"] >= 1
+        assert get_recent_degraded_events(limit=5) == []
+        assert get_unified_failure_state()["pressure"] == 0.0
+    finally:
+        clear_degraded_events()
+
+
+def test_isolated_baseline_restores_only_transient_zero_failure_circuits():
+    from tools.learning.run_continual_learning_battery import restore_transient_probe_circuits
+
+    class CircuitState:
+        OPEN = "open"
+        CLOSED = "closed"
+
+    transient = SimpleNamespace(
+        state=CircuitState.OPEN,
+        failure_count=0,
+        last_failure=10.0,
+    )
+    real_failure = SimpleNamespace(
+        state=CircuitState.OPEN,
+        failure_count=2,
+        last_failure=10.0,
+    )
+    older = SimpleNamespace(
+        state=CircuitState.OPEN,
+        failure_count=0,
+        last_failure=1.0,
+    )
+    router = SimpleNamespace(
+        endpoints={
+            "transient": transient,
+            "real_failure": real_failure,
+            "older": older,
+        }
+    )
+
+    restored = restore_transient_probe_circuits(router, started_at=5.0)
+
+    assert restored == ["transient"]
+    assert transient.state == CircuitState.CLOSED
+    assert transient.last_failure == 0.0
+    assert real_failure.state == CircuitState.OPEN
+    assert older.state == CircuitState.OPEN
+
+
+def test_no_learning_baseline_uses_bounded_short_answer_contract(monkeypatch):
+    from tools.learning.run_continual_learning_battery import model_attempt_without_learning
+
+    class Router:
+        def __init__(self):
+            self.kwargs = None
+
+        async def generate(self, **kwargs):
+            self.kwargs = kwargs
+            return "guess"
+
+    router = Router()
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert asyncio.run(model_attempt_without_learning(router, "cgfwevmg")) == "guess"
+    assert router.kwargs["max_tokens"] == 32
+    assert router.kwargs["clean_user_surface_recurrent_loops"] == 1
+    assert router.kwargs["proof_evaluation_contract"] is True
+    assert router.kwargs["proof_primary_lane_required"] is True
 
 
 def test_proof_tool_context_is_system_source_not_autonomous_background():

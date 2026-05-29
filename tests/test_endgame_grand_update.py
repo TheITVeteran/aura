@@ -289,6 +289,36 @@ def test_scheduler_activation_spec_matches_live_main_loop_name():
     assert "aura.scheduler.main_loop" in spec.task_name_contains
 
 
+def test_scheduler_activation_detects_existing_scheduler_singleton_loop():
+    from core.runtime.activation_audit import ActivationAuditor, ActivationSpec
+    from core.scheduler import scheduler
+
+    class FakeTask:
+        def done(self):
+            return False
+
+    old_task = getattr(scheduler, "_main_loop_task", None)
+    try:
+        scheduler._main_loop_task = FakeTask()
+        auditor = ActivationAuditor(
+            (
+                ActivationSpec(
+                    name="scheduler",
+                    task_name_contains=("missing-tracker-name",),
+                    required=True,
+                ),
+            )
+        )
+
+        report = asyncio.run(auditor.audit())
+
+        assert report.statuses[0].active
+        assert report.statuses[0].evidence["scheduler_main_loop_active"] is True
+        assert report.statuses[0].evidence["scheduler_task_source"] == "scheduler_singleton"
+    finally:
+        scheduler._main_loop_task = old_task
+
+
 def test_caa_validator_reads_existing_vector_artifacts():
     from training.caa_32b_validation import CAA32BValidator
 

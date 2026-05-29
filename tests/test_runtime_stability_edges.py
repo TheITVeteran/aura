@@ -48,7 +48,15 @@ class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_command_restarts_dead_worker(self):
         client = SensoryLocalClient()
-        client.start = AsyncMock(return_value=True)
+
+        async def restart_worker():
+            client._req_q = MagicMock()
+            client._res_q = MagicMock()
+            client._process = MagicMock()
+            client._process.is_alive.return_value = True
+            return True
+
+        client.start = AsyncMock(side_effect=restart_worker)
         task_registry = MagicMock()
         task_registry.register_task.return_value = "task-1"
 
@@ -173,6 +181,109 @@ class TestShutdownCoordination(unittest.TestCase):
             self.assertIsNone(tree.start_actor("worker"))
         finally:
             clear_shutdown_request()
+
+    def test_proof_runners_use_normal_exit_after_runtime_shutdown(self):
+        root = Path(__file__).resolve().parents[1]
+        proof_runners = [
+            root / "tools" / "agi" / "run_dnu_agi_proof_battery.py",
+            root / "tools" / "run_aletheia_live_proof.py",
+            root / "tools" / "certify_boot.py",
+        ]
+        for runner in proof_runners:
+            source = runner.read_text(encoding="utf-8")
+            self.assertNotIn("os._exit", source, f"{runner} bypasses multiprocessing cleanup")
+
+        dnu_source = proof_runners[0].read_text(encoding="utf-8")
+        self.assertIn("await shutdown_proof_runtime(orch)\n        return 1", dnu_source)
+        self.assertIn("raise SystemExit(code)", dnu_source)
+
+    def test_agency_shutdown_prefers_final_client_close_before_reboot_fallback(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "tools" / "agency" / "run_agency_emergence_battery.py").read_text(
+            encoding="utf-8"
+        )
+        shutdown_block = source[
+            source.index("async def shutdown_agency_runtime"):
+            source.index("async def main", source.index("async def shutdown_agency_runtime"))
+        ]
+        close_index = shutdown_block.index('for close_name in ("aclose", "close", "cleanup", "on_stop")')
+        reboot_index = shutdown_block.index("reboot_worker = getattr")
+        self.assertLess(close_index, reboot_index)
+
+
+class TestStateTransportRuntimeEdges(unittest.IsolatedAsyncioTestCase):
+    async def test_pipe_handler_failure_returns_failed_response_without_killing_dispatcher(self):
+        from core.bus.local_pipe_bus import LocalPipeBus
+
+        bus = LocalPipeBus(start_reader=False)
+        bus._write_raw_message = AsyncMock()
+        handler_calls = {"count": 0}
+
+        def bad_handler(_payload, _trace_id):
+            handler_calls["count"] += 1
+            raise ValueError("bad payload")
+
+        try:
+            await bus._handle_message(
+                bad_handler,
+                {
+                    "type": "commit",
+                    "payload": {"state": {}},
+                    "trace_id": "trace-1",
+                    "request_id": "request-1",
+                    "is_request": True,
+                },
+            )
+        finally:
+            await bus.stop()
+
+        bus._write_raw_message.assert_awaited_once()
+        self.assertEqual(handler_calls["count"], 1)
+        raw_response = bus._write_raw_message.await_args.args[0]
+        self.assertIn('"failed": true', raw_response)
+        self.assertIn('"response_to": "request-1"', raw_response)
+
+    async def test_proxy_commit_timeout_defers_under_live_fail_closed_state_repository(self):
+        from core.state.aura_state import AuraState
+        from core.state.state_repository import StateRepository
+
+        class SaturatedTransport:
+            def __init__(self):
+                self.calls = 0
+
+            async def request(self, *_args, **_kwargs):
+                self.calls += 1
+                raise TimeoutError("commit pipe saturated")
+
+        transport = SaturatedTransport()
+        repo = StateRepository(
+            db_path=str(TMP_ROOT / f"aura_state_proxy_timeout_{time.time_ns()}.db"),
+            is_vault_owner=False,
+        )
+        repo._current = AuraState()
+        repo._transport = transport
+
+        try:
+            with patch.dict(os.environ, {"AURA_MODE": "live"}, clear=False):
+                ServiceContainer.clear()
+                ServiceContainer.register_instance(
+                    "state_repository",
+                    repo,
+                    required=True,
+                    failure_policy="fail-closed",
+                )
+
+                next_state = repo._current.derive("foreground_commit", origin="api")
+                await repo.commit(next_state, "foreground_commit", trace_id="trace-live")
+
+                status = repo.get_runtime_status()
+                self.assertTrue(status["pending_proxy_commit"])
+                self.assertEqual(status["pending_proxy_commit_count"], 1)
+                self.assertIn("TimeoutError", status["last_proxy_commit_error"])
+                self.assertEqual(transport.calls, 2)
+        finally:
+            await repo.close()
+            ServiceContainer.clear()
 
 
 class TestShutdownCancellationHandlers(unittest.IsolatedAsyncioTestCase):
@@ -1123,3 +1234,19 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "login_unavailable")
+
+
+class TestStateManagerSnapshotRecovery(unittest.TestCase):
+    def test_unreadable_legacy_snapshot_is_quarantined_without_boot_failure(self):
+        from core.resilience.state_manager import StateManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_dir = Path(tmp)
+            manager = StateManager.__new__(StateManager)
+            manager.snapshot_dir = snapshot_dir
+            latest = snapshot_dir / "latest_snapshot.json"
+            latest.write_bytes(b"{\xff not utf8 json")
+
+            self.assertIsNone(manager.load_last_snapshot())
+            self.assertFalse(latest.exists())
+            self.assertTrue(list((snapshot_dir / "autopsy").glob("corrupted_state_*_latest_snapshot.json")))

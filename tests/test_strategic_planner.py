@@ -2,7 +2,6 @@ import pytest
 ################################################################################
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -22,12 +21,10 @@ class MockBrain:
         })
 
 @pytest.mark.asyncio
-async def test_flow():
-    db_path = "tests/test_projects.db"
-    if os.path.exists(db_path):
-        os.remove(db_path)
-        
-    store = ProjectStore(db_path)
+async def test_flow(tmp_path):
+    db_path = tmp_path / "projects.db"
+
+    store = ProjectStore(str(db_path))
     brain = MockBrain()
     planner = StrategicPlanner(brain, store)
     
@@ -54,7 +51,7 @@ async def test_flow():
     
     # 4. Test Persistence
     print("--- Testing Persistence ---")
-    new_store = ProjectStore(db_path)
+    new_store = ProjectStore(str(db_path))
     new_planner = StrategicPlanner(brain, new_store)
     projects = new_store.get_active_projects()
     assert len(projects) == 1

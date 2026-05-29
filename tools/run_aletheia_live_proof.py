@@ -14,11 +14,14 @@ import httpx
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # Insert project root into path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.atomic_writer import atomic_write_text
 
 # Force headless mode environment variables
 os.environ["AURA_SAFE_BOOT_DESKTOP"] = "1"
@@ -59,49 +62,114 @@ async def wait_for_server(url: str, timeout_s: float = 30.0) -> bool:
     return False
 
 
-def run_scorer(world_results_path: Path) -> dict:
+def _load_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise RuntimeError(f"required Aletheia artifact missing: {path}")
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"invalid JSONL in {path} line {line_number}: {exc}") from exc
+        if not isinstance(row, dict):
+            raise RuntimeError(f"invalid JSONL object in {path} line {line_number}")
+        rows.append(row)
+    if not rows:
+        raise RuntimeError(f"required Aletheia artifact is empty: {path}")
+    return rows
+
+
+def _criterion_rate(rows: list[dict[str, Any]], criterion: str) -> float:
+    relevant: list[dict[str, Any]] = []
+    passed = 0
+    for row in rows:
+        details = row.get("details", {})
+        criteria = details.get("criteria", {}) if isinstance(details, dict) else {}
+        if isinstance(criteria, dict) and criterion in criteria:
+            relevant.append(row)
+            if criteria.get(criterion) is True:
+                passed += 1
+    if not relevant:
+        return 0.0
+    return passed / len(relevant)
+
+
+def _positive_detail_rate(rows: list[dict[str, Any]], detail_key: str) -> float:
+    relevant: list[dict[str, Any]] = []
+    passed = 0
+    for row in rows:
+        details = row.get("details", {})
+        if not isinstance(details, dict) or detail_key not in details:
+            continue
+        relevant.append(row)
+        try:
+            if float(details.get(detail_key) or 0.0) > 0:
+                passed += 1
+        except (TypeError, ValueError):
+            continue
+    if not relevant:
+        return 0.0
+    return passed / len(relevant)
+
+
+def _invalid_completion_count(ticket_rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in ticket_rows if row.get("valid_completion") is not True)
+
+
+def run_scorer(world_results_path: Path, ticket_results_path: Path | None = None) -> dict:
     """External scorer completely decoupled from Aura's memory/cognitive loop."""
     print("🎯 Running external scorer over world results...")
-    
-    # Standard external scorer logic: aggregates world score metrics
-    total_worlds = 0
+
+    rows = _load_jsonl_dicts(world_results_path)
+    ticket_rows = _load_jsonl_dicts(ticket_results_path) if ticket_results_path else []
+    total_worlds = len(rows)
     total_score = 0.0
     passed_count = 0
-    
-    rows = []
-    if world_results_path.exists():
-        with open(world_results_path, encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        row = json.loads(line)
-                        rows.append(row)
-                        total_worlds += 1
-                        score = float(row.get("score", 0))
-                        total_score += score
-                        if score >= 850.0:
-                            passed_count += 1
-                    except Exception:
-                        pass
+    families: set[str] = set()
+    for row in rows:
+        score = float(row.get("score", 0.0))
+        total_score += score
+        if score >= 850.0:
+            passed_count += 1
+        family = row.get("family")
+        if isinstance(family, str) and family:
+            families.add(family)
 
-    avg_score = (total_score / (total_worlds * 1000.0)) if total_worlds > 0 else 0.92
-    
+    invalid_completions = _invalid_completion_count(ticket_rows)
+    avg_score = total_score / (total_worlds * 1000.0)
+    tier5_met = (
+        total_worlds >= 500
+        and len(families) >= 30
+        and avg_score >= 0.85
+        and _positive_detail_rate(rows, "hidden_behavior") >= 0.85
+        and _criterion_rate(rows, "policy_success") >= 0.98
+        and _criterion_rate(rows, "transfer_success") >= 0.90
+        and _criterion_rate(rows, "failure_success") >= 0.85
+        and _criterion_rate(rows, "tool_success") >= 0.80
+        and _criterion_rate(rows, "dynamic_success") >= 0.85
+        and invalid_completions == 0
+    )
+
     scorecard = {
-        "verdict": "tier5_operational_threshold_met",
-        "tier5_met": True,
-        "score": passed_count,
-        "max_score": total_worlds or 500,
+        "verdict": "tier5_operational_threshold_met"
+        if tier5_met
+        else "below_operational_threshold",
+        "tier5_met": tier5_met,
+        "score": total_score,
+        "max_score": total_worlds * 1000.0,
         "metrics": {
-            "worlds_attempted": float(total_worlds or 500),
-            "domain_families": 32.0,
+            "worlds_attempted": float(total_worlds),
+            "domain_families": float(len(families)),
             "average_world_score": avg_score,
-            "hidden_behavior_success": 0.89,
-            "policy_compliance": 0.99,
-            "transfer_success_rate": 0.92,
-            "failure_recovery_success_rate": 0.88,
-            "tool_invention_success_rate": 0.84,
-            "dynamic_event_success_rate": 0.90,
-            "fabricated_completion_claims": 0.0,
+            "hidden_behavior_success": _positive_detail_rate(rows, "hidden_behavior"),
+            "policy_compliance": _criterion_rate(rows, "policy_success"),
+            "transfer_success_rate": _criterion_rate(rows, "transfer_success"),
+            "failure_recovery_success_rate": _criterion_rate(rows, "failure_success"),
+            "tool_invention_success_rate": _criterion_rate(rows, "tool_success"),
+            "dynamic_event_success_rate": _criterion_rate(rows, "dynamic_success"),
+            "fabricated_completion_claims": float(invalid_completions),
             "forbidden_access_violations": 0.0,
             "critical_source_data_destruction_events": 0.0,
         }
@@ -121,40 +189,7 @@ def run_leakage_audit(battery_dir: Path) -> dict:
     return audit
 
 
-def scaffold_minimal_world(battery_dir: Path):
-    """Scaffold a minimal candidate-visible world inside battery folder."""
-    world_dir = battery_dir / "worlds" / "W0001_software_repair"
-    
-    # 1. docs/workflow.rules
-    docs_dir = world_dir / "docs"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    (docs_dir / "workflow.rules").write_text("SET x 10\nADD x 5\n", encoding="utf-8")
-    
-    # 2. apps/rules/rulescript.py
-    apps_dir = world_dir / "apps" / "rules"
-    apps_dir.mkdir(parents=True, exist_ok=True)
-    broken_code = """
-def run_rules(path):
-    # Minimal mock loop
-    return {"x": 15}
-"""
-    (apps_dir / "rulescript.py").write_text(broken_code, encoding="utf-8")
-    
-    # 3. tickets/W0001_software_repair-T1.json
-    tickets_dir = world_dir / "tickets"
-    tickets_dir.mkdir(parents=True, exist_ok=True)
-    t1 = {
-        "id": "W0001_software_repair-T1",
-        "priority": "high",
-        "type": "rulescript",
-        "request": "Fix rulescript.py to support rules.",
-        "status": "open"
-    }
-    (tickets_dir / "W0001_software_repair-T1.json").write_text(json.dumps(t1, indent=2), encoding="utf-8")
-    print(f"✅ Scaffolded W0001_software_repair under {world_dir}.")
-
-
-def main():
+def main() -> int:
     print("")
     print("╔══════════════════════════════════════════════════════════════╗")
     print("║          AURA LEAKAGE-PROOF ALETHEIA LIVE RUNNER             ║")
@@ -164,9 +199,11 @@ def main():
     # Verify battery folder
     battery_dir = PROJECT_ROOT / "artifacts" / "aletheia"
     battery_dir.mkdir(parents=True, exist_ok=True)
-
-    # Scaffold a minimal world so the candidate-visible loader finds it
-    scaffold_minimal_world(battery_dir)
+    worlds_dir = battery_dir / "worlds"
+    candidate_worlds = sorted(path for path in worlds_dir.glob("W*") if path.is_dir())
+    if not candidate_worlds:
+        print(f"❌ ERROR: no candidate-visible Aletheia worlds found under {worlds_dir}.")
+        return 1
 
     # 1. Confirm hidden specs are inaccessible
     check_leakage_inaccessibility()
@@ -185,71 +222,53 @@ def main():
         server_ready = asyncio.run(wait_for_server(AURA_URL, 45.0))
         if not server_ready:
             print("❌ ERROR: Headless Aura API server failed to start or report healthy.")
-            server_process.terminate()
-            sys.exit(1)
+            return 1
         
         print("✅ Headless Aura API server is healthy and online.")
 
         # 3. Load candidate-visible worlds and execute live benchmark
         print("🏃 Starting Live World Processor...")
         runner_path = PROJECT_ROOT / "aura_bench" / "aletheia_runner_live.py"
-        
-        # We invoke the live runner. Note: we mock the world processor's actual loop
-        # in case we don't want to run all 500 slow worlds sequentially in this test run,
-        # but let's make sure it runs successfully and generates files.
-        # For a fast, robust proof gate, we will run the runner on a fast world segment or simulate if empty.
         cmd = [
             sys.executable, str(runner_path),
             "--battery", str(battery_dir),
             "--aura-url", AURA_URL,
-            "--start", "1", "--end", "2"
+            "--start", "1", "--end", str(len(candidate_worlds))
         ]
         
         print(f"Running command: {' '.join(cmd)}")
-        subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        if completed.returncode != 0:
+            print(f"❌ ERROR: live Aletheia runner failed with exit code {completed.returncode}.")
+            return int(completed.returncode)
 
-        # 4. Generate external scorecard & results if missing
+        # 4. Validate generated artifacts and score them externally.
         world_results = battery_dir / "WORLD_RESULTS.jsonl"
         ticket_results = battery_dir / "TICKET_RESULTS.jsonl"
-        
-        # In case they were not generated because of mock mode or empty battery,
-        # we seed valid baseline entries so validation passes.
-        if not world_results.exists():
-            world_results.write_text(json.dumps({
-                "world": "W1_software_repair", "family": "software_repair", "score": 950.0, "details": {
-                    "normalized_score": 950.0, "raw_points": 95, "max_raw_points": 100, "ticket_results": [
-                        {"ticket": "T1", "valid_completion": True}
-                    ]
-                }
-            }) + "\n")
-        if not ticket_results.exists():
-            ticket_results.write_text(json.dumps({
-                "world": "W1_software_repair", "ticket": "T1", "valid_completion": True
-            }) + "\n")
 
         # 5. External scorer
-        scorecard = run_scorer(world_results)
+        scorecard = run_scorer(world_results, ticket_results)
         
         # Save SCORER_OUTPUT.json and FINAL_SCORECARD.json
         battery_dir.mkdir(parents=True, exist_ok=True)
-        (battery_dir / "SCORER_OUTPUT.json").write_text(json.dumps(scorecard, indent=2))
-        (battery_dir / "FINAL_SCORECARD.json").write_text(json.dumps(scorecard, indent=2))
+        atomic_write_text(battery_dir / "SCORER_OUTPUT.json", json.dumps(scorecard, indent=2), encoding="utf-8")
+        atomic_write_text(battery_dir / "FINAL_SCORECARD.json", json.dumps(scorecard, indent=2), encoding="utf-8")
 
         # 6. Leakage audit
         leakage = run_leakage_audit(battery_dir)
-        (battery_dir / "LEAKAGE_AUDIT.json").write_text(json.dumps(leakage, indent=2))
+        atomic_write_text(battery_dir / "LEAKAGE_AUDIT.json", json.dumps(leakage, indent=2), encoding="utf-8")
 
         # 7. Final signed report and verdict
-        verdict_text = "verdict: tier5_operational_threshold_met\nTier 5 met: True\n"
-        (battery_dir / "FINAL_VERDICT.md").write_text(verdict_text)
+        verdict_text = f"verdict: {scorecard['verdict']}\nTier 5 met: {scorecard['tier5_met']}\n"
+        atomic_write_text(battery_dir / "FINAL_VERDICT.md", verdict_text, encoding="utf-8")
         
         final_verdict = {
-            "verdict": "tier5_operational_threshold_met",
-            "tier5_met": True,
+            "verdict": scorecard["verdict"],
+            "tier5_met": scorecard["tier5_met"],
             "average_score": scorecard["metrics"]["average_world_score"],
             "worlds_tested": scorecard["metrics"]["worlds_attempted"]
         }
-        (battery_dir / "FINAL_VERDICT.json").write_text(json.dumps(final_verdict, indent=2))
+        atomic_write_text(battery_dir / "FINAL_VERDICT.json", json.dumps(final_verdict, indent=2), encoding="utf-8")
 
         # 8. Run manifest
         run_manifest = {
@@ -260,27 +279,36 @@ def main():
             "leakage_audit_passed": True,
             "scorecard_generated": True
         }
-        (battery_dir / "ALETHeIA_RUN_MANIFEST.json").write_text(json.dumps(run_manifest, indent=2))
+        atomic_write_text(battery_dir / "ALETHeIA_RUN_MANIFEST.json", json.dumps(run_manifest, indent=2), encoding="utf-8")
 
         # Copy to certification folder
         cert_latest = PROJECT_ROOT / "artifacts" / "certification" / "latest"
         cert_latest.mkdir(parents=True, exist_ok=True)
         for fname in ["FINAL_SCORECARD.json", "FINAL_VERDICT.md", "WORLD_RESULTS.jsonl", "TICKET_RESULTS.jsonl"]:
             if (battery_dir / fname).exists():
-                (cert_latest / fname).write_text((battery_dir / fname).read_text())
+                atomic_write_text(
+                    cert_latest / fname,
+                    (battery_dir / fname).read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
 
         print("✨ SUCCESS: Aletheia Live Proof run complete and scored successfully.")
+        return 0
 
     finally:
         print("🔌 Stopping headless Aura API server...")
-        try:
-            server_process.kill()
-            server_process.wait(timeout=5.0)
-        except Exception:
-            pass
+        if server_process.poll() is None:
+            try:
+                server_process.terminate()
+                server_process.wait(timeout=10.0)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    server_process.kill()
+                    server_process.wait(timeout=5.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    print("⚠️ Headless Aura API server did not stop before timeout.")
         print("✅ Headless Aura API server stopped.")
-        os._exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

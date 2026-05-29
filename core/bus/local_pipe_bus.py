@@ -15,6 +15,18 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.LocalPipeBus")
 
+_BUS_HANDLER_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    asyncio.InvalidStateError,
+)
+
+
 class LocalPipeBus:
     """
     High-performance, zero-config intra-process communication using multiprocessing.Pipe.
@@ -101,6 +113,53 @@ class LocalPipeBus:
         if self._write_lock is None:
             self._write_lock = asyncio.Lock()
         return self._write_lock
+
+    def _response_write_timeout_s(self) -> float:
+        try:
+            value = float(os.getenv("AURA_PIPE_RESPONSE_WRITE_TIMEOUT_S", "3.0") or 3.0)
+        except (TypeError, ValueError):
+            value = 3.0
+        return min(30.0, max(0.25, value))
+
+    async def _write_raw_message(
+        self,
+        raw_msg: str,
+        *,
+        timeout_s: float,
+        context: str,
+        lock_timeout_s: float | None = None,
+    ) -> None:
+        """Write one raw pipe message with bounded lock acquisition and send time.
+
+        All request, response, and fire-and-forget paths share this lock so
+        multiprocessing.Pipe never receives concurrent writes from heartbeat,
+        response, and foreground request threads. Concurrent writes can corrupt
+        frames or block the dispatch loop, which is worse than a bounded
+        timeout because it starves every subsequent request.
+        """
+        if self.write_conn.closed or getattr(self, "_pipe_broken", False):
+            raise BrokenPipeError("Connection is closed")
+
+        loop = asyncio.get_running_loop()
+        write_lock = self._get_write_lock()
+        lock_timeout = (
+            float(lock_timeout_s)
+            if lock_timeout_s is not None
+            else min(max(float(timeout_s) * 0.25, 0.25), 2.0)
+        )
+        await asyncio.wait_for(write_lock.acquire(), timeout=lock_timeout)
+        try:
+            if self.write_conn.closed or getattr(self, "_pipe_broken", False):
+                raise BrokenPipeError("Connection is closed")
+            await asyncio.wait_for(
+                loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
+                timeout=float(timeout_s),
+            )
+        except asyncio.TimeoutError as exc:
+            logger.warning("⏳ Pipe write timed out in %s after %.1fs.", context, timeout_s)
+            raise TimeoutError(f"pipe write timed out in {context}") from exc
+        finally:
+            write_lock.release()
 
     def _should_log_backpressure_drop(self) -> bool:
         return self._write_backpressure_drops in {1, 10, 50, 100} or (
@@ -342,22 +401,17 @@ class LocalPipeBus:
                     )
                 return
 
-            async with write_lock:
-                if (
-                    self.write_conn.closed
-                    or getattr(self, '_pipe_broken', False)
-                    or time.monotonic() < getattr(self, "_write_suppressed_until", 0.0)
-                ):
-                    return
-                msg["payload"] = await self._prepare_payload_for_transport(payload)
-                raw_msg = await asyncio.to_thread(json.dumps, msg)
-                timeout_s = self._fire_and_forget_write_timeout_s()
-                await asyncio.wait_for(
-                    loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
-                    timeout=timeout_s,
-                )
-                self._write_timeout_count = 0
-                self._write_backpressure_drops = 0
+            msg["payload"] = await self._prepare_payload_for_transport(payload)
+            raw_msg = await asyncio.to_thread(json.dumps, msg)
+            timeout_s = self._fire_and_forget_write_timeout_s()
+            await self._write_raw_message(
+                raw_msg,
+                timeout_s=timeout_s,
+                context=f"send:{msg_type}",
+                lock_timeout_s=0.05,
+            )
+            self._write_timeout_count = 0
+            self._write_backpressure_drops = 0
         except asyncio.TimeoutError:
             self._write_timeout_count += 1
             suppress_for_s = self._pipe_suppression_window_s()
@@ -431,16 +485,11 @@ class LocalPipeBus:
             logger.debug("📡 Sending request: %s (ID: %s)", msg_type, request_id)
             
             # ZENITH LOCKDOWN: Use isolated pipe executor and hard 10s timeout on write
-            write_lock = self._get_write_lock()
-            lock_timeout = min(max(timeout * 0.25, 0.25), 2.0)
-            await asyncio.wait_for(write_lock.acquire(), timeout=lock_timeout)
-            try:
-                await asyncio.wait_for(
-                    loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
-                    timeout=min(timeout, 10.0)
-                )
-            finally:
-                write_lock.release()
+            await self._write_raw_message(
+                raw_msg,
+                timeout_s=min(timeout, 10.0),
+                context=f"request:{msg_type}",
+            )
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending_requests.pop(request_id, None)
@@ -511,7 +560,11 @@ class LocalPipeBus:
                                 "trace_id": msg.get("trace_id"),
                             }
                             raw_resp = json.dumps(err_resp)
-                            await self.loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_resp)
+                            await self._write_raw_message(
+                                raw_resp,
+                                timeout_s=self._response_write_timeout_s(),
+                                context="response:shm_resolution_failed",
+                            )
                         continue
 
                 # Check if it's a response to a pending request
@@ -542,7 +595,11 @@ class LocalPipeBus:
                                 "trace_id": msg.get("trace_id"),
                             }
                             raw_resp = json.dumps(err_resp)
-                            await self.loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_resp)
+                            await self._write_raw_message(
+                                raw_resp,
+                                timeout_s=self._response_write_timeout_s(),
+                                context="response:dispatch_queue_saturated",
+                            )
                 else:
                     logger.debug("❓ Unhandled bus message type: %s", msg_type)
 
@@ -585,7 +642,7 @@ class LocalPipeBus:
                     self._dispatch_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except _BUS_HANDLER_ERRORS as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("❌ Error in Bus dispatch loop: %s", e)
                 
@@ -619,19 +676,7 @@ class LocalPipeBus:
             result = handler(msg.get("payload"), msg.get("trace_id"))
             if asyncio.iscoroutine(result):
                 result = await result
-            
-            # If it was a request, send back the result via write_conn
-            if msg.get("is_request") and "request_id" in msg:
-                resp = {
-                    "response_to": msg["request_id"],
-                    "payload": result,
-                    "trace_id": msg.get("trace_id")
-                }
-                # Consistently use JSON
-                raw_resp = json.dumps(resp)
-                # ZENITH LOCKDOWN: Dedicated executor
-                await self.loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_resp)
-        except (OSError, ConnectionError, TimeoutError) as e:
+        except _BUS_HANDLER_ERRORS as e:
             record_degradation('local_pipe_bus', e)
             logger.error("❌ Bus handler error (%s): %s", msg.get("type"), e)
             
@@ -655,5 +700,35 @@ class LocalPipeBus:
                 }
                 # Consistently use JSON
                 raw_err = json.dumps(err_resp)
-                # ZENITH LOCKDOWN: Dedicated executor
-                await self.loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_err)
+                try:
+                    await self._write_raw_message(
+                        raw_err,
+                        timeout_s=self._response_write_timeout_s(),
+                        context=f"error_response:{msg.get('type')}",
+                    )
+                except _BUS_HANDLER_ERRORS as send_exc:
+                    record_degradation('local_pipe_bus', send_exc)
+                    logger.error(
+                        "❌ Bus error-response write failed (%s): %s",
+                        msg.get("type"),
+                        send_exc,
+                    )
+            return
+
+        # If it was a request, send back the result via write_conn.
+        if msg.get("is_request") and "request_id" in msg:
+            resp = {
+                "response_to": msg["request_id"],
+                "payload": result,
+                "trace_id": msg.get("trace_id")
+            }
+            raw_resp = json.dumps(resp)
+            try:
+                await self._write_raw_message(
+                    raw_resp,
+                    timeout_s=self._response_write_timeout_s(),
+                    context=f"response:{msg.get('type')}",
+                )
+            except _BUS_HANDLER_ERRORS as e:
+                record_degradation('local_pipe_bus', e)
+                logger.error("❌ Bus response write failed (%s): %s", msg.get("type"), e)

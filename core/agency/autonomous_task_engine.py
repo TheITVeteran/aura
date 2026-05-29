@@ -899,6 +899,13 @@ class AutonomousTaskEngine:
                 goal[:60],
             )
             return chain_plan
+        cognitive_plan = self._build_cognitive_planning_fallback_plan(goal, plan_id, context)
+        if cognitive_plan is not None:
+            logger.info(
+                "TaskEngine: recognized cognitive planning objective; using deterministic plan for '%s'",
+                goal[:60],
+            )
+            return cognitive_plan
 
         tool_specs = self._build_planning_tool_specs(goal)
         tool_catalog = "\n".join(
@@ -1022,7 +1029,7 @@ Respond ONLY with a JSON array, no other text:
             TypeError,
             ValueError,
         ) as e:
-            record_degradation("autonomous_task_engine", e)
+            self._record_recoverable_decomposition_failure(e)
             logger.error("TaskEngine: decomposition failed: %s", e)
 
             # Record planning failure to ResilienceEngine
@@ -1066,6 +1073,21 @@ Respond ONLY with a JSON array, no other text:
                 trace_id="",
                 context=dict(context or {}),
             )
+
+    @staticmethod
+    def _record_recoverable_decomposition_failure(error: BaseException) -> None:
+        """Record planner model trouble without aborting deterministic fallback planning."""
+
+        try:
+            record_degradation(
+                "autonomous_task_engine_planning",
+                error,
+                severity="warning",
+                action="used deterministic planner fallback after model decomposition failure",
+                extra={"fallback_available": True},
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("TaskEngine: recoverable planning degradation record skipped: %s", exc)
 
     @staticmethod
     def _summarize_parameter_schema(schema: dict[str, Any]) -> str:
@@ -1785,6 +1807,67 @@ Respond ONLY with a JSON array, no other text:
             context=dict(context or {}),
         )
 
+    @staticmethod
+    def _looks_like_cognitive_planning_goal(goal: str) -> bool:
+        lowered = str(goal or "").lower()
+        if not lowered:
+            return False
+        planning_markers = (
+            "formulate",
+            "outline",
+            "draft a plan",
+            "make a plan",
+            "create a plan",
+            "self-debug plan",
+            "debug plan",
+            "diagnose",
+            "triage",
+            "strategy",
+            "approach",
+        )
+        if not any(marker in lowered for marker in planning_markers):
+            return False
+        direct_action_markers = (
+            "edit ",
+            "patch ",
+            "write ",
+            "create file",
+            "run ",
+            "execute ",
+            "install ",
+            "download ",
+            "open ",
+            "click ",
+            "type ",
+        )
+        return not any(marker in lowered for marker in direct_action_markers)
+
+    def _build_cognitive_planning_fallback_plan(
+        self,
+        goal: str,
+        plan_id: str,
+        context: dict[str, Any] | None,
+    ) -> TaskPlan | None:
+        if self._requires_grounded_action(goal, context):
+            return None
+        if not self._looks_like_cognitive_planning_goal(goal):
+            return None
+        return TaskPlan(
+            plan_id=plan_id,
+            goal=goal,
+            steps=[
+                TaskStep(
+                    step_id=f"{plan_id}_s0",
+                    description="Produce a verifiable diagnostic or execution plan.",
+                    tool="think",
+                    args={"prompt": goal},
+                    success_criterion="response is non-empty",
+                )
+            ],
+            trace_id="",
+            context=dict(context or {}),
+        )
+
     def _build_single_skill_fallback_plan(
         self,
         goal: str,
@@ -1903,6 +1986,25 @@ Respond ONLY with a JSON array, no other text:
         omitted = max(0, len(text) - len(head) - len(tail))
         compacted = f"{head}\n...[trimmed {omitted} chars]...\n{tail}"
         return f"{prefix}{compacted}" if prefix else compacted
+
+    @staticmethod
+    def _deterministic_think_fallback(prompt: str) -> str:
+        """Return a grounded reasoning scaffold when the background LLM lane is blank."""
+        objective = str(prompt or "").strip()
+        if len(objective) > 220:
+            objective = objective[:217].rstrip() + "..."
+        if not objective:
+            objective = "the requested objective"
+        return (
+            f"Fallback reasoning for: {objective}\n"
+            "1. Restate the objective and define observable success criteria.\n"
+            "2. Inspect the current runtime, files, logs, receipts, or tool outputs before acting.\n"
+            "3. Reproduce the failure or uncertainty with the smallest safe check available.\n"
+            "4. Identify the owning subsystem and fix the root cause, not just the symptom.\n"
+            "5. Add or update regression coverage that would catch the issue if it returns.\n"
+            "6. Run focused validation first, then the relevant integrated gate.\n"
+            "7. Report only verified outcomes and preserve artifacts for replay."
+        )
 
     def _report_progress(self, step: TaskStep, on_progress: Callable | None) -> None:
         if on_progress is None:
@@ -2371,6 +2473,8 @@ Respond ONLY with a JSON array, no other text:
                 ),
                 timeout=15.0,
             )
+            if not str(raw or "").strip():
+                return bool(result_str.strip())
             verdict = raw.strip().upper()
             passed = verdict.startswith("YES")
             logger.debug("Verification: %s → %s", step.description[:40], verdict[:50])
@@ -2587,13 +2691,17 @@ Respond ONLY with a JSON array, no other text:
         async def _think(prompt: str, **kwargs) -> str:
             """Use Aura's LLM to reason about something."""
             llm = self.kernel.organs["llm"].get_instance()
-            return await llm.think(
+            raw = await llm.think(
                 prompt,
                 origin="autonomous_task_engine",
                 is_background=True,
                 prefer_tier="tertiary",
                 allow_cloud_fallback=False,
             )
+            text = str(raw or "").strip()
+            if text:
+                return text
+            return self._deterministic_think_fallback(prompt)
 
         async def _web_search(query: str, **kwargs) -> str:
             """Search the web for information."""

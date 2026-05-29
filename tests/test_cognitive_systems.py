@@ -588,6 +588,19 @@ class TestBrowserURLRouting:
         )
 
         assert params["code"] == "x = [1, 2, 3]\nprint(x[0])"
+        assert params["stateful"] is False
+
+    def test_unsafe_fenced_python_remains_stateful_for_edi_block(self):
+        from core.kernel.upgrades_10x import GodModeToolPhase
+
+        params = GodModeToolPhase._normalize_skill_params(
+            "run_code",
+            "Run this:\n```python\nimport os\nprint(os.listdir('.'))\n```",
+            {},
+        )
+
+        assert params["code"] == "import os\nprint(os.listdir('.'))"
+        assert "stateful" not in params
 
     def test_capability_engine_routes_python_fence_to_run_code(self):
         from core.capability_engine import CapabilityEngine

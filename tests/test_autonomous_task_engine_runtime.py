@@ -60,6 +60,55 @@ async def test_task_engine_fallback_plan_survives_malformed_decomposition():
 
 
 @pytest.mark.asyncio
+async def test_task_engine_recoverable_decomposition_failure_does_not_trip_fail_closed(monkeypatch):
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=""))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+    recorded = []
+
+    def fake_record_degradation(subsystem, error, **kwargs):
+        recorded.append((subsystem, kwargs.get("action")))
+        if subsystem == "autonomous_task_engine":
+            raise RuntimeError("fail-closed planner abort")
+
+    monkeypatch.setattr(
+        "core.agency.autonomous_task_engine.record_degradation",
+        fake_record_degradation,
+    )
+
+    engine = AutonomousTaskEngine(kernel)
+
+    plan = await engine._decompose_goal("Inspect runtime health", "plan_empty", context=None)
+
+    assert len(plan.steps) == 1
+    assert plan.steps[0].tool == "think"
+    assert recorded == [
+        (
+            "autonomous_task_engine_planning",
+            "used deterministic planner fallback after model decomposition failure",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_task_engine_cognitive_planning_goal_uses_deterministic_plan():
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value="[]"))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+
+    engine = AutonomousTaskEngine(kernel)
+
+    plan = await engine._decompose_goal(
+        "Formulate a self-debug plan for a Python script that encounters a RecursionError during deep tree traversal.",
+        "plan_debug",
+        context={"matched_tools": ["think"]},
+    )
+
+    assert len(plan.steps) == 1
+    assert plan.steps[0].tool == "think"
+    assert plan.steps[0].success_criterion == "response is non-empty"
+    llm.think.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_task_engine_grounded_goal_fallback_avoids_think_only_plan():
     llm = SimpleNamespace(think=AsyncCallRecorder(return_value='[{"description": "broken"'))
     kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
@@ -392,6 +441,42 @@ async def test_task_engine_execute_alias_delegates_to_execute_goal():
 
 
 @pytest.mark.asyncio
+async def test_task_engine_think_tool_has_deterministic_empty_llm_fallback():
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=""))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+
+    engine = AutonomousTaskEngine(kernel)
+
+    result = await engine._tool_registry["think"](
+        "Formulate a self-debug plan for a failed runtime gate."
+    )
+
+    assert "Fallback reasoning for:" in result
+    assert "observable success criteria" in result
+    assert "root cause" in result
+    llm.think.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_task_engine_verifier_uses_nonempty_result_when_llm_verdict_blank():
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=""))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+    engine = AutonomousTaskEngine(kernel)
+    step = TaskStep(
+        step_id="s1",
+        description="Reason about the failure.",
+        tool="web_search",
+        args={"prompt": "debug"},
+        success_criterion="answer meets the planning objective",
+    )
+
+    result = await engine._verify_step(step, "Investigated the failure and listed next checks.")
+
+    assert result is True
+    llm.think.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_task_engine_records_execution_repair_pressure(monkeypatch):
     events: list[tuple[str, dict]] = []
 
@@ -670,4 +755,3 @@ async def test_task_engine_resilience_integration(monkeypatch):
     # Since should_persist is False, it breaks out on first attempt
     assert step.attempts == 0
     assert "Suppressed by ResilienceEngine" in step.error
-

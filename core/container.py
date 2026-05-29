@@ -93,7 +93,7 @@ def _determine_caller() -> str:
                     idx = p.parts.index("live-source")
                     return "/".join(p.parts[idx+1:])
                 return p.name
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 return Path(frame.filename).name
     return "unknown"
 
@@ -894,7 +894,7 @@ class ServiceContainer:
             )
         
         path = project_root / "SERVICE_OWNERSHIP.md"
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(path, "\n".join(lines) + "\n")
         return path
 
     @classmethod
@@ -917,4 +917,3 @@ class ServiceContainer:
 
 def get_container() -> type[ServiceContainer]:
     return ServiceContainer
-

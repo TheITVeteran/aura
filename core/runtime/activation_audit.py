@@ -414,6 +414,20 @@ class ActivationAuditor:
         evidence["service_hits"] = service_hits
         evidence["task_hits"] = task_hits
         active = bool(service_hits or task_hits)
+        if spec.name == "scheduler":
+            try:
+                from core.scheduler import scheduler
+
+                health = scheduler.get_health()
+                main_loop_task = getattr(scheduler, "_main_loop_task", None)
+                scheduler_active = bool(main_loop_task is not None and not main_loop_task.done())
+                active = active or scheduler_active
+                evidence["scheduler_health"] = self._safe_json(health)
+                evidence["scheduler_main_loop_active"] = scheduler_active
+                if scheduler_active and "aura.scheduler.main_loop" not in task_hits:
+                    evidence["scheduler_task_source"] = "scheduler_singleton"
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                evidence["scheduler_error"] = repr(exc)
         if spec.name == "keep_awake":
             try:
                 from core.runtime.keep_awake import (

@@ -15,8 +15,8 @@ class SensoryLocalClient:
     """
     def __init__(self):
         self._process = None
-        self._req_q = mp.Queue()
-        self._res_q = mp.Queue()
+        self._req_q = None
+        self._res_q = None
         self._running = False
         self._lock: Optional[asyncio.Lock] = None
         self._start_lock: Optional[asyncio.Lock] = None
@@ -38,9 +38,9 @@ class SensoryLocalClient:
                 logger.debug("👀 Sensory Client: Worker already alive.")
                 return True
 
-            self._drain_queues()
             ctx_name = "spawn" if sys.platform == "darwin" else "forkserver"
             ctx = mp.get_context(ctx_name)
+            self._replace_queues(ctx)
             self._process = ctx.Process(
                 target=sensory_worker_loop,
                 args=(self._req_q, self._res_q),
@@ -67,6 +67,8 @@ class SensoryLocalClient:
             return True
 
     def _drain_queues(self) -> None:
+        if self._req_q is None or self._res_q is None:
+            return
         while not self._req_q.empty():
             try:
                 self._req_q.get_nowait()
@@ -77,6 +79,32 @@ class SensoryLocalClient:
                 self._res_q.get_nowait()
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 break
+
+    @staticmethod
+    def _safe_close_queue(queue_obj: Any) -> None:
+        if queue_obj is None:
+            return
+        try:
+            close = getattr(queue_obj, "close", None)
+            if callable(close):
+                close()
+            join_thread = getattr(queue_obj, "join_thread", None)
+            if callable(join_thread):
+                join_thread()
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("Suppressed queue close error in sensory client: %s", exc)
+
+    def _close_queues(self) -> None:
+        self._safe_close_queue(self._req_q)
+        self._safe_close_queue(self._res_q)
+        self._req_q = None
+        self._res_q = None
+
+    def _replace_queues(self, ctx: Any | None = None) -> None:
+        self._close_queues()
+        factory = ctx.Queue if ctx is not None and hasattr(ctx, "Queue") else mp.Queue
+        self._req_q = factory()
+        self._res_q = factory()
 
     async def _send_command(self, cmd: str, data: Any = None, *, timeout: float = 5.0, auto_restart: bool = True) -> bool:
         if not self.is_alive():
@@ -91,6 +119,9 @@ class SensoryLocalClient:
         command_lock, _ = self._ensure_async_locks()
 
         async with command_lock:
+            if self._req_q is None or self._res_q is None:
+                logger.warning("👀 Sensory Client: Worker queues unavailable for command %s", cmd)
+                return False
 
             # [STRUCTURAL UNIFICATION] Report sensory tasks to registry
             from core.supervisor.registry import get_task_registry, TaskStatus
@@ -123,7 +154,8 @@ class SensoryLocalClient:
         self._running = False
         if self._process:
             try:
-                self._req_q.put({"command": "exit"})
+                if self._req_q is not None:
+                    self._req_q.put({"command": "exit"})
             except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('sensory_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
@@ -135,6 +167,11 @@ class SensoryLocalClient:
             logger.info("👀 Sensory Client: Worker stopped")
             self._process = None
             self._drain_queues()
+        self._close_queues()
+
+    close = stop
+    cleanup = stop
+    on_stop = stop
 
 _instance = None
 _client_lock = threading.Lock()
