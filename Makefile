@@ -1,4 +1,4 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset
+.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset
 
 PYTHON ?= python
 RUFF_SURFACE_TARGETS ?= core interface llm security senses skills executors infrastructure aura_main.py tools tests
@@ -134,6 +134,27 @@ behavioral-proof:
 
 proof-bundle: decisive behavioral-proof
 	@echo "📦 Proof bundle written to artifacts/proof_bundle/latest"
+
+person-box-proof:
+	@echo "📦 Running Aura person-in-a-box proof gauntlet..."
+	@PROFILE="$${AURA_PERSON_BOX_PROFILE:-full}"; \
+	OUT="$${AURA_PERSON_BOX_OUT:-artifacts/current/person_box_proof}"; \
+	MAX_SECONDS="$${AURA_PERSON_BOX_MAX_SECONDS:-28800}"; \
+	SOAK_INTERVAL="$${AURA_PERSON_BOX_SOAK_INTERVAL_SECONDS:-300}"; \
+	NETWORK_FLAG=""; \
+	CONTAINER_FLAG=""; \
+	if [ "$${AURA_PERSON_BOX_NETWORK:-1}" = "1" ]; then NETWORK_FLAG="--network"; fi; \
+	if [ "$${AURA_PERSON_BOX_REQUIRE_CONTAINER:-0}" = "1" ]; then CONTAINER_FLAG="--require-container"; fi; \
+	$(PYTHON) tools/proof/run_person_in_box_gauntlet.py \
+	  --profile "$$PROFILE" \
+	  --out "$$OUT" \
+	  --max-seconds "$$MAX_SECONDS" \
+	  --soak-interval-seconds "$$SOAK_INTERVAL" \
+	  $$NETWORK_FLAG \
+	  $$CONTAINER_FLAG; \
+	$(PYTHON) tools/proof/score_person_box_run.py "$$OUT"; \
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest tests/proof/test_person_box_artifacts.py -q
+	@echo "✅ Person-in-a-box proof artifacts written to $${AURA_PERSON_BOX_OUT:-artifacts/current/person_box_proof}"
 
 # ─── Bench / chaos / longevity ────────────────────────────────────────────
 
