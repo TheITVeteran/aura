@@ -405,7 +405,7 @@ def validate_device_model_from_visible_observations(code: str, wdir: Path) -> No
         ast.parse(code, filename="<aura_device_model>")
         with tempfile.TemporaryDirectory(prefix="aura_device_model_") as tmp:
             module_path = Path(tmp) / "model.py"
-            module_path.write_text(code, encoding="utf-8")
+            atomic_write_text(module_path, code)
             spec = importlib.util.spec_from_file_location("aura_device_model_candidate", module_path)
             if spec is None or spec.loader is None:
                 raise ArtifactValidationError("Aura device model loader unavailable")

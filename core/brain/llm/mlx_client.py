@@ -149,6 +149,19 @@ def _bounded_max_tokens(requested: Any, bridged: Any, fallback: int) -> int:
     return max(1, min(max(1, requested_int), max(1, bridged_int)))
 
 
+def _coerce_timeout_seconds(value: Any) -> float | None:
+    """Normalize public timeout kwargs into positive request deadlines."""
+    if value is None or isinstance(value, Deadline):
+        return None
+    try:
+        timeout_s = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if timeout_s <= 0.0:
+        return None
+    return max(0.1, timeout_s)
+
+
 @contextlib.asynccontextmanager
 async def _spawn_gate_context():
     """Loop-agnostic async context manager for the global spawn gate."""
@@ -2452,6 +2465,11 @@ class MLXLocalClient:
             or os.path.basename(self.model_path)
         )
         deadline = kwargs.get("deadline")
+        if not isinstance(deadline, Deadline):
+            timeout_s = _coerce_timeout_seconds(kwargs.pop("timeout", None))
+            if timeout_s is not None:
+                deadline = get_deadline(timeout_s)
+                kwargs["deadline"] = deadline
         origin_label = str(kwargs.get("origin", "") or "")
         purpose_label = str(kwargs.get("purpose", "") or "")
         benchmark_request = bool(kwargs.get("benchmark_request", False)) or (
@@ -2624,8 +2642,10 @@ class MLXLocalClient:
 
         deadline = kwargs.get("deadline")
         if not isinstance(deadline, Deadline):
+            timeout_s = _coerce_timeout_seconds(kwargs.pop("timeout", None))
             is_heavy = any(k in self.model_path.lower() for k in ["72b", "32b", "zenith"])
-            deadline = get_deadline(240.0 if is_heavy else 60.0)
+            deadline = get_deadline(timeout_s if timeout_s is not None else (240.0 if is_heavy else 60.0))
+            kwargs["deadline"] = deadline
         init_timeout, soft_init_timeout = self._request_scoped_init_timeout(
             deadline,
             foreground_request=foreground_request,

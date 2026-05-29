@@ -244,7 +244,7 @@ def record_degradation(
     except (ImportError, RuntimeError):
         pass
     if _shutting_down:
-        severity = "debug"  # Demote everything during shutdown
+        severity = "debug"  # Demote cleanup-time events during shutdown.
     if classification in (FallbackClassification.GOVERNANCE_BYPASS, FallbackClassification.STATE_CORRUPTION_RISK):
         # Trigger strict fail-closed exceptions
         if classification == FallbackClassification.GOVERNANCE_BYPASS:
@@ -256,7 +256,7 @@ def record_degradation(
     try:
         from core.container import ServiceContainer
         from core.runtime.mode import get_mode, AuraMode
-        if get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
+        if not _shutting_down and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
             resolved = ServiceContainer._resolve_name(subsystem)
             with ServiceContainer._lock:
                 desc = ServiceContainer._services.get(resolved)

@@ -40,7 +40,25 @@ class FlagshipReport:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
 
-_EXCLUDE_DIRS = {".git", ".venv", ".venv_aura", "__pycache__", ".pytest_cache", "node_modules", "dist", "build"}
+_EXCLUDE_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".venv_aura",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "checkpoints",
+    "data",
+    "dist",
+    "htmlcov",
+    "logs",
+    "models",
+    "node_modules",
+    "training",
+}
 _ALLOWED_CREATE_TASK_FILES = {
     "core/utils/task_tracker.py",
     "core/runtime/task_ownership.py",

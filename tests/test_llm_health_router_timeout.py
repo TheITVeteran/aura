@@ -1,3 +1,4 @@
+import asyncio
 import time
 from pathlib import Path
 
@@ -94,6 +95,19 @@ class _KwargRecordingGenerateClient:
         return "ready"
 
 
+class _HangingAbortableClient:
+    def __init__(self):
+        self.abort_reasons = []
+
+    async def think(self, prompt: str, system_prompt: str = "", **kwargs):
+        await asyncio.sleep(60.0)
+        return "late"
+
+    def force_abort_active_generation(self, *, reason: str):
+        self.abort_reasons.append(reason)
+        return True
+
+
 @pytest.mark.asyncio
 async def test_direct_client_think_receives_timeout_budget():
     router = HealthAwareLLMRouter()
@@ -117,6 +131,38 @@ async def test_direct_client_think_receives_timeout_budget():
     assert result["ok"] is True
     assert result["text"] == "ready"
     assert client.calls[0]["timeout"] == 67.0
+
+
+@pytest.mark.asyncio
+async def test_router_outer_watchdog_aborts_hung_endpoint():
+    router = HealthAwareLLMRouter()
+    client = _HangingAbortableClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="test",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "probe",
+        timeout=0.01,
+        prefer_tier="primary",
+        origin="proof",
+        purpose="proof_model_lane_probe",
+        foreground_request=True,
+        health_probe=True,
+        skip_runtime_payload=True,
+        allow_cloud_fallback=False,
+    )
+
+    assert result["ok"] is False
+    assert result["endpoint"] == "all_failed"
+    assert result["error"].startswith("endpoint_timeout:Cortex:")
+    assert client.abort_reasons
+    assert client.abort_reasons[0].startswith("endpoint_timeout:Cortex:")
 
 
 @pytest.mark.asyncio
@@ -147,7 +193,8 @@ async def test_public_think_serializes_full_messages_for_clients_without_kwargs(
     assert "Earlier context about Bryan and music." in client.calls[0]["prompt"]
     assert "I remember that thread." in client.calls[0]["prompt"]
     assert "Search the web for the song" in client.calls[0]["prompt"]
-    assert client.calls[0]["system_prompt"] == "Speak as Aura."
+    assert client.calls[0]["system_prompt"].startswith("Speak as Aura.")
+    assert "COGNITION & REASONING" in client.calls[0]["system_prompt"]
 
 
 @pytest.mark.asyncio

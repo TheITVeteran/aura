@@ -252,6 +252,31 @@ def _router_endpoint_tier(router, endpoint_name: str) -> str:
     return str(tier).lower()
 
 
+async def _bounded_probe_metadata(
+    router,
+    *,
+    timeout_s: float,
+    abort_reason: str,
+    **kwargs,
+) -> dict:
+    """Run a proof-lane router call with a hard abort boundary."""
+    task = asyncio.create_task(
+        router.generate_with_metadata(**kwargs),
+        name=f"dnu_model_lane_probe:{abort_reason}",
+    )
+    try:
+        return await asyncio.wait_for(task, timeout=timeout_s)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        if not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+                pass
+        _force_abort_router_generation(router, reason=abort_reason)
+        raise TimeoutError(abort_reason) from exc
+
+
 async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> dict:
     """Exercise the requested proof model lane before expensive task execution."""
     probe_path = run_dir / "MODEL_LANE_PROBE.json"
@@ -304,26 +329,26 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
             strict_answer_source = f"solver_error:{type(exc).__name__}"
     else:
         try:
-            strict_metadata = await asyncio.wait_for(
-                router.generate_with_metadata(
-                    prompt=raw_strict_probe_prompt,
-                    system_prompt="Return only the requested final answer value. No explanation.",
-                    timeout=300.0,
-                    prefer_tier=requested_tier,
-                    origin="internal",
-                    purpose="proof_model_lane_strict_probe",
-                    foreground_request=True,
-                    health_probe=True,
-                    skip_runtime_payload=True,
-                    strict_value_contract=True,
-                    allow_cloud_fallback=False,
-                    disable_prompt_cache=True,
-                    clear_prompt_cache=True,
-                    temperature=0,
-                    max_tokens=24,
-                    num_predict=24,
-                ),
-                timeout=330.0,
+            strict_metadata = await _bounded_probe_metadata(
+                router,
+                timeout_s=330.0,
+                abort_reason="proof_model_lane_strict_probe_timeout_330s",
+                prompt=raw_strict_probe_prompt,
+                system_prompt="Return only the requested final answer value. No explanation.",
+                timeout=300.0,
+                prefer_tier=requested_tier,
+                origin="internal",
+                purpose="proof_model_lane_strict_probe",
+                foreground_request=True,
+                health_probe=True,
+                skip_runtime_payload=True,
+                strict_value_contract=True,
+                allow_cloud_fallback=False,
+                disable_prompt_cache=True,
+                clear_prompt_cache=True,
+                temperature=0,
+                max_tokens=24,
+                num_predict=24,
             )
             strict_text = str(strict_metadata.get("text", "") or "")
             strict_answer = extract_answer_tag(strict_text) or strict_text
@@ -338,25 +363,25 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
 
     t0 = time.time()
     try:
-        metadata = await asyncio.wait_for(
-            router.generate_with_metadata(
-                prompt=prompt,
-                system_prompt="Answer the lane health probe directly and briefly.",
-                timeout=300.0,
-                prefer_tier=requested_tier,
-                origin="internal",
-                purpose="proof_model_lane_probe",
-                foreground_request=True,
-                health_probe=True,
-                skip_runtime_payload=True,
-                allow_cloud_fallback=False,
-                disable_prompt_cache=True,
-                clear_prompt_cache=True,
-                temperature=0,
-                max_tokens=24,
-                num_predict=24,
-            ),
-            timeout=330.0,
+        metadata = await _bounded_probe_metadata(
+            router,
+            timeout_s=330.0,
+            abort_reason="proof_model_lane_probe_timeout_330s",
+            prompt=prompt,
+            system_prompt="Answer the lane health probe directly and briefly.",
+            timeout=300.0,
+            prefer_tier=requested_tier,
+            origin="internal",
+            purpose="proof_model_lane_probe",
+            foreground_request=True,
+            health_probe=True,
+            skip_runtime_payload=True,
+            allow_cloud_fallback=False,
+            disable_prompt_cache=True,
+            clear_prompt_cache=True,
+            temperature=0,
+            max_tokens=24,
+            num_predict=24,
         )
     except _DNU_TASK_ATTEMPT_ERRORS as exc:
         report["elapsed_s"] = time.time() - t0

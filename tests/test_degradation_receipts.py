@@ -20,6 +20,19 @@ from core.runtime.errors import (
 )
 
 
+@pytest.fixture
+def clean_container_and_shutdown(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.shutdown_coordinator import clear_shutdown_request
+
+    clear_shutdown_request()
+    ServiceContainer.clear()
+    yield
+    clear_shutdown_request()
+    ServiceContainer.clear()
+    monkeypatch.delenv("AURA_MODE", raising=False)
+
+
 @pytest.fixture(autouse=True)
 def clean_tracker():
     tracker = get_degradation_tracker()
@@ -124,3 +137,54 @@ def test_no_silent_pass():
     assert record is not None
     assert record.error_message != ""
     assert record.action != ""
+
+
+def test_fail_closed_service_degradation_raises_before_shutdown(
+    clean_container_and_shutdown,
+    monkeypatch,
+):
+    """Live fail-closed services still raise before the runtime enters shutdown."""
+    from core.container import ServiceContainer
+
+    monkeypatch.setenv("AURA_MODE", "live")
+    ServiceContainer.register_instance(
+        "critical_unit",
+        object(),
+        failure_policy="fail-closed",
+    )
+
+    with pytest.raises(RuntimeError, match="CRITICAL SERVICE FAILURE"):
+        record_degradation(
+            "critical_unit",
+            TimeoutError("late cleanup"),
+            severity="degraded",
+            action="unit test",
+        )
+
+
+def test_shutdown_degradation_records_fail_closed_service_without_raising(
+    clean_container_and_shutdown,
+    monkeypatch,
+):
+    """Shutdown cleanup timeouts should be receipted, not misclassified as live failures."""
+    from core.container import ServiceContainer
+    from core.runtime.shutdown_coordinator import request_shutdown
+
+    monkeypatch.setenv("AURA_MODE", "live")
+    ServiceContainer.register_instance(
+        "critical_unit",
+        object(),
+        failure_policy="fail-closed",
+    )
+    request_shutdown("unit_test")
+
+    record = record_degradation(
+        "critical_unit",
+        TimeoutError("late cleanup"),
+        severity="degraded",
+        action="bounded shutdown cleanup timed out",
+    )
+
+    assert record.subsystem == "critical_unit"
+    assert record.severity == "debug"
+    assert record.action == "bounded shutdown cleanup timed out"

@@ -215,7 +215,7 @@ def is_dev() -> bool:
 
 def is_simulation() -> bool:
     """True if running in simulation mode (all side effects mocked)."""
-    return get_mode() in (AuraMode.SIMULATION, AuraMode.SIMULATED)
+    return get_mode() == AuraMode.SIMULATED
 
 
 def is_safe() -> bool:

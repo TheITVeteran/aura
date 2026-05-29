@@ -579,6 +579,17 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ok")
         fake_lock.release.assert_called()
 
+    async def test_generate_maps_timeout_kwarg_to_request_deadline(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+
+        with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")) as inner:
+            result = await client.generate("hello", timeout=12.5)
+
+        self.assertEqual(result, "ok")
+        deadline = inner.await_args.kwargs["deadline"]
+        self.assertAlmostEqual(deadline._timeout, 12.5, places=2)
+        self.assertNotIn("timeout", inner.await_args.kwargs)
+
     async def test_generate_soft_times_out_init_budget_without_killing_worker(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         proc = MagicMock()

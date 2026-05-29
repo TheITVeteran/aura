@@ -79,6 +79,39 @@ _ROUTER_CLIENT_ERRORS = (
 )
 
 
+def _endpoint_call_timeout(timeout: float) -> float:
+    """Outer watchdog for an endpoint call.
+
+    The endpoint/client still receives the original timeout as its cooperative
+    budget. This wrapper adds a small cleanup grace window so a blocked local
+    runtime cannot hold the router forever if the client fails to observe that
+    budget.
+    """
+    try:
+        timeout_s = float(timeout)
+    except (TypeError, ValueError, OverflowError):
+        timeout_s = 120.0
+    timeout_s = max(0.1, timeout_s)
+    grace_s = min(5.0, max(0.25, timeout_s * 0.1))
+    return timeout_s + grace_s
+
+
+def _force_abort_endpoint_client(client: Any, *, reason: str) -> bool:
+    abort = getattr(client, "force_abort_active_generation", None)
+    if not callable(abort):
+        return False
+    try:
+        return bool(abort(reason=reason))
+    except _ROUTER_CLIENT_ERRORS as exc:
+        _record_router_degradation(
+            exc,
+            action="continued routing after endpoint force-abort failed",
+            severity="error",
+        )
+        logger.warning("Endpoint force-abort failed: %s", exc)
+        return False
+
+
 _USER_FACING_ORIGINS = frozenset({
     "user",
     "voice",
@@ -1835,7 +1868,11 @@ class HealthAwareLLMRouter:
                 )
                 continue
             try:
-                result = await self._call_endpoint(ep, prompt, system_prompt, timeout, schema=schema, **kwargs)
+                endpoint_budget = _endpoint_call_timeout(timeout)
+                result = await asyncio.wait_for(
+                    self._call_endpoint(ep, prompt, system_prompt, timeout, schema=schema, **kwargs),
+                    timeout=endpoint_budget,
+                )
                 if result["ok"]:
                     # [TELEMETRY] Update for UI reporting
                     self.last_tier = ep.tier
@@ -1858,7 +1895,7 @@ class HealthAwareLLMRouter:
                     if (
                         not is_bg
                         and ep.is_local
-                        and allow_cloud_fallback
+                        and (allow_cloud_fallback or allow_auto_cloud_recovery)
                         and not isolated_generation_contract
                         and not cloud_recovery_injected
                         and _supports_foreground_cloud_recovery(last_error)
@@ -1884,6 +1921,29 @@ class HealthAwareLLMRouter:
                             "Endpoint %s failed validation: %s",
                             ep.name, last_error
                         )
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                endpoint_budget = _endpoint_call_timeout(timeout)
+                last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
+                aborted = _force_abort_endpoint_client(ep.client, reason=last_error)
+                _record_router_degradation(
+                    exc,
+                    action="recorded endpoint timeout and force-aborted local client if possible",
+                    severity="error",
+                )
+                if ep.is_local:
+                    ep.trip_temporarily(last_error)
+                else:
+                    ep.record_failure(last_error)
+                logger.error(
+                    "Endpoint %s timed out after %.1fs (force_aborted=%s).",
+                    ep.name,
+                    endpoint_budget,
+                    aborted,
+                )
+                if is_bg:
+                    self.last_background_error = last_error
+                else:
+                    self.last_user_error = last_error
             except _ROUTER_CLIENT_ERRORS as exc:
                 _record_router_degradation(
                     exc,
