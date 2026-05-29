@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1780049429.564138`
+Generated: `1780066406.8941472`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1589
-- Python lines: 460177
+- Python lines: 460577
 - Dependency edges: 688
 - ServiceContainer `.get()` calls: 1460
 - ServiceContainer registrations: 346
@@ -17,20 +17,20 @@ Generated: `1780049429.564138`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>92 files, 20369 lines"]
+    runtime["runtime<br/>92 files, 20441 lines"]
     utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 42807 lines"]
-    consciousness["consciousness<br/>121 files, 57052 lines"]
+    brain["brain<br/>115 files, 42898 lines"]
+    consciousness["consciousness<br/>121 files, 57071 lines"]
     resilience["resilience<br/>53 files, 11125 lines"]
     health["health<br/>3 files, 758 lines"]
     memory["memory<br/>70 files, 16670 lines"]
-    agency["agency<br/>28 files, 14010 lines"]
+    agency["agency<br/>28 files, 14078 lines"]
     adaptation["adaptation<br/>26 files, 11869 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     senses["senses<br/>23 files, 5012 lines"]
     affect["affect<br/>5 files, 1857 lines"]
     self_modification["self_modification<br/>29 files, 10296 lines"]
-    state["state<br/>6 files, 3377 lines"]
+    state["state<br/>6 files, 3408 lines"]
     observability["observability<br/>3 files, 553 lines"]
     governance["governance<br/>8 files, 2421 lines"]
     identity["identity<br/>11 files, 2136 lines"]
@@ -79,7 +79,7 @@ graph TD
     verification["verification<br/>4 files, 350 lines"]
     advanced_cognition["advanced_cognition<br/>13 files, 2905 lines"]
     architect["architect<br/>25 files, 5706 lines"]
-    bus["bus<br/>4 files, 1673 lines"]
+    bus["bus<br/>4 files, 1748 lines"]
     coherence["coherence<br/>2 files, 397 lines"]
     discovery["discovery<br/>4 files, 579 lines"]
     environment["environment<br/>82 files, 8308 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 54938 lines"]
+    core_root["core_root<br/>182 files, 54982 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -834,15 +834,15 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 121 | 57052 | 2402941 | 37 | 29 |
-| core_root | 182 | 54938 | 2234341 | 99 | 0 |
-| brain | 115 | 42807 | 1849786 | 40 | 39 |
-| runtime | 92 | 20369 | 718209 | 38 | 104 |
+| consciousness | 121 | 57071 | 2403751 | 37 | 29 |
+| core_root | 182 | 54982 | 2236361 | 99 | 0 |
+| brain | 115 | 42898 | 1853547 | 40 | 39 |
+| runtime | 92 | 20441 | 720818 | 38 | 104 |
 | orchestrator | 42 | 18644 | 823200 | 123 | 9 |
 | phases | 29 | 16970 | 764881 | 32 | 7 |
 | memory | 70 | 16670 | 674725 | 17 | 21 |
 | skills | 76 | 15433 | 622714 | 27 | 6 |
-| agency | 28 | 14010 | 566998 | 27 | 17 |
+| agency | 28 | 14078 | 569142 | 27 | 17 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
 | resilience | 53 | 11125 | 448837 | 16 | 25 |
 | self_modification | 29 | 10296 | 406977 | 11 | 13 |
@@ -860,7 +860,7 @@ graph TD
 | reasoning | 7 | 3830 | 155566 | 2 | 6 |
 | social | 11 | 3823 | 163226 | 8 | 1 |
 | cognition | 9 | 3456 | 139831 | 7 | 3 |
-| state | 6 | 3377 | 143244 | 8 | 13 |
+| state | 6 | 3408 | 144522 | 8 | 13 |
 | perception | 15 | 3260 | 129879 | 3 | 2 |
 | goals | 7 | 3047 | 129238 | 6 | 3 |
 | advanced_cognition | 13 | 2905 | 118305 | 3 | 2 |
@@ -881,9 +881,9 @@ graph TD
 | affect | 5 | 1857 | 84809 | 12 | 13 |
 | evolution | 6 | 1855 | 75408 | 8 | 2 |
 | evaluation | 10 | 1765 | 61879 | 3 | 4 |
+| bus | 4 | 1748 | 73318 | 6 | 2 |
 | search | 2 | 1715 | 64882 | 6 | 3 |
 | self | 6 | 1681 | 70508 | 12 | 5 |
-| bus | 4 | 1673 | 70811 | 6 | 2 |
 | agi | 6 | 1520 | 63343 | 13 | 4 |
 | temporal | 3 | 1502 | 51551 | 2 | 0 |
 | meta | 7 | 1256 | 47229 | 5 | 5 |
@@ -1100,7 +1100,7 @@ Review candidates:
 - `core/advanced_cognition/continual_learning_stability.py:98` [advanced_cognition] `self.store_memory` - return self.store_memory(
 - `core/advanced_cognition/continual_learning_stability.py:208` [advanced_cognition] `scored.append` - scored.append((score, memory))
 - `core/advanced_cognition/continual_learning_stability.py:313` [advanced_cognition] `self._append_jsonl` - self._append_jsonl(self.state_dir / "memory.jsonl", rec.to_dict())
-- `core/agency/autonomous_task_engine.py:1000` [agency] `self._mycelial.add_edge` - await self._mycelial.add_edge(context["source_memory"], goal[:40])
+- `core/agency/autonomous_task_engine.py:1007` [agency] `self._mycelial.add_edge` - await self._mycelial.add_edge(context["source_memory"], goal[:40])
 - `core/agency/latent_distiller.py:63` [agency] `self.memory.store_memory` - await self.memory.store_memory(
 - `core/architect/code_graph.py:679` [architect] `effects.add` - effects.add("memory_write")
 - `core/architect/safe_boot_harness.py:79` [architect] `probe_memory_write_read` - memory = await probe_memory_write_read(tmp_root=root / "memory")
@@ -1158,10 +1158,10 @@ Review candidates:
 - `core/agency/agency_core.py:410` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
 - `core/agency/agency_orchestrator.py:360` [agency] `execute` - await execute(proposal, state_snapshot, receipt.capability_token or "")
 - `core/agency/autonomous_task_engine.py:515` [agency] `orchestrator.execute_tool` - return await orchestrator.execute_tool(tool_name, args, **kwargs)
-- `core/agency/autonomous_task_engine.py:2647` [agency] `orch.execute_tool` - return await orch.execute_tool(
-- `core/agency/autonomous_task_engine.py:2650` [agency] `orch.execute_tool` - return await orch.execute_tool("web_search", {"query": query})
-- `core/agency/autonomous_task_engine.py:2665` [agency] `orch.execute_tool` - result = await orch.execute_tool(
-- `core/agency/autonomous_task_engine.py:2669` [agency] `orch.execute_tool` - result = await orch.execute_tool("run_python", {"code": code})
+- `core/agency/autonomous_task_engine.py:2715` [agency] `orch.execute_tool` - return await orch.execute_tool(
+- `core/agency/autonomous_task_engine.py:2718` [agency] `orch.execute_tool` - return await orch.execute_tool("web_search", {"query": query})
+- `core/agency/autonomous_task_engine.py:2733` [agency] `orch.execute_tool` - result = await orch.execute_tool(
+- `core/agency/autonomous_task_engine.py:2737` [agency] `orch.execute_tool` - result = await orch.execute_tool("run_python", {"code": code})
 - `core/agency/skill_library.py:199` [agency] `tool_orchestrator.execute_tool` - result = await tool_orchestrator.execute_tool(step.tool_name, resolved_args)
 - `core/agi/curiosity_explorer.py:240` [agi] `orchestrator.execute_tool` - orchestrator.execute_tool(
 - `core/architect/safety_gate.py:304` [architect] `subprocess.run` - result = subprocess.run(
@@ -1210,11 +1210,11 @@ Review candidates:
 - `core/adaptation/heuristic_synthesizer.py:126` [adaptation] `brain.think` - thought = await brain.think(
 - `core/adaptation/star_reasoner.py:364` [adaptation] `llm.think` - result = await asyncio.wait_for(llm.think(prompt), timeout=self.RATIONALIZATION_TIMEOUT)
 - `core/agency/agency_core.py:290` [agency] `structured_brain.generate` - shard_res = await structured_brain.generate(prompt, context=context)
-- `core/agency/autonomous_task_engine.py:955` [agency] `llm.think` - llm.think(
-- `core/agency/autonomous_task_engine.py:2399` [agency] `llm.think` - llm.think(
-- `core/agency/autonomous_task_engine.py:2433` [agency] `llm.think` - llm.think(
-- `core/agency/autonomous_task_engine.py:2517` [agency] `llm.think` - llm.think(
-- `core/agency/autonomous_task_engine.py:2626` [agency] `llm.think` - raw = await llm.think(
+- `core/agency/autonomous_task_engine.py:962` [agency] `llm.think` - llm.think(
+- `core/agency/autonomous_task_engine.py:2467` [agency] `llm.think` - llm.think(
+- `core/agency/autonomous_task_engine.py:2501` [agency] `llm.think` - llm.think(
+- `core/agency/autonomous_task_engine.py:2585` [agency] `llm.think` - llm.think(
+- `core/agency/autonomous_task_engine.py:2694` [agency] `llm.think` - raw = await llm.think(
 - `core/agency/latent_distiller.py:49` [agency] `brain.think` - summary = await brain.think(
 - `core/agi/curiosity_explorer.py:310` [agi] `router.think` - router.think(prompt, priority=0.3, is_background=True,
 - `core/agi/hierarchical_planner.py:215` [agi] `router.think` - router.think(prompt, priority=0.3, is_background=True,
@@ -1261,8 +1261,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2668
-- Log-and-limp candidates: 2474
+- Total `record_degradation()` calls: 2673
+- Log-and-limp candidates: 2479
 - Nearby fail-closed candidates: 194
 
 Top limp-on files:
