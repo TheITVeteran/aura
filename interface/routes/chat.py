@@ -1309,7 +1309,10 @@ def _check_response_consistency(reply_text: str, user_message: str) -> tuple[boo
         if hasattr(ce, "get_active_commitments"):
             active = ce.get_active_commitments()
             for commitment in (active or [])[:5]:
-                desc = str(commitment.get("description", "") or "").lower()
+                if isinstance(commitment, dict):
+                    desc = str(commitment.get("description", "") or "").lower()
+                else:
+                    desc = str(getattr(commitment, "description", "") or "").lower()
                 # If reply says "I don't" or "I haven't" about something we committed to
                 if desc and len(desc) > 10:
                     key_words = set(desc.split()) - {"i", "a", "the", "to", "and", "of", "in", "for", "will", "should"}
