@@ -123,6 +123,22 @@ def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypa
     assert reason == "proof_run_active"
 
 
+def test_closed_loop_defers_heavy_phi_refreshes_during_proof(monkeypatch):
+    from core.consciousness.closed_loop import ClosedCausalLoop
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    loop = ClosedCausalLoop()
+    loop._loop_state.cycle_count = 60
+    loop._last_phi_core_schedule_at = 0.0
+    loop._last_hphi_schedule_at = 0.0
+
+    loop._maybe_schedule_phi_core_refresh(SimpleNamespace(compute_phi=lambda: None))
+    loop._maybe_schedule_hierarchical_phi_refresh(SimpleNamespace(compute=lambda: None))
+
+    assert loop._phi_core_task is None
+    assert loop._hphi_task is None
+
+
 @pytest.mark.asyncio
 async def test_substrate_micro_evolution_is_deferred_during_proof(monkeypatch):
     from core.consciousness.substrate_evolution import Genome, SubstrateEvolution

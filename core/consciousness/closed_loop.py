@@ -956,6 +956,7 @@ class ClosedCausalLoop:
         should_refresh_phi = (
             self._loop_state.cycle_count > 0
             and self._loop_state.cycle_count % 6 == 0
+            and not self._proof_run_active()
             and not self._foreground_request_active()
             and (time.time() - self._last_phi_core_schedule_at) >= 45.0
         )
@@ -970,6 +971,7 @@ class ClosedCausalLoop:
         should_refresh_hphi = (
             self._loop_state.cycle_count > 0
             and self._loop_state.cycle_count % 10 == 0
+            and not self._proof_run_active()
             and not self._foreground_request_active()
             and (time.time() - self._last_hphi_schedule_at) >= HIERARCHICAL_PHI_REFRESH_INTERVAL_S
         )
@@ -996,6 +998,23 @@ class ClosedCausalLoop:
             "arousal_gate": float(values[6]),
             "cross_timescale_fe": float(values[7]),
         }
+
+    @staticmethod
+    def _proof_run_active() -> bool:
+        """Keep expensive consciousness maintenance off active proof lanes."""
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            return bool(proof_run_active(origin="closed_loop_phi_refresh"))
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            _emit_closed_loop_fault(
+                exc,
+                action="treated proof run as inactive after proof-policy lookup failed",
+                severity="warning",
+                stage="closed_loop_proof_status",
+            )
+            logger.debug("Proof-run status unavailable: %s", exc)
+            return False
 
     @staticmethod
     def _foreground_request_active() -> bool:
