@@ -30,7 +30,8 @@ _BROKEN_LANE_BOILERPLATE_RE = re.compile(
     r"send (?:it|your message) again|couldn'?t respond properly|"
     r"under load right now|holding (?:it|this|the thread) while i recover|"
     r"hold on\s*[—-]\s*i'?m still finishing|still finishing the last turn|"
-    r"let me regroup|my deeper processing)",
+    r"let me regroup|my deeper processing|"
+    r"lost the (?:reply|conversation|response) lane|ask (?:that|it|me) again)",
     re.IGNORECASE,
 )
 _FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
@@ -43,14 +44,16 @@ _FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
     r"real answer,\s*not a recycled one|gathering (?:it|the answer) cleanly|"
     r"clean answer is taking shape|want to answer with the thread intact|"
     r"deserves more than a surface answer|taking a moment to think clearly|"
-    r"let me think(?: about it| on that)?(?: for a real answer)?)",
+    r"let me think(?: about it| on that)?(?: for a real answer)?|"
+    r"i'?ll answer cleanly|answer (?:that|it) cleanly)",
     re.IGNORECASE,
 )
 _HARD_FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
     r"(previous turn open|next clean reply|not (?:going to )?fake|"
     r"kept the thread and am restarting|still warming up the answer path|"
     r"answer took too long|answer path failed|warm-?up failed|"
-    r"(?:don'?t|do not want to) hand you (?:a|another)?\s*(?:broken\s+)?fragment)",
+    r"(?:don'?t|do not want to) hand you (?:a|another)?\s*(?:broken\s+)?fragment|"
+    r"i'?ll answer cleanly|answer (?:that|it) cleanly)",
     re.IGNORECASE,
 )
 _KNOWN_CORRUPT_RE = re.compile(
