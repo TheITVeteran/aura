@@ -233,6 +233,71 @@ def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
     return find_existing_aura_runtimes()
 
 
+async def _reap_proof_child_processes(reason: str) -> None:
+    """Bounded cleanup for child processes that would otherwise block process exit."""
+    reaped: list[str] = []
+
+    try:
+        import multiprocessing as mp
+
+        mp_children = list(mp.active_children())
+    except _DNU_RUN_RECOVERABLE_ERRORS:
+        mp_children = []
+
+    for child in mp_children:
+        try:
+            if child.is_alive():
+                child.terminate()
+                reaped.append(f"mp:{child.name}:{child.pid}")
+        except _DNU_RUN_RECOVERABLE_ERRORS:
+            continue
+
+    if mp_children:
+        await asyncio.gather(
+            *[asyncio.to_thread(child.join, 1.5) for child in mp_children],
+            return_exceptions=True,
+        )
+        for child in mp_children:
+            try:
+                if child.is_alive() and hasattr(child, "kill"):
+                    child.kill()
+                    await asyncio.to_thread(child.join, 0.5)
+                    reaped.append(f"mp-kill:{child.name}:{child.pid}")
+            except _DNU_RUN_RECOVERABLE_ERRORS:
+                continue
+
+    try:
+        import psutil
+
+        parent = psutil.Process(os.getpid())
+        children = parent.children(recursive=True)
+        if children:
+            for proc in children:
+                try:
+                    proc.terminate()
+                    reaped.append(f"pid:{proc.pid}:{proc.name()}")
+                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                    continue
+            _gone, alive = psutil.wait_procs(children, timeout=1.5)
+            for proc in alive:
+                try:
+                    proc.kill()
+                    reaped.append(f"pid-kill:{proc.pid}:{proc.name()}")
+                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                    continue
+            if alive:
+                psutil.wait_procs(alive, timeout=0.5)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    if reaped:
+        unique = list(dict.fromkeys(reaped))
+        print(
+            f"  [CLEANUP] Reaped {len(unique)} proof child process(es) during {reason}: "
+            + ", ".join(unique[:8])
+        )
+
+
 def write_exclusive_runtime_report(path: Path, *, status: str, instances: list[dict]) -> dict:
     report = {
         "status": status,
@@ -502,7 +567,10 @@ async def shutdown_proof_runtime(orchestrator) -> None:
         timeout=orchestrator_shutdown_timeout_s,
     )
 
-    await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
+    try:
+        await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
+    finally:
+        await _reap_proof_child_processes("dnu_proof_runtime_shutdown")
 
 
 # ---------------------------------------------------------------------------

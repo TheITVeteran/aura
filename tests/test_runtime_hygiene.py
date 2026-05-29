@@ -278,6 +278,49 @@ async def test_runtime_hygiene_child_cleanup_is_concurrent():
 
 
 @pytest.mark.asyncio
+async def test_runtime_hygiene_cleans_adopted_psutil_children(monkeypatch):
+    class PsutilChild:
+        pid = 54321
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+            self.running = True
+
+        def cmdline(self):
+            return [sys.executable, "-m", "multiprocessing.spawn"]
+
+        def name(self):
+            return "spawned-child"
+
+        def is_running(self):
+            return self.running
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            self.running = False
+
+        def kill(self):
+            self.killed = True
+            self.running = False
+
+    child = PsutilChild()
+    monkeypatch.setattr(runtime_hygiene_module, "_HAS_PSUTIL", True)
+
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [child])
+    hygiene.process_shutdown_timeout_s = 0.2
+
+    hygiene._adopt_active_child_processes()
+    await hygiene._cleanup_child_processes()
+
+    assert child.terminated
+    assert child.running is False
+
+
+@pytest.mark.asyncio
 async def test_stability_guardian_surfaces_runtime_hygiene_findings(service_container):
     service_container.register_instance(
         "runtime_hygiene",

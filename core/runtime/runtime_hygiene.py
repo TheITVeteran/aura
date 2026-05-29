@@ -137,6 +137,7 @@ class RuntimeHygieneManager:
     async def stop(self) -> None:
         self._task_tracker.restore_loop_hygiene()
         self._restore_patches()
+        self._adopt_active_child_processes()
         await self._cleanup_child_processes()
         await self._join_non_daemon_threads()
         if self._tracemalloc_started_by_hygiene and tracemalloc.is_tracing():
@@ -718,6 +719,28 @@ class RuntimeHygieneManager:
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: multiprocessing cleanup failed: %s", exc)
+            elif _HAS_PSUTIL and hasattr(proc, "is_running"):
+                try:
+                    if proc.is_running():
+                        proc.terminate()
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s),
+                                timeout=self.process_shutdown_timeout_s + 0.25,
+                            )
+                        except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
+                            if proc.is_running():
+                                proc.kill()
+                                try:
+                                    await asyncio.wait_for(
+                                        asyncio.to_thread(proc.wait, 0.2),
+                                        timeout=0.3,
+                                    )
+                                except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
+                                    pass
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                    record_degradation('runtime_hygiene', exc)
+                    logger.debug("RuntimeHygiene: psutil child cleanup failed: %s", exc)
 
         cleanup_coros = [_cleanup_one(proc) for proc in list(self._process_refs.values())]
         if not cleanup_coros:
