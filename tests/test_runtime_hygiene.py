@@ -215,10 +215,10 @@ def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_proce
         pid = 43210
 
         def cmdline(self):
-            return [sys.executable, "-m", "multiprocessing.resource_tracker"]
+            return [sys.executable, "-m", "multiprocessing.spawn"]
 
         def name(self):
-            return "resource_tracker"
+            return "spawned-child"
 
         def is_running(self):
             return True
@@ -235,6 +235,56 @@ def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_proce
     assert summary["active_registered"] == 1
     assert summary["active_subprocesses"] == 1
     assert summary["rogue_child_processes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_hygiene_ignores_python_resource_tracker_children():
+    class _ResourceTrackerProc:
+        pid = 43211
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+            self.waited = False
+
+        def cmdline(self):
+            return [
+                sys.executable,
+                "-c",
+                "from multiprocessing.resource_tracker import main;main(11)",
+            ]
+
+        def name(self):
+            return "Python"
+
+        def is_running(self):
+            return True
+
+        def status(self):
+            return "sleeping"
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            self.waited = True
+
+        def kill(self):
+            self.killed = True
+
+    child = _ResourceTrackerProc()
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [child])
+
+    hygiene._adopt_active_child_processes()
+    summary = hygiene._process_summary()
+    await hygiene._cleanup_child_processes()
+
+    assert summary["active_registered"] == 0
+    assert summary["rogue_child_processes"] == 0
+    assert child.terminated is False
+    assert child.waited is False
+    assert child.killed is False
 
 
 def test_runtime_hygiene_thread_join_helper_skips_current_thread():

@@ -27,6 +27,38 @@ except ImportError:
 logger = logging.getLogger("Aura.RuntimeHygiene")
 
 
+def _process_cmdline(proc: Any) -> List[str]:
+    try:
+        return [str(part) for part in (proc.cmdline() or [])]
+    except (RuntimeError, AttributeError, TypeError, ValueError):
+        return []
+
+
+def _process_name(proc: Any) -> str:
+    try:
+        return str(proc.name() or "")
+    except (RuntimeError, AttributeError, TypeError, ValueError):
+        return ""
+
+
+def _is_python_resource_tracker_process(proc: Any) -> bool:
+    """Return true for Python's internal multiprocessing tracker processes.
+
+    The resource tracker owns semaphore/shared-memory bookkeeping for the
+    current interpreter. Terminating it during runtime cleanup causes noisy
+    relaunches and can corrupt its unregister cache, so it is observed but not
+    adopted, flagged as rogue, or force-reaped by Aura cleanup.
+    """
+
+    name = _process_name(proc).lower()
+    cmdline = " ".join(_process_cmdline(proc)).lower()
+    return (
+        name in {"resource_tracker", "semaphore_tracker"}
+        or "multiprocessing.resource_tracker" in cmdline
+        or "multiprocessing.semaphore_tracker" in cmdline
+    )
+
+
 @dataclass
 class MemorySample:
     timestamp: float
@@ -368,20 +400,16 @@ class RuntimeHygieneManager:
             if record.finished_at is None and getattr(record, "pid", None)
         }
         for child in children:
+            if _is_python_resource_tracker_process(child):
+                continue
             try:
                 pid = int(getattr(child, "pid", 0) or 0)
             except (RuntimeError, AttributeError, TypeError):
                 pid = 0
             if pid and pid in tracked_pids:
                 continue
-            try:
-                command_parts = list(child.cmdline() or [])
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                command_parts = []
-            try:
-                name = str(child.name() or f"pid:{pid}")
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                name = f"pid:{pid}" if pid else "unknown_child"
+            command_parts = _process_cmdline(child)
+            name = _process_name(child) or (f"pid:{pid}" if pid else "unknown_child")
             key = -(pid or len(self._process_records) + 1)
             self._process_records[key] = ProcessRecord(
                 key=key,
@@ -576,6 +604,7 @@ class RuntimeHygieneManager:
                 1
                 for child in active_children
                 if int(getattr(child, "pid", 0) or 0) not in active_registered_pids
+                and not _is_python_resource_tracker_process(child)
             )
         return {
             "active_registered": max(0, active_registered),
@@ -681,6 +710,8 @@ class RuntimeHygieneManager:
 
     async def _cleanup_child_processes(self) -> None:
         async def _cleanup_one(proc: Any) -> None:
+            if _is_python_resource_tracker_process(proc):
+                return
             if hasattr(proc, "poll"):
                 try:
                     if proc.poll() is None:

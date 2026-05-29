@@ -1,4 +1,5 @@
 import asyncio
+import sys
 
 
 class HangingBaselineRouter:
@@ -39,6 +40,31 @@ def test_dnu_baseline_timeout_preserves_shared_model_lane(monkeypatch):
     assert router.force_abort_count == 0
     assert router.calls[0]["origin"] == "baseline"
     assert router.calls[0]["proof_primary_lane_required"] is True
+
+
+def test_dnu_reaper_identifies_python_resource_tracker_children():
+    from tools.agi import run_dnu_agi_proof_battery as dnu
+
+    class ResourceTracker:
+        def name(self):
+            return "Python"
+
+        def cmdline(self):
+            return [
+                sys.executable,
+                "-c",
+                "from multiprocessing.resource_tracker import main;main(11)",
+            ]
+
+    class ModelWorker:
+        def name(self):
+            return "Python"
+
+        def cmdline(self):
+            return [sys.executable, "-c", "from multiprocessing.spawn import spawn_main"]
+
+    assert dnu._is_resource_tracker_process(ResourceTracker()) is True
+    assert dnu._is_resource_tracker_process(ModelWorker()) is False
 
 
 def test_agency_baseline_timeout_preserves_shared_model_lane(monkeypatch):

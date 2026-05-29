@@ -49,6 +49,22 @@ PROOF_LIVE_MESSAGE_ORIGIN = "api"
 # Utilities
 # ---------------------------------------------------------------------------
 
+def _is_resource_tracker_process(proc) -> bool:
+    try:
+        name = str(proc.name() or "").lower()
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+        name = ""
+    try:
+        cmdline = " ".join(str(part) for part in (proc.cmdline() or [])).lower()
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+        cmdline = ""
+    return (
+        name in {"resource_tracker", "semaphore_tracker"}
+        or "multiprocessing.resource_tracker" in cmdline
+        or "multiprocessing.semaphore_tracker" in cmdline
+    )
+
+
 def get_git_commit() -> str:
     try:
         git_dir = PROJECT_ROOT / ".git"
@@ -270,7 +286,11 @@ async def _reap_proof_child_processes(reason: str) -> None:
         import psutil
 
         parent = psutil.Process(os.getpid())
-        children = parent.children(recursive=True)
+        children = [
+            child
+            for child in parent.children(recursive=True)
+            if not _is_resource_tracker_process(child)
+        ]
         if children:
             for proc in children:
                 try:
