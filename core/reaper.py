@@ -190,7 +190,7 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
                 _record_reaper_degradation(
                     e,
                     stage="pid_cleanup",
-                    action="skipped SIGTERM on non-owned or reused PID",
+                    action="deregistered non-owned or reused PID from reaper manifest without signaling it",
                     severity="warning",
                     extra={"pid": pid},
                 )
@@ -198,7 +198,7 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
                     "[REAPER] PID %d not signalable (PermissionError on SIGTERM); skipping.",
                     pid,
                 )
-                cleaned_pid = True
+                manifest.deregister_pid(pid)
                 continue
             # Short grace period
             for _ in range(5):
