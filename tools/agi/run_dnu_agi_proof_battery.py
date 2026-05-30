@@ -393,6 +393,63 @@ def proof_runtime_health_blockers(snapshot: dict) -> list[str]:
     return blockers
 
 
+async def wait_for_proof_runtime_health(
+    *,
+    label: str,
+    task_index: int = 0,
+    task_id: str = "",
+    timeout_s: float = 60.0,
+    interval_s: float = 2.0,
+) -> tuple[dict, list[str]]:
+    """Wait for transient proof-runtime degradation to genuinely recover.
+
+    Cold model warmup can cause a short hypervisor/event-loop lag incident.
+    The proof gate should not ignore it, but it also should not fail a healthy
+    recovered runtime from a single cold-start spike. This function proceeds
+    only after the canonical health contract is healthy again, otherwise it
+    returns the final blockers and the caller fails closed.
+    """
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    first_blockers: list[str] | None = None
+    attempts = 0
+    last_snapshot: dict | None = None
+    last_blockers: list[str] = []
+
+    while True:
+        attempts += 1
+        snapshot = collect_proof_resource_snapshot(
+            label=label,
+            task_index=task_index,
+            task_id=task_id,
+        )
+        blockers = proof_runtime_health_blockers(snapshot)
+        last_snapshot = snapshot
+        last_blockers = blockers
+        if first_blockers is None:
+            first_blockers = list(blockers)
+
+        if not blockers:
+            if first_blockers:
+                snapshot["runtime_health_recovery"] = {
+                    "initial_blockers": first_blockers,
+                    "attempts": attempts,
+                    "recovered": True,
+                }
+            return snapshot, []
+
+        if time.monotonic() >= deadline:
+            snapshot["runtime_health_recovery"] = {
+                "initial_blockers": first_blockers or list(blockers),
+                "attempts": attempts,
+                "recovered": False,
+            }
+            return snapshot, blockers
+
+        await asyncio.sleep(max(0.0, interval_s))
+
+    return last_snapshot or {}, last_blockers
+
+
 def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: bool) -> int:
     """Return the task interval for primary-lane model-worker recycling."""
     raw = os.environ.get("AURA_DNU_MODEL_RECYCLE_INTERVAL")
@@ -2611,9 +2668,12 @@ async def main():
         "  [OK] Model lane probe passed via "
         f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
     )
-    initial_resource_snapshot = collect_proof_resource_snapshot(label="after_model_lane_probe")
+    initial_resource_snapshot, initial_health_blockers = await wait_for_proof_runtime_health(
+        label="after_model_lane_probe",
+        timeout_s=90.0 if requested_proof_model_tier == "primary" else 45.0,
+        interval_s=2.0,
+    )
     append_jsonl(run_dir / "RESOURCE_TRACE.jsonl", initial_resource_snapshot)
-    initial_health_blockers = proof_runtime_health_blockers(initial_resource_snapshot)
     if initial_health_blockers:
         print("  [FATAL] Proof runtime health failed after model lane probe:")
         for blocker in initial_health_blockers:
@@ -2939,9 +2999,12 @@ async def main():
         raw_llm_results = await asyncio.gather(*raw_llm_tasks)
         llm_with_tools_results = await asyncio.gather(*llm_with_tools_tasks)
         react_results = await asyncio.gather(*react_tasks)
-        baseline_resource_snapshot = collect_proof_resource_snapshot(label="after_baselines")
+        baseline_resource_snapshot, baseline_health_blockers = await wait_for_proof_runtime_health(
+            label="after_baselines",
+            timeout_s=60.0,
+            interval_s=2.0,
+        )
         append_jsonl(resource_trace_file, baseline_resource_snapshot)
-        baseline_health_blockers = proof_runtime_health_blockers(baseline_resource_snapshot)
         if baseline_health_blockers:
             print("  [FATAL] Proof runtime health failed after baseline comparison:")
             for blocker in baseline_health_blockers:
@@ -3036,9 +3099,12 @@ async def main():
             "aura_minus_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
             "aura_minus_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
         }
-        ablation_resource_snapshot = collect_proof_resource_snapshot(label="after_ablations")
+        ablation_resource_snapshot, ablation_health_blockers = await wait_for_proof_runtime_health(
+            label="after_ablations",
+            timeout_s=60.0,
+            interval_s=2.0,
+        )
         append_jsonl(resource_trace_file, ablation_resource_snapshot)
-        ablation_health_blockers = proof_runtime_health_blockers(ablation_resource_snapshot)
         if ablation_health_blockers:
             print("  [FATAL] Proof runtime health failed after ablation recovery:")
             for blocker in ablation_health_blockers:

@@ -36,6 +36,37 @@ def test_dnu_artifact_manifest_never_hashes_itself(tmp_path):
     assert "MANIFEST.json" not in stored["files"]
 
 
+def test_dnu_proof_health_wait_requires_actual_recovery(monkeypatch):
+    snapshots = [
+        {"runtime_health_contract": {"healthy": False, "status": "degraded"}},
+        {"runtime_health_contract": {"healthy": True, "status": "healthy"}},
+    ]
+
+    def fake_collect(**_kwargs):
+        return snapshots.pop(0)
+
+    def fake_blockers(snapshot):
+        return [] if snapshot["runtime_health_contract"]["healthy"] else ["runtime health status is degraded"]
+
+    monkeypatch.setattr(dnu_runner, "collect_proof_resource_snapshot", fake_collect)
+    monkeypatch.setattr(dnu_runner, "proof_runtime_health_blockers", fake_blockers)
+
+    snapshot, blockers = asyncio.run(
+        dnu_runner.wait_for_proof_runtime_health(
+            label="after_model_lane_probe",
+            timeout_s=1.0,
+            interval_s=0.0,
+        )
+    )
+
+    assert blockers == []
+    assert snapshot["runtime_health_contract"]["healthy"] is True
+    assert snapshot["runtime_health_recovery"]["initial_blockers"] == [
+        "runtime health status is degraded"
+    ]
+    assert snapshot["runtime_health_recovery"]["recovered"] is True
+
+
 def test_dnu_claims_canonical_runtime_lock_before_boot():
     source = dnu_runner.Path(dnu_runner.__file__).read_text(encoding="utf-8")
 
