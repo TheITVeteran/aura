@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
+from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 from core.runtime.errors import record_degradation
 from core.runtime_tools import get_runtime_state
 from core.scheduler import scheduler
@@ -1731,6 +1732,30 @@ async def api_boot_health():
     return JSONResponse(payload, status_code=status_code)
 
 
+def _heartbeat_probe_blockers(required_probes: Any) -> list[str]:
+    """Return blockers that make a readiness heartbeat unhealthy.
+
+    A healthy heartbeat is a launch contract, not a process ping. It must have
+    every required probe group and every group must report ok.
+    """
+    if not isinstance(required_probes, dict):
+        return ["runtime_required_probes"]
+
+    blockers: list[str] = []
+    if not bool(required_probes.get("all_passed", False)):
+        blockers.append("runtime_required_probes")
+
+    for group_name in REQUIRED_HEALTH_PROBE_GROUPS:
+        group = required_probes.get(group_name)
+        if not isinstance(group, dict):
+            blockers.append(f"probe:{group_name}")
+            continue
+        if not bool(group.get("ok", False)):
+            blockers.append(f"probe:{group_name}")
+
+    return list(dict.fromkeys(blockers))
+
+
 @router.get("/health/heartbeat")
 async def api_heartbeat():
     """Readiness heartbeat for GUI/runtime watchdogs.
@@ -1748,12 +1773,21 @@ async def api_heartbeat():
         is_gui_proxy=False,
         conversation_lane=conversation_lane,
     )
+    required_probes = payload.get("required_probes", {})
+    probe_blockers = _heartbeat_probe_blockers(required_probes)
+    healthy = status_code == 200 and not probe_blockers
+    blockers = list(payload.get("blockers", []) or [])
+    for blocker in probe_blockers:
+        if blocker not in blockers:
+            blockers.append(blocker)
+    if not healthy:
+        status_code = 503
     heartbeat_payload = {
-        "status": "healthy" if status_code == 200 else "unhealthy",
-        "healthy": status_code == 200,
+        "status": "healthy" if healthy else "unhealthy",
+        "healthy": healthy,
         "time": time.time(),
-        "required_probes": payload.get("required_probes", {}),
-        "blockers": payload.get("blockers", []),
+        "required_probes": required_probes,
+        "blockers": blockers,
         "boot_phase": payload.get("boot_phase"),
         "conversation_ready": payload.get("conversation_ready", False),
     }

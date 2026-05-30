@@ -63,7 +63,16 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
         payload = resp.json()
     except (AttributeError, TypeError, ValueError):
         return False
-    return bool(payload.get("healthy") is True and payload.get("status") == "healthy")
+    if not bool(payload.get("healthy") is True and payload.get("status") == "healthy"):
+        return False
+    probes = payload.get("required_probes")
+    if not isinstance(probes, dict) or not bool(probes.get("all_passed", False)):
+        return False
+    for group in ("kernel", "inference", "memory", "scheduler", "tool_governance"):
+        probe = probes.get(group)
+        if not isinstance(probe, dict) or not bool(probe.get("ok", False)):
+            return False
+    return True
 
 
 def gui_actor_entry(port: int, token: str = None):

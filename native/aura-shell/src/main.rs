@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{Manager, RunEvent};
 use tokio::process::{Child, Command};
 
@@ -23,6 +24,30 @@ async fn boot_status() -> Result<BootStatus, String> {
     // doesn't speak to the runtime directly — it just reflects whether
     // the local TCP port is accepting connections.
     Ok(BootStatus { state: "starting".into() })
+}
+
+fn readiness_heartbeat_is_healthy(payload: &Value) -> bool {
+    if payload.get("healthy").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    if payload.get("status").and_then(Value::as_str) != Some("healthy") {
+        return false;
+    }
+    let Some(probes) = payload.get("required_probes").and_then(Value::as_object) else {
+        return false;
+    };
+    if probes.get("all_passed").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    for group in ["kernel", "inference", "memory", "scheduler", "tool_governance"] {
+        let Some(probe) = probes.get(group).and_then(Value::as_object) else {
+            return false;
+        };
+        if probe.get("ok").and_then(Value::as_bool) != Some(true) {
+            return false;
+        }
+    }
+    true
 }
 
 #[tokio::main]
@@ -56,9 +81,15 @@ async fn main() {
                         .get("http://localhost:7400/api/health/heartbeat")
                         .send()
                         .await;
-                    if r.as_ref().map(|resp| resp.status().is_success()).unwrap_or(false) {
-                        let _ = handle.emit("aura://ready", &());
-                        break;
+                    if let Ok(resp) = r {
+                        if resp.status().is_success() {
+                            if let Ok(payload) = resp.json::<Value>().await {
+                                if readiness_heartbeat_is_healthy(&payload) {
+                                    let _ = handle.emit("aura://ready", &());
+                                    break;
+                                }
+                            }
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }

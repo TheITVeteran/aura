@@ -73,6 +73,29 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "/api/health/heartbeat" in gui_actor
     assert "_heartbeat_response_healthy(resp)" in gui_actor
     assert "resp.status_code == 200" not in gui_actor
+    assert "tool_governance" in gui_actor
+
+
+def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
+    from interface.gui_actor import _heartbeat_response_healthy
+
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "healthy": True,
+                "status": "healthy",
+                "required_probes": {
+                    "all_passed": True,
+                    "kernel": {"ok": True},
+                    "inference": {"ok": True},
+                    "memory": {"ok": True},
+                    "scheduler": {"ok": True},
+                },
+            }
+
+    assert _heartbeat_response_healthy(_Response()) is False
 
 
 def test_native_shell_waits_for_readiness_heartbeat():
@@ -81,6 +104,8 @@ def test_native_shell_waits_for_readiness_heartbeat():
     assert "/api/health/heartbeat" in native_shell
     assert 'client.get("http://localhost:7400/api/health").send().await' not in native_shell
     assert "resp.status().is_success()" in native_shell
+    assert "readiness_heartbeat_is_healthy" in native_shell
+    assert "tool_governance" in native_shell
 
 
 def test_input_bus_normalizes_external_priority_values():
