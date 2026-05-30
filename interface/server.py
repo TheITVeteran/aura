@@ -896,39 +896,28 @@ async def websocket_endpoint(ws: WebSocket):
                                     lane=chat_routes._collect_conversation_lane_status(),
                                     source="websocket",
                                 )
-                                from core.kernel.kernel_interface import KernelInterface
-                                ki = KernelInterface.get_instance()
-                                if not reply and ki.is_ready():
-                                    # Match the foreground HTTP budget so the
-                                    # websocket does not disconnect while the
-                                    # heavy local reasoning lane is still alive.
-                                    reply = await asyncio.wait_for(
-                                        ki.process(user_content, origin="user", priority=True),
-                                        timeout=360.0,
-                                    )
-                                elif not reply:
-                                    from core.event_bus import get_event_bus
-                                    bus = get_event_bus()
-                                    await bus.publish("user_input", {"message": user_content})
+                                if not reply:
+                                    await ws_ref.send_text(json.dumps({
+                                        "type": "aura_message",
+                                        "content": (
+                                            "The desktop WebSocket chat path requires CognitiveEngine, and it did not "
+                                            "return a clean reply. I refused the legacy fallback so this surface cannot "
+                                            "display an incoherent answer."
+                                        ),
+                                        "status": "desktop_cognitive_engine_unavailable",
+                                    }))
                                     return
 
-                                if reply:
-                                    reply = await chat_routes._stabilize_user_facing_reply(
-                                        user_content,
-                                        reply,
-                                    )
-                                    await ws_ref.send_text(json.dumps({
-                                        "type": "aura_message",
-                                        "content": reply,
-                                    }))
-                                else:
-                                    # [STABILITY v53] Never leave user without a response
-                                    await ws_ref.send_text(json.dumps({
-                                        "type": "aura_message",
-                                        "content": "I could not produce a clean live reply from this path. I logged the failure and kept the conversation state intact.",
-                                    }))
+                                reply = await chat_routes._stabilize_user_facing_reply(
+                                    user_content,
+                                    reply,
+                                )
+                                await ws_ref.send_text(json.dumps({
+                                    "type": "aura_message",
+                                    "content": reply,
+                                }))
                             except TimeoutError:
-                                logger.error("WS: live CognitiveEngine/KernelInterface processing timed out")
+                                logger.error("WS: live CognitiveEngine processing timed out")
                                 await ws_ref.send_text(json.dumps({
                                     "type": "aura_message",
                                     "content": "The live reasoning lane exceeded its timeout. I logged the timeout and preserved this turn instead of fabricating a recovered answer.",

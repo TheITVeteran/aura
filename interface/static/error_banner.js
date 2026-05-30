@@ -88,7 +88,7 @@
     document.querySelectorAll(".aura-error-banner").forEach(el => el.remove());
     if (actionId === "retry" && lastUserMessage) {
       try {
-        const resp = await fetch("/api/chat", { method: "POST", headers: {"Content-Type": "application/json"},
+        const resp = await fetch("/api/chat", { method: "POST", headers: {"Content-Type": "application/json", "X-Aura-Surface": "desktop-ui", "X-Aura-Require-CognitiveEngine": "true"},
           body: JSON.stringify({ message: lastUserMessage }) });
         const data = await resp.json();
         if (data && (data.status === "phenomenal" || data.envelope)) {
@@ -97,7 +97,7 @@
       } catch (e) { console.warn("aura retry failed:", e); }
     } else if (actionId === "fallback" && lastUserMessage) {
       try {
-        const resp = await fetch("/api/chat", { method: "POST", headers: {"Content-Type": "application/json"},
+        const resp = await fetch("/api/chat", { method: "POST", headers: {"Content-Type": "application/json", "X-Aura-Surface": "desktop-ui", "X-Aura-Require-CognitiveEngine": "true"},
           body: JSON.stringify({ message: lastUserMessage, prefer_tier: "tertiary" }) });
         await resp.json();
       } catch (e) { console.warn("aura fallback failed:", e); }

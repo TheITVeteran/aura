@@ -328,6 +328,174 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="Hi. I am here and following this conversation through the live desktop path.",
+                mode=mode,
+            )
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            raise AssertionError("desktop UI must not use KernelInterface when CognitiveEngine answers")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="hi"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"following this conversation through the live desktop path" in response.body
+    assert b"cognitive_engine" in response.body
+    assert b"social_presence_reflex" not in response.body
+    assert calls
+    assert calls[0]["context"]["route"] == "desktop_chat"
+    assert calls[0]["context"]["source"] == "desktop_ui"
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_kernel_fallback(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            raise AssertionError("desktop UI must fail closed instead of using KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-1"
+
+    async def _fake_complete_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="What were we talking about?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_cognitive_engine_unavailable" in response.body
+    assert b"refused the legacy fallback" in response.body
+    assert b"desktop_cognitive_engine_required_no_reply" in response.body
+
+
+def test_desktop_static_chat_requests_require_cognitive_engine():
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "interface/static/aura.js",
+        "interface/static/error_banner.js",
+        "interface/static/first_run.js",
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "X-Aura-Surface" in source
+        assert "desktop-ui" in source
+        assert "X-Aura-Require-CognitiveEngine" in source
+
+
+@pytest.mark.asyncio
 async def test_api_chat_returns_hard_local_failure_without_kernel_fallback(monkeypatch):
     from interface import server as server_module
 

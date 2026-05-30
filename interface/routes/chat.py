@@ -4965,6 +4965,15 @@ async def api_chat(
 
     is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
     chat_origin = "benchmark" if is_benchmark else "user"
+    request_surface = str(request.headers.get("X-Aura-Surface") or "").strip().lower()
+    require_cognitive_header = str(request.headers.get("X-Aura-Require-CognitiveEngine") or "").strip().lower()
+    desktop_requires_cognitive_engine = (
+        not is_benchmark
+        and (
+            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri"}
+            or require_cognitive_header in {"1", "true", "yes", "required"}
+        )
+    )
 
     # ── Chat preflight ──────────────────────────────────────────
     # 1) File-reference loading: if the user references a file path, load
@@ -5211,7 +5220,7 @@ async def api_chat(
                 record_degradation('chat', _ac_exc)
                 logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
-        allow_chat_fastpaths = not is_benchmark
+        allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
@@ -5473,7 +5482,11 @@ async def api_chat(
                     status=str(live_proof.get("status") or "live_proof"),
                 )
 
-        protected_foreground_reason = _protected_foreground_reason(lane) if not is_benchmark else None
+        protected_foreground_reason = (
+            _protected_foreground_reason(lane)
+            if not is_benchmark and not desktop_requires_cognitive_engine
+            else None
+        )
         if protected_foreground_reason:
             protected_reply = await _attempt_protected_foreground_reply(protected_foreground_reason)
             if protected_reply:
@@ -5767,7 +5780,7 @@ async def api_chat(
                     origin=chat_origin,
                     timeout=cognitive_budget,
                     lane=dict(lane or {}),
-                    source="chat_api",
+                    source="desktop_ui" if desktop_requires_cognitive_engine else "chat_api",
                 )
                 if reply_text:
                     reply_source = "cognitive_engine"
@@ -5775,6 +5788,42 @@ async def api_chat(
                         "REST: CognitiveEngine served desktop chat turn (len=%d).",
                         len(reply_text),
                     )
+
+        if desktop_requires_cognitive_engine and not reply_text:
+            lane = _mark_conversation_lane_state(
+                "desktop_cognitive_engine_required_no_reply",
+                state="failed",
+            )
+            failure_reply = (
+                "The desktop chat path requires CognitiveEngine, and it did not return a clean reply. "
+                "I refused the legacy fallback so this surface cannot display an incoherent answer."
+            )
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            await _emit_chat_output_receipt(
+                failure_reply,
+                cause="chat_cognitive_engine_required",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "desktop_cognitive_required",
+                    "surface": request_surface or "unknown",
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": failure_reply,
+                    "status": "desktop_cognitive_engine_unavailable",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+            )
 
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
         from core.kernel.kernel_interface import KernelInterface

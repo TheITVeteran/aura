@@ -132,7 +132,11 @@
           try {
             const r = await fetch("/api/chat", {
               method: "POST",
-              headers: {"Content-Type": "application/json"},
+              headers: {
+                "Content-Type": "application/json",
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true"
+              },
               body: JSON.stringify({ message: document.getElementById("hello_msg").value || "hi" }),
             });
             const d = await r.json();

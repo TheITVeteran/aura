@@ -2329,7 +2329,11 @@ $('chat-form').onsubmit = async e => {
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Aura-Surface': 'desktop-ui',
+                'X-Aura-Require-CognitiveEngine': 'true'
+            },
             body: JSON.stringify({ message: msg }),
             signal: controller.signal,
         });
