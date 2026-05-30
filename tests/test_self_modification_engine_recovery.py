@@ -296,7 +296,16 @@ async def test_safe_modification_commits_after_quarantine_promotion(tmp_path):
         lines_changed=1,
     )
 
-    success, message = await safe_mod.apply_fix(fix, {"success": True})
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {
+            "success": True,
+            "syntax_test": True,
+            "import_test": True,
+            "integrity_check": True,
+            "unit_tests": True,
+        },
+    )
 
     assert (success, message) == (True, "Fix applied successfully")
     assert events == [
@@ -307,3 +316,54 @@ async def test_safe_modification_commits_after_quarantine_promotion(tmp_path):
         ("delete", "value = 2\n"),
     ]
     assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+
+@pytest.mark.asyncio
+async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_path):
+    target = tmp_path / "core" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+    safe_mod.staging_dir = tmp_path / ".aura-staging"
+    safe_mod.staging_dir.mkdir()
+    safe_mod.stats = {
+        "total_attempts": 0,
+        "successful": 0,
+        "failed": 0,
+        "rolled_back": 0,
+        "blocked_by_policy": 0,
+    }
+    safe_mod.event_bus = None
+    safe_mod.backup = SimpleNamespace(create_backup=lambda *_args, **_kwargs: "backup-id")
+    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
+    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.modification_log = tmp_path / "modifications.jsonl"
+
+    async def full_suite():
+        raise AssertionError("bare or preview evidence must block before suite execution")
+
+    safe_mod._run_full_test_suite = full_suite
+
+    fix = SimpleNamespace(
+        target_file="core/example.py",
+        target_line=1,
+        original_code="value = 1\n",
+        fixed_code="value = 2\n",
+        explanation="raise value",
+        risk_level=1,
+        lines_changed=1,
+    )
+
+    success, message = await safe_mod.apply_fix(fix, {"success": True})
+    assert success is False
+    assert "missing sandbox/static validation artifacts" in message
+
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {"success": True, "validation": "shadow_ast_preview"},
+    )
+    assert success is False
+    assert "shadow AST preview" in message
+    assert target.read_text(encoding="utf-8") == "value = 1\n"

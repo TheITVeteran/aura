@@ -638,6 +638,46 @@ class SafeSelfModification:
 
         return True, "Proposal approved"
 
+    @staticmethod
+    def _validate_test_evidence(test_results: dict[str, Any]) -> tuple[bool, str]:
+        """Require concrete validation evidence before any real source promotion.
+
+        A bare ``{"success": true}`` is not enough for self-modification. The
+        promotion path must carry evidence from the sandbox/static validation
+        layer so previews, scripted approvals, or caller-side optimism cannot
+        mutate the live tree.
+        """
+        if not isinstance(test_results, dict):
+            return False, "missing structured validation evidence"
+        if not bool(test_results.get("success", False)):
+            return False, "validation evidence reports failure"
+
+        validation = str(test_results.get("validation") or "").strip().lower()
+        if validation == "shadow_ast_preview":
+            return False, "shadow AST preview is proposal evidence, not promotion evidence"
+
+        if validation in {
+            "sandbox",
+            "sandbox_tests",
+            "sandbox_py_compile",
+            "code_repair_sandbox",
+            "safe_modification_harness",
+        }:
+            return True, "validated by sandbox marker"
+
+        if str(test_results.get("suite") or "").strip().lower() == "sandbox":
+            return True, "validated by sandbox suite"
+
+        required_static_checks = ("syntax_test", "import_test", "integrity_check")
+        if all(bool(test_results.get(key, False)) for key in required_static_checks):
+            if "unit_tests" not in test_results or bool(test_results.get("unit_tests", False)):
+                return True, "validated by static sandbox checks"
+
+        if test_results.get("tests_run") or test_results.get("pytest") or test_results.get("py_compile"):
+            return True, "validated by explicit test artifacts"
+
+        return False, "missing sandbox/static validation artifacts"
+
     def _emit_proposal_event(self, fix, decision: str, reason: str) -> None:
         """Emit a self-modification proposal event to the event bus."""
         if self.event_bus is None:
@@ -691,6 +731,13 @@ class SafeSelfModification:
             self._emit_proposal_event(fix, "BLOCKED", reason)
             return False, f"Blocked: {reason}"
 
+        evidence_ok, evidence_reason = self._validate_test_evidence(test_results)
+        if not evidence_ok:
+            self.stats["blocked_by_policy"] += 1
+            logger.warning("Modification blocked by validation evidence policy: %s", evidence_reason)
+            self._emit_proposal_event(fix, "BLOCKED", evidence_reason)
+            return False, f"Blocked: {evidence_reason}"
+
         if isinstance(fix, LogicTransplant):
             logger.info("🧬 Initiating Logic Transplantation for %s", fix.target_file)
         else:
@@ -712,8 +759,14 @@ class SafeSelfModification:
         # Issue 76: Rollback Hash (Capture before change)
         pre_mod_hash = self._file_hash(target_path)
 
-        # Create Quarantine Staging File
-        staging_file = self.staging_dir / target_path.name
+        # Create a collision-resistant quarantine staging file that preserves
+        # the target's repo-relative path. Reusing only target_path.name can
+        # cross-contaminate same-name modules from different packages.
+        stage_token = hashlib.sha256(
+            f"{target_rel}:{time.time_ns()}".encode("utf-8")
+        ).hexdigest()[:16]
+        staging_file = self.staging_dir / stage_token / target_rel
+        staging_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target_path, staging_file)
         logger.info("🛡️ [QUARANTINE] Staged %s for validation", target_rel)
 
@@ -789,7 +842,8 @@ class SafeSelfModification:
 
         # PROMOTE FROM QUARANTINE TO REAL FILE
         logger.info("🚀 [PROMOTION] Quarantine passed. Applying to primary repository.")
-        shutil.copy2(staging_file, target_path)
+        promoted_content = await asyncio.to_thread(staging_file.read_text, encoding="utf-8")
+        await asyncio.to_thread(atomic_write_text, target_path, promoted_content, encoding="utf-8")
 
         logger.info("✓ Stage 5: System Verification passed & Promoted")
 
