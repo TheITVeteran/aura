@@ -20,10 +20,17 @@ from __future__ import annotations
 
 
 import ast
-import importlib.util
 import logging
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Sequence, Union
+
+from core.self_modification.mutation_safety import (
+    MutationOutcome,
+    QuarantineStore,
+    SafeMutationEvaluator,
+)
 
 logger = logging.getLogger("Aura.SelfRepairLadder")
 
@@ -60,6 +67,23 @@ BANNED_AST_PATTERNS: tuple = (
     "socket.socket",
     "eval",
     "exec",
+    "compile",
+    "open",
+    "write_text",
+    "write_bytes",
+    "unlink",
+    "remove",
+    "rmdir",
+    "rename",
+    "replace",
+    "mkdir",
+    "makedirs",
+    "os.remove",
+    "os.unlink",
+    "os.rmdir",
+    "os.rename",
+    "os.replace",
+    "os.makedirs",
 )
 
 
@@ -157,15 +181,25 @@ def _check_ast_safety(patch_source: str) -> RungResult:
 
 
 def _check_import(patch_source: str, module_name: str = "aura_self_repair_candidate") -> RungResult:
-    spec = importlib.util.spec_from_loader(module_name, loader=None)
-    if spec is None:
-        return RungResult(RUNG_IMPORT, False, "could not create import spec")
-    module = importlib.util.module_from_spec(spec)
-    try:
-        exec(compile(patch_source, f"<{module_name}>", "exec"), module.__dict__)  # nosec
-    except BaseException as exc:
-        logger.debug("Import-time validation failed for candidate patch: %s", exc)
-        return RungResult(RUNG_IMPORT, False, f"import-time failure: {exc!r}")
+    del module_name  # kept for API compatibility with older tests/callers.
+    with tempfile.TemporaryDirectory(prefix="aura_self_repair_import_") as tmp_dir:
+        evaluator = SafeMutationEvaluator(
+            timeout_seconds=5.0,
+            memory_mb=256,
+            quarantine=QuarantineStore(Path(tmp_dir) / "quarantine"),
+        )
+        diagnostics = evaluator.evaluate(patch_source)
+    if diagnostics.outcome is not MutationOutcome.PASSED:
+        logger.debug(
+            "Import-time validation failed for candidate patch: %s",
+            diagnostics.outcome.value,
+        )
+        reason = diagnostics.traceback_text or diagnostics.stderr or diagnostics.outcome.value
+        return RungResult(
+            RUNG_IMPORT,
+            False,
+            f"isolated import failure: {diagnostics.outcome.value}: {reason[:500]}",
+        )
     return RungResult(RUNG_IMPORT, True)
 
 

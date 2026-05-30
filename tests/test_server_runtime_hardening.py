@@ -4603,6 +4603,22 @@ async def test_self_repair_ladder_rejects_eval_call():
 
 
 @pytest.mark.asyncio
+async def test_self_repair_ladder_rejects_import_time_file_writes(tmp_path):
+    from core.runtime.self_repair_ladder import validate_patch
+
+    marker = tmp_path / "should_not_exist.txt"
+    report = await validate_patch(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('bad')\n"
+    )
+
+    failure = report.first_failure
+    assert failure is not None and failure.rung == "ast_safety"
+    assert "write_text" in (failure.reason or "")
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
 async def test_self_repair_ladder_catches_import_time_error():
     from core.runtime.self_repair_ladder import validate_patch
 
