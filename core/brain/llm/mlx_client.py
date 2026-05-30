@@ -250,8 +250,16 @@ def _clear_matching_foreground_owner(*candidate_names: str) -> str | None:
         return holder
 
 
-def _clear_stale_foreground_owner(max_age_s: float = 45.0) -> str | None:
-    """Release leaked foreground ownership after the generation has ended."""
+def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
+    """Release leaked foreground ownership after the generation has ended.
+
+    [STABILITY v59] Raised default from 45s → 200s.  The 32B cortex
+    cold-load + Metal shader JIT takes 90-180s.  At 45s the warmup's
+    foreground owner was being cleared mid-load by periodic
+    ``get_lane_status()`` calls, which allowed background workers to
+    respawn and compete for unified memory — creating the desktop
+    'cortex warming forever' deadlock.
+    """
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
 
     with _FOREGROUND_OWNER_LOCK:
@@ -988,7 +996,11 @@ class MLXLocalClient:
         return min(full_timeout, scoped_timeout), scoped_timeout < full_timeout
 
     def get_lane_status(self) -> dict[str, Any]:
-        if int(getattr(self, "_active_generations", 0) or 0) <= 0:
+        # [STABILITY v59] Do NOT clear the foreground owner while a warmup
+        # is actively in flight.  The warmup legitimately holds the owner
+        # for up to 180s; clearing it mid-load lets background workers
+        # respawn and compete for memory, creating the desktop deadlock.
+        if int(getattr(self, "_active_generations", 0) or 0) <= 0 and not self._warmup_in_flight:
             stale_owner = _clear_stale_foreground_owner()
             if stale_owner:
                 logger.warning(
