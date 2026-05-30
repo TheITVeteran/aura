@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.container import ServiceContainer
-from core.health.system_health import get_runtime_health_contract
+from core.health.system_health import get_full_health_report, get_health_v2, get_runtime_health_contract
 from core.runtime.health_contract import (
     HEALTH_CONTRACT_VERSION,
     RUNTIME_CONTRACT,
@@ -116,6 +116,45 @@ def test_runtime_health_endpoint_uses_contract_status_code():
     assert response.status_code == 503
     assert payload["contract_version"] == HEALTH_CONTRACT_VERSION
     assert payload["failures"]["critical"][0]["container_key"] == "inference_gate"
+
+
+def test_full_health_report_fails_closed_with_runtime_contract():
+    _register_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="scheduler",
+    )
+
+    response = asyncio.run(get_full_health_report())
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["healthy"] is False
+    assert payload["operational"] is False
+    assert payload["required_probes"]["scheduler"]["ok"] is False
+    assert payload["contract"]["failures"]["critical"][0]["container_key"] == "scheduler"
+
+
+def test_tricorder_health_v2_cannot_override_failed_runtime_contract():
+    _register_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="authority_gateway",
+    )
+
+    async def scan(_state):
+        return {"scan": "ok"}
+
+    ServiceContainer.register_instance(
+        "tricorder",
+        SimpleNamespace(healthy=True, scan=scan),
+    )
+
+    response = asyncio.run(get_health_v2())
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["healthy"] is False
+    assert payload["legacy_status"] == "degraded"
+    assert payload["runtime_contract"]["required_probes"]["tool_governance"]["ok"] is False
 
 
 def test_compute_orchestrator_is_liveness_checked_by_runtime_health_contract():

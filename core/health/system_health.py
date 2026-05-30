@@ -1,21 +1,66 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from core.container import ServiceContainer
-from core.runtime.health_contract import evaluate_health
+from core.runtime.errors import record_degradation
+from core.runtime.health_contract import evaluate_health, runtime_health_report
 
 router = APIRouter()
+
+_SYSTEM_HEALTH_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _current_state_for_scan() -> object:
+    """Return the best available state object for health scans."""
+    repo = ServiceContainer.get("state_repository", default=None)
+    state = getattr(repo, "_current", None) if repo is not None else None
+    if state is not None:
+        return state
+    from core.state.aura_state import AuraState
+
+    return AuraState()
 
 
 @router.get("/")
 @router.get("/report")
-async def get_full_health_report() -> dict[str, Any]:
-    """Provide a comprehensive rollup of all registered services and their deep health."""
-    return ServiceContainer.get_health_report()
+async def get_full_health_report() -> JSONResponse:
+    """Comprehensive health report gated by the canonical runtime contract."""
+    try:
+        contract = runtime_health_report()
+        container_report = ServiceContainer.get_health_report()
+    except _SYSTEM_HEALTH_ERRORS as exc:
+        record_degradation("system_health", exc)
+        return JSONResponse(
+            {
+                "status": "dead",
+                "healthy": False,
+                "operational": False,
+                "error": str(exc),
+                "required_probes": {"all_passed": False},
+                "container": {},
+            },
+            status_code=503,
+        )
+
+    return JSONResponse(
+        {
+            "status": contract.get("status", "unknown"),
+            "healthy": bool(contract.get("healthy", False)),
+            "operational": bool(contract.get("operational", False)),
+            "required_probes": contract.get("required_probes", {}),
+            "contract": contract,
+            "container": container_report,
+        },
+        status_code=int(contract.get("status_code", 503)),
+    )
 
 
 @router.get("/runtime")
@@ -27,18 +72,33 @@ async def get_runtime_health_contract() -> JSONResponse:
 
 
 @router.get("/v2")
-async def get_health_v2() -> dict[str, Any]:
+async def get_health_v2() -> JSONResponse:
     """Extended system health endpoints via the [ZENITH] Tricorder."""
+    contract = runtime_health_report()
     tricorder = ServiceContainer.get("tricorder", default=None)
     if not tricorder:
-        return {"status": "error", "message": "Tricorder organ not found."}
+        return JSONResponse(
+            {
+                "status": "error",
+                "healthy": False,
+                "message": "Tricorder organ not found.",
+                "runtime_contract": contract,
+            },
+            status_code=503,
+        )
 
-    # Trigger a real-time scan
-    from core.state.aura_state import get_current_state
-
-    state = get_current_state()
+    # Trigger a real-time scan against the canonical state repository when
+    # available, with a fresh AuraState fallback during cold boot/tests.
+    state = _current_state_for_scan()
     report = await tricorder.scan(state)
 
-    # Add legacy metadata for compatibility
-    report["legacy_status"] = "ok" if tricorder.healthy else "degraded"
-    return report
+    # Add legacy metadata for compatibility, but do not allow the Tricorder
+    # alone to imply system health when required runtime probes are down.
+    contract_ok = bool(contract.get("operational", False)) and bool(
+        (contract.get("required_probes") or {}).get("all_passed", False)
+    )
+    report["runtime_contract"] = contract
+    report["healthy"] = bool(getattr(tricorder, "healthy", False) and contract_ok)
+    report["legacy_status"] = "ok" if report["healthy"] else "degraded"
+    status_code = 200 if report["healthy"] else 503
+    return JSONResponse(report, status_code=status_code)
