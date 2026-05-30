@@ -2,7 +2,7 @@ import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -43,11 +43,14 @@ def test_phenomenal_error_envelopes_use_truthful_http_status():
 def test_global_error_and_introspection_paths_do_not_hide_failures():
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
     chat = (PROJECT_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    synthesis = (PROJECT_ROOT / "core" / "initiative_synthesis.py").read_text(encoding="utf-8")
 
     assert "always 200 so the chat never appears broken" not in server
     assert "status_code=200,  # always 200" not in server
+    assert "Suppressed Exception" not in server
     assert "fail-open: introspection" not in chat
     assert "Grounded introspection authority gate unavailable" in chat
+    assert "approved = True  # fail-open" not in synthesis
 
 
 def test_gui_actor_exits_after_extended_kernel_loss():
@@ -201,6 +204,47 @@ async def test_websocket_manager_uses_task_spawner_for_disconnect_on_overflow(mo
     assert scheduled["name"] == "ws_disconnect"
     await scheduled["task"]
     disconnect.assert_awaited_once_with(websocket)
+
+
+@pytest.mark.asyncio
+async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(monkeypatch):
+    from core import initiative_synthesis as synthesis_module
+    from core.agency.initiative_arbiter import ScoredInitiative
+    from core import will as will_module
+
+    synth = synthesis_module.InitiativeSynthesizer()
+    synth.submit("inspect runtime drift", "test_source", urgency=0.9)
+    scored = ScoredInitiative(
+        initiative={
+            "goal": "inspect runtime drift",
+            "source": "test_source",
+            "urgency": 0.9,
+        },
+        scores={"resource_cost": 0.1},
+        final_score=0.91,
+        rationale="selected by test arbiter",
+    )
+    arbiter = SimpleNamespace(arbitrate=AsyncMock(return_value=scored))
+
+    def _service_get(name, default=None):
+        if name == "initiative_arbiter":
+            return arbiter
+        if name == "internal_simulator":
+            return None
+        return default
+
+    monkeypatch.setattr(synthesis_module.ServiceContainer, "get", _service_get)
+    monkeypatch.setattr(
+        will_module,
+        "get_will",
+        lambda: SimpleNamespace(decide=Mock(side_effect=RuntimeError("will offline"))),
+    )
+
+    result = await synth.synthesize(SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[])))
+
+    assert result.approved is False
+    assert result.winner is None
+    assert "will_authorization_unavailable=RuntimeError" in result.rationale
 
 
 def test_bryan_model_save_is_debounced(monkeypatch, tmp_path):

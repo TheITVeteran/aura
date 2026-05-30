@@ -3,7 +3,9 @@
 All actual implementation has been consolidated under the governance subsystem:
 core/governance/will.py
 
-This module re-exports all elements to ensure complete backward-compatibility.
+This module re-exports all elements to ensure complete backward-compatibility
+while preserving the same governance invariant: consequential decisions are
+FAIL-CLOSED when the canonical UnifiedWill cannot decide.
 """
 from __future__ import annotations
 

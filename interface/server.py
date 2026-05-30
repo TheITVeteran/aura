@@ -316,7 +316,7 @@ async def lifespan(app: FastAPI):
                 logger.warning("LocalBrain (legacy) unavailable — Fallback mode active")
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional legacy local brain import failed; continuing degraded: %s", _exc)
 
         try:
             mod = await async_safe_import("core.latent.latent_core", optional=True)
@@ -324,7 +324,7 @@ async def lifespan(app: FastAPI):
                 _LatentCore = mod.LatentCore
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional latent core import failed; continuing degraded: %s", _exc)
 
         try:
             mod = await async_safe_import("core.predictive.predictive_self_model", optional=True)
@@ -332,7 +332,7 @@ async def lifespan(app: FastAPI):
                 _PredictiveSelf = mod.PredictiveSelfModel
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional predictive self model import failed; continuing degraded: %s", _exc)
 
         try:
             mod = await async_safe_import("core.senses.tts_stream", optional=True)
@@ -340,7 +340,7 @@ async def lifespan(app: FastAPI):
                 _FastMouth = mod.FastMouth
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional TTS stream import failed; continuing degraded: %s", _exc)
 
         try:
             mod = await async_safe_import("core.senses.screen_vision", optional=True)
@@ -348,7 +348,7 @@ async def lifespan(app: FastAPI):
                 _LocalVision = mod.LocalVision
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional local vision import failed; continuing degraded: %s", _exc)
 
         try:
             mod = await async_safe_import("core.senses.voice_engine", optional=True)
@@ -367,7 +367,7 @@ async def lifespan(app: FastAPI):
                     _voice_engine_fn = None
         except _SERVER_BOUNDARY_ERRORS as _exc:
             record_degradation('server', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.warning("Optional voice engine import failed; continuing degraded: %s", _exc)
     else:
         logger.info("📡 GUI Proxy Mode: Skipping heavy subsystem initialization (Brain, TTS, Vision).")
 

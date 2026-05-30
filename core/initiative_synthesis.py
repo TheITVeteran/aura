@@ -738,6 +738,7 @@ class InitiativeSynthesizer:
         # ── Authorize via UnifiedWill ──
         will_receipt = ""
         approved = False
+        approval_rationale = scored.rationale
         try:
             from core.will import ActionDomain, get_will
             decision = get_will().decide(
@@ -752,15 +753,18 @@ class InitiativeSynthesizer:
                 logger.info("Synth: Will refused initiative: %s", decision.reason)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('initiative_synthesis', e)
-            logger.debug("Synth: Will authorization degraded: %s", e)
-            approved = True  # fail-open
+            logger.warning("Synth: Will authorization unavailable; blocking initiative: %s", e)
+            approval_rationale = (
+                f"{scored.rationale}; will_authorization_unavailable={type(e).__name__}"
+            )
+            approved = False
 
         result = SynthesisResult(
             winner=winner if approved else None,
             impulse_count=impulse_count,
             winner_score=scored.final_score,
             winner_source=winner.get("source", ""),
-            rationale=scored.rationale,
+            rationale=approval_rationale,
             will_receipt_id=will_receipt,
             approved=approved,
         )
