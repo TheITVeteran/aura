@@ -420,7 +420,7 @@ class AutonomousSelfModificationEngine:
         fix = fix_proposal["fix"]
 
         # Phase 15: Swarm Review (Sovereign Decision)
-        if not await self._swarm_review(fix_proposal):
+        if not await self._swarm_review(fix_proposal, force=force):
             logger.error("❌ Fix Rejected by Swarm Critic. Aborting modification.")
             return False
 
@@ -620,14 +620,26 @@ class AutonomousSelfModificationEngine:
 
         return False  # Fallback
 
-    async def _swarm_review(self, proposal: dict[str, Any]) -> bool:
+    async def _swarm_review(self, proposal: dict[str, Any], *, force: bool = False) -> bool:
         """Recursive check: spawn a swarm debate to review the proposed fix."""
         from core.container import ServiceContainer
 
         swarm = ServiceContainer.get("agent_delegator", default=None)
         if not swarm:
-            logger.debug("Swarm Delegator not available, skipping swarm review.")
-            return True  # Fallback to single-brain if swarm is offline
+            if force:
+                logger.warning(
+                    "Swarm Delegator unavailable; continuing only because force=True was requested."
+                )
+                return True
+            _record_self_modification_degradation(
+                RuntimeError("agent_delegator unavailable for self-modification review"),
+                action="Rejected fix because required swarm review was unavailable",
+                severity="degraded",
+                receipt_required=True,
+                extra={"review": "swarm", "force": False},
+            )
+            logger.error("Swarm Delegator unavailable. Rejecting unsupervised self-modification.")
+            return False
 
         fix = proposal["fix"]
         proposed_change = getattr(fix, "fixed_code", None)

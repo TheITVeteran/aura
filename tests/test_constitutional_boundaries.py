@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from core.middleware.capability_guard import CapabilityGuard
 from core.self_modification.safe_modification import SafeSelfModification
 
@@ -47,3 +49,86 @@ def test_safe_self_modification_blocks_constitutionally_protected_paths(tmp_path
 
     allowed, reason = modifier.validate_proposal(allowed_fix)
     assert allowed is True
+
+
+def test_autonomous_self_modification_treats_security_as_protected():
+    from core.autonomy.self_modification import AutonomousSelfModification, ModuleZone
+
+    assert AutonomousSelfModification.classify_target("core/security/trust_engine.py") == ModuleZone.PROTECTED
+
+
+@pytest.mark.asyncio
+async def test_autonomous_self_modification_rejects_unsafe_code_patch_calls():
+    from core.autonomy.self_modification import AutonomousSelfModification, ModificationProposal
+
+    engine = AutonomousSelfModification.__new__(AutonomousSelfModification)
+    proposal = ModificationProposal(
+        proposal_id="p-unsafe",
+        target_path="core/brain/example.py",
+        description="unsafe patch",
+        diff_summary="adds eval",
+        changes={"type": "code_patch", "new_code": "def f():\n    return eval('1 + 1')\n"},
+        source="test",
+    )
+
+    ok, detail = await engine._simulate(proposal)
+
+    assert ok is False
+    assert "Unsafe code patch call" in detail
+
+
+@pytest.mark.asyncio
+async def test_autonomous_self_modification_queues_code_patch_after_will_approval(monkeypatch):
+    from core.autonomy.self_modification import (
+        AutonomousSelfModification,
+        ModificationProposal,
+        ProposalOutcome,
+    )
+    import core.will as will_module
+
+    receipts = []
+    events = []
+    domains = []
+
+    class _Decision:
+        receipt_id = "will-receipt"
+        reason = "approved for staging"
+
+        def is_approved(self):
+            return True
+
+    class _Will:
+        def decide(self, **kwargs):
+            domains.append(kwargs.get("domain"))
+            return _Decision()
+
+    monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
+    monkeypatch.setattr(will_module, "get_will", lambda: _Will())
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_record_receipt",
+        lambda self, receipt: receipts.append(receipt),
+    )
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_publish_event",
+        lambda self, topic, receipt: events.append((topic, receipt)),
+    )
+
+    engine = AutonomousSelfModification.__new__(AutonomousSelfModification)
+    proposal = ModificationProposal(
+        proposal_id="p-safe",
+        target_path="core/brain/example.py",
+        description="safe patch",
+        diff_summary="returns a constant",
+        changes={"type": "code_patch", "new_code": "def f():\n    return 2\n"},
+        source="test",
+    )
+
+    receipt = await engine.propose(proposal)
+
+    assert receipt.outcome == ProposalOutcome.QUEUED_FOR_PIPELINE
+    assert receipts == [receipt]
+    assert events == [("self_modification.queued", receipt)]
+    assert domains
+    assert str(domains[0]).endswith("self_modification")

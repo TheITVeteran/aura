@@ -31,6 +31,7 @@ import ast
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -46,6 +47,7 @@ logger = logging.getLogger("Aura.SelfModification.Autonomous")
 _DATA_DIR = Path.home() / ".aura" / "data" / "self_modification"
 _AUDIT_LOG_PATH = _DATA_DIR / "audit_log.jsonl"
 _MAX_AUDIT_ENTRIES = 2000
+_RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
 
 
 # ── Classification ──────────────────────────────────────────────────────────
@@ -59,6 +61,7 @@ class ModuleZone(StrEnum):
 
 class ProposalOutcome(StrEnum):
     APPROVED = "approved"
+    QUEUED_FOR_PIPELINE = "queued_for_pipeline"
     REFUSED_BY_WILL = "refused_by_will"
     REFUSED_PROTECTED = "refused_protected"
     REFUSED_SIMULATION = "refused_simulation"
@@ -70,12 +73,40 @@ _PROTECTED_PREFIXES = (
     "core/will.py",
     "core/identity/",
     "core/safety/",
+    "core/security/",
     "core/constitution.py",
     "core/constitutional_alignment.py",
     "core/identity/heartstone.py",
     "core/container.py",
     "core/prime_directives.py",
 )
+
+_BANNED_CODE_CALLS = {
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "os.system",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output",
+    "subprocess.Popen",
+    "subprocess.run",
+}
+
+
+def _runtime_self_modification_enabled() -> bool:
+    raw = os.getenv(_RUNTIME_SELF_MODIFICATION_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _call_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
 
 # Explicitly modifiable path prefixes
 _MODIFIABLE_PREFIXES = (
@@ -277,7 +308,7 @@ class AutonomousSelfModification:
                     f"Simulation: {sim_detail[:100]}"
                 ),
                 source=f"self_modification/{proposal.source}",
-                domain=ActionDomain.STATE_MUTATION,
+                domain=getattr(ActionDomain, "SELF_MODIFICATION", ActionDomain.STATE_MUTATION),
                 priority=proposal.priority,
                 context={
                     "proposal_id": proposal.proposal_id,
@@ -321,7 +352,37 @@ class AutonomousSelfModification:
             )
             return receipt
 
-        # 4. Apply the modification
+        # 4. Queue code patches, and block all live mutation unless the
+        # operator explicitly enabled runtime self-modification promotion.
+        change_type = str((proposal.changes or {}).get("type", "unknown"))
+        if change_type == "code_patch" or not _runtime_self_modification_enabled():
+            queue_reason = (
+                "Code patch requires SafeSelfModification quarantine and promotion pipeline"
+                if change_type == "code_patch"
+                else f"Runtime application disabled; set {_RUNTIME_SELF_MODIFICATION_ENV}=1"
+            )
+            receipt = ModificationReceipt(
+                proposal_id=proposal.proposal_id,
+                target_path=proposal.target_path,
+                description=proposal.description,
+                diff_summary=proposal.diff_summary,
+                source=proposal.source,
+                outcome=ProposalOutcome.QUEUED_FOR_PIPELINE,
+                zone=zone.value,
+                will_receipt_id=decision.receipt_id,
+                will_reason=decision.reason,
+                simulation_result=f"{sim_detail}; queued: {queue_reason}",
+            )
+            self._record_receipt(receipt)
+            logger.warning(
+                "QUEUED self-modification instead of live-applying: %s (%s)",
+                proposal.target_path,
+                queue_reason,
+            )
+            self._publish_event("self_modification.queued", receipt)
+            return receipt
+
+        # 5. Apply the runtime-only modification.
         apply_detail = await self._apply(proposal)
 
         receipt = ModificationReceipt(
@@ -381,9 +442,20 @@ class AutonomousSelfModification:
                 if not new_code.strip():
                     return False, "Empty code patch"
                 try:
-                    ast.parse(new_code, filename="<self_modification_patch>")
+                    tree = ast.parse(new_code, filename="<self_modification_patch>")
                 except SyntaxError as se:
                     return False, f"Syntax error in patch: {se}"
+                unsafe_calls = sorted(
+                    {
+                        name
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        for name in (_call_name(node.func),)
+                        if name in _BANNED_CODE_CALLS
+                    }
+                )
+                if unsafe_calls:
+                    return False, f"Unsafe code patch call(s): {', '.join(unsafe_calls)}"
                 return True, f"Code patch syntax valid ({len(new_code)} chars)"
 
             elif change_type == "config_update":
@@ -500,10 +572,16 @@ class AutonomousSelfModification:
     def get_status(self) -> dict[str, Any]:
         """Return current status."""
         approved = sum(1 for r in self._receipts if r.outcome == ProposalOutcome.APPROVED)
-        refused = sum(1 for r in self._receipts if r.outcome != ProposalOutcome.APPROVED)
+        queued = sum(1 for r in self._receipts if r.outcome == ProposalOutcome.QUEUED_FOR_PIPELINE)
+        refused = sum(
+            1
+            for r in self._receipts
+            if r.outcome not in {ProposalOutcome.APPROVED, ProposalOutcome.QUEUED_FOR_PIPELINE}
+        )
         return {
             "total_proposals": len(self._receipts),
             "approved": approved,
+            "queued": queued,
             "refused": refused,
             "approval_rate": round(approved / max(1, len(self._receipts)), 4),
             "pending": len(self._pending),

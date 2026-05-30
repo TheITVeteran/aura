@@ -46,7 +46,11 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
         proposal = {
             "bug": {"pattern": {"events": [{"error_type": "test_persistence"}]}},
             "fix": fix,
-            "test_results": {"success": True}
+            "test_results": {
+                "success": True,
+                "validation": "safe_modification_harness",
+                "tests_run": ["test_permanent_fix_application"],
+            }
         }
         
         # Bypass swarm for testing
@@ -111,7 +115,11 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
         proposal = {
             "bug": {"pattern": pattern},
             "fix": fix,
-            "test_results": {"success": True}
+            "test_results": {
+                "success": True,
+                "validation": "safe_modification_harness",
+                "tests_run": ["test_apply_fix_resolves_subsystem_and_incident"],
+            }
         }
         
         self.engine._swarm_review = AsyncMock(return_value=True)

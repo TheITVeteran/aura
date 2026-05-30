@@ -38,7 +38,7 @@ async def test_self_modification_registry_lives_outside_source_tree(tmp_path, mo
     registry_path = tmp_path / "runtime" / "selfmod" / "pending_patch_registry.jsonl"
     monkeypatch.setenv("AURA_PENDING_PATCH_REGISTRY", str(registry_path))
 
-    async def review(_proposal):
+    async def review(_proposal, **_kwargs):
         return True
 
     safe_apply = SafeApply()
@@ -62,7 +62,12 @@ async def test_self_modification_registry_lives_outside_source_tree(tmp_path, mo
     )
     proposal = {
         "fix": fix,
-        "test_results": {"success": True, "suite": "focused"},
+        "test_results": {
+            "success": True,
+            "suite": "focused",
+            "validation": "safe_modification_harness",
+            "tests_run": ["focused"],
+        },
         "bug": {"pattern": {"events": [{"error_type": "regression"}]}},
     }
 
@@ -74,7 +79,12 @@ async def test_self_modification_registry_lives_outside_source_tree(tmp_path, mo
     assert len(entries) == 1
     assert entries[0]["target_file"] == "core/example.py"
     assert entries[0]["fixed_code"] == "value = 2"
-    assert entries[0]["test_results"] == {"success": True, "suite": "focused"}
+    assert entries[0]["test_results"] == {
+        "success": True,
+        "suite": "focused",
+        "validation": "safe_modification_harness",
+        "tests_run": ["focused"],
+    }
 
 
 def test_repair_registry_validation_rejects_tampered_payload(tmp_path):

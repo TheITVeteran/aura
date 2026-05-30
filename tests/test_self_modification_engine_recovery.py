@@ -202,6 +202,51 @@ async def test_swarm_review_accepts_logic_transplant_patch_shape():
     assert "value = 2" in topic
 
 
+@pytest.mark.asyncio
+async def test_swarm_review_fails_closed_when_delegator_missing(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        sm_mod,
+        "_record_self_modification_degradation",
+        lambda error, **kwargs: recorded.append((error, kwargs)),
+    )
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    fix = SimpleNamespace(target_file="core/example.py", fixed_code="value = 2\n")
+
+    with patch("core.container.ServiceContainer.get", return_value=None):
+        result = await engine._swarm_review({"fix": fix, "bug": {"diagnosis": "repair"}})
+
+    assert result is False
+    assert recorded
+    assert recorded[0][1]["receipt_required"] is True
+    assert "required swarm review was unavailable" in recorded[0][1]["action"]
+
+
+@pytest.mark.asyncio
+async def test_swarm_review_allows_explicit_force_without_delegator(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        sm_mod,
+        "_record_self_modification_degradation",
+        lambda error, **kwargs: recorded.append((error, kwargs)),
+    )
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    fix = SimpleNamespace(target_file="core/example.py", fixed_code="value = 2\n")
+
+    with patch("core.container.ServiceContainer.get", return_value=None):
+        result = await engine._swarm_review(
+            {"fix": fix, "bug": {"diagnosis": "repair"}},
+            force=True,
+        )
+
+    assert result is True
+    assert recorded == []
+
+
 def test_safe_modification_stats_expose_report_fields():
     safe_mod = SafeSelfModification.__new__(SafeSelfModification)
     safe_mod.stats = {
@@ -367,3 +412,22 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
     assert success is False
     assert "shadow AST preview" in message
     assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_safe_modification_static_validation_excludes_generated_artifacts(tmp_path):
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+
+    runtime_source = tmp_path / "core" / "runtime.py"
+    runtime_source.parent.mkdir(parents=True)
+    runtime_source.write_text("value = 1\n", encoding="utf-8")
+
+    generated_artifact = tmp_path / "artifacts" / "current" / "battery" / "broken.py"
+    generated_artifact.parent.mkdir(parents=True)
+    generated_artifact.write_text("value = '\n", encoding="utf-8")
+
+    assert safe_mod._validate_python_tree_parse() is True
+
+    runtime_source.write_text("value = '\n", encoding="utf-8")
+
+    assert safe_mod._validate_python_tree_parse() is False

@@ -1082,15 +1082,38 @@ class SafeSelfModification:
             "success_rate": f"{success_rate:.1f}%",
         }
 
+    @staticmethod
+    def _should_validate_python_path(relative_path: Path) -> bool:
+        """Return True for Python paths that belong to live source validation."""
+        parts = set(relative_path.parts)
+        if parts.intersection(
+            {
+                ".git",
+                ".mypy_cache",
+                ".pytest_cache",
+                ".ruff_cache",
+                ".venv",
+                "__pycache__",
+                "artifacts",
+                "build",
+                "dist",
+                "htmlcov",
+                "node_modules",
+                "site-packages",
+                "venv",
+            }
+        ):
+            return False
+        return True
+
     def _validate_python_tree_parse(self) -> bool:
         """Validate all production Python files parse without importing them."""
         logger.info("Running static validation on modified files...")
         try:
             base = Path(self.code_base)
             for py_file in base.rglob("*.py"):
-                # Skip test files, venv, and build dirs
-                rel = str(py_file.relative_to(base))
-                if any(skip in rel for skip in (".venv", "build", "dist", "__pycache__")):
+                rel_path = py_file.relative_to(base)
+                if not self._should_validate_python_path(rel_path):
                     continue
                 try:
                     source = py_file.read_text(encoding="utf-8")
