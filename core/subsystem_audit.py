@@ -141,10 +141,33 @@ class SubsystemAudit:
         return time.time() - self._last_health_pulse > self._health_pulse_interval
     
     def emit_pulse(self) -> str:
-        """Generate a human-readable health pulse for the Neural Feed."""
+        """Generate a human-readable health pulse for the Neural Feed.
+
+        Heartbeats alone do not prove health. The pulse is allowed to claim a
+        healthy runtime only when the canonical runtime contract and required
+        probe groups pass.
+        """
         self._last_health_pulse = time.time()
         health = self.check_health()
         uptime = time.time() - self._start_time
+        try:
+            from core.runtime.health_contract import runtime_health_report
+
+            contract = runtime_health_report()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "subsystem_audit",
+                exc,
+                severity="critical",
+                action="health pulse failed closed: runtime contract unavailable",
+                enforce_failure_policy=False,
+            )
+            contract = {
+                "healthy": False,
+                "status": "contract_unavailable",
+                "required_probes": {"all_passed": False},
+                "failures": {"critical": [], "important": [], "optional": []},
+            }
         
         # System Metrics
         cpu = psutil.cpu_percent()
@@ -156,6 +179,7 @@ class SubsystemAudit:
         active_count = 0
         stale_count = 0
         missing_count = 0
+        degraded_count = 0
         
         for name, info in health["subsystems"].items():
             status = info.get("status", "UNKNOWN")
@@ -164,13 +188,40 @@ class SubsystemAudit:
             elif status == "STALE":
                 stale_count += 1
                 lines.append(f"  ⚠️ {name}: STALE ({info['stale_seconds']}s)")
+            elif status == "DEGRADED":
+                degraded_count += 1
+                lines.append(f"  ⚠️ {name}: DEGRADED ({info.get('last_error') or 'recent failures'})")
             else:
                 missing_count += 1
                 lines.append(f"  ❌ {name}: NEVER SEEN")
         
-        summary = f"Total: {active_count}/{len(self.SUBSYSTEMS)} Subsystems Active"
+        required = contract.get("required_probes", {}) if isinstance(contract, dict) else {}
+        required_ok = bool(required.get("all_passed", False))
+        contract_healthy = bool(contract.get("healthy", False)) if isinstance(contract, dict) else False
+        contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
+        probe_status = "PASS" if required_ok else "FAIL"
+        summary = (
+            f"Runtime: {contract_status.upper()} | Required probes: {probe_status} | "
+            f"Heartbeats: {active_count}/{len(self.SUBSYSTEMS)} ACTIVE"
+        )
+        if not contract_healthy or not required_ok:
+            failures = contract.get("failures", {}) if isinstance(contract, dict) else {}
+            for tier in ("critical", "important"):
+                for failure in failures.get(tier, [])[:3]:
+                    if not isinstance(failure, dict):
+                        continue
+                    lines.append(
+                        "  ❌ contract/%s: %s (%s)"
+                        % (
+                            tier,
+                            failure.get("container_key") or failure.get("name") or "unknown",
+                            failure.get("error") or failure.get("liveness") or "failed",
+                        )
+                    )
         if stale_count:
             summary += f" | ⚠️ {stale_count} STALE"
+        if degraded_count:
+            summary += f" | ⚠️ {degraded_count} DEGRADED"
         if missing_count:
             summary += f" | ❌ {missing_count} MISSING"
         

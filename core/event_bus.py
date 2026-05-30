@@ -1,5 +1,4 @@
 """core/event_bus.py — Topic-based Asynchronous Event Bus."""
-# NOTE: record_degradation is intentionally NOT used here.  See _record_error docstring.
 import asyncio
 import json
 import logging
@@ -20,6 +19,7 @@ except ImportError:
     _REDIS_AVAILABLE = False
 
 from core.config import config
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.EventBus")
@@ -138,11 +138,13 @@ class AuraEventBus:
 
     def get_status(self) -> Dict[str, Any]:
         """Return a diagnostic report of the event bus health."""
+        alive = self.is_alive()
         return {
             "bus_id": self._bus_id,
             "redis_connected": self._redis is not None,
             "use_redis": self._use_redis,
             "degraded": self.degraded, # Patch 13
+            "healthy": alive,
             "subscribers": {topic: len(subs) for topic, subs in self._subscribers.items()},
             "stats": {
                 "delivered": self._delivered_count,
@@ -150,29 +152,43 @@ class AuraEventBus:
                 "errors": self._error_count,
                 "last_error": str(self._last_error) if self._last_error else None
             },
-            "alive": self._loop is not None and self._loop.is_running()
+            "alive": alive,
         }
 
     def _record_error(self, exc: BaseException, message: str, *args: Any, degraded: bool = True) -> None:
         """Record event-bus degradation with counters and a visible log line.
 
-        [FIX] Do NOT call record_degradation("event_bus", exc) here — the event_bus
-        is registered as required=True with failure_policy="fail-closed".  In
-        PRODUCTION/LIVE mode, record_degradation raises a fatal RuntimeError
-        ("CRITICAL SERVICE FAILURE") for any transient Redis timeout, loop
-        mismatch, or connection blip, crashing the entire desktop process.
-
-        The event bus already tracks its own health via self.degraded,
-        self._error_count, and self._last_error — those are what the
-        /api/health endpoint reads.  We log at WARNING level so the issue
-        is visible without being fatal.
+        The event bus is used from callbacks and background threads. Recording
+        must update the canonical degradation/health registries, but cannot
+        raise out of a Future done-callback where fail-closed would become
+        "exception calling callback" noise. Health contracts fail through
+        get_status()/is_alive() instead.
         """
         with self._stats_lock:
             self._error_count += 1
             self._last_error = exc
         if degraded:
             self.degraded = True
+        try:
+            action = message % ((*args, exc) if args else (exc,))
+        except (TypeError, ValueError):
+            action = message
+        record_degradation(
+            "event_bus",
+            exc,
+            severity="degraded",
+            action=action,
+            enforce_failure_policy=False,
+        )
         logger.warning(message, *args, exc)
+
+    def is_alive(self) -> bool:
+        """Return true only when local event delivery is usable and not degraded."""
+        return bool(
+            self._loop is not None
+            and self._loop.is_running()
+            and not self.degraded
+        )
 
     async def diagnose(self):
         """Actively check and report health, attempting self-repair if needed."""

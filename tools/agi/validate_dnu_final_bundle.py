@@ -23,6 +23,28 @@ def load_json_artifact(path: Path, label: str, failures: list[str]) -> dict:
         failures.append(f"Failed to parse {label}: {exc}")
         return {}
 
+
+def load_jsonl_artifact(path: Path, label: str, failures: list[str]) -> list[dict]:
+    rows: list[dict] = []
+    if not path.exists():
+        return rows
+    try:
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                failures.append(f"Failed to parse {label}:{line_no}: {exc}")
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+            else:
+                failures.append(f"{label}:{line_no} is not a JSON object")
+    except (OSError, UnicodeDecodeError) as exc:
+        failures.append(f"Failed to read {label}: {exc}")
+    return rows
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python validate_dnu_final_bundle.py <run_dir>")
@@ -55,6 +77,9 @@ def main():
     runtime_policy_file = run_dir / "RUNTIME_POLICY.json"
     receipts_file = run_dir / "RECEIPTS.jsonl"
     task_trace_file = run_dir / "TASK_TRACE.jsonl"
+    resource_trace_file = run_dir / "RESOURCE_TRACE.jsonl"
+    lifecycle_events_file = run_dir / "LIFECYCLE_EVENTS.jsonl"
+    run_status_file = run_dir / "RUN_STATUS.json"
 
     # Check for missing required JSON files
     for name, f in [
@@ -69,6 +94,9 @@ def main():
         ("RUNTIME_POLICY.json", runtime_policy_file),
         ("RECEIPTS.jsonl", receipts_file),
         ("TASK_TRACE.jsonl", task_trace_file),
+        ("RESOURCE_TRACE.jsonl", resource_trace_file),
+        ("LIFECYCLE_EVENTS.jsonl", lifecycle_events_file),
+        ("RUN_STATUS.json", run_status_file),
     ]:
         if not f.exists():
             failures.append(f"Required artifact '{name}' is missing")
@@ -82,6 +110,8 @@ def main():
     manifest_data = {}
     runtime_manifest_data = {}
     runtime_policy_data = {}
+    run_status_data = {}
+    tier_6_failed = False
 
     proof_data = load_json_artifact(proof_file, "DNU_AGI_PROOF.json", failures)
     scorecard_data = load_json_artifact(scorecard_file, "SCORECARD.json", failures)
@@ -100,6 +130,51 @@ def main():
         "RUNTIME_POLICY.json",
         failures,
     )
+    run_status_data = load_json_artifact(
+        run_status_file,
+        "RUN_STATUS.json",
+        failures,
+    )
+    resource_snapshots = load_jsonl_artifact(
+        resource_trace_file,
+        "RESOURCE_TRACE.jsonl",
+        failures,
+    )
+
+    if not run_status_data:
+        failures.append("Run status is missing or unreadable")
+        tier_6_failed = True
+    else:
+        if run_status_data.get("schema") != "aura.dnu_run_status.v1":
+            failures.append("Run status schema is invalid")
+            tier_6_failed = True
+        if run_status_data.get("status") != "complete":
+            failures.append(f"Run status is not complete: {run_status_data.get('status')}")
+            tier_6_failed = True
+        if run_status_data.get("runner_completed") is not True:
+            failures.append("Run status does not confirm runner completion")
+            tier_6_failed = True
+
+    if not resource_snapshots:
+        failures.append("Resource trace has no runtime snapshots")
+        tier_6_failed = True
+    else:
+        for idx, snapshot in enumerate(resource_snapshots, 1):
+            health = snapshot.get("runtime_health_contract")
+            label = snapshot.get("label") or f"snapshot_{idx}"
+            if not isinstance(health, dict):
+                failures.append(f"Resource trace {label} lacks runtime health contract")
+                tier_6_failed = True
+                continue
+            if health.get("healthy") is not True:
+                failures.append(
+                    f"Runtime health was not healthy at resource trace {label}: {health.get('status')}"
+                )
+                tier_6_failed = True
+            required = health.get("required_probes") or {}
+            if isinstance(required, dict) and required.get("all_passed") is not True:
+                failures.append(f"Required runtime probes failed at resource trace {label}")
+                tier_6_failed = True
 
     # Determine verdict and tier from loaded proof_data
     final_tier = 0
@@ -141,7 +216,6 @@ def main():
 
     # If tier 6 is claimed, or if we want to run all checks, we validate all requirements
     # 4. final_tier == 6 but any Tier 6 requirement is false
-    tier_6_failed = False
     
     # 5. fewer than 100 tasks were attempted
     total_attempted = scorecard_data.get("total_tasks", 0)
@@ -442,6 +516,9 @@ def main():
             "receipt",
             "runtime manifest",
             "runtime policy",
+            "runtime health",
+            "resource trace",
+            "required runtime probes",
             "task_trace",
             "proof integrity",
             "ablation",

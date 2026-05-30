@@ -386,6 +386,20 @@ class EventLoopMonitor:
         self._last_lag: float = 0.0
         self._consecutive_breaches: int = 0
         self._started_at: float = 0.0
+        self._last_failure_at: float = 0.0
+        self._last_failure_reason: str = ""
+        try:
+            self.hard_failure_threshold = float(
+                os.getenv("AURA_EVENT_LOOP_MONITOR_HARD_FAILURE_S", "5.0")
+            )
+        except (TypeError, ValueError):
+            self.hard_failure_threshold = 5.0
+        try:
+            self.failure_recovery_window_s = float(
+                os.getenv("AURA_EVENT_LOOP_MONITOR_FAILURE_RECOVERY_S", "300.0")
+            )
+        except (TypeError, ValueError):
+            self.failure_recovery_window_s = 300.0
 
     def _active_runtime_reason(self) -> str | None:
         try:
@@ -451,9 +465,22 @@ class EventLoopMonitor:
 
     def is_alive(self) -> bool:
         """Return True when the monitor task is running and accepting ticks."""
-        return bool(
-            self._task is not None and not self._task.done() and not self._stop_event.is_set()
-        )
+        if self._task is None or self._task.done() or self._stop_event.is_set():
+            return False
+        if self._last_failure_at and (
+            time.time() - self._last_failure_at
+        ) < self.failure_recovery_window_s:
+            return False
+        return True
+
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "alive": self.is_alive(),
+            "last_lag_s": self._last_lag,
+            "consecutive_breaches": self._consecutive_breaches,
+            "last_failure_at": self._last_failure_at,
+            "last_failure_reason": self._last_failure_reason,
+        }
 
     async def _run(self):
         while not self._stop_event.is_set():
@@ -476,6 +503,18 @@ class EventLoopMonitor:
             if lag > threshold and not in_startup_grace:
                 self._last_lag = lag
                 self._consecutive_breaches += 1
+                if lag >= self.hard_failure_threshold:
+                    self._last_failure_at = time.time()
+                    self._last_failure_reason = (
+                        f"hard event-loop lag {lag:.4f}s exceeded {self.hard_failure_threshold:.2f}s"
+                    )
+                    record_degradation(
+                        "event_loop_monitor",
+                        RuntimeError(self._last_failure_reason),
+                        severity="critical",
+                        action="marked event loop monitor unhealthy until recovery window expires",
+                        enforce_failure_policy=False,
+                    )
                 severe = lag >= max(threshold * 3.0, 0.50)
                 if severe or self._consecutive_breaches >= 5:
                     logger.warning(

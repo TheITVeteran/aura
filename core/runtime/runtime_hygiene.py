@@ -21,23 +21,37 @@ try:
     import psutil
 
     _HAS_PSUTIL = True
+    _PSUTIL_PROCESS_ERRORS = (
+        psutil.NoSuchProcess,
+        psutil.AccessDenied,
+        psutil.ZombieProcess,
+        psutil.Error,
+    )
 except ImportError:
     _HAS_PSUTIL = False
+    _PSUTIL_PROCESS_ERRORS = ()
 
 logger = logging.getLogger("Aura.RuntimeHygiene")
+_PROCESS_INTROSPECTION_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+) + _PSUTIL_PROCESS_ERRORS
 
 
 def _process_cmdline(proc: Any) -> List[str]:
     try:
         return [str(part) for part in (proc.cmdline() or [])]
-    except (RuntimeError, AttributeError, TypeError, ValueError):
+    except _PROCESS_INTROSPECTION_ERRORS:
         return []
 
 
 def _process_name(proc: Any) -> str:
     try:
         return str(proc.name() or "")
-    except (RuntimeError, AttributeError, TypeError, ValueError):
+    except _PROCESS_INTROSPECTION_ERRORS:
         return ""
 
 
@@ -389,7 +403,7 @@ class RuntimeHygieneManager:
                     for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline", "status"])
                     if int((proc.info or {}).get("ppid") or 0) == parent_pid
                 ]
-            except (OSError, ConnectionError, TimeoutError) as exc:
+            except (OSError, ConnectionError, TimeoutError) + _PSUTIL_PROCESS_ERRORS as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: process_iter child adoption skipped: %s", exc)
                 children = []
@@ -404,7 +418,7 @@ class RuntimeHygieneManager:
                 continue
             try:
                 pid = int(getattr(child, "pid", 0) or 0)
-            except (RuntimeError, AttributeError, TypeError):
+            except _PROCESS_INTROSPECTION_ERRORS:
                 pid = 0
             if pid and pid in tracked_pids:
                 continue

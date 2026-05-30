@@ -12,6 +12,7 @@ Every number in the output comes from actual task execution.
 
 import asyncio
 import contextlib
+import gc
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 # Insert project root into sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -43,6 +45,45 @@ _DNU_RUN_RECOVERABLE_ERRORS = (
 _DNU_TASK_ATTEMPT_ERRORS = (asyncio.TimeoutError, *_DNU_RUN_RECOVERABLE_ERRORS)
 
 PROOF_LIVE_MESSAGE_ORIGIN = "api"
+
+DNU_STALE_ARTIFACTS = (
+    "TASK_TRACE.jsonl",
+    "FAILURES.jsonl",
+    "RECEIPTS.jsonl",
+    "RESOURCE_TRACE.jsonl",
+    "LIFECYCLE_EVENTS.jsonl",
+    "RUN_STATUS.json",
+    "SCORECARD.json",
+    "DNU_AGI_PROOF.json",
+    "DNU_AGI_PROOF.md",
+    "FINAL_VERDICT.txt",
+    "GOVERNANCE_REPORT.json",
+    "LEAKAGE_REPORT.json",
+    "MODEL_LANE_PROBE.json",
+    "MANIFEST.json",
+)
+
+DNU_STANDARD_COPY_ARTIFACTS = (
+    "DNU_AGI_PROOF.json",
+    "DNU_AGI_PROOF.md",
+    "SCORECARD.json",
+    "BASELINES.json",
+    "ABLATIONS.json",
+    "TASK_TRACE.jsonl",
+    "FAILURES.jsonl",
+    "RECEIPTS.jsonl",
+    "RESOURCE_TRACE.jsonl",
+    "LIFECYCLE_EVENTS.jsonl",
+    "RUN_STATUS.json",
+    "GOVERNANCE_REPORT.json",
+    "LEAKAGE_REPORT.json",
+    "RUNTIME_MANIFEST.json",
+    "RUNTIME_POLICY.json",
+    "MODEL_LANE_PROBE.json",
+    "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
+    "FINAL_VERDICT.txt",
+    "MANIFEST.json",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +211,142 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_json_atomic(path: Path, payload: dict) -> None:
+    """Write JSON through a temporary file so interrupted runs are detectable."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+def append_jsonl(path: Path, payload: dict) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, default=str) + "\n")
+
+
+def write_run_status(
+    run_dir: Path,
+    *,
+    status: str,
+    run_id: str,
+    commit_sha: str,
+    phase: str,
+    tasks_completed: int = 0,
+    total_tasks: int | None = None,
+    error: str | None = None,
+    lifecycle_events: int = 0,
+) -> dict:
+    payload = {
+        "schema": "aura.dnu_run_status.v1",
+        "status": status,
+        "run_id": run_id,
+        "commit_sha": commit_sha,
+        "phase": phase,
+        "tasks_completed": int(tasks_completed),
+        "total_tasks": total_tasks,
+        "runner_completed": status == "complete",
+        "error": error,
+        "lifecycle_events": int(lifecycle_events),
+        "updated_at_unix": time.time(),
+        "updated_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    write_json_atomic(run_dir / "RUN_STATUS.json", payload)
+    return payload
+
+
+def collect_proof_resource_snapshot(
+    *,
+    label: str,
+    task_index: int = 0,
+    task_id: str = "",
+) -> dict:
+    """Collect bounded proof-run resource evidence without depending on psutil."""
+    snapshot = {
+        "schema": "aura.dnu_resource_snapshot.v1",
+        "label": label,
+        "task_index": int(task_index),
+        "task_id": task_id,
+        "timestamp_unix": time.time(),
+        "process_rss_mb": None,
+        "child_rss_mb": None,
+        "child_count": None,
+        "system_memory_percent": None,
+        "system_available_mb": None,
+        "runtime_health_contract": None,
+        "error": None,
+    }
+    try:
+        from core.runtime.health_contract import runtime_health_report
+
+        snapshot["runtime_health_contract"] = runtime_health_report()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        snapshot["runtime_health_contract"] = {
+            "healthy": False,
+            "status": "health_contract_unavailable",
+            "required_probes": {"all_passed": False},
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        children = proc.children(recursive=True)
+        child_rss = 0
+        live_children = 0
+        for child in children:
+            try:
+                child_rss += int(child.memory_info().rss)
+                live_children += 1
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+        mem = psutil.virtual_memory()
+        snapshot.update(
+            {
+                "process_rss_mb": round(proc.memory_info().rss / (1024 * 1024), 2),
+                "child_rss_mb": round(child_rss / (1024 * 1024), 2),
+                "child_count": live_children,
+                "system_memory_percent": float(mem.percent),
+                "system_available_mb": round(float(mem.available) / (1024 * 1024), 2),
+            }
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        snapshot["error"] = f"{type(exc).__name__}: {exc}"
+    return snapshot
+
+
+def proof_runtime_health_blockers(snapshot: dict) -> list[str]:
+    """Return blocker strings when a proof resource snapshot is not closure-safe."""
+    health = snapshot.get("runtime_health_contract")
+    if not isinstance(health, dict):
+        return ["runtime health contract missing from resource snapshot"]
+    blockers: list[str] = []
+    if health.get("healthy") is not True:
+        blockers.append(f"runtime health status is {health.get('status')}")
+    required = health.get("required_probes") or {}
+    if isinstance(required, dict) and required.get("all_passed") is not True:
+        failed = [
+            name
+            for name, probe in required.items()
+            if isinstance(probe, dict) and probe.get("ok") is not True
+        ]
+        blockers.append(f"required health probes failed: {failed or 'unknown'}")
+    return blockers
+
+
+def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: bool) -> int:
+    """Return the task interval for primary-lane model-worker recycling."""
+    raw = os.environ.get("AURA_DNU_MODEL_RECYCLE_INTERVAL")
+    if raw is not None:
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return 0
+    if smoke or total_tasks <= 40:
+        return 0
+    if requested_tier == "primary":
+        return 40
+    return 0
+
+
 def find_existing_aura_runtimes() -> list[dict]:
     """Return live aura_main.py runtime processes that would contend with proof boot."""
     if sys.platform not in ("darwin", "linux"):
@@ -208,6 +385,93 @@ def find_existing_aura_runtimes() -> list[dict]:
             continue
         instances.append({"pid": pid, "user": user, "command": command})
     return instances
+
+
+def find_existing_proof_runners() -> list[dict]:
+    """Return stale DNU proof-runner processes from this checkout."""
+    if sys.platform not in ("darwin", "linux"):
+        return []
+    me = os.getpid()
+    current_user = os.environ.get("USER") or ""
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    instances: list[dict] = []
+    for proc in psutil.process_iter(["pid", "username", "cmdline"]):
+        try:
+            pid = int(proc.info.get("pid") or 0)
+            if pid == me:
+                continue
+            user = str(proc.info.get("username") or "")
+            cmdline = proc.info.get("cmdline") or []
+            command = " ".join(str(part) for part in cmdline)
+            cwd = Path(proc.cwd()).resolve()
+        except (
+            psutil.AccessDenied,
+            psutil.NoSuchProcess,
+            psutil.ZombieProcess,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
+            continue
+        if current_user and user != current_user:
+            continue
+        if "run_dnu_agi_proof_battery.py" not in command:
+            continue
+        if cwd != PROJECT_ROOT.resolve():
+            continue
+        instances.append({"pid": pid, "user": user, "command": command})
+    return instances
+
+
+def stop_existing_proof_runners(timeout_s: float = 8.0) -> list[dict]:
+    """Stop stale proof-runner process trees before an exclusive proof boot."""
+    instances = find_existing_proof_runners()
+    if not instances:
+        return []
+    print(f"  [EXCLUSIVE] Stopping {len(instances)} stale proof runner process(es).")
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+
+    processes = []
+    for instance in instances:
+        pid = int(instance["pid"])
+        if psutil is not None:
+            try:
+                parent = psutil.Process(pid)
+                processes.extend(parent.children(recursive=True))
+                processes.append(parent)
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (OSError, PermissionError):
+                continue
+
+    if psutil is not None:
+        for proc in processes:
+            try:
+                proc.terminate()
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+        _gone, alive = psutil.wait_procs(processes, timeout=max(1.0, timeout_s))
+        for proc in alive:
+            try:
+                proc.kill()
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+        if alive:
+            psutil.wait_procs(alive, timeout=0.5)
+    else:
+        time.sleep(max(1.0, timeout_s))
+    return find_existing_proof_runners()
 
 
 def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
@@ -249,7 +513,72 @@ def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
     return find_existing_aura_runtimes()
 
 
-async def _reap_proof_child_processes(reason: str) -> None:
+def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[dict]:
+    """Reap orphaned Aura-owned multiprocessing helpers from interrupted proof runs."""
+    if sys.platform not in ("darwin", "linux"):
+        return []
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    candidates = []
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        try:
+            pid = int(proc.info.get("pid") or 0)
+            ppid = int(proc.info.get("ppid") or 0)
+            cmdline = proc.info.get("cmdline") or []
+            command = " ".join(str(part) for part in cmdline)
+            cwd = Path(proc.cwd()).resolve()
+        except (
+            psutil.AccessDenied,
+            psutil.NoSuchProcess,
+            psutil.ZombieProcess,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
+            continue
+        if pid == os.getpid() or ppid != 1:
+            continue
+        if cwd != PROJECT_ROOT.resolve():
+            continue
+        if (
+            "multiprocessing.spawn" not in command
+            and "multiprocessing.resource_tracker" not in command
+            and "multiprocessing.semaphore_tracker" not in command
+        ):
+            continue
+        candidates.append({"pid": pid, "command": command[:240]})
+
+    if not candidates:
+        return []
+
+    processes = []
+    for item in candidates:
+        try:
+            proc = psutil.Process(int(item["pid"]))
+            proc.terminate()
+            processes.append(proc)
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    _, alive = psutil.wait_procs(processes, timeout=timeout_s)
+    for proc in alive:
+        try:
+            proc.kill()
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    if alive:
+        psutil.wait_procs(alive, timeout=0.5)
+    return candidates
+
+
+async def _reap_proof_child_processes(
+    reason: str,
+    *,
+    include_resource_trackers: bool = False,
+) -> None:
     """Bounded cleanup for child processes that would otherwise block process exit."""
     reaped: list[str] = []
 
@@ -289,7 +618,7 @@ async def _reap_proof_child_processes(reason: str) -> None:
         children = [
             child
             for child in parent.children(recursive=True)
-            if not _is_resource_tracker_process(child)
+            if include_resource_trackers or not _is_resource_tracker_process(child)
         ]
         if children:
             for proc in children:
@@ -519,6 +848,135 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
     return report
 
 
+async def recycle_proof_model_lane(
+    router,
+    requested_tier: str,
+    *,
+    run_dir: Path,
+    reason: str,
+    task_index: int,
+) -> dict:
+    """Recycle the local proof model worker between task checkpoints.
+
+    The proof path remains the same canonical runtime and requested model tier.
+    This only bounds resident worker growth and stale shared-memory/semaphore
+    state during long primary-lane proof batteries.
+    """
+    event = {
+        "schema": "aura.dnu_lifecycle_event.v1",
+        "event": "model_lane_recycle",
+        "status": "started",
+        "reason": reason,
+        "requested_tier": requested_tier,
+        "task_index": int(task_index),
+        "timestamp_unix": time.time(),
+        "before": collect_proof_resource_snapshot(
+            label="before_model_lane_recycle",
+            task_index=task_index,
+        ),
+        "after": None,
+        "recycled_clients": [],
+        "error": None,
+    }
+    lifecycle_path = run_dir / "LIFECYCLE_EVENTS.jsonl"
+    append_jsonl(lifecycle_path, event)
+
+    if router is None:
+        event["status"] = "failed"
+        event["error"] = "llm_router_missing"
+        event["after"] = collect_proof_resource_snapshot(
+            label="after_model_lane_recycle_failed",
+            task_index=task_index,
+        )
+        append_jsonl(lifecycle_path, event)
+        return event
+
+    def _lane_matches(candidate) -> bool:
+        text_parts = [type(candidate).__name__]
+        for getter_name in ("get_lane_status", "get_conversation_status"):
+            getter = getattr(candidate, getter_name, None)
+            if not callable(getter):
+                continue
+            try:
+                status = getter() or {}
+            except _DNU_RUN_RECOVERABLE_ERRORS:
+                continue
+            if isinstance(status, dict):
+                text_parts.extend(str(value) for value in status.values())
+        text = " ".join(text_parts).lower()
+        if requested_tier == "primary":
+            return "32b" in text or "cortex" in text or "qwen2.5-32b" in text
+        return "7b" in text or "brainstem" in text or "fast" in text
+
+    recycled = 0
+    candidates: list[tuple[str, Any]] = []
+    seen: set[int] = set()
+
+    def _add_candidate(label: str, candidate) -> None:
+        if candidate is None:
+            return
+        for obj in (
+            candidate,
+            getattr(candidate, "client", None),
+            getattr(candidate, "_client", None),
+            getattr(candidate, "_mlx_client", None),
+            getattr(candidate, "mlx_client", None),
+            getattr(candidate, "_local_client", None),
+        ):
+            if obj is None:
+                continue
+            ident = id(obj)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            candidates.append((label, obj))
+
+    _add_candidate("router", router)
+    endpoints = getattr(router, "endpoints", {}) or {}
+    for endpoint_name, endpoint in list(endpoints.items()):
+        _add_candidate(str(endpoint_name), endpoint)
+    try:
+        from core.container import ServiceContainer
+
+        _add_candidate("inference_gate", ServiceContainer.get("inference_gate", default=None))
+    except _DNU_RUN_RECOVERABLE_ERRORS:
+        pass
+
+    for label, candidate in candidates:
+        reboot = getattr(candidate, "reboot_worker", None)
+        if not callable(reboot):
+            continue
+        if not _lane_matches(candidate):
+            continue
+        try:
+            result = reboot(reason=reason, mark_failed=False)
+        except TypeError:
+            result = reboot()
+        if asyncio.iscoroutine(result):
+            await asyncio.wait_for(result, timeout=180.0)
+        recycled += 1
+        event["recycled_clients"].append(
+            {
+                "owner": label,
+                "client": type(candidate).__name__,
+            }
+        )
+        break
+
+    gc.collect()
+    if recycled == 0:
+        event["status"] = "failed"
+        event["error"] = "no_rebootable_model_client_for_requested_tier"
+    else:
+        event["status"] = "complete"
+    event["after"] = collect_proof_resource_snapshot(
+        label="after_model_lane_recycle",
+        task_index=task_index,
+    )
+    append_jsonl(lifecycle_path, event)
+    return event
+
+
 async def shutdown_proof_runtime(orchestrator) -> None:
     """Tear down the canonical proof boot so local model workers do not linger."""
     from core.container import ServiceContainer
@@ -590,7 +1048,10 @@ async def shutdown_proof_runtime(orchestrator) -> None:
     try:
         await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
     finally:
-        await _reap_proof_child_processes("dnu_proof_runtime_shutdown")
+        await _reap_proof_child_processes(
+            "dnu_proof_runtime_shutdown",
+            include_resource_trackers=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1765,18 +2226,7 @@ async def main():
 
     run_dir = artifacts_base
     run_dir.mkdir(parents=True, exist_ok=True)
-    for stale_artifact in (
-        "TASK_TRACE.jsonl",
-        "FAILURES.jsonl",
-        "RECEIPTS.jsonl",
-        "SCORECARD.json",
-        "DNU_AGI_PROOF.json",
-        "DNU_AGI_PROOF.md",
-        "FINAL_VERDICT.txt",
-        "GOVERNANCE_REPORT.json",
-        "LEAKAGE_REPORT.json",
-        "MODEL_LANE_PROBE.json",
-    ):
+    for stale_artifact in DNU_STALE_ARTIFACTS:
         try:
             (run_dir / stale_artifact).unlink(missing_ok=True)
         except OSError as exc:
@@ -1798,12 +2248,48 @@ async def main():
     print(f"Commit SHA: {commit_sha}")
     print(f"Run Directory: {run_dir}")
     print(f"Proof Model Tier: {requested_proof_model_tier}")
+    lifecycle_events = 0
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="startup",
+        lifecycle_events=lifecycle_events,
+    )
+    (run_dir / "RESOURCE_TRACE.jsonl").touch()
+    (run_dir / "LIFECYCLE_EVENTS.jsonl").touch()
 
     # -----------------------------------------------------------------------
     # 0. Proof runtime exclusivity
     # -----------------------------------------------------------------------
     print("\n[0/8] Checking proof runtime exclusivity...")
     exclusive_report_path = run_dir / "EXCLUSIVE_RUNTIME_PREFLIGHT.json"
+    existing_proof_runners = find_existing_proof_runners()
+    if existing_proof_runners and args.stop_existing_runtime:
+        remaining_proof_runners = stop_existing_proof_runners()
+        if remaining_proof_runners:
+            write_exclusive_runtime_report(
+                exclusive_report_path,
+                status="proof_runner_stop_failed",
+                instances=remaining_proof_runners,
+            )
+            print("  [FATAL] Stale proof runner remained alive after stop request:")
+            for instance in remaining_proof_runners:
+                print(f"    PID {instance['pid']}: {instance['command'][:180]}")
+            return 1
+    elif existing_proof_runners and not args.allow_coexisting_runtime:
+        write_exclusive_runtime_report(
+            exclusive_report_path,
+            status="blocked_existing_proof_runner",
+            instances=existing_proof_runners,
+        )
+        print("  [FATAL] Existing DNU proof runner detected. Proof runs require exclusivity.")
+        print("          Re-run with --stop-existing-runtime to stop it first.")
+        for instance in existing_proof_runners:
+            print(f"    PID {instance['pid']}: {instance['command'][:180]}")
+        return 1
+
     existing_runtimes = find_existing_aura_runtimes()
     if existing_runtimes and args.stop_existing_runtime:
         remaining = stop_existing_aura_runtimes()
@@ -1836,6 +2322,14 @@ async def main():
             instances=existing_runtimes,
         )
         print(f"  [OK] Runtime exclusivity status: {status}.")
+    reaped_orphans = stop_orphaned_aura_multiprocessing_children()
+    if reaped_orphans:
+        exclusive_report["orphaned_multiprocessing_children_reaped"] = reaped_orphans
+        exclusive_report_path.write_text(json.dumps(exclusive_report, indent=2), encoding="utf-8")
+        print(
+            "  [CLEANUP] Reaped "
+            f"{len(reaped_orphans)} orphaned Aura multiprocessing helper(s) from prior interrupted runs."
+        )
     sys_info["exclusive_runtime_preflight"] = exclusive_report
 
     # -----------------------------------------------------------------------
@@ -1865,8 +2359,26 @@ async def main():
                 print(f"  [WARN] Invalid AURA_AGI_MAX_TASKS value: {max_tasks_env}")
 
     if len(all_tasks) == 0:
+        write_run_status(
+            run_dir,
+            status="failed",
+            run_id=run_id,
+            commit_sha=commit_sha,
+            phase="load_task_packs",
+            error="no_tasks_loaded",
+            lifecycle_events=lifecycle_events,
+        )
         print("  [FATAL] No tasks loaded. Cannot run battery.")
         return 1
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="task_packs_loaded",
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
 
     # -----------------------------------------------------------------------
     # 2. Anti-Theater Pre-Check
@@ -1936,6 +2448,11 @@ async def main():
         "structured_proof_solver_enabled": not args.disable_structured_proof_solver,
         "exclusive_runtime_required": not args.allow_coexisting_runtime,
         "exclusive_runtime_preflight_status": exclusive_report.get("status"),
+        "model_recycle_interval_tasks": dnu_model_recycle_interval(
+            requested_proof_model_tier,
+            total_tasks=len(all_tasks),
+            smoke=args.smoke,
+        ),
         "comparisons_mode": "skipped_for_smoke" if args.smoke else "run",
     }
     runtime_policy_path = run_dir / "RUNTIME_POLICY.json"
@@ -1957,6 +2474,15 @@ async def main():
         "  [OK] Model lane probe passed via "
         f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
     )
+    initial_resource_snapshot = collect_proof_resource_snapshot(label="after_model_lane_probe")
+    append_jsonl(run_dir / "RESOURCE_TRACE.jsonl", initial_resource_snapshot)
+    initial_health_blockers = proof_runtime_health_blockers(initial_resource_snapshot)
+    if initial_health_blockers:
+        print("  [FATAL] Proof runtime health failed after model lane probe:")
+        for blocker in initial_health_blockers:
+            print(f"    - {blocker}")
+        await shutdown_proof_runtime(orch)
+        return 1
 
     # -----------------------------------------------------------------------
     # 4. Execute Tasks
@@ -1965,9 +2491,29 @@ async def main():
     results = []
     trace_file = run_dir / "TASK_TRACE.jsonl"
     receipts_file = run_dir / "RECEIPTS.jsonl"
+    resource_trace_file = run_dir / "RESOURCE_TRACE.jsonl"
+    recycle_interval = dnu_model_recycle_interval(
+        requested_proof_model_tier,
+        total_tasks=len(all_tasks),
+        smoke=args.smoke,
+    )
+    if recycle_interval:
+        print(
+            "  [LIFECYCLE] Primary proof model worker will be recycled every "
+            f"{recycle_interval} tasks to bound long-run resident resource growth."
+        )
     from core.will import get_will
     will = get_will()
     await will.start()
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="task_execution",
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
 
     with trace_file.open("w", encoding="utf-8") as trace_fh, receipts_file.open("w", encoding="utf-8") as receipts_fh:
         for i, task in enumerate(all_tasks, 1):
@@ -2085,11 +2631,80 @@ async def main():
                 "ungraded": "?",
             }.get(result["status"], "?")
             print(f"{status_icon} {result['status']} ({result['elapsed_s']:.1f}s)")
+            task_resource_snapshot = collect_proof_resource_snapshot(
+                label="after_task",
+                task_index=i,
+                task_id=tid,
+            )
+            append_jsonl(resource_trace_file, task_resource_snapshot)
+            task_health_blockers = proof_runtime_health_blockers(task_resource_snapshot)
+            if task_health_blockers:
+                print("  [FATAL] Proof runtime health failed during task execution:")
+                for blocker in task_health_blockers:
+                    print(f"    - {blocker}")
+                await shutdown_proof_runtime(orch)
+                return 1
+            write_run_status(
+                run_dir,
+                status="running",
+                run_id=run_id,
+                commit_sha=commit_sha,
+                phase="task_execution",
+                tasks_completed=len(results),
+                total_tasks=len(all_tasks),
+                lifecycle_events=lifecycle_events,
+            )
+            if recycle_interval and i < len(all_tasks) and i % recycle_interval == 0:
+                recycle_event = await recycle_proof_model_lane(
+                    router,
+                    requested_proof_model_tier,
+                    run_dir=run_dir,
+                    reason=f"dnu_checkpoint_after_task_{i}",
+                    task_index=i,
+                )
+                lifecycle_events += 1
+                write_run_status(
+                    run_dir,
+                    status="running",
+                    run_id=run_id,
+                    commit_sha=commit_sha,
+                    phase="model_lane_recycle",
+                    tasks_completed=len(results),
+                    total_tasks=len(all_tasks),
+                    error=recycle_event.get("error"),
+                    lifecycle_events=lifecycle_events,
+                )
+                if recycle_event.get("status") != "complete":
+                    print(
+                        "  [FATAL] Proof model lane recycle failed: "
+                        f"{recycle_event.get('error')}"
+                    )
+                    await shutdown_proof_runtime(orch)
+                    return 1
+                recycle_health_blockers = proof_runtime_health_blockers(
+                    recycle_event.get("after") or {}
+                )
+                if recycle_health_blockers:
+                    print("  [FATAL] Proof runtime health failed after model lane recycle:")
+                    for blocker in recycle_health_blockers:
+                        print(f"    - {blocker}")
+                    await shutdown_proof_runtime(orch)
+                    return 1
 
     # -----------------------------------------------------------------------
     # 5. Anti-Theater Post-Check
     # -----------------------------------------------------------------------
     print("\n[5/8] Running anti-theater post-checks...")
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="anti_theater_post_check",
+        tasks_completed=len(results),
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
     post_violations = anti_theater_post_check(results)
     if post_violations:
         for v in post_violations:
@@ -2107,6 +2722,16 @@ async def main():
     # 6. Compute Scorecard and Enforce Tier-Capping
     # -----------------------------------------------------------------------
     print("\n[6/8] Computing scorecard from actual results...")
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="scorecard",
+        tasks_completed=len(results),
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
     scorecard = compute_scorecard(results)
 
     # Check minimum task counts and record violations
@@ -2155,6 +2780,16 @@ async def main():
         }
     else:
         print("\nRunning raw LLM, LLM with direct tools, and ReAct agent baselines...")
+        write_run_status(
+            run_dir,
+            status="running",
+            run_id=run_id,
+            commit_sha=commit_sha,
+            phase="baselines",
+            tasks_completed=len(results),
+            total_tasks=len(all_tasks),
+            lifecycle_events=lifecycle_events,
+        )
         # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
         comparison_tasks = all_tasks[:10]
         print(f"  Using first {len(comparison_tasks)} tasks for representative ablation comparisons.")
@@ -2167,6 +2802,15 @@ async def main():
         raw_llm_results = await asyncio.gather(*raw_llm_tasks)
         llm_with_tools_results = await asyncio.gather(*llm_with_tools_tasks)
         react_results = await asyncio.gather(*react_tasks)
+        baseline_resource_snapshot = collect_proof_resource_snapshot(label="after_baselines")
+        append_jsonl(resource_trace_file, baseline_resource_snapshot)
+        baseline_health_blockers = proof_runtime_health_blockers(baseline_resource_snapshot)
+        if baseline_health_blockers:
+            print("  [FATAL] Proof runtime health failed after baseline comparison:")
+            for blocker in baseline_health_blockers:
+                print(f"    - {blocker}")
+            await shutdown_proof_runtime(orch)
+            return 1
 
         raw_llm_scorecard = compute_scorecard(raw_llm_results)
         llm_with_tools_scorecard = compute_scorecard(llm_with_tools_results)
@@ -2194,6 +2838,16 @@ async def main():
         }
 
         print("\nRunning dynamic system ablations sequentially...")
+        write_run_status(
+            run_dir,
+            status="running",
+            run_id=run_id,
+            commit_sha=commit_sha,
+            phase="ablations",
+            tasks_completed=len(results),
+            total_tasks=len(all_tasks),
+            lifecycle_events=lifecycle_events,
+        )
 
         # Compute full_aura pass rate on the same comparison subset for honest ablation comparison.
         full_aura_comparison_results = results[:len(comparison_tasks)]
@@ -2234,11 +2888,30 @@ async def main():
             "aura_minus_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
             "aura_minus_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
         }
+        ablation_resource_snapshot = collect_proof_resource_snapshot(label="after_ablations")
+        append_jsonl(resource_trace_file, ablation_resource_snapshot)
+        ablation_health_blockers = proof_runtime_health_blockers(ablation_resource_snapshot)
+        if ablation_health_blockers:
+            print("  [FATAL] Proof runtime health failed after ablation recovery:")
+            for blocker in ablation_health_blockers:
+                print(f"    - {blocker}")
+            await shutdown_proof_runtime(orch)
+            return 1
 
     # -----------------------------------------------------------------------
     # 7. Write Artifacts
     # -----------------------------------------------------------------------
     print("\n[7/8] Writing artifacts...")
+    write_run_status(
+        run_dir,
+        status="running",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="write_artifacts",
+        tasks_completed=len(results),
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
 
     # Granular verification checklist
     baselines_complete = (
@@ -2308,6 +2981,12 @@ async def main():
         "runtime_policy": runtime_policy,
         "model_lane_probe": model_lane_probe,
         "structured_solver_task_count": structured_solver_task_count,
+        "lifecycle_event_count": lifecycle_events,
+        "resource_trace": {
+            "path": str((run_dir / "RESOURCE_TRACE.jsonl").relative_to(PROJECT_ROOT))
+            if (run_dir / "RESOURCE_TRACE.jsonl").is_relative_to(PROJECT_ROOT)
+            else str(run_dir / "RESOURCE_TRACE.jsonl"),
+        },
         "governance_report_status": gov_report.get("status"),
         "leakage_report_status": leakage_report.get("status"),
         "passed": all(verification_checklist.values()) and anti_theater["all_passed"],
@@ -2401,6 +3080,16 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     verdict_path = run_dir / "FINAL_VERDICT.txt"
     verdict_path.write_text(verdict_text, encoding="utf-8")
     print(f"  [OK] {verdict_path.name}")
+    write_run_status(
+        run_dir,
+        status="complete",
+        run_id=run_id,
+        commit_sha=commit_sha,
+        phase="complete",
+        tasks_completed=len(results),
+        total_tasks=len(all_tasks),
+        lifecycle_events=lifecycle_events,
+    )
 
     # -----------------------------------------------------------------------
     # 8. Write Manifest
@@ -2428,12 +3117,7 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     # Also copy key artifacts to the standard agi_live directory for pytest
     std_dest = artifacts_base
     std_dest.mkdir(parents=True, exist_ok=True)
-    for fname in ["DNU_AGI_PROOF.json", "DNU_AGI_PROOF.md", "SCORECARD.json",
-                   "BASELINES.json", "ABLATIONS.json", "TASK_TRACE.jsonl",
-                   "FAILURES.jsonl", "RECEIPTS.jsonl", "GOVERNANCE_REPORT.json",
-                   "LEAKAGE_REPORT.json", "RUNTIME_MANIFEST.json", "RUNTIME_POLICY.json",
-                   "MODEL_LANE_PROBE.json", "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
-                   "FINAL_VERDICT.txt", "MANIFEST.json"]:
+    for fname in DNU_STANDARD_COPY_ARTIFACTS:
         src = run_dir / fname
         if src.exists():
             (std_dest / fname).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -2444,19 +3128,7 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
         "commit_sha": commit_sha,
         "files": {},
     }
-    for fname in [
-        "DNU_AGI_PROOF.json",
-        "DNU_AGI_PROOF.md",
-        "SCORECARD.json",
-        "RECEIPTS.jsonl",
-        "GOVERNANCE_REPORT.json",
-        "LEAKAGE_REPORT.json",
-        "RUNTIME_MANIFEST.json",
-        "RUNTIME_POLICY.json",
-        "MODEL_LANE_PROBE.json",
-        "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
-        "FINAL_VERDICT.txt",
-    ]:
+    for fname in DNU_STANDARD_COPY_ARTIFACTS:
         fpath = std_dest / fname
         if fpath.exists():
             std_manifest["files"][fname] = {

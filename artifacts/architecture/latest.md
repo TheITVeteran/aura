@@ -2,34 +2,34 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1780104318.812922`
+Generated: `1780106991.991498`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1589
-- Python lines: 460928
-- Dependency edges: 688
-- ServiceContainer `.get()` calls: 1463
+- Python lines: 461178
+- Dependency edges: 689
+- ServiceContainer `.get()` calls: 1464
 - ServiceContainer registrations: 350
 
 ## Subsystem Dependency Graph
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>92 files, 20523 lines"]
+    runtime["runtime<br/>92 files, 20582 lines"]
     utils["utils<br/>41 files, 4956 lines"]
     brain["brain<br/>115 files, 42902 lines"]
     consciousness["consciousness<br/>121 files, 57071 lines"]
     resilience["resilience<br/>53 files, 11125 lines"]
-    health["health<br/>3 files, 778 lines"]
+    health["health<br/>3 files, 838 lines"]
     memory["memory<br/>70 files, 16745 lines"]
     agency["agency<br/>28 files, 14078 lines"]
     adaptation["adaptation<br/>26 files, 11869 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
+    self_modification["self_modification<br/>29 files, 10380 lines"]
     senses["senses<br/>23 files, 5012 lines"]
     affect["affect<br/>5 files, 1857 lines"]
-    self_modification["self_modification<br/>29 files, 10348 lines"]
     state["state<br/>6 files, 3408 lines"]
     observability["observability<br/>3 files, 575 lines"]
     governance["governance<br/>8 files, 2425 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 55004 lines"]
+    core_root["core_root<br/>182 files, 55103 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -159,6 +159,7 @@ graph TD
     runtime --> research_core
     runtime --> resilience
     runtime --> self
+    runtime --> self_modification
     runtime --> social
     runtime --> state
     runtime --> supervisor
@@ -274,6 +275,12 @@ graph TD
     adaptation --> sensors
     adaptation --> utils
     adaptation --> world
+    self_modification --> ethics
+    self_modification --> governance
+    self_modification --> resilience
+    self_modification --> runtime
+    self_modification --> skills
+    self_modification --> utils
     senses --> affect
     senses --> brain
     senses --> consciousness
@@ -295,12 +302,6 @@ graph TD
     affect --> runtime
     affect --> senses
     affect --> utils
-    self_modification --> ethics
-    self_modification --> governance
-    self_modification --> resilience
-    self_modification --> runtime
-    self_modification --> skills
-    self_modification --> utils
     state --> constitution
     state --> governance
     state --> motivation
@@ -835,17 +836,17 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 121 | 57071 | 2403751 | 37 | 29 |
-| core_root | 182 | 55004 | 2237533 | 99 | 0 |
+| core_root | 182 | 55103 | 2241143 | 99 | 0 |
 | brain | 115 | 42902 | 1853761 | 40 | 39 |
-| runtime | 92 | 20523 | 723797 | 38 | 104 |
+| runtime | 92 | 20582 | 725566 | 39 | 104 |
 | orchestrator | 42 | 18703 | 826005 | 123 | 9 |
 | phases | 29 | 16970 | 764881 | 32 | 7 |
 | memory | 70 | 16745 | 677304 | 17 | 21 |
 | skills | 76 | 15433 | 622714 | 27 | 6 |
 | agency | 28 | 14078 | 569142 | 27 | 17 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
-| resilience | 53 | 11125 | 448837 | 16 | 25 |
-| self_modification | 29 | 10348 | 409314 | 11 | 13 |
+| resilience | 53 | 11125 | 448848 | 16 | 25 |
+| self_modification | 29 | 10380 | 410241 | 11 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8097 | 329816 | 9 | 4 |
 | autonomy | 22 | 7560 | 310198 | 16 | 7 |
@@ -898,8 +899,8 @@ graph TD
 | autonomic | 4 | 882 | 36599 | 5 | 5 |
 | sovereignty | 3 | 873 | 33628 | 10 | 1 |
 | providers | 5 | 857 | 40239 | 51 | 0 |
+| health | 3 | 838 | 31377 | 6 | 21 |
 | creativity | 2 | 800 | 33218 | 2 | 1 |
-| health | 3 | 778 | 29160 | 6 | 21 |
 | environments | 7 | 748 | 31101 | 3 | 2 |
 | introspection | 3 | 738 | 28467 | 1 | 2 |
 | lattice | 5 | 704 | 26089 | 0 | 2 |
@@ -981,8 +982,8 @@ graph TD
 | homeostasis | 22 | 1 |
 | global_workspace | 22 | 2 |
 | drive_engine | 22 | 0 |
+| state_repository | 20 | 1 |
 | goal_engine | 20 | 0 |
-| state_repository | 19 | 1 |
 | knowledge_graph | 18 | 0 |
 | qualia_synthesizer | 18 | 3 |
 | belief_revision_engine | 17 | 1 |
@@ -1076,8 +1077,8 @@ Review candidates:
 - `core/goals/goal_engine.py:1013` [goals] `will.decide` - decision = will.decide(
 - `core/governance/will_gate.py:109` [governance] `will.decide` - decision = will.decide(
 - `core/governance/will_gate.py:160` [governance] `will.decide` - decision = will.decide(
-- `core/initiative_synthesis.py:743` [core_root] `get_will` - decision = get_will().decide(
-- `core/initiative_synthesis.py:743` [core_root] `get_will.decide` - decision = get_will().decide(
+- `core/initiative_synthesis.py:744` [core_root] `get_will` - decision = get_will().decide(
+- `core/initiative_synthesis.py:744` [core_root] `get_will.decide` - decision = get_will().decide(
 - `core/learning/genuine_learning_pipeline.py:643` [learning] `get_will` - decision = get_will().decide(
 - `core/learning/genuine_learning_pipeline.py:643` [learning] `get_will.decide` - decision = get_will().decide(
 - `core/learning/recursive_self_improvement.py:502` [learning] `get_will` - decision = get_will().decide(
@@ -1261,9 +1262,9 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2678
-- Log-and-limp candidates: 2483
-- Nearby fail-closed candidates: 195
+- Total `record_degradation()` calls: 2681
+- Log-and-limp candidates: 2485
+- Nearby fail-closed candidates: 196
 
 Top limp-on files:
 

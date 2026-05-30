@@ -1638,7 +1638,7 @@ def stop_aura():
     
     # 1. Unload Launchd Agent (Prevents auto-revival on macOS)
     if sys.platform == "darwin":
-        plist_path = Path.home() / "Library/LaunchAgents/com.aura.daemon.plist"
+        plist_path = Path.home() / "Library/LaunchAgents/com.aura.sovereign.plist"
         if plist_path.exists():
             logger.info("Unloading launchd daemon to prevent auto-revival...")
             try:

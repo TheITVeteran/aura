@@ -9,6 +9,7 @@ import logging
 import time
 
 from core.observability.metrics import get_metrics
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Hypervisor")
@@ -22,6 +23,10 @@ class Hypervisor:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_tick = time.time()
+        self._last_lag = 0.0
+        self._last_severe_lag_at = 0.0
+        self._last_failure_reason = ""
+        self._failure_recovery_window_s = 300.0
 
     async def start(self):
         if self._running:
@@ -42,7 +47,21 @@ class Hypervisor:
 
     def is_alive(self) -> bool:
         """Return True only when the watchdog loop is actively supervised."""
-        return bool(self._running and self._task is not None and not self._task.done())
+        if not bool(self._running and self._task is not None and not self._task.done()):
+            return False
+        if self._last_severe_lag_at and (
+            time.time() - self._last_severe_lag_at
+        ) < self._failure_recovery_window_s:
+            return False
+        return True
+
+    def get_status(self) -> dict[str, float | bool | str]:
+        return {
+            "alive": self.is_alive(),
+            "last_lag_s": self._last_lag,
+            "last_severe_lag_at": self._last_severe_lag_at,
+            "last_failure_reason": self._last_failure_reason,
+        }
 
     def _active_runtime_reason(self) -> str:
         try:
@@ -89,6 +108,7 @@ class Hypervisor:
             await asyncio.sleep(1.0)
             actual_sleep = time.time() - start
             lag = actual_sleep - 1.0
+            self._last_lag = lag
 
             self._last_tick = time.time()
             metrics.gauge("hypervisor.loop_lag_s", lag)
@@ -104,6 +124,15 @@ class Hypervisor:
                 metrics.increment("hypervisor.lag_spikes_total")
 
                 if lag > 5.0:
+                    self._last_severe_lag_at = time.time()
+                    self._last_failure_reason = f"severe event-loop lag {lag:.3f}s"
+                    record_degradation(
+                        "hypervisor",
+                        RuntimeError(self._last_failure_reason),
+                        severity="critical",
+                        action="marked hypervisor unhealthy until recovery window expires",
+                        enforce_failure_policy=False,
+                    )
                     logger.critical(
                         "🚨 SEVERE FREEZE: Loop lag > 5s. System stability compromised."
                     )

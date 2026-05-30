@@ -253,13 +253,26 @@ class CommitmentEngine:
 
     def _on_fulfilled(self, c: Commitment):
         try:
-            from core.adaptation.finetune_pipe import FinetunePipe
-            FinetunePipe().register_success(
+            from core.adaptation.finetune_pipe import get_finetune_pipe
+            import asyncio
+
+            pipe = get_finetune_pipe()
+            coro = pipe.register_success(
+                task_description=f"Commitment: {c.description[:100]}",
+                context=f"Commitment fulfilled (overdue={c.is_overdue()})",
                 reasoning=f"Commitment fulfilled: {c.description}",
                 final_action=f"Outcome: {c.outcome}",
                 quality_score=0.8 + (0.2 if not c.is_overdue() else 0.0),
             )
-        except (ImportError, AttributeError, RuntimeError) as _exc:
+            # register_success is async; schedule it without blocking the sync caller
+            try:
+                loop = asyncio.get_running_loop()
+                from core.utils.task_tracker import get_task_tracker
+                get_task_tracker().create_task(coro, name="finetune_pipe.register_success")
+            except RuntimeError:
+                # No running loop — just discard the coroutine safely
+                coro.close()
+        except (ImportError, AttributeError, RuntimeError, TypeError) as _exc:
             record_degradation('commitment_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 

@@ -128,6 +128,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
     ),
     # ── IMPORTANT: Aura works but is impaired without these ──
     ServiceRequirement(
+        "Event Bus",
+        "event_bus",
+        ServiceTier.IMPORTANT,
+        "Canonical runtime event transport. Without it, subsystems cannot reliably coordinate.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
         "Cognitive Engine",
         "cognitive_engine",
         ServiceTier.IMPORTANT,
@@ -465,7 +472,8 @@ def evaluate_health() -> HealthVerdict:
         if s.requirement.tier == ServiceTier.CRITICAL
     )
     important_alive = all(
-        s.present for s in statuses if s.requirement.tier == ServiceTier.IMPORTANT
+        s.present and s.liveness_ok is not False
+        for s in statuses if s.requirement.tier == ServiceTier.IMPORTANT
     )
 
     if critical_alive and important_alive:

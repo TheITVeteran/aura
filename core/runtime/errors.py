@@ -193,6 +193,7 @@ def record_degradation(
     classification: FallbackClassification | None = None,
     receipt_required: bool = False,
     extra: dict[str, Any] | None = None,
+    enforce_failure_policy: bool = True,
 ) -> DegradationRecord:
     """Record a degradation event: the canonical replacement for silent catch-alls.
 
@@ -252,7 +253,8 @@ def record_degradation(
         else:
             raise StateCoherenceFailure(f"Fail-Closed: State corruption risk detected in {subsystem}. original_error={error}")
 
-    # ── Fail-closed policy enforcement ──
+    failure_policy_violation = False
+    failure_policy_error = ""
     try:
         from core.container import ServiceContainer
         from core.runtime.mode import get_mode, AuraMode
@@ -261,13 +263,15 @@ def record_degradation(
             with ServiceContainer._lock:
                 desc = ServiceContainer._services.get(resolved)
             if desc and getattr(desc, "failure_policy", "") == "fail-closed":
-                raise RuntimeError(
+                failure_policy_violation = True
+                failure_policy_error = (
                     f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
                     f"Original error: {type(error).__name__}: {error}"
                 )
-    except (ImportError, RuntimeError) as exc:
-        if "CRITICAL SERVICE FAILURE" in str(exc):
-            raise
+                if severity != "critical":
+                    severity = "critical"
+    except (ImportError, RuntimeError):
+        pass
 
 
     error_type = type(error).__qualname__
@@ -296,7 +300,9 @@ def record_degradation(
         if registry is not None:
             health = registry.register(subsystem)
             health.last_error = f"{error_type}: {error_msg}"
-            if severity == "critical":
+            if failure_policy_violation:
+                health.mark_failed_closed(error_msg, impact=action)
+            elif severity == "critical":
                 health.mark_unavailable(error_msg)
             elif severity in ("degraded", "warning"):
                 health.mark_degraded(error_msg, impact=action)
@@ -400,6 +406,9 @@ def record_degradation(
     except (ImportError, AttributeError, RuntimeError):
         pass  # Metrics unavailable — already logged
 
+    if failure_policy_violation and enforce_failure_policy:
+        raise RuntimeError(failure_policy_error)
+
     return record
 
 
@@ -436,6 +445,12 @@ class SubsystemHealth:
     def mark_unavailable(self, reason: str) -> None:
         self.status = "unavailable"
         self.reason = reason
+        self.last_failed_at = time.time()
+
+    def mark_failed_closed(self, reason: str, impact: str = "") -> None:
+        self.status = "failed_closed"
+        self.reason = reason
+        self.impact = impact
         self.last_failed_at = time.time()
 
     def to_dict(self) -> dict[str, Any]:

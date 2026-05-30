@@ -247,7 +247,10 @@ class InternalSimulator:
             content_lower = content.lower()
             # Check for conflicts (action that contradicts a promise)
             for c in active:
-                goal = str(c.get("goal", c.get("description", ""))).lower()
+                if isinstance(c, dict):
+                    goal = str(c.get("goal", c.get("description", ""))).lower()
+                else:
+                    goal = str(getattr(c, "goal", "") or getattr(c, "description", "")).lower()
                 # If the action serves a commitment, that's good
                 if any(word in content_lower for word in goal.split()[:3] if len(word) > 3):
                     return 0.3
