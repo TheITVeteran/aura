@@ -551,6 +551,18 @@ async def request_id_middleware(request: Request, call_next):
 from datetime import UTC, datetime
 
 
+def _phenomenal_error_status(envelope) -> int:
+    """Map graceful error envelopes to truthful HTTP status codes."""
+    state = str(getattr(envelope, "phenomenal_state", "") or "")
+    if state == "permission_denied":
+        return 403
+    if state == "disk_pressure":
+        return 507
+    if state in {"cognitive_fog", "metabolic_strain", "model_unavailable", "network_offline"}:
+        return 503
+    return 500
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Phenomenal error envelope for every unhandled exception.
@@ -572,10 +584,13 @@ async def global_exception_handler(request: Request, exc: Exception):
             envelope = exc.envelope
         else:
             envelope = build_envelope(exc, correlation_id=request_id)
+        http_status = _phenomenal_error_status(envelope)
         return JSONResponse(
-            status_code=200,  # always 200 so the chat never appears broken
+            status_code=http_status,
             content={
+                "ok": False,
                 "status": "phenomenal",
+                "http_status": http_status,
                 "envelope": envelope.to_dict(),
                 "user_message": envelope.user_message,
                 "request_id": request_id,

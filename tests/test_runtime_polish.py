@@ -1,6 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,7 +11,13 @@ from core.events import EventPriority, InputBus
 from core.phantom_browser import PhantomBrowser
 from core.world_model import user_model as user_model_module
 from interface import websocket_manager as websocket_module
-from interface.server import MessageBroadcastBus, Response, WebSocketManager, _cache_policy_for_path
+from interface.server import (
+    MessageBroadcastBus,
+    Response,
+    WebSocketManager,
+    _cache_policy_for_path,
+    _phenomenal_error_status,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -24,6 +31,23 @@ def test_cache_policy_keeps_live_shell_uncached():
 
 def test_cache_policy_middleware_dependencies_are_imported():
     assert Response is not None
+
+
+def test_phenomenal_error_envelopes_use_truthful_http_status():
+    assert _phenomenal_error_status(SimpleNamespace(phenomenal_state="permission_denied")) == 403
+    assert _phenomenal_error_status(SimpleNamespace(phenomenal_state="disk_pressure")) == 507
+    assert _phenomenal_error_status(SimpleNamespace(phenomenal_state="model_unavailable")) == 503
+    assert _phenomenal_error_status(SimpleNamespace(phenomenal_state="unknown_phenomenal")) == 500
+
+
+def test_global_error_and_introspection_paths_do_not_hide_failures():
+    server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
+    chat = (PROJECT_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+
+    assert "always 200 so the chat never appears broken" not in server
+    assert "status_code=200,  # always 200" not in server
+    assert "fail-open: introspection" not in chat
+    assert "Grounded introspection authority gate unavailable" in chat
 
 
 def test_gui_actor_exits_after_extended_kernel_loss():

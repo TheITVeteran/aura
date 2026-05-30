@@ -5470,17 +5470,13 @@ async def api_chat(
                     elif _gv.decision == AuthorizationDecision.BLOCK:
                         logger.debug("Grounded introspection blocked by substrate — falling through to kernel")
                         grounded_introspection = None  # fall through to full cognitive path
-            except _CHAT_RECOVERABLE_ERRORS:
-                if asks_authority:
-                    grounded_introspection = _build_grounded_introspection_reply(
-                        _semantic_user_message,
-                        authority_observability_note=(
-                            "I could not complete a live authority gate for this governance report, "
-                            "so I am exposing the current authority state directly."
-                        ),
-                    )
-                else:
-                    pass  # fail-open: introspection proceeds if authority check errors
+            except _CHAT_RECOVERABLE_ERRORS as exc:
+                record_degradation("chat", exc)
+                logger.warning(
+                    "Grounded introspection authority gate unavailable; falling through to kernel path: %s",
+                    exc,
+                )
+                grounded_introspection = None
 
             if grounded_introspection:
                 # Record effect with exact receipt_id for provenance matching

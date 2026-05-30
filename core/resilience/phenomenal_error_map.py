@@ -18,11 +18,11 @@ failure mode. Adding a new failure category requires:
   * a recovery-action hint (retry / fallback / restart_cortex / etc.)
 
 Used everywhere the system catches an exception that would otherwise
-become a 500 / WebSocket error / dead frontend button. The decorator
+become a raw traceback / WebSocket error / dead frontend button. The decorator
 ``@phenomenal`` wraps an async fn and re-raises an ``ErrorEnvelope`` instead
 of the original exception. The HTTP middleware in ``interface/server.py``
-maps the envelope to a 200-with-status response so the chat UI never sees
-a non-200 unless something truly catastrophic is happening.
+maps the envelope to a structured non-2xx response so the UI can recover
+gracefully without pretending the failed request was healthy.
 """
 from __future__ import annotations
 import inspect
