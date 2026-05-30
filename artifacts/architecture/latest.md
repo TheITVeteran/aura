@@ -2,14 +2,14 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1780106991.991498`
+Generated: `1780162596.817494`
 
 ## Summary
 
 - Subsystems: 123
 - Python files: 1589
-- Python lines: 461178
-- Dependency edges: 689
+- Python lines: 461951
+- Dependency edges: 690
 - ServiceContainer `.get()` calls: 1464
 - ServiceContainer registrations: 350
 
@@ -17,40 +17,40 @@ Generated: `1780106991.991498`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>92 files, 20582 lines"]
-    utils["utils<br/>41 files, 4956 lines"]
-    brain["brain<br/>115 files, 42902 lines"]
+    runtime["runtime<br/>92 files, 20636 lines"]
+    utils["utils<br/>41 files, 5110 lines"]
+    brain["brain<br/>115 files, 42912 lines"]
     consciousness["consciousness<br/>121 files, 57071 lines"]
-    resilience["resilience<br/>53 files, 11125 lines"]
+    resilience["resilience<br/>53 files, 11146 lines"]
     health["health<br/>3 files, 838 lines"]
     memory["memory<br/>70 files, 16745 lines"]
-    agency["agency<br/>28 files, 14078 lines"]
+    agency["agency<br/>28 files, 14091 lines"]
     adaptation["adaptation<br/>26 files, 11869 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
-    self_modification["self_modification<br/>29 files, 10380 lines"]
+    self_modification["self_modification<br/>29 files, 10434 lines"]
     senses["senses<br/>23 files, 5012 lines"]
     affect["affect<br/>5 files, 1857 lines"]
     state["state<br/>6 files, 3408 lines"]
     observability["observability<br/>3 files, 575 lines"]
     governance["governance<br/>8 files, 2425 lines"]
     identity["identity<br/>11 files, 2136 lines"]
-    orchestrator["orchestrator<br/>42 files, 18703 lines"]
+    orchestrator["orchestrator<br/>42 files, 18737 lines"]
+    security["security<br/>17 files, 4623 lines"]
     world_model["world_model<br/>9 files, 2541 lines"]
     executive["executive<br/>4 files, 2317 lines"]
-    security["security<br/>17 files, 4623 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
     autonomy["autonomy<br/>22 files, 7560 lines"]
-    phases["phases<br/>29 files, 16970 lines"]
+    phases["phases<br/>29 files, 16974 lines"]
     actuators["actuators<br/>9 files, 2132 lines"]
     conversation["conversation<br/>8 files, 3993 lines"]
     learning["learning<br/>20 files, 6934 lines"]
     reasoning["reasoning<br/>7 files, 3830 lines"]
-    skills["skills<br/>76 files, 15433 lines"]
+    skills["skills<br/>76 files, 15440 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4224 lines"]
     managers["managers<br/>6 files, 932 lines"]
     meta["meta<br/>7 files, 1256 lines"]
-    ops["ops<br/>11 files, 2262 lines"]
+    ops["ops<br/>11 files, 2304 lines"]
     organism["organism<br/>1 files, 458 lines"]
     self["self<br/>6 files, 1681 lines"]
     supervisor["supervisor<br/>3 files, 495 lines"]
@@ -61,7 +61,7 @@ graph TD
     embodiment["embodiment<br/>15 files, 2627 lines"]
     ethics["ethics<br/>1 files, 309 lines"]
     evaluation["evaluation<br/>10 files, 1765 lines"]
-    kernel["kernel<br/>10 files, 5397 lines"]
+    kernel["kernel<br/>10 files, 5456 lines"]
     motivation["motivation<br/>7 files, 1194 lines"]
     promotion["promotion<br/>6 files, 944 lines"]
     resource["resource<br/>2 files, 426 lines"]
@@ -95,7 +95,7 @@ graph TD
     self_improvement["self_improvement<br/>12 files, 2285 lines"]
     sensors["sensors<br/>1 files, 151 lines"]
     services["services<br/>2 files, 31 lines"]
-    simulation["simulation<br/>3 files, 390 lines"]
+    simulation["simulation<br/>3 files, 393 lines"]
     soma["soma<br/>3 files, 502 lines"]
     sovereign["sovereign<br/>4 files, 541 lines"]
     startup["startup<br/>2 files, 326 lines"]
@@ -120,7 +120,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 55103 lines"]
+    core_root["core_root<br/>182 files, 55421 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -373,6 +373,13 @@ graph TD
     orchestrator --> verification
     orchestrator --> voice
     orchestrator --> world_model
+    security --> affect
+    security --> agency
+    security --> consciousness
+    security --> identity
+    security --> memory
+    security --> runtime
+    security --> utils
     world_model --> brain
     world_model --> constitution
     world_model --> health
@@ -386,13 +393,6 @@ graph TD
     executive --> health
     executive --> runtime
     executive --> state
-    security --> affect
-    security --> agency
-    security --> consciousness
-    security --> identity
-    security --> memory
-    security --> runtime
-    security --> utils
     tasks --> runtime
     autonomy --> affect
     autonomy --> agency
@@ -578,6 +578,7 @@ graph TD
     kernel --> phases
     kernel --> resilience
     kernel --> runtime
+    kernel --> security
     kernel --> self_modification
     kernel --> senses
     kernel --> somatic
@@ -836,26 +837,26 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 121 | 57071 | 2403751 | 37 | 29 |
-| core_root | 182 | 55103 | 2241143 | 99 | 0 |
-| brain | 115 | 42902 | 1853761 | 40 | 39 |
-| runtime | 92 | 20582 | 725566 | 39 | 104 |
-| orchestrator | 42 | 18703 | 826005 | 123 | 9 |
-| phases | 29 | 16970 | 764881 | 32 | 7 |
+| core_root | 182 | 55421 | 2254280 | 99 | 0 |
+| brain | 115 | 42912 | 1854277 | 40 | 39 |
+| runtime | 92 | 20636 | 727260 | 39 | 104 |
+| orchestrator | 42 | 18737 | 827082 | 123 | 9 |
+| phases | 29 | 16974 | 764976 | 32 | 7 |
 | memory | 70 | 16745 | 677304 | 17 | 21 |
-| skills | 76 | 15433 | 622714 | 27 | 6 |
-| agency | 28 | 14078 | 569142 | 27 | 17 |
+| skills | 76 | 15440 | 623058 | 27 | 6 |
+| agency | 28 | 14091 | 569817 | 27 | 17 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
-| resilience | 53 | 11125 | 448848 | 16 | 25 |
-| self_modification | 29 | 10380 | 410241 | 11 | 14 |
+| resilience | 53 | 11146 | 449730 | 16 | 25 |
+| self_modification | 29 | 10434 | 413033 | 11 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8097 | 329816 | 9 | 4 |
 | autonomy | 22 | 7560 | 310198 | 16 | 7 |
 | learning | 20 | 6934 | 274949 | 14 | 6 |
 | architect | 25 | 5706 | 238326 | 9 | 2 |
-| kernel | 10 | 5397 | 222452 | 19 | 4 |
+| kernel | 10 | 5456 | 224181 | 20 | 4 |
+| utils | 41 | 5110 | 198787 | 17 | 49 |
 | senses | 23 | 5012 | 210643 | 16 | 14 |
-| utils | 41 | 4956 | 192837 | 17 | 49 |
-| security | 17 | 4623 | 182059 | 11 | 8 |
+| security | 17 | 4623 | 182059 | 11 | 9 |
 | coordinators | 9 | 4224 | 198441 | 36 | 5 |
 | conversation | 8 | 3993 | 147860 | 10 | 6 |
 | reasoning | 7 | 3830 | 155566 | 2 | 6 |
@@ -873,8 +874,8 @@ graph TD
 | unity | 11 | 2409 | 100598 | 3 | 5 |
 | somatic | 5 | 2375 | 89958 | 7 | 3 |
 | executive | 4 | 2317 | 97890 | 13 | 8 |
+| ops | 11 | 2304 | 89159 | 15 | 5 |
 | self_improvement | 12 | 2285 | 86875 | 3 | 2 |
-| ops | 11 | 2262 | 87136 | 15 | 5 |
 | conversational | 4 | 2237 | 95525 | 4 | 3 |
 | identity | 11 | 2136 | 90455 | 9 | 9 |
 | actuators | 9 | 2132 | 83552 | 12 | 6 |
@@ -923,8 +924,8 @@ graph TD
 | tools | 2 | 457 | 17582 | 2 | 0 |
 | resource | 2 | 426 | 15523 | 3 | 4 |
 | coherence | 2 | 397 | 18920 | 6 | 2 |
+| simulation | 3 | 393 | 15639 | 6 | 2 |
 | adapters | 3 | 392 | 13257 | 0 | 0 |
-| simulation | 3 | 390 | 15477 | 6 | 2 |
 | neuroweb | 5 | 368 | 14195 | 5 | 0 |
 | skill_management | 1 | 350 | 17043 | 6 | 1 |
 | verification | 4 | 350 | 13177 | 2 | 3 |
@@ -1191,7 +1192,7 @@ Review candidates:
 - `core/optimizer.py:59` [core_root] `patch.apply` - success = await patch.apply(signature)
 - `core/optimizer.py:61` [core_root] `patch.apply` - success = await patch.apply()
 - `core/optimizer.py:72` [core_root] `cog_patch.apply` - if await cog_patch.apply(signature):
-- `core/orchestrator/mixins/boot/boot_autonomy.py:853` [orchestrator] `apply_presence_patch` - apply_presence_patch(self)
+- `core/orchestrator/mixins/boot/boot_autonomy.py:866` [orchestrator] `apply_presence_patch` - apply_presence_patch(self)
 - `core/skill_management/hephaestus.py:194` [skill_management] `guard.validate` - if not guard.validate(patched_code):
 - `core/skills/self_repair.py:122` [skills] `atomic_write_text` - atomic_write_text(patch_path, fix_content)
 - `core/state/cellular_substrate.py:64` [state] `self._apply_patch_recursive` - self._apply_patch_recursive(state, patch)
@@ -1262,8 +1263,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2681
-- Log-and-limp candidates: 2485
+- Total `record_degradation()` calls: 2686
+- Log-and-limp candidates: 2490
 - Nearby fail-closed candidates: 196
 
 Top limp-on files:

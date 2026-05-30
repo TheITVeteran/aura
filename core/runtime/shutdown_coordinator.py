@@ -18,6 +18,7 @@ remaining phases.
 """
 from __future__ import annotations
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.utils.task_tracker import get_task_tracker
 
 import asyncio
@@ -207,7 +208,8 @@ def request_shutdown(reason: str = "") -> None:
             from pathlib import Path
             grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
             grace_file.parent.mkdir(parents=True, exist_ok=True)
-            grace_file.write_text(
+            atomic_write_text(
+                grace_file,
                 json.dumps(
                     {
                         "schema": "aura.shutdown_grace.v1",

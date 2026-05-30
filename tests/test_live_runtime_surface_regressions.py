@@ -111,6 +111,26 @@ def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     assert reason == "proof_run_active"
 
 
+def test_hypervisor_recovers_only_after_healthy_lag_samples():
+    from core.ops.hypervisor import Hypervisor
+
+    class _RunningTask:
+        def done(self):
+            return False
+
+    hypervisor = Hypervisor(lag_threshold_s=0.5)
+    hypervisor._running = True
+    hypervisor._task = _RunningTask()
+    hypervisor._last_severe_lag_at = 1.0
+    hypervisor._healthy_lag_samples_after_failure = 0
+
+    assert hypervisor.is_alive() is False
+
+    hypervisor._healthy_lag_samples_after_failure = hypervisor._required_recovery_samples
+
+    assert hypervisor.is_alive() is True
+
+
 def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     from core.utils.concurrency import EventLoopMonitor
 
@@ -121,6 +141,25 @@ def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypa
 
     assert threshold >= 5.0
     assert reason == "proof_run_active"
+
+
+def test_event_loop_monitor_recovers_only_after_healthy_lag_samples():
+    from core.utils.concurrency import EventLoopMonitor
+
+    class _RunningTask:
+        def done(self):
+            return False
+
+    monitor = EventLoopMonitor(threshold=0.5)
+    monitor._task = _RunningTask()
+    monitor._last_failure_at = 1.0
+    monitor._healthy_lag_samples_after_failure = 0
+
+    assert monitor.is_alive() is False
+
+    monitor._healthy_lag_samples_after_failure = monitor.failure_recovery_samples
+
+    assert monitor.is_alive() is True
 
 
 def test_closed_loop_defers_heavy_phi_refreshes_during_proof(monkeypatch):

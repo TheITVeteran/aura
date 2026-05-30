@@ -1,4 +1,5 @@
 from core.runtime.errors import record_degradation
+from core.runtime.atomic_writer import atomic_write_text
 import fcntl
 import json
 import logging
@@ -105,7 +106,8 @@ def _write_instance_lock_metadata(lock_name: str, pid: int) -> None:
     path = instance_lock_metadata_path(lock_name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        atomic_write_text(
+            path,
             json.dumps(_current_process_metadata(lock_name, pid), indent=2, sort_keys=True),
             encoding="utf-8",
         )

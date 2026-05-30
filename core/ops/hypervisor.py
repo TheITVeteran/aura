@@ -26,7 +26,8 @@ class Hypervisor:
         self._last_lag = 0.0
         self._last_severe_lag_at = 0.0
         self._last_failure_reason = ""
-        self._failure_recovery_window_s = 300.0
+        self._healthy_lag_samples_after_failure = 0
+        self._required_recovery_samples = 3
 
     async def start(self):
         if self._running:
@@ -50,8 +51,8 @@ class Hypervisor:
         if not bool(self._running and self._task is not None and not self._task.done()):
             return False
         if self._last_severe_lag_at and (
-            time.time() - self._last_severe_lag_at
-        ) < self._failure_recovery_window_s:
+            self._healthy_lag_samples_after_failure < self._required_recovery_samples
+        ):
             return False
         return True
 
@@ -61,6 +62,8 @@ class Hypervisor:
             "last_lag_s": self._last_lag,
             "last_severe_lag_at": self._last_severe_lag_at,
             "last_failure_reason": self._last_failure_reason,
+            "healthy_recovery_samples": self._healthy_lag_samples_after_failure,
+            "required_recovery_samples": self._required_recovery_samples,
         }
 
     def _active_runtime_reason(self) -> str:
@@ -126,17 +129,27 @@ class Hypervisor:
                 if lag > 5.0:
                     self._last_severe_lag_at = time.time()
                     self._last_failure_reason = f"severe event-loop lag {lag:.3f}s"
+                    self._healthy_lag_samples_after_failure = 0
                     record_degradation(
                         "hypervisor",
                         RuntimeError(self._last_failure_reason),
                         severity="critical",
-                        action="marked hypervisor unhealthy until recovery window expires",
+                        action="marked hypervisor unhealthy until healthy lag samples confirm recovery",
                         enforce_failure_policy=False,
                     )
                     logger.critical(
                         "🚨 SEVERE FREEZE: Loop lag > 5s. System stability compromised."
                     )
                     # In a real enterprise system, we might trigger a graceful restart here.
+            elif self._last_severe_lag_at:
+                self._healthy_lag_samples_after_failure += 1
+                if self._healthy_lag_samples_after_failure >= self._required_recovery_samples:
+                    logger.info(
+                        "Hypervisor recovered after %d healthy event-loop samples.",
+                        self._healthy_lag_samples_after_failure,
+                    )
+                    self._last_severe_lag_at = 0.0
+                    self._last_failure_reason = ""
 
             # Memory Check
             import psutil

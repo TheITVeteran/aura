@@ -388,6 +388,7 @@ class EventLoopMonitor:
         self._started_at: float = 0.0
         self._last_failure_at: float = 0.0
         self._last_failure_reason: str = ""
+        self._healthy_lag_samples_after_failure: int = 0
         try:
             self.hard_failure_threshold = float(
                 os.getenv("AURA_EVENT_LOOP_MONITOR_HARD_FAILURE_S", "5.0")
@@ -400,6 +401,13 @@ class EventLoopMonitor:
             )
         except (TypeError, ValueError):
             self.failure_recovery_window_s = 300.0
+        try:
+            self.failure_recovery_samples = max(
+                1,
+                int(os.getenv("AURA_EVENT_LOOP_MONITOR_RECOVERY_SAMPLES", "3")),
+            )
+        except (TypeError, ValueError):
+            self.failure_recovery_samples = 3
 
     def _active_runtime_reason(self) -> str | None:
         try:
@@ -468,8 +476,8 @@ class EventLoopMonitor:
         if self._task is None or self._task.done() or self._stop_event.is_set():
             return False
         if self._last_failure_at and (
-            time.time() - self._last_failure_at
-        ) < self.failure_recovery_window_s:
+            self._healthy_lag_samples_after_failure < self.failure_recovery_samples
+        ):
             return False
         return True
 
@@ -480,6 +488,8 @@ class EventLoopMonitor:
             "consecutive_breaches": self._consecutive_breaches,
             "last_failure_at": self._last_failure_at,
             "last_failure_reason": self._last_failure_reason,
+            "healthy_recovery_samples": self._healthy_lag_samples_after_failure,
+            "required_recovery_samples": self.failure_recovery_samples,
         }
 
     async def _run(self):
@@ -508,11 +518,12 @@ class EventLoopMonitor:
                     self._last_failure_reason = (
                         f"hard event-loop lag {lag:.4f}s exceeded {self.hard_failure_threshold:.2f}s"
                     )
+                    self._healthy_lag_samples_after_failure = 0
                     record_degradation(
                         "event_loop_monitor",
                         RuntimeError(self._last_failure_reason),
                         severity="critical",
-                        action="marked event loop monitor unhealthy until recovery window expires",
+                        action="marked event loop monitor unhealthy until healthy lag samples confirm recovery",
                         enforce_failure_policy=False,
                     )
                 severe = lag >= max(threshold * 3.0, 0.50)
@@ -549,6 +560,15 @@ class EventLoopMonitor:
                     )
             else:
                 self._consecutive_breaches = 0
+                if self._last_failure_at:
+                    self._healthy_lag_samples_after_failure += 1
+                    if self._healthy_lag_samples_after_failure >= self.failure_recovery_samples:
+                        logger.info(
+                            "EventLoopMonitor recovered after %d healthy lag samples.",
+                            self._healthy_lag_samples_after_failure,
+                        )
+                        self._last_failure_at = 0.0
+                        self._last_failure_reason = ""
 
 
 class RobustSemaphore:
