@@ -1,0 +1,20 @@
+{
+  "final_report.md": true,
+  "action_log.jsonl": true,
+  "changed_files_manifest.json": true,
+  "memory_notes.md": true,
+  "open_issues.md": true,
+  "risk_register.md": true,
+  "test_results.md": true,
+  "handoff_plan.md": true,
+  "strategy.md": true,
+  "tool_discoveries.md": true,
+  "hypothesis_tracker.md": true,
+  "failure_recovery.md": true,
+  "cross_world_lessons.md": true,
+  "decision_register.jsonl": true,
+  "world_model.md": true,
+  "adaptation_slope_report.md": true,
+  "dynamic_events_report.md": true,
+  "baseline_notes.md": true
+}
