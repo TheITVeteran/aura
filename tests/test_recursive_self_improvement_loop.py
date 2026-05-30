@@ -203,3 +203,32 @@ def test_structural_improver_repairs_generated_gateway_mkdir(tmp_path: Path):
     assert result.success is True
     assert "Path(target).mkdir(parents=True, exist_ok=True)" in text
     assert "get_storage_gateway" not in text
+
+
+def test_structural_improver_reports_rollback_failure(tmp_path: Path, monkeypatch):
+    from core.self_modification import structural_improver as module
+
+    source = tmp_path / "mod.py"
+    source.write_text(
+        "def enabled():\n"
+        "    return os.environ.get('AURA_FLAG') == '1'\n",
+        encoding="utf-8",
+    )
+    improver = StructuralImprover(tmp_path, ledger_path=tmp_path / "ledger.jsonl")
+    issue = improver.scan()[0]
+    writes = []
+
+    def flaky_atomic_write(path, text, *, encoding="utf-8"):
+        writes.append(str(text))
+        if len(writes) == 2:
+            raise OSError("rollback target locked")
+        Path(path).write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(module, "atomic_write_text", flaky_atomic_write)
+    monkeypatch.setattr(improver, "_validate_files", lambda _paths: {"ok": False})
+
+    result = improver.apply_known_repair(issue)
+
+    assert result.success is False
+    assert result.message == "validation failed; rollback failed"
+    assert result.validation["rollback_error"] == "OSError: rollback target locked"

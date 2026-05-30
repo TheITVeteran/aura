@@ -143,17 +143,49 @@ class StructuralImprover:
             atomic_write_text(path, repaired, encoding="utf-8")
             validation = self._validate_files([path])
             if not validation.get("ok", False):
-                atomic_write_text(path, original, encoding="utf-8")
-                return StructuralRepairResult(issue, True, False, "validation failed; rolled back", validation)
+                if self._restore_original(path, original, validation=validation):
+                    return StructuralRepairResult(issue, True, False, "validation failed; rolled back", validation)
+                return StructuralRepairResult(
+                    issue,
+                    True,
+                    False,
+                    "validation failed; rollback failed",
+                    validation,
+                )
 
             return StructuralRepairResult(issue, True, True, "repair applied", validation)
         except (OSError, ConnectionError, TimeoutError) as exc:
             record_degradation("structural_improver", exc)
-            try:
-                atomic_write_text(path, original, encoding="utf-8")
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                logger.debug("Suppressed %s in core.self_modification.structural_improver: %s", type(_exc).__name__, _exc)
-            return StructuralRepairResult(issue, repaired != original, False, f"{type(exc).__name__}: {exc}")
+            validation: Dict[str, Any] = {}
+            self._restore_original(path, original, validation=validation)
+            return StructuralRepairResult(
+                issue,
+                repaired != original,
+                False,
+                f"{type(exc).__name__}: {exc}",
+                validation,
+            )
+
+    def _restore_original(
+        self,
+        path: Path,
+        original: str,
+        *,
+        validation: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        try:
+            atomic_write_text(path, original, encoding="utf-8")
+            return True
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            if validation is not None:
+                validation["rollback_error"] = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "structural_improver",
+                exc,
+                action=f"rollback failed for {path}",
+            )
+            logger.error("Structural improver rollback failed for %s: %s", path, exc)
+            return False
 
     def _iter_python_files(self) -> Iterable[Path]:
         for path in self.root.rglob("*.py"):
