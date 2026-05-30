@@ -44,7 +44,6 @@ _SYSTEM_RECOVERABLE_ERRORS = (
     asyncio.QueueFull,
     json.JSONDecodeError,
     psutil.Error,
-    Exception,
 )
 
 
@@ -779,11 +778,17 @@ async def metrics(request: Request):
     """System metrics for monitoring (JSON format, backwards compatible)."""
     _require_internal(request)
     try:
+        from core.runtime.health_contract import runtime_health_report
+
         orch = ServiceContainer.get("orchestrator", default=None)
         orch_status = orch.get_status() if orch else {}
+        contract = runtime_health_report()
 
         return {
-            "status": "healthy",
+            "status": contract.get("status", "unknown"),
+            "healthy": bool(contract.get("healthy", False)),
+            "operational": bool(contract.get("operational", False)),
+            "required_probes": contract.get("required_probes", {}),
             "uptime": time.time() - (orch_status.get("start_time", time.time()) if orch_status else time.time()),
             "active_connections": ws_manager.count(),
             "cycle_count": orch_status.get("cycle_count", 0),
@@ -1728,8 +1733,31 @@ async def api_boot_health():
 
 @router.get("/health/heartbeat")
 async def api_heartbeat():
-    """Minimal heartbeat for GUI Actor watchdog."""
-    return {"status": "ok", "time": time.time()}
+    """Readiness heartbeat for GUI/runtime watchdogs.
+
+    This is intentionally not a process-only ping. It may report healthy only
+    when the kernel, inference, memory, scheduler, and tool-governance probes
+    pass through the canonical boot health contract.
+    """
+    orch = ServiceContainer.get("orchestrator", default=None)
+    rt = _get_runtime_state_safe()
+    conversation_lane = _collect_conversation_lane_status_resilient()
+    payload, status_code = build_boot_health_snapshot(
+        orch,
+        rt,
+        is_gui_proxy=False,
+        conversation_lane=conversation_lane,
+    )
+    heartbeat_payload = {
+        "status": "healthy" if status_code == 200 else "unhealthy",
+        "healthy": status_code == 200,
+        "time": time.time(),
+        "required_probes": payload.get("required_probes", {}),
+        "blockers": payload.get("blockers", []),
+        "boot_phase": payload.get("boot_phase"),
+        "conversation_ready": payload.get("conversation_ready", False),
+    }
+    return JSONResponse(heartbeat_payload, status_code=status_code)
 
 
 # ── Hot Reload ────────────────────────────────────────────────

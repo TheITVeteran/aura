@@ -7,6 +7,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Any, List
 
+from core.container import ServiceContainer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 
@@ -56,6 +57,12 @@ class Scheduler:
         self._health: Dict[str, str] = {}
         self._main_loop_task: Optional[asyncio.Task] = None
         self._initialized = True
+        try:
+            if ServiceContainer.get("scheduler", default=None) is None:
+                ServiceContainer.register_instance("scheduler", self, required=False)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("scheduler", exc)
+            logger.debug("Scheduler container registration unavailable during import: %s", exc)
         logger.info("Scheduler substrate initialized.")
 
     def _ensure_async_primitives(self) -> tuple[asyncio.Lock, asyncio.Event]:
@@ -190,6 +197,12 @@ class Scheduler:
             "tasks": dict(self._health),
             "active_tasks": len([t for t in self._tasks.values() if t.running_task and not t.running_task.done()])
         }
+
+    def is_alive(self) -> bool:
+        """Deep liveness probe for the runtime health contract."""
+        if self.state == Lifecycle.SHUTTING_DOWN:
+            return False
+        return bool(self._main_loop_task is not None and not self._main_loop_task.done())
 
 # Global Instance
 scheduler = Scheduler()

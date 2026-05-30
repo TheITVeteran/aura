@@ -54,6 +54,17 @@ class AuthorityGateway:
     def __init__(self) -> None:
         self._capabilities = get_capability_manager()
 
+    def is_ready(self) -> bool:
+        """Deep readiness probe for runtime tool-governance health."""
+        if self._capabilities is None:
+            return False
+        if not callable(getattr(self._capabilities, "generate_token", None)):
+            return False
+        if not callable(getattr(self._capabilities, "verify_access", None)):
+            return False
+        will = ServiceContainer.get("unified_will", default=None)
+        return bool(will is not None and callable(getattr(will, "decide", None)))
+
     @staticmethod
     def _will_gate(
         content: str,

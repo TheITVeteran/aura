@@ -101,6 +101,16 @@ class MemoryFacade:
                     bool(self._episodic), bool(self._semantic), bool(self._vector),
                     bool(self._ledger), bool(self._graph), bool(self._short_term))
 
+    def is_ready(self) -> bool:
+        """Deep liveness probe for the runtime health contract."""
+        self._refresh_subsystems()
+        primary_store_online = any(
+            subsystem is not None
+            for subsystem in (self._episodic, self._semantic, self._vector, self._graph)
+        )
+        state_repo_online = ServiceContainer.get("state_repository", default=None) is not None
+        return bool(primary_store_online or state_repo_online)
+
     @property
     def episodic(self): return self._episodic
     @property

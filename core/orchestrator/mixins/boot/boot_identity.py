@@ -9,6 +9,15 @@ from core.config import config
 
 logger = logging.getLogger(__name__)
 
+_BOOT_IDENTITY_BOUNDARY_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+
 
 def _record_identity_degradation(
     exc: BaseException,
@@ -89,11 +98,20 @@ class BootIdentityMixin:
             )
 
             modifier = self.self_modifier
-            if config.security.auto_fix_enabled and modifier:
+            if (
+                config.security.auto_fix_enabled
+                and modifier
+                and modifier.runtime_promotion_enabled()
+            ):
                 # [STABILITY] Use local variable to satisfy Pyre2 None check
                 modifier.start_monitoring()
                 logger.info("🧬 Self-Modification Engine Active")
-        except Exception as e:
+            elif config.security.auto_fix_enabled and modifier:
+                logger.info(
+                    "🧬 Self-Modification Engine registered in proposal-only mode; "
+                    "runtime patch promotion requires AURA_ALLOW_RUNTIME_SELF_MODIFICATION=1."
+                )
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with disabled self-modification engine", severity="error")
             logger.warning("🧬 Self-Modification Engine init failed: %s", e)
             self.self_modifier = None

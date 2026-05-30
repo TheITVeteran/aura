@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 try:
     from websockets.exceptions import ConnectionClosed
@@ -28,6 +29,23 @@ except ImportError:
 from fastapi import WebSocketDisconnect
 
 logger = logging.getLogger("Aura.Server.WebSocket")
+
+_QUEUE_REPAIR_ERRORS = (
+    asyncio.QueueEmpty,
+    asyncio.QueueFull,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+_WEBSOCKET_DELIVERY_ERRORS = (
+    WebSocketDisconnect,
+    ConnectionClosed,
+    RuntimeError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+_WEBSOCKET_HEARTBEAT_ERRORS = (asyncio.TimeoutError,) + _WEBSOCKET_DELIVERY_ERRORS
 
 
 # ── Broadcast Bus ────────────────────────────────────────────
@@ -60,17 +78,20 @@ class MessageBroadcastBus:
     def _worse_than(lhs: tuple[Any, ...], rhs: tuple[Any, ...]) -> bool:
         return (lhs[0], -float(lhs[1])) > (rhs[0], -float(rhs[1]))
 
+    @staticmethod
+    def _drain_queue_snapshot(q: asyncio.PriorityQueue) -> list[tuple[int, float, Any]]:
+        """Drain the current queue contents without relying on an unbounded loop."""
+        drained: list[tuple[int, float, Any]] = []
+        for _ in range(q.qsize()):
+            drained.append(q.get_nowait())
+        return drained
+
     async def _replace_lowest_priority_item(
         self,
         q: asyncio.PriorityQueue,
         item: tuple[int, float, Any],
     ) -> None:
-        drained: list[tuple[int, float, Any]] = []
-        while True:
-            try:
-                drained.append(q.get_nowait())
-            except asyncio.QueueEmpty:
-                break
+        drained = self._drain_queue_snapshot(q)
         if not drained:
             return
 
@@ -105,9 +126,9 @@ class MessageBroadcastBus:
                 except asyncio.QueueFull:
                     try:
                         await self._replace_lowest_priority_item(q, item)
-                    except Exception as _exc:
+                    except _QUEUE_REPAIR_ERRORS as _exc:
                         record_degradation('websocket_manager', _exc)
-                        logger.debug("Suppressed Exception: %s", _exc)
+                        logger.warning("Broadcast queue replacement failed: %s", _exc)
 
 
 def _normalize_ui_event(message: Any) -> dict[str, Any]:
@@ -158,17 +179,20 @@ class WebSocketManager:
     def _worse_than(lhs: tuple[Any, ...], rhs: tuple[Any, ...]) -> bool:
         return (lhs[0], -float(lhs[1])) > (rhs[0], -float(rhs[1]))
 
+    @staticmethod
+    def _drain_queue_snapshot(queue: asyncio.PriorityQueue) -> list[tuple[int, float, str]]:
+        """Drain the current queue contents without relying on an unbounded loop."""
+        drained: list[tuple[int, float, str]] = []
+        for _ in range(queue.qsize()):
+            drained.append(queue.get_nowait())
+        return drained
+
     async def _replace_lowest_priority_item(
         self,
         queue: asyncio.PriorityQueue,
         item: tuple[int, float, str],
     ) -> None:
-        drained: list[tuple[int, float, str]] = []
-        while True:
-            try:
-                drained.append(queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
+        drained = self._drain_queue_snapshot(queue)
         if not drained:
             return
 
@@ -222,29 +246,37 @@ class WebSocketManager:
     async def _pump_messages(self, websocket: WebSocket, queue: asyncio.Queue):
         """Hardened message pump with heartbeat and timeout protection."""
         try:
-            while True:
+            while not is_shutdown_requested():
                 try:
                     _p, _t, payload = await asyncio.wait_for(queue.get(), timeout=15.0)
                     try:
                         await websocket.send_text(payload)
-                    except BaseException as e:
+                    except _WEBSOCKET_DELIVERY_ERRORS as e:
                         logger.warning("WS send failed (message lost, type=%s): %s", type(e).__name__, e)
                         break
                     finally:
-                        queue.task_done()
-                except TimeoutError:
+                        try:
+                            queue.task_done()
+                        except ValueError as exc:
+                            record_degradation('websocket_manager', exc)
+                            logger.warning("WS queue task accounting failed: %s", exc)
+                except asyncio.TimeoutError:
                     try:
                         await websocket.send_json({"type": "heartbeat", "timestamp": time.time()})
-                    except (WebSocketDisconnect, ConnectionClosed, RuntimeError, OSError) as exc:
+                    except _WEBSOCKET_DELIVERY_ERRORS as exc:
                         logger.debug("WS heartbeat failed; closing pump: %s", exc)
                         break
-                except Exception as e:
+                except asyncio.CancelledError:
+                    raise
+                except _QUEUE_REPAIR_ERRORS as e:
                     record_degradation('websocket_manager', e)
                     logger.error("Error in WS pump loop: %s", e)
                     break
         except (WebSocketDisconnect, ConnectionClosed):
             pass  # no-op: intentional
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except _WEBSOCKET_DELIVERY_ERRORS as e:
             record_degradation('websocket_manager', e)
             logger.error("Error pumping messages to client: %s", e)
         finally:
@@ -266,7 +298,7 @@ class WebSocketManager:
     async def _heartbeat_runner(self, websocket: WebSocket):
         """Aggressively reaps zombie connections to prevent FD exhaustion."""
         try:
-            while True:
+            while not is_shutdown_requested():
                 jitter = random.uniform(0, 5.0)
                 await asyncio.sleep(self._heartbeat_interval + jitter)
 
@@ -279,7 +311,7 @@ class WebSocketManager:
                         websocket.send_json({"type": "ping", "timestamp": time.monotonic()}),
                         timeout=5.0,
                     )
-                except (TimeoutError, Exception):
+                except _WEBSOCKET_HEARTBEAT_ERRORS:
                     logger.warning("🧟 WS ZOMBIE: Reaping connection %s", id(websocket))
                     await self.disconnect(websocket)
                     break
@@ -322,7 +354,9 @@ class WebSocketManager:
                 except asyncio.QueueFull:
                     try:
                         await self._replace_lowest_priority_item(queue, item)
-                    except Exception:
+                    except _QUEUE_REPAIR_ERRORS as exc:
+                        record_degradation('websocket_manager', exc)
+                        logger.warning("WS client queue replacement failed; disconnecting client: %s", exc)
                         disconnect_later.append(websocket)
         for websocket in disconnect_later:
             self._task_spawner(self.disconnect(websocket), name="ws_disconnect")

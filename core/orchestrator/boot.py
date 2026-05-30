@@ -257,8 +257,14 @@ class OrchestratorBootMixin(
             # AffectFacade also likely needs skeletal setup to be usable for status
             ServiceContainer.register_instance("affect_facade", affect_facade)
 
+            from core.executive.authority_gateway import get_authority_gateway
+            from core.will import get_will
+
+            get_will()
+            get_authority_gateway()
+
             logger.info(
-                "✓ [BOOT] All Core Facades (Memory, Agency, Affect) registered during synchronous setup."
+                "✓ [BOOT] Core facades and governance gates registered during synchronous setup."
             )
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_boot_degradation(
@@ -841,6 +847,38 @@ class OrchestratorBootMixin(
                 # Swarm Protocol start moved to proactive systems (v26.3 Unified)
 
                 _spawn_boot_task(_final_steps(), "orchestrator.final_steps")
+
+                # ── Canonical Scheduler Heartbeat ───────────────────────
+                # The health contract treats scheduler liveness as a critical
+                # runtime probe. Start the scheduler before the contract is
+                # evaluated so boot cannot report healthy on a mere heartbeat.
+                try:
+                    from core.scheduler import scheduler
+
+                    foreground_only = (
+                        os.getenv("AURA_FOREGROUND_ONLY", "").strip().lower()
+                        in {"1", "true", "yes", "on"}
+                    )
+                    ServiceContainer.register_instance("scheduler", scheduler, required=False)
+                    if foreground_only:
+                        logger.warning(
+                            "Scheduler heartbeat disabled for foreground-only boot; "
+                            "runtime health contract will remain non-operational."
+                        )
+                    else:
+                        await asyncio.wait_for(scheduler.start(), timeout=5.0)
+                        if not scheduler.is_alive():
+                            raise RuntimeError("scheduler start returned without live main loop")
+                        logger.info("✓ Scheduler heartbeat active before health contract.")
+                except asyncio.CancelledError:
+                    raise
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+                    _record_boot_degradation(
+                        exc,
+                        action="left scheduler unavailable so runtime health contract can fail closed",
+                        severity="critical",
+                    )
+                    logger.error("Scheduler heartbeat failed before health contract: %s", exc)
 
                 # ── Runtime Health Contract ───────────────────────────
                 # Evaluate the formal health contract that defines what

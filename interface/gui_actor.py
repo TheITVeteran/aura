@@ -40,6 +40,20 @@ _inject_project_venv_site_packages()
 
 logger = logging.getLogger("Aura.GUI")
 
+_GUI_RECOVERABLE_ERRORS = (
+    ImportError,
+    RuntimeError,
+    OSError,
+    ValueError,
+)
+
+
+def _flush_logs_before_forced_exit() -> None:
+    try:
+        logging.shutdown()
+    except (RuntimeError, OSError):
+        pass
+
 def gui_actor_entry(port: int, token: str = None):
     """Entry point for the GUI process."""
     logger.info("🚀 Aura GUI Actor starting on port %d...", port)
@@ -80,10 +94,13 @@ def gui_actor_entry(port: int, token: str = None):
             "Aura Zenith", 
             width=1280, height=820, min_size=(800, 600)
         )
+        shutdown_event = threading.Event()
 
         # ISSUE #14 - window closure delay race condition
         def _on_closed():
             logger.info("🎨 Window closed. Forcing GUI process termination.")
+            shutdown_event.set()
+            _flush_logs_before_forced_exit()
             os._exit(0)
             
         window.events.closed += _on_closed
@@ -94,7 +111,7 @@ def gui_actor_entry(port: int, token: str = None):
             try:
                 window.load_url(app_url)
                 logger.info(f"🔄 GUI Loaded: {app_url}")
-            except Exception as e:
+            except _GUI_RECOVERABLE_ERRORS as e:
                 record_degradation('gui_actor', e)
                 logger.error(f"Failed to load URL in WebView: {e}")
 
@@ -109,27 +126,27 @@ def gui_actor_entry(port: int, token: str = None):
                 
             logger.info("🐕 GUI Watchdog active.")
             consecutive_failures = 0
-            while True:
-                time.sleep(20)
+            while not shutdown_event.wait(20):
                 try:
                     resp = requests.get(f"{app_url}/api/health", timeout=5)
                     if resp.status_code == 200:
                         consecutive_failures = 0
                     else:
                         consecutive_failures += 1
-                except Exception:
+                except requests.RequestException:
                     consecutive_failures += 1
                 
                 if consecutive_failures >= 3:
                     logger.warning("🚨 [GUI WATCHDOG] Kernel API unreachable. Attempting reload.")
                     try:
                         window.load_url(app_url)
-                    except Exception as _exc:
+                    except _GUI_RECOVERABLE_ERRORS as _exc:
                         record_degradation('gui_actor', _exc)
-                        logger.debug("Suppressed Exception: %s", _exc)
+                        logger.warning("GUI watchdog reload failed: %s", _exc)
 
                 if consecutive_failures >= 6:
                     logger.critical("🛑 [GUI WATCHDOG] Kernel API unavailable for too long. Exiting stale WebView.")
+                    _flush_logs_before_forced_exit()
                     os._exit(1)
 
         watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
@@ -138,7 +155,7 @@ def gui_actor_entry(port: int, token: str = None):
         # In Zenith, we use the functional start to load the URL after initialization
         webview.start(func=_on_shown, debug=False)
         
-    except Exception as e:
+    except _GUI_RECOVERABLE_ERRORS as e:
         record_degradation('gui_actor', e)
         logger.error(f"❌ WebView Failure: {e}")
         time.sleep(5)

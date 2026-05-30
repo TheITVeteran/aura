@@ -133,8 +133,9 @@ class SecurityConfig(BaseModel):
       repo defaults to ``"owner_autonomous"`` to match the intended single-owner,
       self-directed operating mode for this workspace.
     - ``internal_only_mode``: When True, blocks all external network access.
-    - ``auto_fix_enabled``: Allows the self-modification engine to apply code
-      repairs (still gated by ConstitutionalCore and ASTGuard).
+    - ``auto_fix_enabled``: Requests self-repair capability. Runtime source-code
+      promotion still requires explicit ``AURA_ALLOW_RUNTIME_SELF_MODIFICATION=1``
+      and the safe modification pipeline; otherwise repairs stay proposal-only.
     - ``aura_full_autonomy``: Enables autonomous initiative generation
       (background goals, boredom impulses, self-directed exploration).
       When False, Aura only acts in response to user messages.

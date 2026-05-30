@@ -23,17 +23,34 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger("Aura.DBWriter")
 
 _SENTINEL = object()  # Poison pill for shutdown
+_QUEUE_PUT_TIMEOUT_S = 2.0
+_QUEUE_SHUTDOWN_TIMEOUT_S = 5.0
+_DB_WRITE_ERRORS = (
+    sqlite3.Error,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class _WriteRequest:
     """A queued write operation."""
-    __slots__ = ("db_path", "sql", "params", "future")
+    __slots__ = ("db_path", "sql", "params", "future", "loop")
 
-    def __init__(self, db_path: str, sql: str, params: tuple, future: asyncio.Future):
+    def __init__(
+        self,
+        db_path: str,
+        sql: str,
+        params: tuple,
+        future: asyncio.Future,
+        loop: asyncio.AbstractEventLoop,
+    ):
         self.db_path = db_path
         self.sql = sql
         self.params = params
         self.future = future
+        self.loop = loop
 
 
 class SerializedDBWriter:
@@ -49,11 +66,11 @@ class SerializedDBWriter:
         self._local = threading.local()
         self._writer_conns: Dict[str, sqlite3.Connection] = {}
         self._lock = threading.Lock()
+        self._accepting = True
         self._checkpoint_every = 500
         self._writes_since_checkpoint: Dict[str, int] = {}
         self._thread = threading.Thread(target=self._writer_loop, daemon=True, name="db-writer")
         self._thread.start()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
         logger.info("📝 SerializedDBWriter started")
 
     def _get_conn(self, db_path: str) -> sqlite3.Connection:
@@ -114,15 +131,39 @@ class SerializedDBWriter:
             record_degradation('db_writer_queue', exc)
             logger.warning("DBWriter checkpoint failed for %s: %s", db_path, exc)
 
+    def _complete_request(
+        self,
+        req: "_WriteRequest",
+        *,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        """Resolve request futures on their owning event loop."""
+        def _complete() -> None:
+            if req.future.done():
+                return
+            if error is not None:
+                req.future.set_exception(error)
+            else:
+                req.future.set_result(result or {})
+
+        try:
+            req.loop.call_soon_threadsafe(_complete)
+        except RuntimeError as exc:
+            record_degradation('db_writer_queue', exc)
+            logger.warning("DBWriter could not complete request on a closed loop: %s", exc)
+
     def _writer_loop(self):
         """Background thread: processes queued writes in short micro-batches with exponential retry backoff."""
         import random
-        while True:
+        stop_writer = False
+        while not stop_writer:
             try:
-                item = self._queue.get()
+                item = self._queue.get(timeout=0.5)
                 batch, stop_requested = self._drain_batch(item)
                 if not batch and stop_requested:
                     break
+                stop_writer = stop_requested
 
                 grouped: Dict[str, List[_WriteRequest]] = {}
                 for req in batch:
@@ -165,7 +206,7 @@ class SerializedDBWriter:
                                 time.sleep(sleep_time)
                             else:
                                 break
-                        except Exception as e:
+                        except _DB_WRITE_ERRORS as e:
                             last_exc = e
                             break
 
@@ -180,8 +221,7 @@ class SerializedDBWriter:
                             e,
                         )
                         for req in requests:
-                            if self._loop and not req.future.done():
-                                self._loop.call_soon_threadsafe(req.future.set_exception, e)
+                            self._complete_request(req, error=e)
                         continue
 
                     self._maybe_checkpoint(db_path, conn)
@@ -199,21 +239,37 @@ class SerializedDBWriter:
                         capture_and_log(e, {'module': __name__})
 
                     for req, result in results:
-                        if self._loop and not req.future.done():
-                            self._loop.call_soon_threadsafe(req.future.set_result, result)
+                        self._complete_request(req, result=result)
 
                 if stop_requested:
                     break
-            except (sqlite3.Error, OSError, Exception) as e:
+            except queue.Empty:
+                continue
+            except _DB_WRITE_ERRORS as e:
                 record_degradation('db_writer_queue', e)
                 logger.error("DBWriter loop error: %s", e)
 
     async def execute(self, db_path: str, sql: str, params: tuple = ()) -> Dict[str, Any]:
         """Queue a write and await its completion."""
-        if self._loop is None:
-            self._loop = asyncio.get_running_loop()
-        future = self._loop.create_future()
-        self._queue.put(_WriteRequest(str(db_path), sql, params, future))
+        if not self._accepting or not self._thread.is_alive():
+            raise RuntimeError("SerializedDBWriter is not accepting writes")
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        request = _WriteRequest(str(db_path), sql, params, future, loop)
+        deadline = time.monotonic() + _QUEUE_PUT_TIMEOUT_S
+        last_full: queue.Full | None = None
+        while time.monotonic() < deadline:
+            try:
+                self._queue.put_nowait(request)
+                break
+            except queue.Full as exc:
+                last_full = exc
+                await asyncio.sleep(0.025)
+        else:
+            future.cancel()
+            exc = last_full or queue.Full()
+            record_degradation('db_writer_queue', exc)
+            raise TimeoutError("Timed out enqueueing SQLite write") from exc
         return await future
 
     def execute_sync(self, db_path: str, sql: str, params: tuple = ()) -> Dict[str, Any]:
@@ -237,8 +293,17 @@ class SerializedDBWriter:
 
     def shutdown(self):
         """Gracefully stop the writer thread."""
-        self._queue.put(_SENTINEL)
-        self._thread.join(timeout=5)
+        self._accepting = False
+        try:
+            self._queue.put(_SENTINEL, timeout=_QUEUE_SHUTDOWN_TIMEOUT_S)
+        except queue.Full as exc:
+            record_degradation('db_writer_queue', exc)
+            logger.error("DBWriter shutdown could not enqueue sentinel: %s", exc)
+        self._thread.join(timeout=_QUEUE_SHUTDOWN_TIMEOUT_S)
+        if self._thread.is_alive():
+            exc = TimeoutError("SerializedDBWriter thread did not stop before shutdown timeout")
+            record_degradation('db_writer_queue', exc)
+            logger.error("%s", exc)
         with self._lock:
             for conn in self._writer_conns.values():
                 conn.close()

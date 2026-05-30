@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.container import ServiceContainer
 from core.self_modification import self_modification_engine as sm_mod
 from core.self_modification.safe_modification import LogicTransplant, SafeSelfModification
 from core.self_modification.shadow_ast_healer import ShadowASTHealer
@@ -41,6 +42,59 @@ async def test_shadow_ast_proposal_does_not_mutate_source_before_safe_apply(tmp_
     assert fix.chunks[0]["original"] == original
     assert "import asyncio" in fix.chunks[0]["fixed"]
     assert proposal["test_results"]["validation"] == "shadow_ast_preview"
+
+
+@pytest.mark.asyncio
+async def test_runtime_self_modification_promotion_requires_operator_opt_in(monkeypatch):
+    monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
+    monkeypatch.setattr(sm_mod.random, "random", lambda: 0.99)
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("aura_kernel", SimpleNamespace(volition_level=3))
+
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    engine.auto_fix_enabled = True
+    engine._auto_fix_requested = True
+    engine.session_stats = {"session_start": time.time()}
+    engine.diagnose_current_bugs = AsyncMock(return_value=[])
+
+    result = await engine.run_autonomous_cycle()
+
+    assert result["success"] is True
+    assert result["fixes_applied"] == 0
+    assert engine.auto_fix_enabled is False
+    ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_apply_fix_refuses_unsupervised_promotion_without_opt_in(monkeypatch, tmp_path):
+    monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("aura_kernel", SimpleNamespace(volition_level=3))
+
+    review_calls = []
+
+    async def review(_proposal):
+        review_calls.append(_proposal)
+        raise AssertionError("policy should block before swarm review")
+
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    engine.auto_fix_enabled = True
+    engine._auto_fix_requested = True
+    engine.code_base = tmp_path
+    engine._swarm_review = review
+
+    proposal = {
+        "fix": SimpleNamespace(target_file="core/example.py"),
+        "test_results": {"success": True},
+    }
+
+    assert await engine.apply_fix(proposal, force=False) is False
+    assert review_calls == []
+    ServiceContainer.clear()
 
 
 @pytest.mark.asyncio
@@ -124,7 +178,7 @@ async def test_report_optimization_preserves_sandbox_results_for_safe_apply():
     )
 
     assert result is True
-    assert captured["force"] is True
+    assert captured["force"] is False
     assert captured["proposal"]["test_results"] == sandbox_results
 
 

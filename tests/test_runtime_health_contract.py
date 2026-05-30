@@ -15,6 +15,7 @@ from core.runtime.health_contract import (
     ServiceRequirement,
     ServiceTier,
     evaluate_health,
+    required_probe_status,
     runtime_health_report,
 )
 
@@ -127,3 +128,47 @@ def test_compute_orchestrator_is_liveness_checked_by_runtime_health_contract():
     assert set(required) == {"compute_orchestrator"}
     assert required["compute_orchestrator"].tier == ServiceTier.IMPORTANT
     assert required["compute_orchestrator"].liveness_check == "is_alive"
+
+
+def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_governance():
+    required = {
+        requirement.container_key: requirement
+        for requirement in RUNTIME_CONTRACT
+        if requirement.tier == ServiceTier.CRITICAL
+    }
+
+    assert required["kernel_interface"].liveness_check == "is_ready"
+    assert required["inference_gate"].liveness_check == "is_alive"
+    assert required["llm_router"].tier == ServiceTier.CRITICAL
+    assert required["state_repository"].liveness_check == "is_initialized"
+    assert required["memory_facade"].liveness_check == "is_ready"
+    assert required["scheduler"].liveness_check == "is_alive"
+    assert required["unified_will"].liveness_check == "is_alive"
+    assert required["authority_gateway"].liveness_check == "is_ready"
+    assert required["capability_engine"].liveness_check == "is_ready"
+
+
+def test_required_probe_summary_fails_if_scheduler_or_tool_governance_is_unhealthy():
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    ServiceContainer.register_instance("scheduler", SimpleNamespace(is_alive=lambda: False))
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.CRITICAL.value
+    assert probes["scheduler"]["ok"] is False
+    assert probes["tool_governance"]["ok"] is True
+    assert probes["all_passed"] is False
+
+
+def test_observability_readiness_uses_runtime_health_contract():
+    from core.observability.metrics import check_readiness
+
+    ServiceContainer.clear()
+
+    result = check_readiness()
+
+    assert result["ready"] is False
+    assert result["status"] == "not_ready"
+    assert any(issue.startswith("runtime_contract:") for issue in result["issues"])
+    assert any(issue.startswith("required_probes:") for issue in result["issues"])

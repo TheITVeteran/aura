@@ -1411,10 +1411,13 @@ class RobustOrchestrator(
             # ---------------------------------------------------------
             if _foreground_only_runtime():
                 logger.info("Scheduler background tasks disabled for foreground-only boot.")
+                ServiceContainer.register_instance("scheduler", scheduler, required=False)
             else:
                 await asyncio.wait_for(self._register_scheduled_tasks(), timeout=10.0)
-                # [STABILITY FIX] scheduler.start() is a continuous loop. Must run in background.
-                self._fire_and_forget(scheduler.start(), name="orchestrator.scheduler.start")
+                ServiceContainer.register_instance("scheduler", scheduler, required=False)
+                await asyncio.wait_for(scheduler.start(), timeout=5.0)
+                if not scheduler.is_alive():
+                    raise RuntimeError("scheduler start returned without live main loop")
 
             # 🧠 [PEER MODE] Evolution 1: MindTick / cognitive_loop becomes the PRIMARY heartbeat
             if (

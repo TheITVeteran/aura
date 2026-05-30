@@ -6,7 +6,7 @@ from typing import Any
 
 from core.brain.llm.model_registry import PRIMARY_ENDPOINT
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
-from core.runtime.health_contract import evaluate_health
+from core.runtime.health_contract import evaluate_health, required_probe_status
 from core.version import VERSION, version_string
 
 _BOOT_STATUS_RECOVERABLE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
@@ -189,6 +189,16 @@ def build_boot_health_snapshot(
         runtime_contract = _runtime_contract_snapshot()
     runtime_contract_operational = bool(runtime_contract.get("operational", False))
     runtime_contract_healthy = bool(runtime_contract.get("healthy", False))
+    runtime_required_probes = required_probe_status(runtime_contract)
+    if is_gui_proxy:
+        runtime_required_probes = {
+            "all_passed": True,
+            "proxy": {
+                "ok": True,
+                "components": {"gui_proxy": True},
+            },
+        }
+    runtime_required_probes_ok = bool(runtime_required_probes.get("all_passed", False))
     critical_contract_failures = _contract_failure_keys(runtime_contract, "critical")
     important_contract_failures = _contract_failure_keys(runtime_contract, "important")
 
@@ -234,6 +244,13 @@ def build_boot_health_snapshot(
         if not runtime_contract_operational:
             blockers.append("runtime_contract")
             blockers.extend(f"critical:{key}" for key in critical_contract_failures)
+        if not runtime_required_probes_ok:
+            blockers.append("runtime_required_probes")
+            blockers.extend(
+                f"probe:{name}"
+                for name, probe in runtime_required_probes.items()
+                if isinstance(probe, dict) and not bool(probe.get("ok", False))
+            )
         if not (running or runtime_fresh or cycle_count > 0):
             blockers.append("running")
 
@@ -254,6 +271,7 @@ def build_boot_health_snapshot(
             and not last_error
             and runtime_integrity_ok
             and runtime_contract_operational
+            and runtime_required_probes_ok
             and (running or runtime_fresh or cycle_count > 0)
         )
         status_text = "ready" if system_ready else "booting"
@@ -315,6 +333,7 @@ def build_boot_health_snapshot(
             "runtime_integrity": runtime_integrity_ok,
             "runtime_contract_operational": runtime_contract_operational,
             "runtime_contract_healthy": runtime_contract_healthy,
+            "runtime_required_probes": runtime_required_probes_ok,
         },
         "orchestrator": {
             "cycle_count": cycle_count,
@@ -324,6 +343,7 @@ def build_boot_health_snapshot(
         "runtime_age_s": uptime,
         "runtime": runtime_payload,
         "runtime_contract": runtime_contract,
+        "required_probes": runtime_required_probes,
         "runtime_degradations": {
             "important": important_contract_failures,
             "critical": critical_contract_failures,

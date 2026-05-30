@@ -1790,9 +1790,13 @@ class HealthAwareLLMRouter:
         if tier_preference == "local":
             # Filter to locals first
             available = [ep for ep in available if ep.is_local] or available
-        elif tier_preference == "cloud":
+        elif tier_preference == "cloud" and allow_cloud_fallback:
             # Filter to cloud first
             available = [ep for ep in available if not ep.is_local] or available
+        elif tier_preference == "cloud":
+            logger.debug(
+                "Router: ignoring cloud tier preference because cloud fallback was not explicitly allowed."
+            )
 
         # Standard local-first ordering only when no explicit routing plan was applied.
         if not selectors:

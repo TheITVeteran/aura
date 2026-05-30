@@ -5,6 +5,7 @@ telemetry broadcasting, and mycelial UI callback.
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 
 import asyncio
@@ -14,6 +15,15 @@ import time
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Aura.Server.EventBridge")
+
+_EVENT_BRIDGE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    TypeError,
+    ValueError,
+)
 
 
 async def mycelial_ui_callback(message: str):
@@ -63,6 +73,8 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
     """
     from interface.websocket_manager import broadcast_bus, ws_manager
 
+    bus = None
+    q = None
     try:
         from core.event_bus import get_event_bus
         from core.schemas import (
@@ -99,62 +111,87 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
             try:
                 from core.brain.personality_engine import get_personality_engine
                 return get_personality_engine().filter_response(text)
-            except Exception as e:
+            except _EVENT_BRIDGE_RECOVERABLE_ERRORS as e:
                 record_degradation('event_bridge', e)
                 logger.debug("Personality filtering failed: %s", e)
                 return text
 
-        while True:
+        while not is_shutdown_requested():
             _priority, _seq, event = await q.get()
-            topic = event.get("topic")
-            data = event.get("data")
+            try:
+                topic = event.get("topic")
+                data = event.get("data")
 
-            # With no UI consumers attached, the bridge should stay dormant instead of
-            # serializing every internal event into a websocket shape that nobody will read.
-            if ws_manager.count() == 0 and broadcast_bus.subscriber_count() <= 1:
-                q.task_done()
-                continue
+                # With no UI consumers attached, the bridge should stay dormant instead of
+                # serializing every internal event into a websocket shape that nobody will read.
+                if ws_manager.count() == 0 and broadcast_bus.subscriber_count() <= 1:
+                    continue
 
-            # Apply personality filtering to any broadcasted text
-            if isinstance(data, dict):
-                for key in ["content", "message", "text", "thought", "chunk"]:
-                    if key in data:
-                        data[key] = _filter_msg(data[key])
-            else:
-                data = {"content": _filter_msg(str(data))}
+                # Apply personality filtering to any broadcasted text
+                if isinstance(data, dict):
+                    data = dict(data)
+                    for key in ["content", "message", "text", "thought", "chunk"]:
+                        if key in data:
+                            data[key] = _filter_msg(data[key])
+                else:
+                    data = {"content": _filter_msg(str(data))}
 
-            ws_msg = _map_event_to_ws_message(
-                topic, data,
-                CognitiveThoughtPayload=CognitiveThoughtPayload,
-                WebsocketMessage=WebsocketMessage,
-                ChatStreamChunkPayload=ChatStreamChunkPayload,
-                ChatThoughtChunkPayload=ChatThoughtChunkPayload,
-                AuraMessagePayload=AuraMessagePayload,
-                ActionResultPayload=ActionResultPayload,
-            )
+                ws_msg = _map_event_to_ws_message(
+                    topic, data,
+                    CognitiveThoughtPayload=CognitiveThoughtPayload,
+                    WebsocketMessage=WebsocketMessage,
+                    ChatStreamChunkPayload=ChatStreamChunkPayload,
+                    ChatThoughtChunkPayload=ChatThoughtChunkPayload,
+                    AuraMessagePayload=AuraMessagePayload,
+                    ActionResultPayload=ActionResultPayload,
+                )
 
-            if ws_msg is not None:
-                p_val = 10
-                msg_type = ws_msg.get("type", "")
-                if msg_type in ("aura_message", "chat_response", "chat_stream_chunk"):
-                    p_val = 0
-                elif msg_type in ("thought", "neural_event", "log", "telemetry"):
-                    p_val = 20
+                if ws_msg is not None:
+                    p_val = 10
+                    msg_type = ws_msg.get("type", "")
+                    if msg_type in ("aura_message", "chat_response", "chat_stream_chunk"):
+                        p_val = 0
+                    elif msg_type in ("thought", "neural_event", "log", "telemetry"):
+                        p_val = 20
 
+                    try:
+                        await asyncio.wait_for(
+                            broadcast_bus.publish(ws_msg, priority=p_val), timeout=2.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "EventBridge: dropped %s event (broadcast bus timeout)",
+                            ws_msg.get("type", "unknown"),
+                        )
+            except asyncio.CancelledError:
+                raise
+            except _EVENT_BRIDGE_RECOVERABLE_ERRORS as e:
+                record_degradation('event_bridge', e)
+                logger.warning(
+                    "EventBridge: dropped malformed %s event: %s",
+                    event.get("topic", "unknown") if isinstance(event, dict) else "unknown",
+                    e,
+                )
+            finally:
                 try:
-                    await asyncio.wait_for(
-                        broadcast_bus.publish(ws_msg, priority=p_val), timeout=2.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "EventBridge: dropped %s event (broadcast bus timeout)",
-                        ws_msg.get("type", "unknown"),
-                    )
-            q.task_done()
+                    q.task_done()
+                except ValueError as e:
+                    record_degradation('event_bridge', e)
+                    logger.warning("EventBridge queue task accounting failed: %s", e)
 
-    except Exception as e:
+    except asyncio.CancelledError:
+        logger.info("EventBus bridge cancelled")
+        raise
+    except _EVENT_BRIDGE_RECOVERABLE_ERRORS as e:
         record_degradation('event_bridge', e)
         logger.error("EventBus bridge failure: %s", e, exc_info=True)
+    finally:
+        if bus is not None and q is not None:
+            try:
+                await bus.unsubscribe("*", q)
+            except _EVENT_BRIDGE_RECOVERABLE_ERRORS as e:
+                record_degradation('event_bridge', e)
+                logger.warning("EventBridge unsubscribe failed during shutdown: %s", e)
 
 
 def _map_event_to_ws_message(
@@ -171,7 +208,13 @@ def _map_event_to_ws_message(
     ActionResultPayload = schema_classes["ActionResultPayload"]
 
     def _model_dict(instance):
-        return getattr(instance, "model_dump", getattr(instance, "dict"))()
+        model_dump = getattr(instance, "model_dump", None)
+        if callable(model_dump):
+            return model_dump()
+        legacy_dict = getattr(instance, "dict", None)
+        if callable(legacy_dict):
+            return legacy_dict()
+        raise TypeError(f"{type(instance).__name__} does not expose a model dump method")
 
     if topic in ("thoughts", "neural_event", "cognition"):
         return CognitiveThoughtPayload(

@@ -3322,3 +3322,11 @@ class CapabilityEngine(AuraBaseModule):
         # Deep check: how many skills have dependencies met
         report["skills_ready"] = len([s for s in self.skills.values() if s.requirements.check()[0]])
         return report
+
+    def is_ready(self) -> bool:
+        """Deep readiness probe for runtime tool-governance health."""
+        if not isinstance(self.skills, dict) or not self.skills:
+            return False
+        if not isinstance(self.active_skills, set) or not self.active_skills:
+            return False
+        return any(name in self.active_skills for name in self.skills)

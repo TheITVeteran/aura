@@ -39,6 +39,20 @@ SELF_MOD_RECOVERABLE_ERRORS = (
     IndexError,
 )
 
+_RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _runtime_patch_promotion_enabled() -> bool:
+    """Runtime source promotion requires explicit operator opt-in."""
+    return _env_flag(_RUNTIME_SELF_MODIFICATION_ENV, False)
+
 
 def _record_self_modification_degradation(
     error: BaseException,
@@ -131,7 +145,8 @@ class AutonomousSelfModificationEngine:
 
         self.brain = cognitive_engine
         self.code_base = Path(code_base_path)
-        self.auto_fix_enabled = auto_fix_enabled
+        self._auto_fix_requested = bool(auto_fix_enabled)
+        self.auto_fix_enabled = bool(auto_fix_enabled and _runtime_patch_promotion_enabled())
 
         # Initialize subsystems
         from ..config import config
@@ -178,7 +193,13 @@ class AutonomousSelfModificationEngine:
 
         logger.info("✓ Autonomous Self-Modification Engine initialized")
 
-        if not auto_fix_enabled:
+        if auto_fix_enabled and not self.auto_fix_enabled:
+            logger.warning(
+                "Runtime self-modification promotion DISABLED. Set %s=1 to allow "
+                "tested patches to be promoted outside explicit supervised force=True calls.",
+                _RUNTIME_SELF_MODIFICATION_ENV,
+            )
+        elif not auto_fix_enabled:
             logger.warning("Auto-fix DISABLED - fixes will be proposed but not applied")
 
     # ========================================================================
@@ -221,6 +242,10 @@ class AutonomousSelfModificationEngine:
     def _increment_stat(self, key: str) -> None:
         self.session_stats.setdefault(key, 0)
         self.session_stats[key] += 1
+
+    def runtime_promotion_enabled(self) -> bool:
+        """Return whether autonomous runtime code promotion is currently allowed."""
+        return _runtime_patch_promotion_enabled()
 
     def _record_cycle_failure(
         self,
@@ -381,6 +406,13 @@ class AutonomousSelfModificationEngine:
             logger.warning("SME: Modification BLOCKED. Requires Volition Level 1+.")
             return False
 
+        if not force and not self.runtime_promotion_enabled():
+            logger.warning(
+                "SME: Runtime patch promotion blocked. Set %s=1 for autonomous promotion.",
+                _RUNTIME_SELF_MODIFICATION_ENV,
+            )
+            return False
+
         if not self.auto_fix_enabled and not force:
             logger.warning("Auto-fix disabled. Use force=True to override.")
             return False
@@ -499,7 +531,7 @@ class AutonomousSelfModificationEngine:
                                             category=category,
                                             resolution=f"Successfully applied self-modification repair: {fix.explanation}",
                                         )
-                    except Exception as resolve_err:
+                    except SELF_MOD_RECOVERABLE_ERRORS as resolve_err:
                         _record_self_modification_degradation(
                             resolve_err,
                             action="Kept applied fix but left incident resolution for the next health reconciliation",
@@ -565,7 +597,7 @@ class AutonomousSelfModificationEngine:
                                         error_type = getattr(
                                             first_event, "error_type", "optimization"
                                         )
-                except Exception as _e:
+                except SELF_MOD_RECOVERABLE_ERRORS as _e:
                     logger.debug("Failed to extract error_type for learning: %s", _e)
 
                 self.learning_system.record_fix_attempt(
@@ -685,7 +717,7 @@ class AutonomousSelfModificationEngine:
             "test_results": message,
         }
 
-        return await self.apply_fix(proposal, force=True)
+        return await self.apply_fix(proposal, force=False)
 
     # ========================================================================
     # Automatic Fix Workflow
@@ -707,14 +739,23 @@ class AutonomousSelfModificationEngine:
             kernel = ServiceContainer.get("aura_kernel", default=None)
             volition = getattr(kernel, "volition_level", 0) if kernel else 0
 
-            # Override auto_fix based on Volition
-            if volition >= 3:
+            promotion_enabled = self.runtime_promotion_enabled()
+            auto_fix_requested = bool(getattr(self, "_auto_fix_requested", False))
+
+            # Override auto_fix based on Volition only after explicit operator opt-in.
+            if volition >= 3 and auto_fix_requested and promotion_enabled:
                 if not self.auto_fix_enabled:
                     logger.info("SME: Volition Level 3 detected. AUTO-FIX ENGAGED.")
                     self.auto_fix_enabled = True
             else:
                 if self.auto_fix_enabled:
-                    logger.debug("SME: Volition Level < 3. Auto-fix held in proposal-only mode.")
+                    logger.debug(
+                        "SME: Auto-fix held in proposal-only mode "
+                        "(volition=%d requested=%s promotion_enabled=%s).",
+                        volition,
+                        auto_fix_requested,
+                        promotion_enabled,
+                    )
                     self.auto_fix_enabled = False
 
             logger.debug("--- [SME] Starting Autonomous Cycle (Volition=%d) ---", volition)
@@ -779,7 +820,7 @@ class AutonomousSelfModificationEngine:
             if self.auto_fix_enabled:
                 success = False
                 try:
-                    success = await self.apply_fix(fix_proposal, force=True)
+                    success = await self.apply_fix(fix_proposal, force=False)
                 finally:
                     cycle_time = time.time() - cycle_start
                     logger.debug("--- [SME] Cycle Complete (%.2fs) ---", cycle_time)
@@ -1147,6 +1188,8 @@ class AutonomousSelfModificationEngine:
         return {
             "monitoring_enabled": self.monitoring_enabled,
             "auto_fix_enabled": self.auto_fix_enabled,
+            "auto_fix_requested": bool(getattr(self, "_auto_fix_requested", False)),
+            "runtime_patch_promotion_enabled": self.runtime_promotion_enabled(),
             "session_duration_hours": session_time / 3600,
             "session_stats": self.session_stats,
             "last_cycle_error": getattr(self, "_last_cycle_error", None),
@@ -1215,11 +1258,20 @@ TOP FIX STRATEGIES:
         if not confirm:
             logger.error("Attempted to enable auto-fix without explicit confirmation.")
             return False
+        if not self.runtime_promotion_enabled():
+            logger.error(
+                "Attempted to enable auto-fix without %s=1.",
+                _RUNTIME_SELF_MODIFICATION_ENV,
+            )
+            self._auto_fix_requested = True
+            return False
+        self._auto_fix_requested = True
         self.auto_fix_enabled = True
         logger.warning("⚠️  AUTO-FIX ENABLED - System will modify its own code")
         return True
 
     def disable_auto_fix(self):
         """Disable automatic fixing"""
+        self._auto_fix_requested = False
         self.auto_fix_enabled = False
         logger.info("Auto-fix disabled - fixes will be proposed only")

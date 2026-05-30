@@ -479,6 +479,28 @@ def check_readiness() -> Dict[str, Any]:
         issues.append(f"db_inaccessible: {e}")
         ready = False
 
+    # Canonical runtime contract: readiness must include the same probes the UI
+    # uses to prevent heartbeat-only false health.
+    try:
+        from core.runtime.health_contract import runtime_health_report
+
+        contract = runtime_health_report()
+        required_probes = contract.get("required_probes", {})
+        if not bool(contract.get("operational", False)):
+            issues.append(f"runtime_contract:{contract.get('status', 'unknown')}")
+            ready = False
+        if not bool(required_probes.get("all_passed", False)):
+            failed = [
+                name
+                for name, probe in required_probes.items()
+                if isinstance(probe, dict) and not bool(probe.get("ok", False))
+            ]
+            issues.append("required_probes:" + ",".join(failed))
+            ready = False
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+        issues.append(f"runtime_contract_unavailable: {e}")
+        ready = False
+
     return {
         "status": "ready" if ready else "not_ready",
         "ready": ready,

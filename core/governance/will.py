@@ -263,6 +263,10 @@ class UnifiedWill:
         """Initialize references and register in ServiceContainer."""
         self.ensure_started()
 
+    def is_alive(self) -> bool:
+        """Deep liveness probe for the runtime health contract."""
+        return bool(self._started and self._fail_closed_when_stopped)
+
     def ensure_started(self) -> None:
         """Synchronously activate the runtime Will singleton.
 

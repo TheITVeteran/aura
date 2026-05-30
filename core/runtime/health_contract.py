@@ -24,6 +24,14 @@ logger = logging.getLogger("Aura.HealthContract")
 
 HEALTH_CONTRACT_VERSION = "runtime-health-v1"
 
+REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
+    "kernel": ("kernel_interface",),
+    "inference": ("inference_gate", "llm_router"),
+    "memory": ("state_repository", "memory_facade"),
+    "scheduler": ("scheduler",),
+    "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
+}
+
 
 class ServiceTier(StrEnum):
     """How critical is this service to Aura's operation?"""
@@ -71,10 +79,45 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         liveness_check="is_initialized",
     ),
     ServiceRequirement(
+        "Memory Facade",
+        "memory_facade",
+        ServiceTier.CRITICAL,
+        "Canonical memory gateway. Without it, Aura cannot safely read or write long-term memory.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
         "Kernel Interface",
         "kernel_interface",
         ServiceTier.CRITICAL,
         "Bridge between orchestrator and consciousness kernel.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Scheduler",
+        "scheduler",
+        ServiceTier.CRITICAL,
+        "Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
+        "Unified Will",
+        "unified_will",
+        ServiceTier.CRITICAL,
+        "Single locus of authority for consequential decisions.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
+        "Authority Gateway",
+        "authority_gateway",
+        ServiceTier.CRITICAL,
+        "Governance gateway for tools, external I/O, memory writes, state changes, and self-modification.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Capability Engine",
+        "capability_engine",
+        ServiceTier.CRITICAL,
+        "Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(
@@ -91,22 +134,10 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "Manages cognitive state transitions and working memory.",
     ),
     ServiceRequirement(
-        "Memory Facade",
-        "memory_facade",
-        ServiceTier.IMPORTANT,
-        "Unified memory interface. Without it, Aura has no long-term recall.",
-    ),
-    ServiceRequirement(
         "Affect Engine",
         "affect_engine",
         ServiceTier.IMPORTANT,
         "Emotional state management. Without it, responses are emotionally flat.",
-    ),
-    ServiceRequirement(
-        "Capability Engine",
-        "capability_engine",
-        ServiceTier.IMPORTANT,
-        "Skill routing and tool dispatch. Without it, Aura cannot use tools.",
     ),
     ServiceRequirement(
         "Compute Orchestrator",
@@ -272,10 +303,16 @@ class HealthVerdict:
     def to_report(self) -> dict[str, Any]:
         """Canonical machine-readable runtime health report."""
         services = [_service_status_payload(status) for status in self.services]
+        report_services = {
+            payload["container_key"]: payload
+            for payload in services
+            if isinstance(payload.get("container_key"), str)
+        }
         tier_summary = {
             tier.value: _tier_summary(self.services, tier)
             for tier in (ServiceTier.CRITICAL, ServiceTier.IMPORTANT, ServiceTier.OPTIONAL)
         }
+        required_probes = _required_probe_status_from_services(report_services)
         return {
             "contract_version": HEALTH_CONTRACT_VERSION,
             "status": self.level.value,
@@ -283,6 +320,7 @@ class HealthVerdict:
             "operational": self.is_operational,
             "status_code": self.status_code,
             "timestamp_unix": self.timestamp,
+            "required_probes": required_probes,
             "tier_summary": tier_summary,
             "failures": {
                 "critical": [_service_status_payload(status) for status in self.critical_failures],
@@ -293,6 +331,50 @@ class HealthVerdict:
             },
             "services": services,
         }
+
+
+def _service_probe_ok(service: dict[str, Any] | None) -> bool:
+    if not isinstance(service, dict):
+        return False
+    if not bool(service.get("present", False)):
+        return False
+    return str(service.get("liveness", "") or "") != "failed"
+
+
+def _required_probe_status_from_services(
+    services_by_key: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    probes: dict[str, Any] = {}
+    for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items():
+        component_status = {
+            key: _service_probe_ok(services_by_key.get(key))
+            for key in keys
+        }
+        probes[group] = {
+            "ok": all(component_status.values()),
+            "components": component_status,
+        }
+    probes["all_passed"] = all(
+        bool(value.get("ok", False))
+        for value in probes.values()
+        if isinstance(value, dict)
+    )
+    return probes
+
+
+def required_probe_status(report: dict[str, Any]) -> dict[str, Any]:
+    """Return canonical high-level readiness probes from a health report.
+
+    A heartbeat is allowed to claim healthy only when every group here passes:
+    kernel, inference, memory, scheduler, and tool governance.
+    """
+    services = report.get("services", []) if isinstance(report, dict) else []
+    services_by_key = {
+        str(service.get("container_key")): service
+        for service in services
+        if isinstance(service, dict) and service.get("container_key")
+    }
+    return _required_probe_status_from_services(services_by_key)
 
 
 def _service_status_payload(status: ServiceStatus) -> dict[str, Any]:

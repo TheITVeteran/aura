@@ -233,6 +233,37 @@ def test_boot_health_fails_closed_when_runtime_contract_is_not_operational():
     assert any(blocker.startswith("critical:") for blocker in payload["blockers"])
 
 
+def test_boot_health_fails_closed_when_required_runtime_probe_fails():
+    _register_runtime_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="scheduler",
+    )
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=12,
+        start_time=time.time() - 5,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={"conversation_ready": True, "state": "ready"},
+    )
+
+    assert status_code == 503
+    assert payload["ready"] is False
+    assert payload["checks"]["runtime_required_probes"] is False
+    assert payload["required_probes"]["scheduler"]["ok"] is False
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "probe:scheduler" in payload["blockers"]
+
+
 def test_boot_health_records_health_check_failure_as_structured_degradation():
     _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
     status = SimpleNamespace(
