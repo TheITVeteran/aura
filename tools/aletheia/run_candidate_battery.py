@@ -23,6 +23,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
@@ -1060,7 +1064,9 @@ def execute(ctx: BatteryContext) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Execute the public Aletheia Tier 5 candidate battery."
+    )
     ap.add_argument("battery_root", help="Path to candidate_battery_500 root")
     args = ap.parse_args()
     root = Path(args.battery_root).resolve()

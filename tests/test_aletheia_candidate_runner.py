@@ -87,3 +87,29 @@ def test_candidate_runner_refuses_evaluator_material(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         runner.main()
     assert "forbidden evaluator/private paths" in str(excinfo.value)
+
+
+def test_candidate_runner_script_style_import_resolves_repo_imports(monkeypatch):
+    repo = Path(__file__).resolve().parents[1]
+    path = repo / "tools" / "aletheia" / "run_candidate_battery.py"
+    original_path = list(sys.path)
+    filtered_path = [
+        entry
+        for entry in original_path
+        if entry and Path(entry).resolve() != repo
+    ]
+    monkeypatch.setattr(sys, "path", [str(path.parent), *filtered_path])
+    sys.modules.pop("aletheia_candidate_runner_script_style", None)
+
+    spec = importlib.util.spec_from_file_location(
+        "aletheia_candidate_runner_script_style",
+        path,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    assert str(repo) in sys.path
+    assert module.PROJECT_ROOT == repo
+    assert callable(module.get_subprocess_gateway)
