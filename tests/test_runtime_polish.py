@@ -238,6 +238,54 @@ def test_event_bus_threadsafe_publish_failure_is_recorded():
     assert status["stats"]["last_error"] == "publish future failed"
 
 
+def test_background_policy_blocks_when_foreground_probe_fails(monkeypatch):
+    from core.runtime import background_policy
+    from core.runtime import foreground_guard
+
+    monkeypatch.setattr(
+        foreground_guard,
+        "foreground_activity_reason",
+        lambda: (_ for _ in ()).throw(RuntimeError("foreground probe down")),
+    )
+
+    reason = background_policy.background_activity_reason(
+        SimpleNamespace(
+            is_busy=False,
+            _suppress_unsolicited_proactivity_until=0.0,
+            _foreground_user_quiet_until=0.0,
+            _last_user_interaction_time=0.0,
+        ),
+        allow_no_user_anchor=True,
+    )
+
+    assert reason == "foreground_guard_unavailable"
+
+
+def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
+    from core.runtime import background_policy
+    from core.runtime import foreground_guard
+
+    monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "")
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+    monkeypatch.setattr(
+        background_policy.psutil,
+        "virtual_memory",
+        lambda: (_ for _ in ()).throw(OSError("mem probe down")),
+    )
+
+    reason = background_policy.background_activity_reason(
+        SimpleNamespace(
+            is_busy=False,
+            _suppress_unsolicited_proactivity_until=0.0,
+            _foreground_user_quiet_until=0.0,
+            _last_user_interaction_time=0.0,
+        ),
+        allow_no_user_anchor=True,
+    )
+
+    assert reason == "memory_probe_unavailable"
+
+
 @pytest.mark.asyncio
 async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(monkeypatch):
     from core import initiative_synthesis as synthesis_module

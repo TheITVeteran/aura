@@ -182,8 +182,13 @@ def _foreground_activity_reason() -> str:
         if guard_reason:
             return guard_reason
     except (ImportError, AttributeError, RuntimeError) as _exc:
-        record_degradation('background_policy', _exc)
-        logger.debug("Suppressed Exception: %s", _exc)
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background work because foreground guard probe failed",
+        )
+        logger.warning("Background policy foreground guard probe failed: %s", _exc)
+        return "foreground_guard_unavailable"
 
     try:
         from core.container import ServiceContainer
@@ -199,8 +204,13 @@ def _foreground_activity_reason() -> str:
             if request_age > 0.0 and str(lane.get("foreground_owner") or "").strip():
                 return "foreground_request_active"
     except (ImportError, AttributeError, RuntimeError) as _exc:
-        record_degradation('background_policy', _exc)
-        logger.debug("Suppressed Exception: %s", _exc)
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background work because inference foreground probe failed",
+        )
+        logger.warning("Background policy inference foreground probe failed: %s", _exc)
+        return "foreground_generation_status_unavailable"
     return ""
 
 
@@ -280,8 +290,13 @@ def background_activity_reason(
         if memory_pct >= max_memory_percent:
             return f"memory_pressure_{memory_pct:.1f}"
     except (ImportError, OSError, AttributeError) as _exc:
-        record_degradation('background_policy', _exc)
-        logger.debug("Suppressed Exception: %s", _exc)
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background work because memory-pressure probe failed",
+        )
+        logger.warning("Background policy memory-pressure probe failed: %s", _exc)
+        return "memory_probe_unavailable"
 
     try:
         failure = get_unified_failure_state()
@@ -289,8 +304,13 @@ def background_activity_reason(
         if pressure >= max_failure_pressure:
             return f"failure_lockdown_{pressure:.2f}"
     except (OSError, ConnectionError, TimeoutError) as _exc:
-        record_degradation('background_policy', _exc)
-        logger.debug("Suppressed Exception: %s", _exc)
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background work because failure-state probe failed",
+        )
+        logger.warning("Background policy failure-state probe failed: %s", _exc)
+        return "failure_state_unavailable"
 
     if require_conversation_ready:
         try:
@@ -302,8 +322,13 @@ def background_activity_reason(
                 if not bool(lane.get("conversation_ready", False)):
                     return f"conversation_lane_{str(lane.get('state', 'unready') or 'unready').lower()}"
         except (ImportError, AttributeError, RuntimeError) as _exc:
-            record_degradation('background_policy', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
+            record_degradation(
+                "background_policy",
+                _exc,
+                action="blocked background work because conversation readiness probe failed",
+            )
+            logger.warning("Background policy conversation readiness probe failed: %s", _exc)
+            return "conversation_lane_probe_unavailable"
 
     return ""
 
