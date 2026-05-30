@@ -281,6 +281,12 @@ class RedisConfig(BaseModel):
     url: str = Field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     enabled: bool = True
     use_for_events: bool = True
+    required_for_events: bool = Field(
+        default_factory=lambda: os.environ.get("AURA_REDIS_REQUIRED_FOR_EVENTS", "0")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
     
     @property
     def broker_url(self) -> str:

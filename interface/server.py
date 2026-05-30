@@ -888,23 +888,35 @@ async def websocket_endpoint(ws: WebSocket):
                         async def _handle_ws_message(ws_ref, user_content: str):
                             """Process user message and send response back via WebSocket."""
                             try:
+                                reply = await chat_routes._run_cognitive_engine_chat_turn(
+                                    user_content,
+                                    visible_user_message=user_content,
+                                    origin="user",
+                                    timeout=300.0,
+                                    lane=chat_routes._collect_conversation_lane_status(),
+                                    source="websocket",
+                                )
                                 from core.kernel.kernel_interface import KernelInterface
                                 ki = KernelInterface.get_instance()
-                                if ki.is_ready():
+                                if not reply and ki.is_ready():
                                     # Match the foreground HTTP budget so the
                                     # websocket does not disconnect while the
                                     # heavy local reasoning lane is still alive.
                                     reply = await asyncio.wait_for(
-                                        ki.process(user_content, origin="ws", priority=True),
+                                        ki.process(user_content, origin="user", priority=True),
                                         timeout=360.0,
                                     )
-                                else:
+                                elif not reply:
                                     from core.event_bus import get_event_bus
                                     bus = get_event_bus()
                                     await bus.publish("user_input", {"message": user_content})
                                     return
 
                                 if reply:
+                                    reply = await chat_routes._stabilize_user_facing_reply(
+                                        user_content,
+                                        reply,
+                                    )
                                     await ws_ref.send_text(json.dumps({
                                         "type": "aura_message",
                                         "content": reply,
@@ -916,7 +928,7 @@ async def websocket_endpoint(ws: WebSocket):
                                         "content": "I could not produce a clean live reply from this path. I logged the failure and kept the conversation state intact.",
                                     }))
                             except TimeoutError:
-                                logger.error("WS: KernelInterface.process() timed out after 180s")
+                                logger.error("WS: live CognitiveEngine/KernelInterface processing timed out")
                                 # [STABILITY v53] Try fast brainstem fallback before giving up
                                 try:
                                     from core.container import ServiceContainer
@@ -926,7 +938,7 @@ async def websocket_endpoint(ws: WebSocket):
                                             gate.generate(
                                                 user_content,
                                                 context={
-                                                    "origin": "ws",
+                                                    "origin": "user",
                                                     "foreground_request": True,
                                                     "prefer_tier": "tertiary",
                                                     "allow_cloud_fallback": True,

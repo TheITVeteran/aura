@@ -596,6 +596,58 @@ _TOPICAL_BRIDGE_MARKERS = (
     "when you",
     "if you",
 )
+_CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
+    "what does that have to do",
+    "what does this have to do",
+    "how is that related",
+    "how is this related",
+    "why the interest",
+    "why are you interested",
+    "why are you talking about",
+    "where did that come from",
+    "what are you talking about",
+    "why did you bring",
+)
+_CONTEXTUAL_RELEVANCE_BRIDGE_MARKERS = (
+    "you mentioned",
+    "you brought",
+    "i brought",
+    "i asked because",
+    "because you",
+    "because the",
+    "i connected",
+    "i was connecting",
+    "what i meant",
+    "where it came from",
+    "i was responding to",
+    "i thought you meant",
+    "i misread",
+    "i drifted",
+    "i wasn't being clear",
+    "i was not being clear",
+    "answer directly",
+    "talking around it",
+    "look at this more clearly",
+    "still focused on our conversation",
+    "that did not connect",
+    "that didn't connect",
+    "that was a jump",
+)
+_CONTEXTUAL_RELEVANCE_DRIFT_MARKERS = (
+    "personal detail",
+    "having pets",
+    "pets can be",
+    "pet can be",
+    "comforting",
+    "used to have a dog",
+    "dog when i was younger",
+    "feeling a bit down",
+    "feeling down",
+    "my attention is",
+    "curiosity is",
+    "my mood",
+    "my state",
+)
 _CONTENT_OBJECT_MARKERS = (
     "article",
     "book",
@@ -710,6 +762,16 @@ def _extract_topic_tokens(text: str) -> set[str]:
                 continue
             tokens.add(normalized)
     return tokens
+
+
+def _is_contextual_relevance_challenge(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    if not text:
+        return False
+    stripped = text.strip(" ?!.")
+    if stripped in {"huh", "wait what", "what"}:
+        return True
+    return any(marker in text for marker in _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS)
 
 
 async def _gather_recent_user_messages_for_relevance(current_user_message: str, *, limit: int = 4) -> list[str]:
@@ -1031,6 +1093,107 @@ def _call_stateful_voice_reflex(frame: dict[str, Any], user_message: str) -> str
         return _build_stateful_voice_reflex(frame)
 
 
+def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
+    from core.brain.types import ThinkingMode
+
+    shape = analyze_prompt_shape(user_message)
+    text = _normalize_user_message(user_message)
+    deep_markers = (
+        "build",
+        "debug",
+        "diagnose",
+        "explain",
+        "fix",
+        "implement",
+        "plan",
+        "review",
+        "run",
+        "test",
+        "why",
+    )
+    if (
+        bool(getattr(shape, "requires_single_reply_coverage", False))
+        or bool(getattr(shape, "prefers_extended_answer", False))
+        or int(getattr(shape, "question_parts", 0) or 0) >= 2
+        or any(marker in text for marker in deep_markers)
+    ):
+        return ThinkingMode.DEEP
+    if len(str(effective_user_message or "")) > 1200:
+        return ThinkingMode.SLOW
+    return ThinkingMode.FAST
+
+
+async def _run_cognitive_engine_chat_turn(
+    effective_user_message: str,
+    *,
+    visible_user_message: str | None = None,
+    origin: str = "user",
+    timeout: float | None = None,
+    lane: dict[str, Any] | None = None,
+    source: str = "chat_api",
+) -> str | None:
+    """Run a live desktop/user chat turn through CognitiveEngine.
+
+    The HTTP and WebSocket desktop surfaces call this before falling back to
+    KernelInterface so the UI uses the same causal cognitive path as the live
+    runtime instead of a thinner transport-specific lane.
+    """
+    engine = ServiceContainer.get("cognitive_engine", default=None)
+    if engine is None or not hasattr(engine, "think"):
+        return None
+
+    visible = str(visible_user_message or effective_user_message or "")
+    mode = _select_cognitive_chat_mode(visible, effective_user_message)
+    shape = analyze_prompt_shape(visible)
+    context = {
+        "route": "desktop_chat",
+        "source": source,
+        "visible_user_message": visible[:1000],
+        "foreground_request": True,
+        "user_facing": True,
+        "conversation_lane": dict(lane or {}),
+        "prompt_shape": {
+            "question_parts": int(getattr(shape, "question_parts", 0) or 0),
+            "prefers_extended_answer": bool(getattr(shape, "prefers_extended_answer", False)),
+            "requires_single_reply_coverage": bool(
+                getattr(shape, "requires_single_reply_coverage", False)
+            ),
+        },
+    }
+    timeout_s = max(2.0, float(timeout if timeout is not None else 120.0))
+    try:
+        thought = await asyncio.wait_for(
+            engine.think(
+                effective_user_message,
+                context=context,
+                mode=mode,
+                origin=origin,
+                foreground_request=True,
+                is_background=False,
+                priority=True,
+            ),
+            timeout=timeout_s,
+        )
+    except TimeoutError:
+        logger.warning(
+            "CognitiveEngine desktop chat turn timed out after %.1fs; falling back to kernel lane.",
+            timeout_s,
+        )
+        return None
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.warning("CognitiveEngine desktop chat turn failed; falling back to kernel lane: %s", exc)
+        return None
+
+    content = getattr(thought, "content", None)
+    if content is None and isinstance(thought, dict):
+        content = thought.get("content") or thought.get("response")
+    text = str(content if content is not None else thought or "").strip()
+    if not text or text == "…" or text.startswith("background_thought_suppressed"):
+        return None
+    return text
+
+
 def _looks_like_unrequested_content_review(user_message: str, reply_text: str) -> tuple[bool, str]:
     user_text = _normalize_user_message(user_message)
     reply = _normalize_user_message(reply_text)
@@ -1067,6 +1230,15 @@ def _evaluate_reply_topicality(
         anchors.update(_extract_topic_tokens(message))
 
     reply_tokens = _extract_topic_tokens(reply)
+    lowered_reply = _normalize_user_message(reply)
+    if _is_contextual_relevance_challenge(user_message):
+        if any(marker in lowered_reply for marker in _CONTEXTUAL_RELEVANCE_BRIDGE_MARKERS):
+            return False, ""
+        if any(marker in lowered_reply for marker in _CONTEXTUAL_RELEVANCE_DRIFT_MARKERS):
+            return True, "contextual_relevance_miss"
+        if anchors and reply_tokens and not anchors.intersection(reply_tokens):
+            return True, "contextual_relevance_miss"
+
     if not anchors or len(reply_tokens) < 16:
         return False, ""
 
@@ -1077,7 +1249,6 @@ def _evaluate_reply_topicality(
     if len(concrete_reply_tokens) < 12:
         return False, ""
 
-    lowered_reply = _normalize_user_message(reply)
     if any(marker in lowered_reply for marker in _TOPICAL_BRIDGE_MARKERS):
         return False, ""
 
@@ -3114,7 +3285,7 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
             or unexpected_cjk
             or semantic_glitch
             or identity_collapse
-            or (off_topic and not generic)  # off-topic is only hard if not just generic-speak
+            or (off_topic and (not generic or off_topic_reason == "contextual_relevance_miss"))
         )
         if valid and not hard_failure:
             return text
@@ -4307,7 +4478,7 @@ async def _execute_governed_live_skill(
 ) -> dict[str, Any]:
     """Run live-proof actions through the agency receipt path, never raw IO."""
     context = {
-        "origin": "api",
+        "origin": "user",
         "route": "chat.live_runtime_proof",
         "objective": objective[:500],
         "message": objective[:500],
@@ -4636,11 +4807,23 @@ async def api_chat_regenerate(
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
         reply_text = None
+        lane = _collect_conversation_lane_status()
 
-        if ki.is_ready():
+        cognitive_budget = min(180.0, max(2.0, foreground_timeout - 24.0))
+        if cognitive_budget >= 8.0:
+            reply_text = await _run_cognitive_engine_chat_turn(
+                user_msg,
+                visible_user_message=user_msg,
+                origin="user",
+                timeout=cognitive_budget,
+                lane=dict(lane or {}),
+                source="chat_regenerate",
+            )
+
+        if not reply_text and ki.is_ready():
             try:
                 reply_text = await asyncio.wait_for(
-                    ki.process(user_msg, origin="api", priority=True),
+                    ki.process(user_msg, origin="user", priority=True),
                     timeout=foreground_timeout,
                 )
             except TimeoutError:
@@ -4653,8 +4836,9 @@ async def api_chat_regenerate(
             orch = ServiceContainer.get("orchestrator", default=None)
             if not orch:
                 return JSONResponse({"error": "offline", "message": "Cognitive engine offline."}, status_code=503)
-            reply_text = await orch.process_user_input_priority(user_msg, origin="api", timeout_sec=foreground_timeout)
+            reply_text = await orch.process_user_input_priority(user_msg, origin="user", timeout_sec=foreground_timeout)
 
+        reply_text = await _stabilize_user_facing_reply(user_msg, reply_text)
         response_data = {"response": reply_text or "…", "regenerated": True}
 
         async with _get_convo_lock():
@@ -4780,6 +4964,7 @@ async def api_chat(
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")
 
     is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
+    chat_origin = "benchmark" if is_benchmark else "user"
 
     # ── Chat preflight ──────────────────────────────────────────
     # 1) File-reference loading: if the user references a file path, load
@@ -5195,7 +5380,7 @@ async def api_chat(
                     gate.generate(
                         body.message,
                         context={
-                            "origin": "benchmark" if is_benchmark else "api",
+                            "origin": chat_origin,
                             "foreground_request": not is_benchmark,
                             "protected_foreground_lane": not is_benchmark,
                             "protected_foreground_reason": reason,
@@ -5571,10 +5756,29 @@ async def api_chat(
             record_degradation("chat", exc)
             logger.debug("Conversation exchange prelogging skipped: %s", exc)
 
+        reply_text: str | None = None
+        reply_source = ""
+        if not is_benchmark:
+            cognitive_budget = min(180.0, _remaining_foreground_budget(reserve=24.0))
+            if cognitive_budget >= 8.0:
+                reply_text = await _run_cognitive_engine_chat_turn(
+                    effective_user_message,
+                    visible_user_message=_semantic_user_message,
+                    origin=chat_origin,
+                    timeout=cognitive_budget,
+                    lane=dict(lane or {}),
+                    source="chat_api",
+                )
+                if reply_text:
+                    reply_source = "cognitive_engine"
+                    logger.debug(
+                        "REST: CognitiveEngine served desktop chat turn (len=%d).",
+                        len(reply_text),
+                    )
+
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
-        reply_text = None
         kernel_timed_out = False
         kernel_task: asyncio.Task | None = None
 
@@ -5583,7 +5787,7 @@ async def api_chat(
             try:
                 kernel_timeout = _remaining_foreground_budget()
                 kernel_task = get_task_tracker().create_task(
-                    ki.process(effective_user_message, origin="benchmark" if is_benchmark else "api", priority=True),
+                    ki.process(effective_user_message, origin=chat_origin, priority=True),
                     name="Aura.Server.Chat.kernel_foreground",
                 )
                 # [STABILITY v53] Two-phase timeout:
@@ -5667,6 +5871,8 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)
                 logger.error("KernelInterface chat failed natively, falling back to legacy: %s (%s)", type(e).__name__, e, exc_info=True)
+        if reply_text and not reply_source:
+            reply_source = "kernel_interface"
 
         if kernel_timed_out and is_benchmark:
             timeout_reply = _conversation_lane_user_message(
@@ -5694,6 +5900,7 @@ async def api_chat(
             direct_reply = await _attempt_protected_foreground_reply("kernel_timeout")
             if direct_reply:
                 reply_text = direct_reply
+                reply_source = "protected_foreground"
                 logger.info("✅ [STABILITY] Protected foreground bypass succeeded after kernel timeout (len=%d)", len(reply_text))
                 kernel_timed_out = False
 
@@ -5729,11 +5936,13 @@ async def api_chat(
                 reply_text = await asyncio.wait_for(
                     orch.process_user_input_priority(
                         effective_user_message,
-                        origin="benchmark" if is_benchmark else "api",
+                        origin=chat_origin,
                         timeout_sec=legacy_timeout,
                     ),
                     timeout=legacy_timeout,
                 )
+                if reply_text:
+                    reply_source = reply_source or "legacy_orchestrator"
 
         if is_benchmark:
             final_benchmark_text = str(reply_text or "").strip()
@@ -5982,6 +6191,7 @@ async def api_chat(
 
         response_data = {
             "response": _final_reply,
+            "status": reply_source or "ok",
             "conversation_lane": _collect_conversation_lane_status(),
             "response_confidence": response_confidence,
         }
@@ -6009,7 +6219,7 @@ async def api_chat(
             cause="chat_response",
             metadata={
                 "response_confidence": response_confidence,
-                "path": "stabilized",
+                "path": reply_source or "stabilized",
             },
         )
 
@@ -6055,7 +6265,7 @@ async def api_chat(
                     gate.generate(
                         body.message,
                         context={
-                            "origin": "api",
+                            "origin": chat_origin,
                             "foreground_request": True,
                             "protected_foreground_lane": True,
                             "protected_foreground_reason": "outer_timeout_emergency",
@@ -6110,7 +6320,7 @@ async def api_chat(
                             gate2.generate(
                                 msg,
                                 context={
-                                    "origin": "api",
+                                    "origin": "user_background_retry",
                                     "foreground_request": False,
                                     "background_retry": True,
                                     "prefer_tier": "primary",

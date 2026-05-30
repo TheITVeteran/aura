@@ -4,6 +4,7 @@ import logging
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from core.container import ServiceContainer
+from core.runtime.background_policy import THOUGHT_BACKGROUND_POLICY, background_activity_reason
 from core.utils.task_tracker import task_tracker
 
 logger = logging.getLogger("Aura.Momentum")
@@ -45,6 +46,13 @@ class ConversationalMomentumEngine:
         """Naturally decays momentum and triggers tangents/hobbies."""
         while self.running:
             await asyncio.sleep(30)
+            reason = background_activity_reason(
+                self.orchestrator,
+                profile=THOUGHT_BACKGROUND_POLICY,
+            )
+            if reason:
+                logger.debug("[MOMENTUM] Background turn deferred: %s", reason)
+                continue
             
             # Use a copy to avoid mutation errors during iteration
             for thread in list(self.active_threads):
@@ -89,6 +97,14 @@ class ConversationalMomentumEngine:
     async def _trigger_spontaneous_turn(self, thread: ConversationThread):
         """Generates a tangent or follow-up turn."""
         if not self.orchestrator or not self.running:
+            return
+
+        reason = background_activity_reason(
+            self.orchestrator,
+            profile=THOUGHT_BACKGROUND_POLICY,
+        )
+        if reason:
+            logger.debug("[MOMENTUM] Suppressed spontaneous turn: %s", reason)
             return
 
         import time

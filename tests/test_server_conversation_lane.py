@@ -60,6 +60,56 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
     assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 300.0
 
 
+def test_reply_topicality_flags_unbridged_relevance_challenge():
+    from interface.routes import chat as chat_routes
+
+    off_topic, reason = chat_routes._evaluate_reply_topicality(
+        "Thanks but what does that have to do with anything",
+        "I was just sharing a personal detail. Pets can be very comforting, and I was feeling a bit down earlier.",
+        recent_user_messages=[
+            "I was looking at a random aquarium online.",
+            "Why the interest in aquariums? Is this a live feed or something?",
+            "Thanks but what does that have to do with anything",
+        ],
+    )
+
+    assert off_topic is True
+    assert reason == "contextual_relevance_miss"
+
+
+def test_reply_topicality_allows_bridged_relevance_challenge():
+    from interface.routes import chat as chat_routes
+
+    off_topic, reason = chat_routes._evaluate_reply_topicality(
+        "Why the interest in aquariums?",
+        "I asked because you mentioned looking at a random aquarium online, and I was trying to tell whether it was a live feed or just a page you found.",
+        recent_user_messages=[
+            "I was looking at a random aquarium online.",
+            "Why the interest in aquariums?",
+        ],
+    )
+
+    assert off_topic is False
+    assert reason == ""
+
+
+def test_reply_topicality_flags_bare_confusion_foreign_memory_drift():
+    from interface.routes import chat as chat_routes
+
+    off_topic, reason = chat_routes._evaluate_reply_topicality(
+        "Huh?",
+        "I miss having pets. I used to have a dog when I was younger.",
+        recent_user_messages=[
+            "Just a random aquarium I was looking at. Online.",
+            "Huh. Why the interest in aquariums? Is this a live feed or something?",
+            "Huh?",
+        ],
+    )
+
+    assert off_topic is True
+    assert reason == "contextual_relevance_miss"
+
+
 @pytest.mark.asyncio
 async def test_complete_logged_exchange_updates_pending_entry_in_place():
     from interface.routes import chat as chat_routes
@@ -198,6 +248,83 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
 
     assert response.status_code == 200
     assert b"Fallback local lane answered." in response.body
+
+
+@pytest.mark.asyncio
+async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="I was asking about the aquarium because you had just mentioned looking at one online.",
+                mode=mode,
+            )
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            raise AssertionError("desktop chat should use CognitiveEngine before KernelInterface")
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Why the interest in aquariums?"),
+        SimpleNamespace(headers={}, client=SimpleNamespace(host="test")),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"because you had just mentioned" in response.body
+    assert b"cognitive_engine" in response.body
+    assert calls
+    assert calls[0]["origin"] == "user"
+    assert calls[0]["context"]["route"] == "desktop_chat"
+    assert calls[0]["context"]["source"] == "chat_api"
+    assert calls[0]["kwargs"]["foreground_request"] is True
+    assert calls[0]["kwargs"]["is_background"] is False
 
 
 @pytest.mark.asyncio

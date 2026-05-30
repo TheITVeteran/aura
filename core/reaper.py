@@ -17,7 +17,8 @@ from typing import Any
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
-DEFAULT_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
+LEGACY_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
+DEFAULT_REAPER_MANIFEST_DIR = Path.home() / ".aura" / "run" / "reaper"
 POLL_INTERVAL = 1.0  # seconds
 
 logger = logging.getLogger("Aura.Reaper")
@@ -46,9 +47,13 @@ def _record_reaper_degradation(
 def resolve_reaper_manifest_path() -> Path:
     """Resolve a single canonical manifest path for every runtime surface."""
     raw_path = os.environ.get(REAPER_MANIFEST_ENV, "").strip()
-    if raw_path:
+    if raw_path and Path(raw_path).expanduser() != LEGACY_REAPER_MANIFEST:
         return Path(raw_path).expanduser()
-    return DEFAULT_REAPER_MANIFEST
+    runtime_id = os.environ.get("AURA_RUNTIME_ID", "").strip() or f"{int(time.time())}-{os.getpid()}"
+    os.environ.setdefault("AURA_RUNTIME_ID", runtime_id)
+    path = DEFAULT_REAPER_MANIFEST_DIR / f"manifest-{runtime_id}.json"
+    os.environ.setdefault(REAPER_MANIFEST_ENV, str(path))
+    return path
 
 
 REAPER_MANIFEST = resolve_reaper_manifest_path()
@@ -59,7 +64,13 @@ class ReaperManifest:
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path is not None else resolve_reaper_manifest_path()
-        self._data: dict[str, Any] = {"shm_names": [], "child_pids": [], "pipe_fds": []}
+        self._data: dict[str, Any] = {
+            "schema": "aura.reaper_manifest.v2",
+            "shm_names": [],
+            "child_pids": [],
+            "child_pid_records": [],
+            "pipe_fds": [],
+        }
         self._load()
 
     def register_shm(self, name: str):
@@ -68,8 +79,14 @@ class ReaperManifest:
         self._save()
 
     def register_pid(self, pid: int):
-        if pid not in self._data["child_pids"]:
-            self._data["child_pids"].append(pid)
+        record = self._pid_record(pid)
+        records = [
+            existing
+            for existing in self._data.get("child_pid_records", [])
+            if int(existing.get("pid", -1)) != int(pid)
+        ]
+        records.append(record)
+        self._data["child_pid_records"] = records
         self._save()
 
     def deregister_shm(self, name: str):
@@ -78,13 +95,42 @@ class ReaperManifest:
 
     def deregister_pid(self, pid: int):
         self._data["child_pids"] = [p for p in self._data["child_pids"] if p != pid]
+        self._data["child_pid_records"] = [
+            p
+            for p in self._data.get("child_pid_records", [])
+            if int(p.get("pid", -1)) != int(pid)
+        ]
         self._save()
+
+    @staticmethod
+    def _pid_record(pid: int) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "pid": int(pid),
+            "registered_at": time.time(),
+            "registered_by": os.getpid(),
+        }
+        try:
+            import psutil
+
+            proc = psutil.Process(int(pid))
+            record.update(
+                {
+                    "create_time": float(proc.create_time()),
+                    "ppid": int(proc.ppid()),
+                    "cmdline": proc.cmdline(),
+                    "cwd": proc.cwd(),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive identity metadata path
+            record["identity_error"] = f"{type(exc).__name__}: {exc}"
+        return record
 
     def _save(self):
         try:
             # Atomic write to prevent corruption (Windows compatible)
             import tempfile
-            fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(self.path))
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(dir=str(self.path.parent))
             try:
                 with os.fdopen(fd, 'w') as f:
                     json.dump(self._data, f)
@@ -106,7 +152,8 @@ class ReaperManifest:
     def _load(self):
         try:
             if self.path.exists():
-                self._data = json.loads(self.path.read_text())
+                raw = json.loads(self.path.read_text())
+                self._data = self._normalize(raw)
         except (json.JSONDecodeError, TypeError, ValueError) as _e:
             _record_reaper_degradation(
                 _e,
@@ -117,6 +164,37 @@ class ReaperManifest:
             )
             # If corrupt or missing, start fresh
             logger.debug('Ignored Exception in reaper.py: %s', _e)
+
+    @staticmethod
+    def _normalize(raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {
+                "schema": "aura.reaper_manifest.v2",
+                "shm_names": [],
+                "child_pids": [],
+                "child_pid_records": [],
+                "pipe_fds": [],
+            }
+        legacy_pids: list[int] = []
+        records: list[dict[str, Any]] = []
+        for item in raw.get("child_pid_records", []):
+            if isinstance(item, dict) and "pid" in item:
+                records.append(dict(item))
+        for item in raw.get("child_pids", []):
+            if isinstance(item, dict) and "pid" in item:
+                records.append(dict(item))
+            else:
+                try:
+                    legacy_pids.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+        return {
+            "schema": "aura.reaper_manifest.v2",
+            "shm_names": list(dict.fromkeys(str(v) for v in raw.get("shm_names", []) if v)),
+            "child_pids": list(dict.fromkeys(legacy_pids)),
+            "child_pid_records": records,
+            "pipe_fds": list(raw.get("pipe_fds", []) or []),
+        }
 
 def reaper_loop(kernel_pid: int, manifest_path: Path):
     """
@@ -147,7 +225,7 @@ def reaper_loop(kernel_pid: int, manifest_path: Path):
         except ProcessLookupError:
             logger.warning("[REAPER] Kernel PID %d is GONE. Initiating cleanup.", kernel_pid)
             is_kernel_alive = False
-            _execute_cleanup(manifest)
+            _execute_cleanup(manifest, kernel_pid=kernel_pid)
             break
         except PermissionError as _e:
             logger.debug('Ignored PermissionError in reaper.py: %s', _e)
@@ -164,12 +242,68 @@ def reaper_loop(kernel_pid: int, manifest_path: Path):
         if is_kernel_alive:
             time.sleep(POLL_INTERVAL)
 
-def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
+def _pid_cleanup_authorized(
+    entry: Any,
+    *,
+    kernel_pid: int | None = None,
+) -> tuple[bool, int | None, str]:
+    """Return whether a manifest PID entry is safe to signal.
+
+    Bare legacy PIDs are not enough evidence. macOS and Linux reuse PIDs, and a
+    static manifest can outlive the runtime that wrote it. Signaling a reused
+    PID can terminate a healthy live Aura process, so cleanup requires stored
+    process identity metadata from register_pid().
+    """
+    if isinstance(entry, dict):
+        try:
+            pid = int(entry.get("pid"))
+        except (TypeError, ValueError):
+            return False, None, "invalid_pid_record"
+        expected_create_time = entry.get("create_time")
+    else:
+        try:
+            pid = int(entry)
+        except (TypeError, ValueError):
+            return False, None, "invalid_legacy_pid"
+        expected_create_time = None
+
+    if not expected_create_time:
+        if os.environ.get("AURA_REAPER_ALLOW_LEGACY_PID_CLEANUP") == "1":
+            return True, pid, "legacy_cleanup_explicitly_allowed"
+        return False, pid, "legacy_pid_without_identity"
+
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        actual_create_time = float(proc.create_time())
+        if abs(actual_create_time - float(expected_create_time)) > 0.05:
+            return False, pid, "pid_reused_or_stale"
+        expected_cwd = str(entry.get("cwd") or "")
+        if expected_cwd:
+            try:
+                if proc.cwd() != expected_cwd:
+                    return False, pid, "process_identity_cwd_mismatch"
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                raise
+        if kernel_pid is not None and pid == int(kernel_pid):
+            return False, pid, "refusing_to_signal_kernel_pid"
+        return True, pid, "identity_verified"
+    except ProcessLookupError:
+        return False, pid, "missing_pid"
+    except Exception as exc:
+        if type(exc).__name__ in {"NoSuchProcess", "ZombieProcess"}:
+            return False, pid, "missing_pid"
+        return False, pid, f"identity_check_failed:{type(exc).__name__}"
+
+
+def _execute_cleanup(manifest: ReaperManifest, kernel_pid: int | None = None) -> dict[str, Any]:
     """Execute cleanup in order: children first, then shared memory."""
     summary: dict[str, Any] = {
         "terminated_pids": [],
         "missing_pids": [],
         "skipped_pids": [],
+        "skipped_pid_details": [],
         "failed_pids": [],
         "unlinked_shm": [],
         "missing_shm": [],
@@ -178,8 +312,30 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
     }
 
     # 1. Terminate orphaned child processes
-    child_pids: list[int] = manifest._data.get("child_pids", [])
-    for pid in list(child_pids):
+    child_entries: list[Any] = [
+        *list(manifest._data.get("child_pid_records", []) or []),
+        *list(manifest._data.get("child_pids", []) or []),
+    ]
+    for entry in list(child_entries):
+        authorized, pid, identity_reason = _pid_cleanup_authorized(entry, kernel_pid=kernel_pid)
+        if pid is None:
+            continue
+        if not authorized:
+            if identity_reason == "missing_pid":
+                summary["missing_pids"].append(pid)
+            else:
+                summary["skipped_pids"].append(pid)
+                summary["skipped_pid_details"].append(
+                    {"pid": pid, "reason": identity_reason}
+                )
+                logger.warning(
+                    "[REAPER] Skipping PID %d cleanup: %s",
+                    pid,
+                    identity_reason,
+                )
+            manifest.deregister_pid(pid)
+            continue
+
         cleaned_pid = False
         try:
             logger.info("[REAPER] Cleaning up PID %d", pid)

@@ -387,6 +387,19 @@ def find_existing_aura_runtimes() -> list[dict]:
     return instances
 
 
+def _is_aura_checkout_cwd(path: Path) -> bool:
+    """Return true for the live checkout and Aura proof temp checkouts."""
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    if resolved == PROJECT_ROOT.resolve():
+        return True
+    return resolved.name == "repo" and any(
+        str(part).startswith("aura-live-") for part in resolved.parts
+    )
+
+
 def find_existing_proof_runners() -> list[dict]:
     """Return stale DNU proof-runner processes from this checkout."""
     if sys.platform not in ("darwin", "linux"):
@@ -422,7 +435,7 @@ def find_existing_proof_runners() -> list[dict]:
             continue
         if "run_dnu_agi_proof_battery.py" not in command:
             continue
-        if cwd != PROJECT_ROOT.resolve():
+        if not _is_aura_checkout_cwd(cwd):
             continue
         instances.append({"pid": pid, "user": user, "command": command})
     return instances
@@ -523,6 +536,7 @@ def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[
         return []
 
     candidates = []
+    orphan_parent_pids: set[int] = set()
     for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
         try:
             pid = int(proc.info.get("pid") or 0)
@@ -542,7 +556,7 @@ def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[
             continue
         if pid == os.getpid() or ppid != 1:
             continue
-        if cwd != PROJECT_ROOT.resolve():
+        if not _is_aura_checkout_cwd(cwd):
             continue
         if (
             "multiprocessing.spawn" not in command
@@ -550,17 +564,58 @@ def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[
             and "multiprocessing.semaphore_tracker" not in command
         ):
             continue
-        candidates.append({"pid": pid, "command": command[:240]})
+        orphan_parent_pids.add(pid)
+        candidates.append({"pid": pid, "command": command[:240], "role": "orphan_parent"})
+
+    processes_by_pid: dict[int, Any] = {}
+    for pid in sorted(orphan_parent_pids):
+        try:
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                processes_by_pid[int(child.pid)] = child
+                try:
+                    child_cmd = " ".join(str(part) for part in (child.cmdline() or []))
+                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError):
+                    child_cmd = ""
+                candidates.append(
+                    {"pid": int(child.pid), "command": child_cmd[:240], "role": "orphan_descendant"}
+                )
+            processes_by_pid[pid] = parent
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError):
+            continue
+
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        try:
+            pid = int(proc.info.get("pid") or 0)
+            ppid = int(proc.info.get("ppid") or 0)
+            cmdline = proc.info.get("cmdline") or []
+            command = " ".join(str(part) for part in cmdline)
+            cwd = Path(proc.cwd()).resolve()
+        except (
+            psutil.AccessDenied,
+            psutil.NoSuchProcess,
+            psutil.ZombieProcess,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
+            continue
+        if pid == os.getpid() or ppid != 1 or not _is_aura_checkout_cwd(cwd):
+            continue
+        if not cmdline or Path(str(cmdline[0])).name != "caffeinate":
+            continue
+        if pid not in processes_by_pid:
+            processes_by_pid[pid] = proc
+            candidates.append({"pid": pid, "command": command[:240], "role": "orphan_keep_awake"})
 
     if not candidates:
         return []
 
-    processes = []
-    for item in candidates:
+    processes = list(processes_by_pid.values())
+    for proc in processes:
         try:
-            proc = psutil.Process(int(item["pid"]))
             proc.terminate()
-            processes.append(proc)
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
     _, alive = psutil.wait_procs(processes, timeout=timeout_s)
@@ -2330,6 +2385,13 @@ async def main():
             "  [CLEANUP] Reaped "
             f"{len(reaped_orphans)} orphaned Aura multiprocessing helper(s) from prior interrupted runs."
         )
+    if not args.allow_coexisting_runtime:
+        from aura_main import bootstrap_lock
+
+        bootstrap_lock(skip_lock=False)
+        exclusive_report["canonical_runtime_lock_claimed_by_runner_pid"] = os.getpid()
+        exclusive_report_path.write_text(json.dumps(exclusive_report, indent=2), encoding="utf-8")
+        print("  [OK] Canonical runtime lock claimed for proof runner.")
     sys_info["exclusive_runtime_preflight"] = exclusive_report
 
     # -----------------------------------------------------------------------
@@ -2809,6 +2871,17 @@ async def main():
             print("  [FATAL] Proof runtime health failed after baseline comparison:")
             for blocker in baseline_health_blockers:
                 print(f"    - {blocker}")
+            write_run_status(
+                run_dir,
+                status="failed",
+                run_id=run_id,
+                commit_sha=commit_sha,
+                phase="baselines",
+                tasks_completed=len(results),
+                total_tasks=len(all_tasks),
+                error="; ".join(baseline_health_blockers),
+                lifecycle_events=lifecycle_events,
+            )
             await shutdown_proof_runtime(orch)
             return 1
 
@@ -2895,6 +2968,17 @@ async def main():
             print("  [FATAL] Proof runtime health failed after ablation recovery:")
             for blocker in ablation_health_blockers:
                 print(f"    - {blocker}")
+            write_run_status(
+                run_dir,
+                status="failed",
+                run_id=run_id,
+                commit_sha=commit_sha,
+                phase="ablations",
+                tasks_completed=len(results),
+                total_tasks=len(all_tasks),
+                error="; ".join(ablation_health_blockers),
+                lifecycle_events=lifecycle_events,
+            )
             await shutdown_proof_runtime(orch)
             return 1
 

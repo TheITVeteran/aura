@@ -8,6 +8,7 @@ to prevent rapid crash loops from consuming resources.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -40,6 +41,7 @@ _SUPERVISOR_ERRORS = (
 )
 _CRASH_WINDOW_SECONDS = 60.0
 _MAX_RESTART_BACKOFF_SECONDS = 300.0
+_GRACE_FLAG_TTL_SECONDS = 300.0
 
 
 def _record_supervisor_degradation(
@@ -182,7 +184,7 @@ class SovereignSupervisor:
             return
 
         grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
-        graceful = grace_file.exists() or return_code == 0
+        graceful = return_code == 0 or self._grace_flag_matches_child(grace_file)
         if grace_file.exists():
             grace_file.unlink(missing_ok=True)
 
@@ -205,6 +207,25 @@ class SovereignSupervisor:
         logger.info("Restarting after %.1fs crash backoff (crash #%d in current window)", backoff_s, self.crash_count)
         await asyncio.sleep(backoff_s)
         return
+
+    def _grace_flag_matches_child(self, grace_file: Path) -> bool:
+        """Accept a graceful-exit flag only from the child that just exited."""
+        if not grace_file.exists() or self.process is None:
+            return False
+        try:
+            payload = json.loads(grace_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        try:
+            flag_pid = int(payload.get("pid"))
+            created_at = float(payload.get("created_at_unix"))
+        except (TypeError, ValueError):
+            return False
+        if flag_pid != int(self.process.pid):
+            return False
+        return 0.0 <= time.time() - created_at <= _GRACE_FLAG_TTL_SECONDS
 
     def _kill_process_tree(self, pid):
         """Kills the process and its children using psutil."""

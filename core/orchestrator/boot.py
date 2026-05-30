@@ -503,7 +503,20 @@ class OrchestratorBootMixin(
                 register_core_pathways(mycelium)
                 mycelium.establish_unification_hyphae()
 
-                if not lightweight_test_boot:
+                proof_boot_active = False
+                try:
+                    from core.runtime.proof_policy import proof_run_active
+
+                    proof_boot_active = proof_run_active(origin="orchestrator_boot")
+                except (ImportError, AttributeError, RuntimeError):
+                    proof_boot_active = os.getenv("AURA_PROOF_RUN", "").strip().lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    }
+
+                if not lightweight_test_boot and not proof_boot_active:
                     _spawn_boot_task(
                         mycelium.pulse_check(),
                         "orchestrator.mycelium.pulse_check",
@@ -526,7 +539,7 @@ class OrchestratorBootMixin(
                         )
                         logger.error("🍄 [MYCELIUM] Mapping failed: %s", e)
 
-                if not lightweight_test_boot:
+                if not lightweight_test_boot and not proof_boot_active:
                     _spawn_boot_task(
                         _background_mapping(),
                         "orchestrator.mycelium.background_mapping",

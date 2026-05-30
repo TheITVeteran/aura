@@ -1,7 +1,10 @@
 from core.runtime.errors import record_degradation
 import fcntl
+import json
 import logging
 import os
+import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -9,6 +12,7 @@ from typing import Any, TypeVar
 logger = logging.getLogger("Aura.Utils.Singleton")
 
 _LOCK_FD: int | None = None
+_LOCK_NAME: str | None = None
 T = TypeVar("T")
 
 
@@ -29,6 +33,87 @@ def singleton(cls: type[T]) -> Callable[..., T]:
     return get_instance
 
 
+def instance_lock_path(lock_name: str = "singleton") -> Path:
+    return Path.home() / ".aura" / "locks" / f"{lock_name}.lock"
+
+
+def instance_lock_metadata_path(lock_name: str = "singleton") -> Path:
+    return Path.home() / ".aura" / "locks" / f"{lock_name}.lock.meta.json"
+
+
+def parse_instance_lock_pid(raw: str) -> int | None:
+    """Parse both legacy PID-only locks and future structured lock payloads."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    first_line = text.splitlines()[0].strip()
+    try:
+        return int(first_line)
+    except ValueError:
+        pass
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    try:
+        return int(payload.get("pid"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def read_instance_lock_pid(lock_name: str = "singleton") -> int | None:
+    try:
+        return parse_instance_lock_pid(instance_lock_path(lock_name).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
+def read_instance_lock_metadata(lock_name: str = "singleton") -> dict[str, Any]:
+    try:
+        payload = json.loads(instance_lock_metadata_path(lock_name).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _current_process_metadata(lock_name: str, pid: int) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "schema": "aura.instance_lock.v1",
+        "lock_name": lock_name,
+        "pid": int(pid),
+        "written_at": time.time(),
+        "cwd": os.getcwd(),
+        "cmdline": list(sys.argv),
+    }
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        metadata.update(
+            {
+                "create_time": float(proc.create_time()),
+                "ppid": int(proc.ppid()),
+                "username": str(proc.username()),
+            }
+        )
+    except Exception as exc:  # pragma: no cover - optional diagnostic metadata
+        metadata["identity_error"] = f"{type(exc).__name__}: {exc}"
+    return metadata
+
+
+def _write_instance_lock_metadata(lock_name: str, pid: int) -> None:
+    path = instance_lock_metadata_path(lock_name)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(_current_process_metadata(lock_name, pid), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        record_degradation("singleton", exc)
+        logger.warning("Failed to write instance lock metadata for '%s': %s", lock_name, exc)
+
+
 def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False) -> None:
     """
     Ensure only one instance of a specific Aura component/process is running.
@@ -41,11 +126,14 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
     if skip_lock:
         return
 
-    global _LOCK_FD
+    global _LOCK_FD, _LOCK_NAME
+    if _LOCK_FD is not None and _LOCK_NAME == lock_name:
+        return
+
     # Standardize lock path
-    lock_dir = Path.home() / ".aura" / "locks"
+    lock_file = instance_lock_path(lock_name)
+    lock_dir = lock_file.parent
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_file = lock_dir / f"{lock_name}.lock"
     
     try:
         # Open with O_RDWR to allow writing the PID.
@@ -63,8 +151,10 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
             # Lock is held by another process. Read the PID.
             try:
                 os.lseek(_LOCK_FD, 0, os.SEEK_SET)
-                pid_bytes = os.read(_LOCK_FD, 16)
-                pid = int(pid_bytes.decode().strip())
+                pid_bytes = os.read(_LOCK_FD, 4096)
+                pid = parse_instance_lock_pid(pid_bytes.decode()) or 0
+                if pid <= 0:
+                    raise ValueError("invalid lock pid")
                 
                 # Check if the process is actually running
                 try:
@@ -123,8 +213,10 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
         
         # Lock acquired. Write current PID.
         os.ftruncate(_LOCK_FD, 0)
-        os.write(_LOCK_FD, str(os.getpid()).encode())
+        os.write(_LOCK_FD, f"{os.getpid()}\n".encode())
         os.fsync(_LOCK_FD)
+        _LOCK_NAME = lock_name
+        _write_instance_lock_metadata(lock_name, os.getpid())
         
         logger.info("🔒 Instance lock acquired: %s (PID: %d)", lock_name, os.getpid())
         
@@ -135,12 +227,13 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
 
 def release_instance_lock() -> None:
     """Explicitly release the lock (usually handled by process exit)."""
-    global _LOCK_FD
+    global _LOCK_FD, _LOCK_NAME
     if _LOCK_FD is not None:
         try:
             fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
             os.close(_LOCK_FD)
             _LOCK_FD = None
+            _LOCK_NAME = None
         except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             record_degradation('singleton', _e)
             logger.debug('Ignored Exception in singleton.py: %s', _e)

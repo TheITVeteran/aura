@@ -22,9 +22,11 @@ from core.utils.task_tracker import get_task_tracker
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
@@ -205,7 +207,18 @@ def request_shutdown(reason: str = "") -> None:
             from pathlib import Path
             grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
             grace_file.parent.mkdir(parents=True, exist_ok=True)
-            grace_file.touch(exist_ok=True)
+            grace_file.write_text(
+                json.dumps(
+                    {
+                        "schema": "aura.shutdown_grace.v1",
+                        "pid": os.getpid(),
+                        "reason": reason,
+                        "created_at_unix": time.time(),
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
         except (ImportError, AttributeError, RuntimeError, OSError) as _exc:
             logger.debug("Suppressed %s in core.runtime.shutdown_coordinator: %s", type(_exc).__name__, _exc)
     _shutdown_requested.set()

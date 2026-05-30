@@ -122,6 +122,10 @@ class AuraEventBus:
         self._redis_loop: Optional[asyncio.AbstractEventLoop] = None
         self._redis_url = config.redis.url if hasattr(config, "redis") else "redis://localhost:6379/0"
         self._use_redis = (_REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False))
+        self._redis_required = bool(getattr(config.redis, "required_for_events", False))
+        self._remote_degraded = False
+        self._remote_error_count = 0
+        self._remote_last_error: Optional[BaseException] = None
 
         if not _REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False):
             logger.warning("redis package not installed — EventBus running in local-only mode.")
@@ -143,6 +147,8 @@ class AuraEventBus:
             "bus_id": self._bus_id,
             "redis_connected": self._redis is not None,
             "use_redis": self._use_redis,
+            "redis_required": self._redis_required,
+            "remote_degraded": self._remote_degraded,
             "degraded": self.degraded, # Patch 13
             "healthy": alive,
             "subscribers": {topic: len(subs) for topic, subs in self._subscribers.items()},
@@ -150,7 +156,11 @@ class AuraEventBus:
                 "delivered": self._delivered_count,
                 "dropped": self._dropped_count,
                 "errors": self._error_count,
-                "last_error": str(self._last_error) if self._last_error else None
+                "remote_errors": self._remote_error_count,
+                "last_error": str(self._last_error) if self._last_error else None,
+                "remote_last_error": (
+                    str(self._remote_last_error) if self._remote_last_error else None
+                ),
             },
             "alive": alive,
         }
@@ -182,8 +192,39 @@ class AuraEventBus:
         )
         logger.warning(message, *args, exc)
 
+    def _record_remote_error(self, exc: BaseException, message: str, *args: Any) -> None:
+        """Record Redis transport failure without poisoning local bus health.
+
+        Redis is useful for cross-process fanout, but Aura's canonical in-process
+        event bus remains operational when local delivery succeeds. Installations
+        that need Redis as a hard dependency can set
+        AURA_REDIS_REQUIRED_FOR_EVENTS=1, which preserves fail-closed behavior.
+        """
+        with self._stats_lock:
+            self._remote_error_count += 1
+            self._remote_last_error = exc
+            self._last_error = exc
+        self._remote_degraded = True
+        if self._redis_required:
+            self._record_error(exc, message, *args, degraded=True)
+            return
+        try:
+            action = message % ((*args, exc) if args else (exc,))
+        except (TypeError, ValueError):
+            action = message
+        record_degradation(
+            "event_bus.remote_redis",
+            exc,
+            severity="warning",
+            action=action,
+            enforce_failure_policy=False,
+        )
+        logger.warning(message, *args, exc)
+
     def is_alive(self) -> bool:
         """Return true only when local event delivery is usable and not degraded."""
+        if self._redis_required and (self._remote_degraded or self._use_redis and self._redis is None):
+            return False
         return bool(
             self._loop is not None
             and self._loop.is_running()
@@ -250,28 +291,25 @@ class AuraEventBus:
                 try:
                     old_task.cancel()
                 except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                    self._record_error(
+                    self._record_remote_error(
                         exc,
                         "AuraEventBus: failed to cancel stale Redis listener task: %s",
-                        degraded=True,
                     )
             if old_redis:
                 async def safe_close(r):
                     try:
                         await r.aclose()
                     except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                        self._record_error(
+                        self._record_remote_error(
                             exc,
                             "AuraEventBus: stale Redis close failed: %s",
-                            degraded=True,
                         )
                 try:
                     current_loop.create_task(safe_close(old_redis))
                 except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                    self._record_error(
+                    self._record_remote_error(
                         exc,
                         "AuraEventBus: error scheduling old Redis close: %s",
-                        degraded=True,
                     )
 
     async def _setup_redis(self):
@@ -293,19 +331,17 @@ class AuraEventBus:
             )
             logger.info("AuraEventBus: Redis Pub/Sub connection established.")
         except _EVENT_BUS_RECOVERABLE_ERRORS as e:
-            self._record_error(
+            self._record_remote_error(
                 e,
                 "AuraEventBus: failed to connect to Redis; falling back to local-only mode: %s",
-                degraded=True,
             )
             if self._redis:
                 try:
                     await self._redis.aclose()
                 except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
-                    self._record_error(
+                    self._record_remote_error(
                         _exc,
                         "AuraEventBus: Redis cleanup after setup failure failed: %s",
-                        degraded=True,
                     )
                 self._redis = None
             self._use_redis = False
@@ -337,10 +373,9 @@ class AuraEventBus:
         except asyncio.CancelledError as _e:
             logger.debug('Ignored asyncio.CancelledError in event_bus.py: %s', _e)
         except _EVENT_BUS_RECOVERABLE_ERRORS as e:
-            self._record_error(
+            self._record_remote_error(
                 e,
                 "AuraEventBus: Redis listener unavailable; falling back to local-only mode: %s",
-                degraded=True,
             )
             self._use_redis = False
         finally:
@@ -348,27 +383,24 @@ class AuraEventBus:
             try:
                 await pubsub.punsubscribe("aura/events/*")
             except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
-                self._record_error(
+                self._record_remote_error(
                     _exc,
                     "AuraEventBus: Redis listener unsubscribe failed: %s",
-                    degraded=True,
                 )
             try:
                 await pubsub.aclose()
             except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
-                self._record_error(
+                self._record_remote_error(
                     _exc,
                     "AuraEventBus: Redis listener pubsub close failed: %s",
-                    degraded=True,
                 )
             if not self._use_redis and self._redis:
                 try:
                     await self._redis.aclose()
                 except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
-                    self._record_error(
+                    self._record_remote_error(
                         _exc,
                         "AuraEventBus: Redis listener client close failed: %s",
-                        degraded=True,
                     )
                 self._redis = None
 
@@ -503,17 +535,15 @@ class AuraEventBus:
                     # [STABILITY] Wrap Redis publish in a 2.0s timeout to prevent external stalls.
                     await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
                 except asyncio.TimeoutError as e:
-                    self._record_error(
+                    self._record_remote_error(
                         e,
                         "AuraEventBus: Redis publish stalled; switching to local-only mode: %s",
-                        degraded=True,
                     )
                     self._use_redis = False
                 except _EVENT_BUS_RECOVERABLE_ERRORS as e:
-                    self._record_error(
+                    self._record_remote_error(
                         e,
                         "AuraEventBus: Redis publish failed; switching to local-only mode: %s",
-                        degraded=True,
                     )
                     self._use_redis = False
 

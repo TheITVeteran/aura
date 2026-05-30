@@ -30,12 +30,19 @@ import httpx
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
-from core.utils.singleton import acquire_instance_lock, release_instance_lock
+from core.utils.singleton import (
+    acquire_instance_lock,
+    instance_lock_metadata_path,
+    parse_instance_lock_pid,
+    read_instance_lock_metadata,
+    release_instance_lock,
+)
 from core.utils.task_tracker import get_task_tracker
 
 # QUAL-07: Define logger early so venv injection logging works.
 logger = logging.getLogger("Aura.Main")
 
+_RUNTIME_LOCK_CLAIMED = False
 _AURA_MAIN_DEGRADATION_KEY = "aura_main"
 _AURA_MAIN_BOUNDARY_ERRORS = (
     AttributeError,
@@ -141,6 +148,11 @@ def _activate_proof_runtime_policy(profile: str | None, ready_label: str | None 
         return
     os.environ.setdefault("AURA_PROOF_RUN", "1")
     os.environ.setdefault("AURA_PROOF_MODEL_TIER", "primary")
+    # Proof/evaluation boots must still use the canonical Aura runtime, but
+    # unsolicited background autonomy cannot compete with sealed evaluator turns.
+    os.environ.setdefault("AURA_ENABLE_PROACTIVE_SYSTEMS", "0")
+    os.environ.setdefault("AURA_ENABLE_RESEARCH_CYCLE", "0")
+    os.environ.setdefault("AURA_ENABLE_SENSORIMOTOR_GROUNDING", "0")
 
 
 def _record_main_degradation(exc: BaseException, message: str, *args: Any) -> None:
@@ -429,17 +441,27 @@ def _launcher_python_executable() -> str:
 
 
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
-DEFAULT_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
+LEGACY_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
+REAPER_MANIFEST_DIR = Path.home() / ".aura" / "run" / "reaper"
+
+
+def _new_reaper_manifest_path() -> Path:
+    runtime_id = os.environ.get("AURA_RUNTIME_ID", "").strip()
+    if not runtime_id:
+        runtime_id = f"{int(time.time())}-{os.getpid()}"
+        os.environ["AURA_RUNTIME_ID"] = runtime_id
+    return REAPER_MANIFEST_DIR / f"manifest-{runtime_id}.json"
 
 
 def _ensure_reaper_manifest_env() -> Path:
-    """Force every launcher/process surface to share one manifest path."""
+    """Force every launcher/process surface for this boot to share one manifest path."""
     raw_path = os.environ.get(REAPER_MANIFEST_ENV, "").strip()
-    if raw_path:
+    if raw_path and Path(raw_path).expanduser() != LEGACY_REAPER_MANIFEST:
         manifest_path = Path(raw_path).expanduser()
     else:
-        manifest_path = DEFAULT_REAPER_MANIFEST
+        manifest_path = _new_reaper_manifest_path()
         os.environ[REAPER_MANIFEST_ENV] = str(manifest_path)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     return manifest_path
 
 
@@ -810,6 +832,8 @@ async def boot_aura_runtime(
     their evidence reflects the same live Aura boot contract.
     """
     resolved_ready_label = ready_label or profile.title()
+    if not _RUNTIME_LOCK_CLAIMED:
+        bootstrap_lock(skip_lock=False)
     _activate_proof_runtime_policy(profile, resolved_ready_label)
     # Validate and log the runtime mode (production/research/dev/simulation/safe)
     try:
@@ -1628,9 +1652,86 @@ def _reap_orphaned_aura_processes() -> int:
 
 def bootstrap_lock(skip_lock: bool = False):
     """Bridge to the shared singleton utility."""
+    global _RUNTIME_LOCK_CLAIMED
+    if _RUNTIME_LOCK_CLAIMED and not skip_lock:
+        return
     # Clean up orphaned stacks from prior hard-crashes before grabbing the lock.
     _reap_orphaned_aura_processes()
     acquire_instance_lock(lock_name="orchestrator", skip_lock=skip_lock)
+    if not skip_lock:
+        _RUNTIME_LOCK_CLAIMED = True
+
+
+def _unlink_orchestrator_lock(lock_file: Path) -> None:
+    lock_file.unlink(missing_ok=True)
+    instance_lock_metadata_path("orchestrator").unlink(missing_ok=True)
+
+
+def _same_path(left: str | Path, right: str | Path) -> bool:
+    try:
+        return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+    except OSError:
+        return str(left) == str(right)
+
+
+def _lock_pid_matches_aura_runtime(pid: int, metadata: dict[str, Any]) -> tuple[bool, str]:
+    """Verify a lock PID is the runtime that wrote it before sending signals."""
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        cmdline = [str(part) for part in (proc.cmdline() or [])]
+        command = " ".join(cmdline).lower()
+        cwd = proc.cwd()
+        actual_create_time = float(proc.create_time())
+    except ImportError:
+        return True, "psutil_unavailable_legacy_signal_check"
+    except psutil.NoSuchProcess:
+        return False, "pid_not_running"
+    except (psutil.AccessDenied, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return False, f"pid_identity_unavailable:{type(exc).__name__}"
+
+    expected_pid = metadata.get("pid") if metadata else None
+    if expected_pid is not None:
+        try:
+            if int(expected_pid) != int(pid):
+                return False, "metadata_pid_mismatch"
+        except (TypeError, ValueError):
+            return False, "metadata_pid_invalid"
+
+    expected_create_time = metadata.get("create_time") if metadata else None
+    if expected_create_time is not None:
+        try:
+            if abs(actual_create_time - float(expected_create_time)) > 0.05:
+                return False, "pid_reused_or_stale"
+        except (TypeError, ValueError):
+            return False, "metadata_create_time_invalid"
+
+    expected_cwd = metadata.get("cwd") if metadata else ""
+    if expected_cwd and not _same_path(str(expected_cwd), cwd):
+        return False, "metadata_cwd_mismatch"
+
+    project_match = _same_path(cwd, PROJECT_ROOT)
+    explicit_aura_command = any(
+        marker in command
+        for marker in (
+            "aura_main.py",
+            "run_dnu_agi_proof_battery.py",
+            "run_external_live_validation.py",
+            "run_agency_emergence_battery.py",
+            "run_continual_learning_battery.py",
+            "run_novel_environment_battery.py",
+            "run_unified_aura_scenario.py",
+            "run_longevity_soak.py",
+            "certify_boot.py",
+        )
+    )
+    if expected_create_time is not None and project_match:
+        return True, "metadata_identity_verified"
+    if project_match and explicit_aura_command:
+        return True, "legacy_identity_verified"
+    return False, "pid_not_owned_by_aura_runtime"
+
 
 def stop_aura():
     """Reads PID from lock file and sends SIGTERM. Also unloads launchd agent."""
@@ -1655,37 +1756,28 @@ def stop_aura():
 
     try:
         with open(lock_file) as f:
-            pid_str = f.read().strip()
-            if not pid_str:
+            lock_text = f.read()
+            pid = parse_instance_lock_pid(lock_text)
+            if pid is None:
                 print("Lock file found but no PID recorded.")
                 return
-            pid = int(pid_str)
+        metadata = read_instance_lock_metadata("orchestrator")
         
-        # Perplexity Audit Fix: Verify the PID actually belongs to Aura
-        try:
-            import psutil
-            proc = psutil.Process(pid)
-            cmdline = " ".join(proc.cmdline()).lower()
-            if "aura" not in cmdline and "python" not in cmdline:
-                print(f"⚠️  Lock file PID {pid} does not appear to be an Aura process. Cleaning stale lock.")
-                lock_file.unlink(missing_ok=True)
-                return
-        except ImportError:
-            # If psutil is missing, we fall back to signal 0 check below
-            logger.debug("psutil unavailable during stop PID verification; falling back to signal check.")
-        except psutil.NoSuchProcess:
-            logger.debug("Lock file process %s no longer exists during verification.", pid)
-        except _AURA_MAIN_BOUNDARY_ERRORS as e:
-            record_degradation('aura_main', e)
-            logger.debug("PID verification error: %s", e)
+        verified, verify_reason = _lock_pid_matches_aura_runtime(pid, metadata)
+        if not verified:
+            print(
+                f"⚠️  Lock file PID {pid} is not a verified Aura runtime "
+                f"({verify_reason}). Cleaning stale lock."
+            )
+            _unlink_orchestrator_lock(lock_file)
+            return
 
         print(f"Stopping Aura (PID: {pid})...")
         try:
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             print("Process already dead or inaccessible.")
-            if lock_file.exists():
-                lock_file.unlink()
+            _unlink_orchestrator_lock(lock_file)
             return
 
         # Wait for cleanup
@@ -1705,7 +1797,7 @@ def stop_aura():
         # Force remove lock if still there
         if lock_file.exists():
             try:
-                lock_file.unlink()
+                _unlink_orchestrator_lock(lock_file)
             except OSError as exc:
                 record_degradation("aura_main", exc)
                 print(f"Failed to remove Aura lock file: {exc}")

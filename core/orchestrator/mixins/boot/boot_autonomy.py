@@ -36,6 +36,15 @@ def _foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def _proof_runtime_active() -> bool:
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        return bool(proof_run_active(origin="boot_autonomy"))
+    except _BOOT_AUTONOMY_BOUNDARY_ERRORS:
+        return _env_flag("AURA_PROOF_RUN", False)
+
+
 def _safe_priority(value: Any, default: float = 0.6) -> float:
     try:
         return max(0.6, float(value))
@@ -819,8 +828,12 @@ class BootAutonomyMixin:
     async def _init_proactive_systems(self):
         """Initialize curiosity, proactive communication, and belief sync with granular error boundaries."""
         logger.info("🛠️ _init_proactive_systems starting")
-        if _foreground_only_runtime() or not _env_flag("AURA_ENABLE_PROACTIVE_SYSTEMS", True):
-            logger.info("Proactive systems disabled for foreground-only boot.")
+        if (
+            _foreground_only_runtime()
+            or _proof_runtime_active()
+            or not _env_flag("AURA_ENABLE_PROACTIVE_SYSTEMS", True)
+        ):
+            logger.info("Proactive systems disabled for foreground/proof boot.")
             ServiceContainer.register_instance("proactive_comm", None, required=False)
             ServiceContainer.register_instance("sensory_motor_cortex", None, required=False)
             ServiceContainer.register_instance("autonomous_initiative_loop", None, required=False)
@@ -859,8 +872,12 @@ class BootAutonomyMixin:
             logger.error("Failed to apply Presence Patch: %s", e)
 
         # 🔬 Research Cycle Daemon — autonomous knowledge pursuit during idle
-        if _foreground_only_runtime() or not _env_flag("AURA_ENABLE_RESEARCH_CYCLE", True):
-            logger.info("Research Cycle disabled for foreground-only boot.")
+        if (
+            _foreground_only_runtime()
+            or _proof_runtime_active()
+            or not _env_flag("AURA_ENABLE_RESEARCH_CYCLE", True)
+        ):
+            logger.info("Research Cycle disabled for foreground/proof boot.")
             self.research_cycle = None
         else:
             try:
@@ -941,8 +958,12 @@ class BootAutonomyMixin:
 
     async def _init_sensory_motor_integration_subsystem(self, tracker):
         """Initialize Sensory-Motor Integration components."""
-        if _foreground_only_runtime() or not _env_flag("AURA_ENABLE_SENSORIMOTOR_GROUNDING", True):
-            logger.info("Sensory-Motor Integration disabled for foreground-only boot.")
+        if (
+            _foreground_only_runtime()
+            or _proof_runtime_active()
+            or not _env_flag("AURA_ENABLE_SENSORIMOTOR_GROUNDING", True)
+        ):
+            logger.info("Sensory-Motor Integration disabled for foreground/proof boot.")
             ServiceContainer.register_instance("sensory_motor_cortex", None, required=False)
             ServiceContainer.register_instance("autonomous_initiative_loop", None, required=False)
             ServiceContainer.register_instance(

@@ -148,6 +148,8 @@ def test_aura_main_uses_shared_runtime_boot_helper_across_cli_server_and_desktop
 
     assert "async def _boot_runtime_orchestrator(" in main_py
     assert "async def boot_aura_runtime(" in main_py
+    assert "if not _RUNTIME_LOCK_CLAIMED:" in main_py
+    assert "bootstrap_lock(skip_lock=False)" in main_py
     assert main_py.count("create_orchestrator()") == 1
     assert main_py.count("await bootstrap_aura(orchestrator)") == 1
     assert main_py.count("ServiceContainer.lock_registration()") == 1

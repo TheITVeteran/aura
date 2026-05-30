@@ -207,7 +207,7 @@ async def test_websocket_manager_uses_task_spawner_for_disconnect_on_overflow(mo
 
 
 @pytest.mark.asyncio
-async def test_event_bus_redis_publish_failure_marks_degraded():
+async def test_event_bus_optional_redis_publish_failure_keeps_local_bus_healthy():
     from core.event_bus import AuraEventBus
 
     bus = AuraEventBus()
@@ -216,7 +216,27 @@ async def test_event_bus_redis_publish_failure_marks_degraded():
 
     await bus.publish("runtime/test", {"ok": True})
 
+    assert bus.degraded is False
+    assert bus.is_alive() is True
+    assert bus._use_redis is False
+    assert bus.get_status()["remote_degraded"] is True
+    assert bus.get_status()["stats"]["remote_errors"] >= 1
+    assert "redis offline" in str(bus.get_status()["stats"]["remote_last_error"])
+
+
+@pytest.mark.asyncio
+async def test_event_bus_required_redis_publish_failure_marks_degraded():
+    from core.event_bus import AuraEventBus
+
+    bus = AuraEventBus()
+    bus._use_redis = True
+    bus._redis_required = True
+    bus._redis = SimpleNamespace(publish=AsyncMock(side_effect=ConnectionError("redis offline")))
+
+    await bus.publish("runtime/test", {"ok": True})
+
     assert bus.degraded is True
+    assert bus.is_alive() is False
     assert bus._use_redis is False
     assert bus.get_status()["stats"]["errors"] >= 1
     assert "redis offline" in str(bus.get_status()["stats"]["last_error"])
