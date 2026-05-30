@@ -1175,6 +1175,10 @@ async def _run_cognitive_engine_chat_turn(
             timeout=timeout_s,
         )
     except TimeoutError:
+        _force_clear_mlx_foreground_owner(
+            reason="cognitive_engine_chat_timeout",
+            min_age_s=min(90.0, max(45.0, timeout_s * 0.5)),
+        )
         logger.warning(
             "CognitiveEngine desktop chat turn timed out after %.1fs; falling back to kernel lane.",
             timeout_s,
@@ -1191,6 +1195,19 @@ async def _run_cognitive_engine_chat_turn(
     text = str(content if content is not None else thought or "").strip()
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
         return None
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assessment = assess_user_facing_reply(visible, text)
+        if assessment.retryable:
+            logger.warning(
+                "CognitiveEngine desktop chat reply failed reliability gate (%s).",
+                ",".join(assessment.reasons),
+            )
+            return None
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("CognitiveEngine reply reliability gate unavailable: %s", exc)
     return text
 
 
@@ -1641,6 +1658,7 @@ def _mark_conversation_lane_timeout(reason: str = "foreground_timeout") -> dict[
     # Activate recovery cooldown so rapid follow-up messages are fast-rejected
     # instead of piling into the inference pipeline.
     _enter_recovery_cooldown()
+    _force_clear_mlx_foreground_owner(reason=reason, min_age_s=45.0)
 
     try:
         gate = ServiceContainer.get("inference_gate", default=None)
@@ -1657,6 +1675,36 @@ def _mark_conversation_lane_timeout(reason: str = "foreground_timeout") -> dict[
     if not lane.get("foreground_endpoint"):
         lane["foreground_endpoint"] = PRIMARY_ENDPOINT
     return lane
+
+
+def _force_clear_mlx_foreground_owner(
+    *,
+    reason: str,
+    min_age_s: float = 45.0,
+) -> dict[str, Any]:
+    try:
+        from core.brain.llm.mlx_client import force_clear_foreground_owner
+
+        result = force_clear_foreground_owner(
+            reason=reason,
+            min_age_s=min_age_s,
+        )
+        if result.get("cleared"):
+            logger.warning(
+                "Cleared stale MLX foreground owner during chat recovery: %s",
+                result,
+            )
+        return result
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("MLX foreground owner recovery hook unavailable: %s", exc)
+        return {
+            "cleared": False,
+            "reason": reason,
+            "holder": None,
+            "age_s": 0.0,
+            "detail": "unavailable",
+        }
 
 
 def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
@@ -5168,6 +5216,10 @@ async def api_chat(
             held = getattr(_foreground_chat_lock, "held_duration", 0.0)
             if held > 45.0:
                 logger.error(f"🚨 Preempting stuck foreground generation (held {held:.1f}s) to allow new user turn.")
+                _force_clear_mlx_foreground_owner(
+                    reason="chat_lock_preemption",
+                    min_age_s=45.0,
+                )
                 if hasattr(_foreground_chat_lock, "force_release"):
                     _foreground_chat_lock.force_release()
                 try:

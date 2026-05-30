@@ -57,8 +57,8 @@ const state = {
 };
 console.log(`%c AURA %c ${state.version} `, "color:white; background:#8a2be2; padding:2px 5px; border-radius:3px 0 0 3px;", "color:white; background:#1e1535; padding:2px 5px; border-radius:0 3px 3px 0;");
 
-const CHAT_REQUEST_TIMEOUT_READY_MS = 155000;
-const CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 185000;
+const CHAT_REQUEST_TIMEOUT_READY_MS = 335000;
+const CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000;
 const THOUGHT_QUEUE_MAX = 160;
 const THOUGHT_COALESCE_WINDOW_MS = 12000;
 const THOUGHT_COALESCE_LOOKBACK = 18;

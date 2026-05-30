@@ -508,6 +508,34 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ok")
         inner.assert_awaited_once()
 
+    def test_force_clear_foreground_owner_respects_min_age(self):
+        import core.brain.llm.mlx_client as mlx_module
+
+        old_owner = mlx_module._FOREGROUND_OWNER_NAME
+        old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
+        try:
+            mlx_module._FOREGROUND_OWNER_NAME = "chat_api:default"
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 10.0
+            young = mlx_module.force_clear_foreground_owner(
+                reason="unit_test_young_owner",
+                min_age_s=45.0,
+            )
+            self.assertFalse(young["cleared"])
+            self.assertEqual(mlx_module._FOREGROUND_OWNER_NAME, "chat_api:default")
+
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 60.0
+            stale = mlx_module.force_clear_foreground_owner(
+                reason="unit_test_stale_owner",
+                min_age_s=45.0,
+            )
+            self.assertTrue(stale["cleared"])
+            self.assertEqual(stale["holder"], "chat_api:default")
+            self.assertIsNone(mlx_module._FOREGROUND_OWNER_NAME)
+            self.assertEqual(mlx_module._FOREGROUND_OWNER_ACQUIRED_AT, 0.0)
+        finally:
+            mlx_module._FOREGROUND_OWNER_NAME = old_owner
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+
     async def test_foreground_generate_reserves_owner_before_request_lock(self):
         import core.brain.llm.mlx_client as mlx_module
 

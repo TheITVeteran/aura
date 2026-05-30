@@ -274,6 +274,67 @@ def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
         return holder
 
 
+def force_clear_foreground_owner(
+    *,
+    reason: str,
+    min_age_s: float = 45.0,
+    owner_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Clear a leaked foreground owner from a higher-level recovery path.
+
+    Normal foreground ownership deliberately uses conservative stale limits so
+    a healthy 32B cold start is not interrupted.  This hook is only for paths
+    that already proved the live turn is wedged, such as desktop HTTP timeout
+    recovery or chat-lock preemption.
+    """
+    global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+
+    min_age = max(0.0, float(min_age_s))
+    with _FOREGROUND_OWNER_LOCK:
+        holder = _FOREGROUND_OWNER_NAME
+        age = _foreground_owner_age()
+        if holder is None:
+            return {
+                "cleared": False,
+                "reason": reason,
+                "holder": None,
+                "age_s": 0.0,
+                "detail": "no_foreground_owner",
+            }
+        if owner_prefix and not str(holder).startswith(str(owner_prefix)):
+            return {
+                "cleared": False,
+                "reason": reason,
+                "holder": holder,
+                "age_s": round(age, 3),
+                "detail": "owner_prefix_mismatch",
+            }
+        if age < min_age:
+            return {
+                "cleared": False,
+                "reason": reason,
+                "holder": holder,
+                "age_s": round(age, 3),
+                "detail": "owner_younger_than_min_age",
+            }
+        _FOREGROUND_OWNER_NAME = None
+        _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+
+    logger.warning(
+        "♻️ [MLX] Force-cleared foreground owner %s after %.1fs (%s).",
+        holder,
+        age,
+        reason,
+    )
+    return {
+        "cleared": True,
+        "reason": reason,
+        "holder": holder,
+        "age_s": round(age, 3),
+        "detail": "cleared",
+    }
+
+
 @contextlib.asynccontextmanager
 async def _foreground_owner_context(
     owner_name: str,

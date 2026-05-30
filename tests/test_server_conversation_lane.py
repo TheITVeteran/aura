@@ -1,4 +1,5 @@
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -490,6 +491,94 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
 
 
+@pytest.mark.asyncio
+async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_reply(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    class _FakeCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            return SimpleNamespace(content="I'm here. What's the puzzle?")
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            raise AssertionError("desktop UI must not use KernelInterface after weak CognitiveEngine text")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-weak"
+
+    async def _fake_complete_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Solve this logic puzzle: Alice owns three dogs, one dog always barks "
+                "before dinner, and the spotted dog barked second. Which dog barked first?"
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_cognitive_engine_unavailable" in response.body
+    assert b"What&apos;s the puzzle" not in response.body
+    assert b"What's the puzzle" not in response.body
+
+
 def test_desktop_static_chat_requests_require_cognitive_engine():
     root = Path(__file__).resolve().parents[1]
     for relative in (
@@ -501,6 +590,9 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
         assert "X-Aura-Surface" in source
         assert "desktop-ui" in source
         assert "X-Aura-Require-CognitiveEngine" in source
+    source = (root / "interface/static/aura.js").read_text(encoding="utf-8")
+    assert "CHAT_REQUEST_TIMEOUT_READY_MS = 335000" in source
+    assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in source
 
 
 @pytest.mark.asyncio
@@ -1547,3 +1639,87 @@ async def test_api_chat_returns_busy_reply_when_foreground_turn_is_already_in_fl
     assert response.status_code == 200
     assert b"previous turn open" in response.body
     assert b"\"status\":\"foreground_busy\"" in response.body
+
+
+@pytest.mark.asyncio
+async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    clear_calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            return SimpleNamespace(
+                content=(
+                    "I am here, the stale foreground turn was cleared, "
+                    "and I can answer this current desktop message now."
+                ),
+                mode=mode,
+            )
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    def _fake_clear_mlx_owner(*, reason, min_age_s=45.0):
+        clear_calls.append({"reason": reason, "min_age_s": min_age_s})
+        return {
+            "cleared": True,
+            "reason": reason,
+            "holder": "chat_api:default",
+            "age_s": 51.0,
+            "detail": "cleared",
+        }
+
+    monkeypatch.setattr(chat_routes, "_foreground_chat_lock", chat_routes.PreemptibleChatLock())
+    monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 0.01)
+    monkeypatch.setattr(chat_routes, "_force_clear_mlx_foreground_owner", _fake_clear_mlx_owner)
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: None))
+
+    await chat_routes._foreground_chat_lock.acquire()
+    chat_routes._foreground_chat_lock._acquired_at = time.time() - 51.0
+    try:
+        response = await server_module.api_chat(
+            server_module.ChatRequest(message="Are you there?"),
+            SimpleNamespace(
+                headers={
+                    "X-Aura-Surface": "desktop-ui",
+                    "X-Aura-Require-CognitiveEngine": "true",
+                },
+                client=SimpleNamespace(host="test"),
+            ),
+            None,
+            None,
+        )
+    finally:
+        if chat_routes._foreground_chat_lock.locked():
+            chat_routes._foreground_chat_lock.release()
+
+    assert response.status_code == 200
+    assert clear_calls == [{"reason": "chat_lock_preemption", "min_age_s": 45.0}]
+    assert b"stale foreground turn was cleared" in response.body
+    assert b"previous turn open" not in response.body
