@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 
 import pytest
 
@@ -23,3 +24,10 @@ async def test_ws_broadcaster_unsubscribes_when_shutdown_is_requested(monkeypatc
     await server._ws_broadcaster()
 
     assert events == ["subscribed", ("unsubscribed", True)]
+
+
+def test_websocket_timeout_path_does_not_direct_generate_raw_fallback():
+    source = inspect.getsource(server.websocket_endpoint)
+
+    assert "gate.generate(" not in source
+    assert "instead of fabricating a recovered answer" in source

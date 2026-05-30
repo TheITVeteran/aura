@@ -929,33 +929,6 @@ async def websocket_endpoint(ws: WebSocket):
                                     }))
                             except TimeoutError:
                                 logger.error("WS: live CognitiveEngine/KernelInterface processing timed out")
-                                # [STABILITY v53] Try fast brainstem fallback before giving up
-                                try:
-                                    from core.container import ServiceContainer
-                                    gate = ServiceContainer.get("inference_gate", default=None)
-                                    if gate and hasattr(gate, "generate"):
-                                        fallback = await asyncio.wait_for(
-                                            gate.generate(
-                                                user_content,
-                                                context={
-                                                    "origin": "user",
-                                                    "foreground_request": True,
-                                                    "prefer_tier": "tertiary",
-                                                    "allow_cloud_fallback": True,
-                                                },
-                                                timeout=15.0,
-                                            ),
-                                            timeout=15.0,
-                                        )
-                                        if fallback and str(fallback).strip():
-                                            await ws_ref.send_text(json.dumps({
-                                                "type": "aura_message",
-                                                "content": str(fallback).strip(),
-                                            }))
-                                            return
-                                except _SERVER_BOUNDARY_ERRORS as fallback_exc:
-                                    record_degradation("server", fallback_exc)
-                                    logger.warning("WS: cloud fallback generation failed after local timeout: %s", fallback_exc)
                                 await ws_ref.send_text(json.dumps({
                                     "type": "aura_message",
                                     "content": "The live reasoning lane exceeded its timeout. I logged the timeout and preserved this turn instead of fabricating a recovered answer.",

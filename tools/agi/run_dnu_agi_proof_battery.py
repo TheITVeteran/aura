@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 # Insert project root into sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -211,6 +211,65 @@ def hash_answer(salt: str, answer: str) -> str:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_artifact_manifest(
+    artifact_dir: Path,
+    *,
+    run_id: str,
+    commit_sha: str,
+    timestamp: float | None = None,
+    include_files: Iterable[str] | None = None,
+) -> dict:
+    """Build a self-consistent artifact manifest.
+
+    MANIFEST.json is deliberately excluded. A manifest that hashes a previous
+    copy of itself becomes unverifiable as soon as it is rewritten.
+    """
+    manifest = {
+        "run_id": run_id,
+        "commit_sha": commit_sha,
+        "files": {},
+    }
+    if timestamp is not None:
+        manifest["timestamp"] = timestamp
+
+    if include_files is None:
+        candidates = sorted(p for p in artifact_dir.iterdir() if p.is_file())
+    else:
+        candidates = [artifact_dir / name for name in include_files]
+
+    for artifact_file in candidates:
+        if not artifact_file.is_file() or artifact_file.name == "MANIFEST.json":
+            continue
+        manifest["files"][artifact_file.name] = {
+            "path": str(artifact_file.relative_to(PROJECT_ROOT))
+            if artifact_file.is_relative_to(PROJECT_ROOT)
+            else str(artifact_file),
+            "sha256": sha256_file(artifact_file),
+            "size_bytes": artifact_file.stat().st_size,
+        }
+
+    return manifest
+
+
+def write_artifact_manifest(
+    artifact_dir: Path,
+    *,
+    run_id: str,
+    commit_sha: str,
+    timestamp: float | None = None,
+    include_files: Iterable[str] | None = None,
+) -> dict:
+    manifest = build_artifact_manifest(
+        artifact_dir,
+        run_id=run_id,
+        commit_sha=commit_sha,
+        timestamp=timestamp,
+        include_files=include_files,
+    )
+    (artifact_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
 
 
 def write_json_atomic(path: Path, payload: dict) -> None:
@@ -3195,24 +3254,13 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     # 8. Write Manifest
     # -----------------------------------------------------------------------
     print("\n[8/8] Writing manifest...")
-    manifest = {
-        "run_id": run_id,
-        "commit_sha": commit_sha,
-        "timestamp": sys_info["timestamp"],
-        "files": {},
-    }
-
-    for artifact_file in run_dir.iterdir():
-        if artifact_file.is_file() and artifact_file.name != "MANIFEST.json":
-            manifest["files"][artifact_file.name] = {
-                "path": str(artifact_file.relative_to(PROJECT_ROOT)) if artifact_file.is_relative_to(PROJECT_ROOT) else str(artifact_file),
-                "sha256": sha256_file(artifact_file),
-                "size_bytes": artifact_file.stat().st_size,
-            }
-
-    manifest_path = run_dir / "MANIFEST.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"  [OK] {manifest_path.name}")
+    write_artifact_manifest(
+        run_dir,
+        run_id=run_id,
+        commit_sha=commit_sha,
+        timestamp=sys_info["timestamp"],
+    )
+    print("  [OK] MANIFEST.json")
 
     # Also copy key artifacts to the standard agi_live directory for pytest
     std_dest = artifacts_base
@@ -3223,19 +3271,12 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
             (std_dest / fname).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
     # Recompute manifest for the standard location
-    std_manifest = {
-        "run_id": run_id,
-        "commit_sha": commit_sha,
-        "files": {},
-    }
-    for fname in DNU_STANDARD_COPY_ARTIFACTS:
-        fpath = std_dest / fname
-        if fpath.exists():
-            std_manifest["files"][fname] = {
-                "path": str(fpath.relative_to(PROJECT_ROOT)) if fpath.is_relative_to(PROJECT_ROOT) else str(fpath),
-                "sha256": sha256_file(fpath),
-            }
-    (std_dest / "MANIFEST.json").write_text(json.dumps(std_manifest, indent=2), encoding="utf-8")
+    write_artifact_manifest(
+        std_dest,
+        run_id=run_id,
+        commit_sha=commit_sha,
+        include_files=DNU_STANDARD_COPY_ARTIFACTS,
+    )
 
     # -----------------------------------------------------------------------
     # Final Summary

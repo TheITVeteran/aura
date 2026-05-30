@@ -93,6 +93,35 @@ def test_runtime_contract_fails_closed_on_critical_liveness_failure():
     assert report["failures"]["critical"][0]["liveness"] == "failed"
 
 
+def test_runtime_contract_fails_closed_when_required_liveness_method_is_missing():
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    ServiceContainer.register_instance("inference_gate", SimpleNamespace())
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.CRITICAL.value
+    assert report["operational"] is False
+    assert report["failures"]["critical"][0]["container_key"] == "inference_gate"
+    assert report["failures"]["critical"][0]["error"] == "missing liveness check: is_alive()"
+    assert probes["inference"]["ok"] is False
+    assert probes["all_passed"] is False
+
+
+def test_runtime_contract_reports_important_liveness_failures():
+    _register_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="event_bus",
+    )
+
+    report = runtime_health_report()
+
+    assert report["status"] == HealthLevel.DEGRADED.value
+    assert report["operational"] is True
+    assert report["failures"]["important"][0]["container_key"] == "event_bus"
+    assert report["failures"]["important"][0]["liveness"] == "failed"
+
+
 def test_runtime_contract_reports_dead_when_no_critical_service_exists():
     report = runtime_health_report()
 

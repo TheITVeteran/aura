@@ -19,6 +19,23 @@ def test_dnu_standard_copy_includes_lifecycle_artifacts():
     assert "LIFECYCLE_EVENTS.jsonl" in dnu_runner.DNU_STANDARD_COPY_ARTIFACTS
 
 
+def test_dnu_artifact_manifest_never_hashes_itself(tmp_path):
+    (tmp_path / "SCORECARD.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "MANIFEST.json").write_text('{"old": true}', encoding="utf-8")
+
+    manifest = dnu_runner.write_artifact_manifest(
+        tmp_path,
+        run_id="run-1",
+        commit_sha="abc123",
+        include_files=["SCORECARD.json", "MANIFEST.json"],
+    )
+    stored = json.loads((tmp_path / "MANIFEST.json").read_text(encoding="utf-8"))
+
+    assert manifest == stored
+    assert "SCORECARD.json" in stored["files"]
+    assert "MANIFEST.json" not in stored["files"]
+
+
 def test_dnu_claims_canonical_runtime_lock_before_boot():
     source = dnu_runner.Path(dnu_runner.__file__).read_text(encoding="utf-8")
 

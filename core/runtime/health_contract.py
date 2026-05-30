@@ -279,7 +279,8 @@ class HealthVerdict:
         return [
             s
             for s in self.services
-            if s.requirement.tier == ServiceTier.IMPORTANT and not s.present
+            if s.requirement.tier == ServiceTier.IMPORTANT
+            and (not s.present or s.liveness_ok is False)
         ]
 
     @property
@@ -442,7 +443,8 @@ def evaluate_health() -> HealthVerdict:
                         if not liveness_ok:
                             error = f"{req.liveness_check}() returned False"
                     else:
-                        liveness_ok = True  # No check method = assume ok
+                        liveness_ok = False
+                        error = f"missing liveness check: {req.liveness_check}()"
                 except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                     liveness_ok = False
                     error = str(exc)
