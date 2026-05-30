@@ -149,8 +149,10 @@ def _lane_context_size(model_path: str) -> int:
     if lane == DEEP_ENDPOINT:
         return int(os.getenv("AURA_SOLVER_CTX", "8192"))
     if lane == PRIMARY_ENDPOINT:
-        # 72B Q4: 8K context balances quality and VRAM; 16K for 32B if swapped back
-        return int(os.getenv("AURA_CORTEX_CTX", "8192"))
+        # [STABILITY v59] Raised from 8192 → 16384. The 8k context was
+        # too aggressive for the 32B model on desktop, causing prompt
+        # compaction to strip critical personality/system context.
+        return int(os.getenv("AURA_CORTEX_CTX", "16384"))
     if lane == BRAINSTEM_ENDPOINT:
         return int(os.getenv("AURA_BRAINSTEM_CTX", "8192"))
     return int(os.getenv("AURA_REFLEX_CTX", "4096"))

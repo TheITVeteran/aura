@@ -3334,9 +3334,14 @@ class InferenceGate:
         latency spikes.
         """
         try:
-            runtime_window = max(4096, int(os.getenv("AURA_CORTEX_CTX", "8192") or 8192))
+            # [STABILITY v59] Raised default from 8192 → 16384.  The 8k
+            # context triggered hyper-aggressive prompt compaction that
+            # stripped system prompts, personality context, and conversation
+            # history — the model was getting ~5k chars total on desktop,
+            # producing thin, generic responses compared to server mode.
+            runtime_window = max(4096, int(os.getenv("AURA_CORTEX_CTX", "16384") or 16384))
         except _INFERENCE_RECOVERABLE_ERRORS:
-            runtime_window = 8192
+            runtime_window = 16384
 
         try:
             from core.brain.llm.model_registry import PRIMARY_ENDPOINT, get_lane_context_window
@@ -4045,33 +4050,43 @@ class InferenceGate:
             logger.debug("ResourceStakesLedger unavailable: %s", _stakes_exc)
 
         # ── Phi (Integrated Information): scale token budget based on cognitive integration ──
-        try:
-            from core.container import ServiceContainer
-            phi_val = 1.0  # default
-            phi_core = ServiceContainer.get("phi_core", default=None)
-            if phi_core is not None:
-                if hasattr(phi_core, "get_live_phi"):
-                    phi_val = max(0.0, float(phi_core.get_live_phi(include_surrogate=True)))
-                elif hasattr(phi_core, "_last_result") and phi_core._last_result:
-                    phi_val = float(phi_core._last_result.phi_s)
-            
-            # Scale token budget:
-            # When Φ is high (highly integrated thought), we allow maximum token budget.
-            # When Φ is low (< 0.8), the budget is dynamically scaled down (min 20%).
-            # This forces the model to be extremely concise and structured when integration is compromised.
-            if (
-                phi_val < 0.8
-                and not strict_answer_contract
-                and not health_probe
-                and not isolated_generation_contract
-                and not benchmark_request
-            ):
-                phi_scale = 0.2 + 0.8 * (phi_val / 0.8)
-                max_tokens = max(256, int(max_tokens * phi_scale))
-                logger.info("🧠 [PHI CONTROL] Integration Φ=%.3f -> scaling token budget by %.2f (max_tokens=%d)", 
-                            phi_val, phi_scale, max_tokens)
-        except Exception as exc:
-            logger.debug("Phi token budget scaling skipped: %s", exc)
+        # [STABILITY v59] NEVER throttle user-facing foreground requests.
+        # PHI is near-zero during early boot (insufficient IIT data), which
+        # was crushing max_tokens to ~420 on the first few user turns —
+        # making desktop responses catastrophically worse than server mode.
+        # PHI scaling is now restricted to background requests only, and
+        # even then the floor is 0.6x instead of 0.2x.
+        _is_user_facing_for_phi = bool(
+            not is_background
+            and (explicit_foreground or protected_foreground_lane or self._origin_is_user_facing(origin))
+        )
+        if not _is_user_facing_for_phi:
+            try:
+                from core.container import ServiceContainer
+                phi_val = 1.0  # default
+                phi_core = ServiceContainer.get("phi_core", default=None)
+                if phi_core is not None:
+                    if hasattr(phi_core, "get_live_phi"):
+                        phi_val = max(0.0, float(phi_core.get_live_phi(include_surrogate=True)))
+                    elif hasattr(phi_core, "_last_result") and phi_core._last_result:
+                        phi_val = float(phi_core._last_result.phi_s)
+                
+                # Scale token budget for background requests only:
+                # When Φ is high, allow full budget. When Φ is low, scale down
+                # but never below 60% — the old 20% floor was destructive.
+                if (
+                    phi_val < 0.8
+                    and not strict_answer_contract
+                    and not health_probe
+                    and not isolated_generation_contract
+                    and not benchmark_request
+                ):
+                    phi_scale = max(0.6, 0.6 + 0.4 * (phi_val / 0.8))
+                    max_tokens = max(512, int(max_tokens * phi_scale))
+                    logger.info("🧠 [PHI CONTROL] Integration Φ=%.3f -> scaling token budget by %.2f (max_tokens=%d)", 
+                                phi_val, phi_scale, max_tokens)
+            except Exception as exc:
+                logger.debug("Phi token budget scaling skipped: %s", exc)
 
         # ── Affective Circumplex: let somatic state modulate generation params ──
         # Only applies on user-facing, non-background requests. Background tasks
