@@ -1,4 +1,5 @@
-from core.runtime.errors import record_degradation
+"""core/event_bus.py — Topic-based Asynchronous Event Bus."""
+# NOTE: record_degradation is intentionally NOT used here.  See _record_error docstring.
 import asyncio
 import json
 import logging
@@ -153,13 +154,24 @@ class AuraEventBus:
         }
 
     def _record_error(self, exc: BaseException, message: str, *args: Any, degraded: bool = True) -> None:
-        """Record event-bus degradation with counters and a visible log line."""
+        """Record event-bus degradation with counters and a visible log line.
+
+        [FIX] Do NOT call record_degradation("event_bus", exc) here — the event_bus
+        is registered as required=True with failure_policy="fail-closed".  In
+        PRODUCTION/LIVE mode, record_degradation raises a fatal RuntimeError
+        ("CRITICAL SERVICE FAILURE") for any transient Redis timeout, loop
+        mismatch, or connection blip, crashing the entire desktop process.
+
+        The event bus already tracks its own health via self.degraded,
+        self._error_count, and self._last_error — those are what the
+        /api/health endpoint reads.  We log at WARNING level so the issue
+        is visible without being fatal.
+        """
         with self._stats_lock:
             self._error_count += 1
             self._last_error = exc
         if degraded:
             self.degraded = True
-        record_degradation("event_bus", exc)
         logger.warning(message, *args, exc)
 
     async def diagnose(self):

@@ -2519,7 +2519,12 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
         logger.error("❌ Failed to register %s: %s", FALLBACK_ENDPOINT, e)
 
     # Gemini Cloud Fallback (used when ALL local models fail)
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    # [FIX] Check config first — desktop/GUI mode may not inherit terminal env vars,
+    # but core.config loads the key from .env at boot time.
+    gemini_key = (
+        getattr(getattr(config, "llm", None), "gemini_api_key", None)
+        or os.environ.get("GEMINI_API_KEY")
+    )
     if gemini_key:
         try:
             from core.brain.llm.gemini_adapter import DailyRateLimiter, GeminiAdapter

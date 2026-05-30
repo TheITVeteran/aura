@@ -24,7 +24,14 @@ class GroundedSearchSkill(BaseSkill):
         if not query:
             return {"ok": False, "error": "No query provided"}
 
-        api_key = os.environ.get("GEMINI_API_KEY")
+        # [FIX] Check config first — desktop/GUI mode may not inherit terminal env vars.
+        try:
+            from core.config import config as _gs_cfg
+            api_key = getattr(getattr(_gs_cfg, "llm", None), "gemini_api_key", None)
+        except (ImportError, AttributeError):
+            api_key = None
+        if not api_key:
+            api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return {
                 "ok": False, 

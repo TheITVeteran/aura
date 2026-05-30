@@ -337,9 +337,14 @@ class ActionExecutor:
                 logger.debug("ReAct: orchestrated web_search failed, falling back: %s", e)
 
         import os
-        api_key = os.environ.get("GEMINI_API_KEY")
-        
-        # Primary Pipeline: Google Grounding (High Fidelity)
+        # [FIX] Check config first — desktop/GUI mode may not inherit terminal env vars.
+        try:
+            from core.config import config as _react_cfg
+            api_key = getattr(getattr(_react_cfg, "llm", None), "gemini_api_key", None)
+        except (ImportError, AttributeError):
+            api_key = None
+        if not api_key:
+            api_key = os.environ.get("GEMINI_API_KEY")
         if api_key:
             try:
                 logger.info("ReAct: Executing grounded search for: %s", query)

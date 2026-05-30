@@ -183,7 +183,23 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
         cleaned_pid = False
         try:
             logger.info("[REAPER] Cleaning up PID %d", pid)
-            os.kill(pid, signal.SIGTERM)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except PermissionError as e:
+                summary["skipped_pids"].append(pid)
+                _record_reaper_degradation(
+                    e,
+                    stage="pid_cleanup",
+                    action="skipped SIGTERM on non-owned or reused PID",
+                    severity="warning",
+                    extra={"pid": pid},
+                )
+                logger.warning(
+                    "[REAPER] PID %d not signalable (PermissionError on SIGTERM); skipping.",
+                    pid,
+                )
+                cleaned_pid = True
+                continue
             # Short grace period
             for _ in range(5):
                 time.sleep(0.1)
@@ -207,8 +223,22 @@ def _execute_cleanup(manifest: ReaperManifest) -> dict[str, Any]:
                     break
             else:
                 # Force kill if still alive
-                os.kill(pid, signal.SIGKILL)
-                logger.warning("[REAPER] Force-killed orphan PID %d", pid)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    logger.warning("[REAPER] Force-killed orphan PID %d", pid)
+                except PermissionError as e:
+                    summary["skipped_pids"].append(pid)
+                    _record_reaper_degradation(
+                        e,
+                        stage="pid_cleanup",
+                        action="skipped SIGKILL on non-owned or reused PID",
+                        severity="warning",
+                        extra={"pid": pid},
+                    )
+                    logger.warning(
+                        "[REAPER] PID %d not signalable (PermissionError on SIGKILL); skipping.",
+                        pid,
+                    )
             cleaned_pid = True
             if pid not in summary["skipped_pids"]:
                 summary["terminated_pids"].append(pid)
