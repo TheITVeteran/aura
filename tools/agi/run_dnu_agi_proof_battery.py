@@ -44,7 +44,9 @@ _DNU_RUN_RECOVERABLE_ERRORS = (
 )
 _DNU_TASK_ATTEMPT_ERRORS = (asyncio.TimeoutError, *_DNU_RUN_RECOVERABLE_ERRORS)
 
-PROOF_LIVE_MESSAGE_ORIGIN = "api"
+# Proof tasks are foreground user-equivalent turns. API/websocket are transport
+# labels; the live cognitive route should see the same origin as desktop chat.
+PROOF_LIVE_MESSAGE_ORIGIN = "user"
 
 DNU_STALE_ARTIFACTS = (
     "TASK_TRACE.jsonl",
@@ -347,6 +349,20 @@ def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: 
     return 0
 
 
+def _cmdline_invokes_script(cmdline: list[Any], script_name: str) -> bool:
+    """Return true only when ``script_name`` is an argv entry, not shell text."""
+
+    parts = [str(part) for part in (cmdline or [])]
+    for index, part in enumerate(parts):
+        if Path(part).name != script_name:
+            continue
+        if index == 0:
+            return True
+        executable = Path(parts[0]).name.lower()
+        return executable.startswith("python") or executable in {"uv", "uvx"}
+    return False
+
+
 def find_existing_aura_runtimes() -> list[dict]:
     """Return live aura_main.py runtime processes that would contend with proof boot."""
     if sys.platform not in ("darwin", "linux"):
@@ -377,7 +393,7 @@ def find_existing_aura_runtimes() -> list[dict]:
             continue
         if current_user and user != current_user:
             continue
-        if "aura_main.py" not in command:
+        if not _cmdline_invokes_script(cmdline, "aura_main.py"):
             continue
         if "run_dnu_agi_proof_battery.py" in command:
             continue
@@ -433,7 +449,7 @@ def find_existing_proof_runners() -> list[dict]:
             continue
         if current_user and user != current_user:
             continue
-        if "run_dnu_agi_proof_battery.py" not in command:
+        if not _cmdline_invokes_script(cmdline, "run_dnu_agi_proof_battery.py"):
             continue
         if not _is_aura_checkout_cwd(cwd):
             continue
@@ -1105,7 +1121,7 @@ async def shutdown_proof_runtime(orchestrator) -> None:
     finally:
         await _reap_proof_child_processes(
             "dnu_proof_runtime_shutdown",
-            include_resource_trackers=True,
+            include_resource_trackers=False,
         )
 
 

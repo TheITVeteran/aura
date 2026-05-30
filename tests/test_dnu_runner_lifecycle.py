@@ -1,5 +1,7 @@
 import json
 import sys
+import asyncio
+import multiprocessing as multiprocessing_module
 
 from tools.agi import run_dnu_agi_proof_battery as dnu_runner
 
@@ -84,6 +86,55 @@ def test_dnu_orphan_cleanup_recognizes_temp_aura_checkouts(tmp_path):
     assert not dnu_runner._is_aura_checkout_cwd(tmp_path / "other")
 
 
+def test_dnu_exclusivity_scanner_ignores_wrapper_shell_commands(monkeypatch):
+    current_user = "runner"
+    monkeypatch.setenv("USER", current_user)
+
+    class FakeProc:
+        def __init__(self, pid, cmdline, ppid=1):
+            self.info = {
+                "pid": pid,
+                "ppid": ppid,
+                "username": current_user,
+                "cmdline": cmdline,
+            }
+
+        def cwd(self):
+            return str(dnu_runner.PROJECT_ROOT)
+
+    wrapper = FakeProc(
+        201,
+        [
+            "zsh",
+            "-lc",
+            "AURA_AGI_MAX_TASKS=1 python tools/agi/run_dnu_agi_proof_battery.py > /tmp/probe.log",
+        ],
+    )
+    proof_runner = FakeProc(
+        202,
+        [sys.executable, "tools/agi/run_dnu_agi_proof_battery.py", "--full"],
+    )
+    aura_wrapper = FakeProc(203, ["zsh", "-lc", "python aura_main.py --desktop"])
+    aura_runtime = FakeProc(204, [sys.executable, "aura_main.py", "--desktop"])
+
+    class FakePsutil:
+        AccessDenied = RuntimeError
+        NoSuchProcess = RuntimeError
+        ZombieProcess = RuntimeError
+
+        @staticmethod
+        def process_iter(attrs):
+            return [wrapper, proof_runner, aura_wrapper, aura_runtime]
+
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+
+    proof_matches = dnu_runner.find_existing_proof_runners()
+    aura_matches = dnu_runner.find_existing_aura_runtimes()
+
+    assert [match["pid"] for match in proof_matches] == [202]
+    assert [match["pid"] for match in aura_matches] == [204]
+
+
 def test_dnu_orphan_cleanup_reaps_descendant_keep_awake(monkeypatch):
     class FakeProc:
         def __init__(self, pid, ppid, cmdline, children=None):
@@ -144,3 +195,61 @@ def test_dnu_orphan_cleanup_reaps_descendant_keep_awake(monkeypatch):
     assert {entry["pid"] for entry in reaped} == {101, 202}
     assert parent.terminated is True
     assert keep_awake.terminated is True
+
+
+def test_dnu_shutdown_reaper_preserves_python_resource_tracker(monkeypatch):
+    class FakeProc:
+        def __init__(self, pid, name, cmdline):
+            self.pid = pid
+            self._name = name
+            self._cmdline = cmdline
+            self.terminated = False
+            self.killed = False
+
+        def name(self):
+            return self._name
+
+        def cmdline(self):
+            return list(self._cmdline)
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    class FakeParent:
+        def __init__(self, children):
+            self._children = children
+
+        def children(self, recursive=False):
+            return list(self._children)
+
+    resource_tracker = FakeProc(
+        301,
+        "resource_tracker",
+        [sys.executable, "-m", "multiprocessing.resource_tracker"],
+    )
+    worker = FakeProc(302, "Python", [sys.executable, "-c", "worker"])
+
+    class FakePsutil:
+        AccessDenied = RuntimeError
+        NoSuchProcess = RuntimeError
+        ZombieProcess = RuntimeError
+
+        @staticmethod
+        def Process(pid):
+            return FakeParent([resource_tracker, worker])
+
+        @staticmethod
+        def wait_procs(processes, timeout):
+            return list(processes), []
+
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    monkeypatch.setattr(multiprocessing_module, "active_children", lambda: [])
+
+    asyncio.run(dnu_runner._reap_proof_child_processes("test_shutdown"))
+
+    assert resource_tracker.terminated is False
+    assert resource_tracker.killed is False
+    assert worker.terminated is True

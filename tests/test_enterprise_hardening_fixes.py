@@ -722,7 +722,7 @@ def test_agency_runner_activates_canonical_proof_task_mode():
     kernel_source = (root / "core" / "kernel" / "aura_kernel.py").read_text(encoding="utf-8")
 
     assert 'os.environ.setdefault("AURA_PROOF_RUN", "1")' in agency_source
-    assert 'PROOF_LIVE_MESSAGE_ORIGIN = "api"' in agency_source
+    assert 'PROOF_LIVE_MESSAGE_ORIGIN = "user"' in agency_source
     assert "isolate_live_runtime_for_proof_task(" in agency_source
     assert 'os.environ.setdefault("AURA_BACKGROUND_BOOT_GRACE_S", "7200")' in agency_source
     assert "async def shutdown_agency_runtime(" in agency_source
@@ -1159,7 +1159,7 @@ def test_dnu_runner_uses_live_message_path_for_full_aura_tasks():
 
     assert "process_user_input_priority(" in source
     assert "execute_task(orch, task" in source
-    assert 'PROOF_LIVE_MESSAGE_ORIGIN = "api"' in source
+    assert 'PROOF_LIVE_MESSAGE_ORIGIN = "user"' in source
     assert 'origin=PROOF_LIVE_MESSAGE_ORIGIN' in source
     assert '"--model-tier"' in source
     assert 'os.environ["AURA_PROOF_MODEL_TIER"] = requested_proof_model_tier' in source

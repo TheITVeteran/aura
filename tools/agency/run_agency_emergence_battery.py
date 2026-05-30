@@ -43,7 +43,9 @@ _AGENCY_BATTERY_ERRORS = (
     TypeError,
     ValueError,
 )
-PROOF_LIVE_MESSAGE_ORIGIN = "api"
+# Proof tasks are foreground user-equivalent turns. API/websocket are transport
+# labels; the live cognitive route should see the same origin as desktop chat.
+PROOF_LIVE_MESSAGE_ORIGIN = "user"
 AGENCY_RESPONSE_REPAIR_ATTEMPTS = 2
 AGENCY_LIVE_TASK_TIMEOUT_SECONDS = 330.0
 AGENCY_BASELINE_TIMEOUT_SECONDS = 90.0
