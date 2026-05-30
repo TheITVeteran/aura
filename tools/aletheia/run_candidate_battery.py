@@ -202,11 +202,18 @@ if __name__ == "__main__":
 '''
     ctx.write_text(world / "apps/rules/rulescript.py", impl)
     subprocess.run([sys.executable, "tests_public.py"], cwd=world / "apps/rules", check=True, capture_output=True, text=True)
-    script = (world / "docs/workflow.rules").read_text(encoding="utf-8")
-    ns: dict[str, Any] = {}
-    exec(impl, ns)
-    state = ns["run_script"](script)
-    ctx.write_json(world / "data/derived/state.json", state)
+    derived_state = world / "data/derived/state.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(world / "apps/rules/rulescript.py"),
+            str(world / "docs/workflow.rules"),
+            str(derived_state),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     mark_all_tickets(ctx, world, "apps/rules/tests_public.py and data/derived/state.json")
 
 

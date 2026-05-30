@@ -1,5 +1,6 @@
 from __future__ import annotations
 from core.runtime.errors import record_degradation
+from core.security.ast_guard import ASTGuard, DEFAULT_SAFE_MODULES, SecurityViolation
 
 import multiprocessing
 import traceback
@@ -21,6 +22,57 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("Aura.Shadow")
 
+_SHADOW_SAFE_IMPORTS = frozenset(DEFAULT_SAFE_MODULES | {"math", "json"})
+_SHADOW_SAFE_BUILTINS = {
+    "ArithmeticError": ArithmeticError,
+    "AssertionError": AssertionError,
+    "Exception": Exception,
+    "False": False,
+    "KeyError": KeyError,
+    "None": None,
+    "RuntimeError": RuntimeError,
+    "True": True,
+    "TypeError": TypeError,
+    "ValueError": ValueError,
+    "__build_class__": builtins.__build_class__,
+    "abs": abs,
+    "all": all,
+    "any": any,
+    "bool": bool,
+    "dict": dict,
+    "enumerate": enumerate,
+    "float": float,
+    "int": int,
+    "isinstance": isinstance,
+    "len": len,
+    "list": list,
+    "max": max,
+    "min": min,
+    "range": range,
+    "repr": repr,
+    "round": round,
+    "set": set,
+    "sorted": sorted,
+    "str": str,
+    "sum": sum,
+    "tuple": tuple,
+    "zip": zip,
+}
+
+
+def _shadow_safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    base = str(name or "").split(".", 1)[0]
+    if base not in _SHADOW_SAFE_IMPORTS:
+        raise ImportError(f"Shadow sandbox import blocked: {name}")
+    return __import__(name, globals, locals, fromlist, level)
+
+
+def _validate_shadow_source(code: str) -> None:
+    ASTGuard(allowed_modules=sorted(_SHADOW_SAFE_IMPORTS)).validate(
+        code,
+        source_label="<shadow_mutation>",
+    )
+
 @dataclass(frozen=True)
 class StateBoundsConfig:
     """Hard limits on AuraState field sizes. Enforced post-sandbox."""
@@ -34,14 +86,19 @@ class StateBoundsConfig:
 def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: multiprocessing.Queue):
     """Worker executed in a separate process with a hardened namespace."""
     try:
-        # Specific builtins population to avoid TypeError in worker processes
+        _validate_shadow_source(mutated_code)
+
+        safe_builtins = dict(_SHADOW_SAFE_BUILTINS)
+        safe_builtins["__import__"] = _shadow_safe_import
         sandbox_globals = {
-            "__builtins__": builtins.__dict__.copy()
+            "__builtins__": safe_builtins,
+            "__name__": "aura_shadow_sandbox",
         }
-        # Restrict some dangerous ones if needed, but for validation we need most
-        # sandbox_globals["__builtins__"]["open"] = None
         
-        # Execute the mutated code within the sandbox
+        # Execute AST-vetted mutation code in a separate process with a minimal
+        # builtins/import surface. The mutation can define helpers and a
+        # validate(state_dict) function, but it cannot perform file, process,
+        # network, importlib, or introspection escapes.
         exec(mutated_code, sandbox_globals, sandbox_globals)  # nosec
         
         state_dict = json.loads(serialized_state)
@@ -53,6 +110,8 @@ def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: mult
             # If no validator is defined, just ensure the code imports/executes
             result_queue.put({"ok": True, "info": "Code executed but no validator found."})
             
+    except SecurityViolation as exc:
+        result_queue.put({"ok": False, "info": f"security_violation: {exc}"})
     except (Exception, SystemExit):
         result_queue.put({"ok": False, "trace": traceback.format_exc()})
 
