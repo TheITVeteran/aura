@@ -11,15 +11,28 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 try:
     import redis.asyncio as redis
+    from redis.exceptions import RedisError
     _REDIS_AVAILABLE = True
 except ImportError:
     redis = None
+    RedisError = None
     _REDIS_AVAILABLE = False
 
 from core.config import config
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.EventBus")
+
+_REDIS_ERRORS = (RedisError,) if RedisError is not None else ()
+_EVENT_BUS_RECOVERABLE_ERRORS = (
+    RuntimeError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    AttributeError,
+) + _REDIS_ERRORS
 
 
 class EventPriority(IntEnum):
@@ -55,7 +68,7 @@ class BoundedPriorityQueue(asyncio.PriorityQueue):
                 try:
                     # Coerce priority to float to handle potential mixed types safely
                     p = float(val[0]) if isinstance(val, (tuple, list)) else 99.0
-                except (Exception, IndexError, TypeError):
+                except (IndexError, TypeError, ValueError):
                     p = 99.0
                 
                 if p > max_p:
@@ -65,7 +78,7 @@ class BoundedPriorityQueue(asyncio.PriorityQueue):
             # Only replace if the new item has a lower numeric priority value (higher logical priority)
             try:
                 new_p = float(item[0]) if isinstance(item, (tuple, list)) else 0.0
-            except (Exception, IndexError, TypeError):
+            except (IndexError, TypeError, ValueError):
                 new_p = 0.0
                 
             if new_p < max_p:
@@ -139,6 +152,16 @@ class AuraEventBus:
             "alive": self._loop is not None and self._loop.is_running()
         }
 
+    def _record_error(self, exc: BaseException, message: str, *args: Any, degraded: bool = True) -> None:
+        """Record event-bus degradation with counters and a visible log line."""
+        with self._stats_lock:
+            self._error_count += 1
+            self._last_error = exc
+        if degraded:
+            self.degraded = True
+        record_degradation("event_bus", exc)
+        logger.warning(message, *args, exc)
+
     async def diagnose(self):
         """Actively check and report health, attempting self-repair if needed."""
         status = self.get_status()
@@ -198,18 +221,30 @@ class AuraEventBus:
             if old_task:
                 try:
                     old_task.cancel()
-                except Exception as exc:
-                    logger.debug("AuraEventBus: failed to cancel stale Redis listener task: %s", exc)
+                except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                    self._record_error(
+                        exc,
+                        "AuraEventBus: failed to cancel stale Redis listener task: %s",
+                        degraded=True,
+                    )
             if old_redis:
                 async def safe_close(r):
                     try:
                         await r.aclose()
-                    except Exception as exc:
-                        logger.debug("AuraEventBus: stale Redis close failed: %s", exc)
+                    except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                        self._record_error(
+                            exc,
+                            "AuraEventBus: stale Redis close failed: %s",
+                            degraded=True,
+                        )
                 try:
                     current_loop.create_task(safe_close(old_redis))
-                except Exception as e:
-                    logger.debug("AuraEventBus: Error scheduling old Redis close: %s", e)
+                except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                    self._record_error(
+                        exc,
+                        "AuraEventBus: error scheduling old Redis close: %s",
+                        degraded=True,
+                    )
 
     async def _setup_redis(self):
         """Initialize Redis connection and start listener task."""
@@ -229,16 +264,23 @@ class AuraEventBus:
                 name="event_bus.redis_listener",
             )
             logger.info("AuraEventBus: Redis Pub/Sub connection established.")
-        except Exception as e:
-            logger.warning("AuraEventBus: Failed to connect to Redis (falling back to local mode): %s", e)
+        except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+            self._record_error(
+                e,
+                "AuraEventBus: failed to connect to Redis; falling back to local-only mode: %s",
+                degraded=True,
+            )
             if self._redis:
                 try:
                     await self._redis.aclose()
-                except Exception as _exc:
-                    logger.debug("Suppressed Exception: %s", _exc)
+                except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
+                    self._record_error(
+                        _exc,
+                        "AuraEventBus: Redis cleanup after setup failure failed: %s",
+                        degraded=True,
+                    )
                 self._redis = None
             self._use_redis = False
-            self.degraded = True # Patch 13
 
     async def _redis_listener(self):
         """Listen for events from other processes via Redis."""
@@ -266,27 +308,40 @@ class AuraEventBus:
                         logger.warning("AuraEventBus: Received malformed JSON from Redis for topic %s", topic)
         except asyncio.CancelledError as _e:
             logger.debug('Ignored asyncio.CancelledError in event_bus.py: %s', _e)
-        except Exception as e:
-            self._last_error = e
-            self._error_count += 1
-            self.degraded = True
+        except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+            self._record_error(
+                e,
+                "AuraEventBus: Redis listener unavailable; falling back to local-only mode: %s",
+                degraded=True,
+            )
             self._use_redis = False
-            logger.warning("AuraEventBus: Redis listener unavailable, falling back to local-only mode: %s", e)
         finally:
             self._pubsub_task = None
             try:
                 await pubsub.punsubscribe("aura/events/*")
-            except Exception as _exc:
-                logger.debug("Suppressed Exception: %s", _exc)
+            except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
+                self._record_error(
+                    _exc,
+                    "AuraEventBus: Redis listener unsubscribe failed: %s",
+                    degraded=True,
+                )
             try:
                 await pubsub.aclose()
-            except Exception as _exc:
-                logger.debug("Suppressed Exception: %s", _exc)
+            except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
+                self._record_error(
+                    _exc,
+                    "AuraEventBus: Redis listener pubsub close failed: %s",
+                    degraded=True,
+                )
             if not self._use_redis and self._redis:
                 try:
                     await self._redis.aclose()
-                except Exception as _exc:
-                    logger.debug("Suppressed Exception: %s", _exc)
+                except _EVENT_BUS_RECOVERABLE_ERRORS as _exc:
+                    self._record_error(
+                        _exc,
+                        "AuraEventBus: Redis listener client close failed: %s",
+                        degraded=True,
+                    )
                 self._redis = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
@@ -303,14 +358,22 @@ class AuraEventBus:
                 await pubsub_task
             except asyncio.CancelledError as _exc:
                 logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
-            except Exception as exc:
-                logger.debug("AuraEventBus: pubsub shutdown failed: %s", exc)
+            except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                self._record_error(
+                    exc,
+                    "AuraEventBus: pubsub shutdown failed: %s",
+                    degraded=True,
+                )
 
         if self._redis:
             try:
                 await self._redis.aclose()
-            except Exception as exc:
-                logger.debug("AuraEventBus: redis close failed: %s", exc)
+            except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                self._record_error(
+                    exc,
+                    "AuraEventBus: redis close failed: %s",
+                    degraded=True,
+                )
             finally:
                 self._redis = None
 
@@ -411,10 +474,20 @@ class AuraEventBus:
                         )
                     # [STABILITY] Wrap Redis publish in a 2.0s timeout to prevent external stalls.
                     await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
-                except asyncio.TimeoutError:
-                    logger.debug("AuraEventBus: Redis publish STALLED (timeout).")
-                except Exception as e:
-                    logger.debug("AuraEventBus: Redis publish failed: %s", e)
+                except asyncio.TimeoutError as e:
+                    self._record_error(
+                        e,
+                        "AuraEventBus: Redis publish stalled; switching to local-only mode: %s",
+                        degraded=True,
+                    )
+                    self._use_redis = False
+                except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+                    self._record_error(
+                        e,
+                        "AuraEventBus: Redis publish failed; switching to local-only mode: %s",
+                        degraded=True,
+                    )
+                    self._use_redis = False
 
     async def _publish_local(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
         """Asynchronously publish an event to all local subscribers with priority."""
@@ -482,7 +555,7 @@ class AuraEventBus:
                         self._error_count += 1
                         self._last_error = e
                     logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
-            except Exception as e:
+            except _EVENT_BUS_RECOVERABLE_ERRORS as e:
                 with self._stats_lock:
                     self._error_count += 1
                     self._last_error = e
@@ -509,10 +582,12 @@ class AuraEventBus:
         except asyncio.QueueFull:
             with self._stats_lock:
                 self._dropped_count += 1
-        except Exception as e:
-            with self._stats_lock:
-                self._error_count += 1
-                self._last_error = e
+        except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+            self._record_error(
+                e,
+                "EventBus direct queue delivery failed: %s",
+                degraded=True,
+            )
 
     def publish_threadsafe(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
         """Safely fire events from background threads to the main asyncio loop."""
@@ -530,7 +605,8 @@ class AuraEventBus:
 
         if target_loop and target_loop.is_running():
             # Schedule the async publish call on the target loop
-            asyncio.run_coroutine_threadsafe(self.publish(topic, data, priority), target_loop)
+            future = asyncio.run_coroutine_threadsafe(self.publish(topic, data, priority), target_loop)
+            future.add_done_callback(self._threadsafe_publish_done)
             
             # Periodic health report for diagnostics
             if self._delivered_count % 100 == 0:
@@ -542,6 +618,23 @@ class AuraEventBus:
                          self._bus_id[:8], topic)
 
     # _inject_threadsafe is now retired in favor of run_coroutine_threadsafe
+
+    def _threadsafe_publish_done(self, future) -> None:
+        if future.cancelled():
+            self._record_error(
+                asyncio.CancelledError("threadsafe publish cancelled"),
+                "EventBus threadsafe publish did not complete: %s",
+                degraded=True,
+            )
+            return
+        try:
+            future.result()
+        except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+            self._record_error(
+                exc,
+                "EventBus threadsafe publish failed: %s",
+                degraded=True,
+            )
 
 
 
@@ -558,7 +651,7 @@ async def reset_event_bus() -> AuraEventBus:
     global _bus
     try:
         await _bus.shutdown()
-    except Exception as exc:
-        logger.debug("EventBus reset shutdown failed: %s", exc)
+    except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+        _bus._record_error(exc, "EventBus reset shutdown failed: %s", degraded=True)
     _bus = AuraEventBus()
     return _bus

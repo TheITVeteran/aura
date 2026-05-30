@@ -207,6 +207,38 @@ async def test_websocket_manager_uses_task_spawner_for_disconnect_on_overflow(mo
 
 
 @pytest.mark.asyncio
+async def test_event_bus_redis_publish_failure_marks_degraded():
+    from core.event_bus import AuraEventBus
+
+    bus = AuraEventBus()
+    bus._use_redis = True
+    bus._redis = SimpleNamespace(publish=AsyncMock(side_effect=ConnectionError("redis offline")))
+
+    await bus.publish("runtime/test", {"ok": True})
+
+    assert bus.degraded is True
+    assert bus._use_redis is False
+    assert bus.get_status()["stats"]["errors"] >= 1
+    assert "redis offline" in str(bus.get_status()["stats"]["last_error"])
+
+
+def test_event_bus_threadsafe_publish_failure_is_recorded():
+    from core.event_bus import AuraEventBus
+
+    bus = AuraEventBus()
+    future = SimpleNamespace(
+        cancelled=lambda: False,
+        result=Mock(side_effect=RuntimeError("publish future failed")),
+    )
+    bus._threadsafe_publish_done(future)
+
+    status = bus.get_status()
+    assert bus.degraded is True
+    assert status["stats"]["errors"] == 1
+    assert status["stats"]["last_error"] == "publish future failed"
+
+
+@pytest.mark.asyncio
 async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(monkeypatch):
     from core import initiative_synthesis as synthesis_module
     from core.agency.initiative_arbiter import ScoredInitiative
