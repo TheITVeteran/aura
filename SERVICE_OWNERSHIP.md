@@ -65,7 +65,7 @@ This file outlines every registered service, its source code location, registrat
 | `code_refiner` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `cognition` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
 | `cognitive_engine` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
-| `cognitive_integration` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
+| `cognitive_integration` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
 | `cognitive_kernel` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `cognitive_ledger` | `core/kernel/aura_kernel.py` | `core/kernel/aura_kernel.py` | boot | `fail-closed` |
 | `cognitive_loop` | `core/orchestrator/boot.py` | `core/orchestrator/boot.py` | boot | `fail-closed` |
@@ -90,7 +90,6 @@ This file outlines every registered service, its source code location, registrat
 | `continuous_cognition` | `core/continuous_cognition.py` | `core/continuous_cognition.py` | optional features | `degrade_with_receipt` |
 | `continuous_experience_stream` | `core/consciousness/continuous_experience.py` | `core/consciousness/continuous_experience.py` | optional features | `degrade_with_receipt` |
 | `continuous_learner` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
-| `continuous_vision` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
 | `conversation_reflector` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `conversational_momentum_engine` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | optional features | `degrade_with_receipt` |
 | `cortana` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
@@ -184,7 +183,7 @@ This file outlines every registered service, its source code location, registrat
 | `keep_awake_controller` | `core/runtime/keep_awake.py` | `core/runtime/keep_awake.py` | optional features | `degrade_with_receipt` |
 | `kernel_interface` | `core/kernel/kernel_interface.py` | `core/kernel/kernel_interface.py` | boot | `fail-closed` |
 | `knowledge_graph` | `core/providers/memory_provider.py` | `core/providers/memory_provider.py` | optional features | `degrade_with_receipt` |
-| `language_center` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
+| `language_center` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `lazarus` | `core/orchestrator/mixins/boot/boot_resilience.py` | `core/orchestrator/mixins/boot/boot_resilience.py` | boot | `fail-closed` |
 | `life_trace` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `lineage_manager` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
@@ -296,6 +295,7 @@ This file outlines every registered service, its source code location, registrat
 | `sensory_motor_cortex` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | optional features | `degrade_with_receipt` |
 | `sensory_system` | `core/sensory_integration.py` | `core/sensory_integration.py` | boot | `fail-closed` |
 | `sentience_engine` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
+| `server` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
 | `session_guardian` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `shadow_ast_healer` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `shutdown_coordinator` | `aura_main.py` | `aura_main.py` | optional features | `degrade_with_receipt` |

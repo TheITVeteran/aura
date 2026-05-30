@@ -85,6 +85,19 @@ def _foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def _proof_runtime_active(origin: str = "orchestrator") -> bool:
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        return bool(proof_run_active(origin=origin))
+    except _ORCHESTRATOR_RECOVERABLE_ERRORS:
+        return _env_flag("AURA_PROOF_RUN", False)
+
+
+def _background_quiescent_runtime(origin: str = "orchestrator_background") -> bool:
+    return _foreground_only_runtime() or _proof_runtime_active(origin)
+
+
 def _record_main_degradation(
     error: BaseException,
     *,
@@ -922,8 +935,11 @@ class RobustOrchestrator(
 
                 _pneuma = get_pneuma()
                 ServiceContainer.register_instance("pneuma", _pneuma)
-                self._fire_and_forget(_pneuma.start(), name="orchestrator.pneuma.start")
-                logger.info("🧠 PNEUMA active inference engine online")
+                if _background_quiescent_runtime("pneuma_background"):
+                    logger.info("PNEUMA background loop deferred for proof/foreground boot.")
+                else:
+                    self._fire_and_forget(_pneuma.start(), name="orchestrator.pneuma.start")
+                    logger.info("🧠 PNEUMA active inference engine online")
             except _ORCHESTRATOR_RECOVERABLE_ERRORS as _pe:
                 _record_main_degradation(
                     _pe,
@@ -938,8 +954,11 @@ class RobustOrchestrator(
 
                 _mhaf = get_mhaf()
                 ServiceContainer.register_instance("mhaf", _mhaf)
-                self._fire_and_forget(_mhaf.start(), name="orchestrator.mhaf.start")
-                logger.info("🌿 MHAF consciousness substrate online")
+                if _background_quiescent_runtime("mhaf_background"):
+                    logger.info("MHAF background loop deferred for proof/foreground boot.")
+                else:
+                    self._fire_and_forget(_mhaf.start(), name="orchestrator.mhaf.start")
+                    logger.info("🌿 MHAF consciousness substrate online")
             except _ORCHESTRATOR_RECOVERABLE_ERRORS as _mhaf_err:
                 _record_main_degradation(
                     _mhaf_err,
@@ -989,12 +1008,15 @@ class RobustOrchestrator(
                 ServiceContainer.register_instance("terminal_fallback", _term)
                 _watchdog = get_terminal_watchdog(orchestrator=self)
                 ServiceContainer.register_instance("terminal_watchdog", _watchdog)
-                self._fire_and_forget(
-                    _watchdog.start(), name="orchestrator.terminal_watchdog.start"
-                )
-                logger.info(
-                    "📟 TerminalFallbackChat + TerminalWatchdog online (autonomous, last-resort)"
-                )
+                if _background_quiescent_runtime("terminal_watchdog"):
+                    logger.info("TerminalWatchdog deferred for proof/foreground boot.")
+                else:
+                    self._fire_and_forget(
+                        _watchdog.start(), name="orchestrator.terminal_watchdog.start"
+                    )
+                    logger.info(
+                        "📟 TerminalFallbackChat + TerminalWatchdog online (autonomous, last-resort)"
+                    )
             except _ORCHESTRATOR_RECOVERABLE_ERRORS as _term_err:
                 _record_main_degradation(
                     _term_err,
@@ -1722,6 +1744,9 @@ class RobustOrchestrator(
         # 🌀 Evolution 9: Meta-Cognitive Self-Optimization
         async def meta_evolution_wrapper():
             if hasattr(self, "meta_cognition") and self.meta_cognition:
+                if _proof_runtime_active("meta_evolution_cycle"):
+                    logger.info("🌀 Meta-Evolution cycle deferred during proof_run_active.")
+                    return
                 # Guard: skip if memory pressure is high or system is under load
                 try:
                     import psutil

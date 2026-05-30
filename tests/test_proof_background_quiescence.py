@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -31,15 +32,33 @@ async def test_conversational_momentum_defers_during_proof_run(monkeypatch):
 def test_proof_boot_policy_disables_unsolicited_background_autonomy(monkeypatch):
     from aura_main import _activate_proof_runtime_policy
 
-    for name in (
+    managed_env = (
+        "AURA_PROOF_RUN",
+        "AURA_PROOF_MODEL_TIER",
         "AURA_ENABLE_PROACTIVE_SYSTEMS",
         "AURA_ENABLE_RESEARCH_CYCLE",
         "AURA_ENABLE_SENSORIMOTOR_GROUNDING",
-    ):
+        "AURA_ENABLE_PROACTIVE_VISION",
+    )
+    for name in managed_env:
         monkeypatch.delenv(name, raising=False)
 
-    _activate_proof_runtime_policy("proof")
+    try:
+        _activate_proof_runtime_policy("proof")
 
-    assert os.environ["AURA_ENABLE_PROACTIVE_SYSTEMS"] == "0"
-    assert os.environ["AURA_ENABLE_RESEARCH_CYCLE"] == "0"
-    assert os.environ["AURA_ENABLE_SENSORIMOTOR_GROUNDING"] == "0"
+        assert os.environ["AURA_ENABLE_PROACTIVE_SYSTEMS"] == "0"
+        assert os.environ["AURA_ENABLE_RESEARCH_CYCLE"] == "0"
+        assert os.environ["AURA_ENABLE_SENSORIMOTOR_GROUNDING"] == "0"
+        assert os.environ["AURA_ENABLE_PROACTIVE_VISION"] == "0"
+    finally:
+        for name in managed_env:
+            os.environ.pop(name, None)
+
+
+def test_proof_boot_defers_nonessential_background_loops():
+    source = Path("core/orchestrator/main.py").read_text(encoding="utf-8")
+
+    assert '_background_quiescent_runtime("pneuma_background")' in source
+    assert '_background_quiescent_runtime("mhaf_background")' in source
+    assert '_background_quiescent_runtime("terminal_watchdog")' in source
+    assert '_proof_runtime_active("meta_evolution_cycle")' in source

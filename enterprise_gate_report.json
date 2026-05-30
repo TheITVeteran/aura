@@ -15,14 +15,14 @@
       "detail": "",
       "file": "aura_main.py",
       "kind": "broad_exception_review",
-      "line": 636,
+      "line": 637,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "aura_main.py",
       "kind": "broad_exception_review",
-      "line": 815,
+      "line": 816,
       "severity": "medium"
     },
     {
@@ -1961,7 +1961,7 @@
       "detail": "from unittest.mock import AsyncMock",
       "file": "tests/test_proof_background_quiescence.py",
       "kind": "placeholder_stub_mock",
-      "line": 3,
+      "line": 4,
       "severity": "low"
     },
     {
@@ -7267,7 +7267,7 @@
       "detail": "",
       "file": "core/utils/singleton.py",
       "kind": "broad_exception_review",
-      "line": 99,
+      "line": 100,
       "severity": "medium"
     },
     {
@@ -9595,11 +9595,11 @@
       "severity": "low"
     }
   ],
-  "generated_at_unix": 1780162048.509105,
+  "generated_at_unix": 1780164581.347573,
   "high_or_critical_count": 0,
   "pytest_collect_ok": true,
-  "pytest_collect_output_tail": "ics_world_model_simulation\ntests/test_worldstate_game.py::test_worldstate_game_coverage\ntests/test_zenith_secrets.py::test_environment_secret_wins_without_touching_keychain\ntests/test_zenith_secrets.py::test_keychain_backend_reads_and_writes_without_subprocess\ntests/test_zenith_secrets.py::test_keychain_unavailable_falls_back_to_environment\ntests/test_zenith_secrets.py::test_zenith_secrets_source_has_no_subprocess_invocation\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_derivation_success\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_event_loop_health\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_records_structured_failure\ntests/topology/test_behavioral_consequence.py::test_bridge_responds_to_substrate_change\ntests/topology/test_behavioral_consequence.py::test_bridge_caps_max_tokens_to_request\ntests/unity/test_co_presence_graph.py::test_related_memory_binds_to_active_focus\ntests/unity/test_co_presence_graph.py::test_unrelated_memory_stays_peripheral\ntests/unity/test_co_presence_graph.py::test_conflicting_charges_raise_conflict_density\ntests/unity/test_draft_reconciliation.py::test_conflicting_drafts_become_conflicted_memory\ntests/unity/test_draft_reconciliation.py::test_similar_drafts_remain_clean\ntests/unity/test_memory_unity_commits.py::test_memory_metadata_carries_unity_fields\ntests/unity/test_memory_unity_commits.py::test_memory_write_defers_when_unity_requires_it\ntests/unity/test_mind_moment.py::test_mind_moment_binds_active_present_and_causal_closure\ntests/unity/test_mind_moment.py::test_mind_moment_lesion_specific_degradation\ntests/unity/test_mind_moment.py::test_will_blocks_external_action_when_mind_moment_closure_collapses\ntests/unity/test_self_world_binding.py::test_will_receipt_increases_authored_trace\ntests/unity/test_self_world_binding.py::test_claimed_authorship_without_receipt_is_flagged\ntests/unity/test_temporal_binding_field.py::test_repeated_contents_raise_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_abrupt_jump_lowers_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_stale_subsystem_produces_phase_lag_signal\ntests/unity/test_unity_adversarial_prompting.py::test_integrated_frame_warns_against_false_clarity\ntests/unity/test_unity_end_to_end.py::test_end_to_end_unity_changes_tool_decision\ntests/unity/test_unity_end_to_end.py::test_unity_route_exposes_current_summary\ntests/unity/test_unity_lesion_suite.py::test_temporal_binding_lesion_changes_behavior\ntests/unity/test_unity_lesion_suite.py::test_self_world_lesion_reduces_authorship_confidence\ntests/unity/test_unity_lesion_suite.py::test_draft_lesion_removes_conflict_preservation\ntests/unity/test_unity_monitor.py::test_monitor_detects_fragmentation_causes\ntests/unity/test_unity_repair.py::test_projected_repair_improves_unity_without_faking_resolution\ntests/unity/test_unity_self_report_honesty.py::test_fragmented_unity_reports_measurable_cause\ntests/unity/test_unity_self_report_honesty.py::test_nominal_state_does_not_force_fragmentation_language\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_external_tool_action\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_all_consequential_external_surfaces\ntests/unity/test_will_unity_gating.py::test_low_unity_allows_stabilization\ntests/unity/test_will_unity_gating.py::test_low_unity_defers_memory_write_when_drafts_are_unstable\nproof_kernel/tests/test_proof_kernel.py::test_global_workspace_prefers_higher_effective_priority\nproof_kernel/tests/test_proof_kernel.py::test_temporal_binding_builds_narrative\nproof_kernel/tests/test_proof_kernel.py::test_self_prediction_tracks_surprise\nproof_kernel/tests/test_proof_kernel.py::test_homeostasis_changes_from_signals_and_feedback\nproof_kernel/tests/test_proof_kernel.py::test_structural_opacity_measures_hidden_state\nproof_kernel/tests/test_proof_kernel.py::test_report_generation_contains_all_sections\n\n6244 tests collected in 3.94s\n",
-  "pytest_collect_seconds": 5.226,
+  "pytest_collect_output_tail": "ics_world_model_simulation\ntests/test_worldstate_game.py::test_worldstate_game_coverage\ntests/test_zenith_secrets.py::test_environment_secret_wins_without_touching_keychain\ntests/test_zenith_secrets.py::test_keychain_backend_reads_and_writes_without_subprocess\ntests/test_zenith_secrets.py::test_keychain_unavailable_falls_back_to_environment\ntests/test_zenith_secrets.py::test_zenith_secrets_source_has_no_subprocess_invocation\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_derivation_success\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_event_loop_health\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_records_structured_failure\ntests/topology/test_behavioral_consequence.py::test_bridge_responds_to_substrate_change\ntests/topology/test_behavioral_consequence.py::test_bridge_caps_max_tokens_to_request\ntests/unity/test_co_presence_graph.py::test_related_memory_binds_to_active_focus\ntests/unity/test_co_presence_graph.py::test_unrelated_memory_stays_peripheral\ntests/unity/test_co_presence_graph.py::test_conflicting_charges_raise_conflict_density\ntests/unity/test_draft_reconciliation.py::test_conflicting_drafts_become_conflicted_memory\ntests/unity/test_draft_reconciliation.py::test_similar_drafts_remain_clean\ntests/unity/test_memory_unity_commits.py::test_memory_metadata_carries_unity_fields\ntests/unity/test_memory_unity_commits.py::test_memory_write_defers_when_unity_requires_it\ntests/unity/test_mind_moment.py::test_mind_moment_binds_active_present_and_causal_closure\ntests/unity/test_mind_moment.py::test_mind_moment_lesion_specific_degradation\ntests/unity/test_mind_moment.py::test_will_blocks_external_action_when_mind_moment_closure_collapses\ntests/unity/test_self_world_binding.py::test_will_receipt_increases_authored_trace\ntests/unity/test_self_world_binding.py::test_claimed_authorship_without_receipt_is_flagged\ntests/unity/test_temporal_binding_field.py::test_repeated_contents_raise_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_abrupt_jump_lowers_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_stale_subsystem_produces_phase_lag_signal\ntests/unity/test_unity_adversarial_prompting.py::test_integrated_frame_warns_against_false_clarity\ntests/unity/test_unity_end_to_end.py::test_end_to_end_unity_changes_tool_decision\ntests/unity/test_unity_end_to_end.py::test_unity_route_exposes_current_summary\ntests/unity/test_unity_lesion_suite.py::test_temporal_binding_lesion_changes_behavior\ntests/unity/test_unity_lesion_suite.py::test_self_world_lesion_reduces_authorship_confidence\ntests/unity/test_unity_lesion_suite.py::test_draft_lesion_removes_conflict_preservation\ntests/unity/test_unity_monitor.py::test_monitor_detects_fragmentation_causes\ntests/unity/test_unity_repair.py::test_projected_repair_improves_unity_without_faking_resolution\ntests/unity/test_unity_self_report_honesty.py::test_fragmented_unity_reports_measurable_cause\ntests/unity/test_unity_self_report_honesty.py::test_nominal_state_does_not_force_fragmentation_language\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_external_tool_action\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_all_consequential_external_surfaces\ntests/unity/test_will_unity_gating.py::test_low_unity_allows_stabilization\ntests/unity/test_will_unity_gating.py::test_low_unity_defers_memory_write_when_drafts_are_unstable\nproof_kernel/tests/test_proof_kernel.py::test_global_workspace_prefers_higher_effective_priority\nproof_kernel/tests/test_proof_kernel.py::test_temporal_binding_builds_narrative\nproof_kernel/tests/test_proof_kernel.py::test_self_prediction_tracks_surprise\nproof_kernel/tests/test_proof_kernel.py::test_homeostasis_changes_from_signals_and_feedback\nproof_kernel/tests/test_proof_kernel.py::test_structural_opacity_measures_hidden_state\nproof_kernel/tests/test_proof_kernel.py::test_report_generation_contains_all_sections\n\n6247 tests collected in 2.68s\n",
+  "pytest_collect_seconds": 3.776,
   "python_files": 2751,
   "root": "/Users/bryan/.aura/live-source",
   "severity_counts": {

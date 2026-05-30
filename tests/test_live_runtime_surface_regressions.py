@@ -64,6 +64,9 @@ def test_omni_tracer_downgrades_optional_dependency_logs():
 def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     from core.runtime.background_policy import background_activity_reason
 
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
     orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
 

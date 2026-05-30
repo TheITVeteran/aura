@@ -146,13 +146,14 @@ def _activate_proof_runtime_policy(profile: str | None, ready_label: str | None 
 
     if not _profile_is_proof(profile, ready_label):
         return
-    os.environ.setdefault("AURA_PROOF_RUN", "1")
+    os.environ["AURA_PROOF_RUN"] = "1"
     os.environ.setdefault("AURA_PROOF_MODEL_TIER", "primary")
     # Proof/evaluation boots must still use the canonical Aura runtime, but
     # unsolicited background autonomy cannot compete with sealed evaluator turns.
-    os.environ.setdefault("AURA_ENABLE_PROACTIVE_SYSTEMS", "0")
-    os.environ.setdefault("AURA_ENABLE_RESEARCH_CYCLE", "0")
-    os.environ.setdefault("AURA_ENABLE_SENSORIMOTOR_GROUNDING", "0")
+    os.environ["AURA_ENABLE_PROACTIVE_SYSTEMS"] = "0"
+    os.environ["AURA_ENABLE_RESEARCH_CYCLE"] = "0"
+    os.environ["AURA_ENABLE_SENSORIMOTOR_GROUNDING"] = "0"
+    os.environ["AURA_ENABLE_PROACTIVE_VISION"] = "0"
 
 
 def _record_main_degradation(exc: BaseException, message: str, *args: Any) -> None:
