@@ -75,6 +75,14 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "resp.status_code == 200" not in gui_actor
 
 
+def test_native_shell_waits_for_readiness_heartbeat():
+    native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    assert "/api/health/heartbeat" in native_shell
+    assert 'client.get("http://localhost:7400/api/health").send().await' not in native_shell
+    assert "resp.status().is_success()" in native_shell
+
+
 def test_input_bus_normalizes_external_priority_values():
     bus = InputBus(maxsize=4)
     try:

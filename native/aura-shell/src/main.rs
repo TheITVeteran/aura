@@ -1,7 +1,7 @@
 //! Aura native shell.
 //!
 //! Wraps the local FastAPI runtime and the web UI in a Tauri window. The
-//! shell launches `aura_main.py` as a sidecar, waits for the boot health
+//! shell launches `aura_main.py` as a sidecar, waits for the readiness heartbeat
 //! endpoint to become reachable, and only then loads the UI. On window
 //! close, it sends SIGTERM so the runtime drains receipts cleanly.
 
@@ -46,11 +46,17 @@ async fn main() {
                     .spawn()
                     .expect("aura runtime failed to launch");
 
-                // Block until the runtime answers, then mark the shell ready.
+                // Block until the runtime passes the canonical readiness heartbeat,
+                // then mark the shell ready. A process-level HTTP response is not
+                // enough: the heartbeat is only healthy when kernel, inference,
+                // memory, scheduler, and tool-governance probes all pass.
                 let client = reqwest::Client::new();
                 loop {
-                    let r = client.get("http://localhost:7400/api/health").send().await;
-                    if r.is_ok() {
+                    let r = client
+                        .get("http://localhost:7400/api/health/heartbeat")
+                        .send()
+                        .await;
+                    if r.as_ref().map(|resp| resp.status().is_success()).unwrap_or(false) {
                         let _ = handle.emit("aura://ready", &());
                         break;
                     }
