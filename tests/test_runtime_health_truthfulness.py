@@ -76,15 +76,21 @@ def test_runtime_hygiene_treats_zombie_process_introspection_as_dead():
     from core.runtime.runtime_hygiene import _process_cmdline, _process_name
 
     class ZombieProc:
+        def __init__(self):
+            self.calls = []
+
         def cmdline(self):
+            self.calls.append("cmdline")
             raise psutil.ZombieProcess(pid=1234, name="Python")
 
         def name(self):
+            self.calls.append("name")
             raise psutil.ZombieProcess(pid=1234, name="Python")
 
     proc = ZombieProc()
     assert _process_cmdline(proc) == []
     assert _process_name(proc) == ""
+    assert proc.calls == ["cmdline", "name"]
 
 
 def test_dnu_runtime_health_blockers_reject_unhealthy_snapshots():

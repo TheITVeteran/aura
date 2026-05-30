@@ -155,7 +155,7 @@ def test_dnu_exclusivity_scanner_ignores_wrapper_shell_commands(monkeypatch):
         [
             "zsh",
             "-lc",
-            "AURA_AGI_MAX_TASKS=1 python tools/agi/run_dnu_agi_proof_battery.py > /tmp/probe.log",
+            "AURA_AGI_MAX_TASKS=1 python tools/agi/run_dnu_agi_proof_battery.py > probe.log",
         ],
     )
     proof_runner = FakeProc(

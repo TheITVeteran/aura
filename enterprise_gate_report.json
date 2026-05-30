@@ -1,21 +1,28 @@
 {
   "compile_ok": true,
   "counts": {
-    "broad_exception_review": 355,
-    "pass_only_function": 37,
-    "placeholder_stub_mock": 609,
+    "broad_exception_review": 371,
+    "pass_only_function": 38,
+    "placeholder_stub_mock": 617,
     "pytest_skip_xfail": 50,
-    "raise_only_function": 94,
-    "subprocess_usage_review": 54,
-    "swallowed_broad_exception": 109,
-    "unbounded_loop_review": 42
+    "raise_only_function": 90,
+    "subprocess_usage_review": 56,
+    "swallowed_broad_exception": 111,
+    "unbounded_loop_review": 36
   },
   "findings": [
     {
       "detail": "",
       "file": "aura_main.py",
       "kind": "broad_exception_review",
-      "line": 753,
+      "line": 636,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "aura_main.py",
+      "kind": "broad_exception_review",
+      "line": 815,
       "severity": "medium"
     },
     {
@@ -30,13 +37,6 @@
       "file": "research/state_observatory.py",
       "kind": "broad_exception_review",
       "line": 61,
-      "severity": "low"
-    },
-    {
-      "detail": "# Dummy metric: % of skills that have been reused at least once",
-      "file": "research/bench_harness.py",
-      "kind": "placeholder_stub_mock",
-      "line": 52,
       "severity": "low"
     },
     {
@@ -146,62 +146,6 @@
     },
     {
       "detail": "",
-      "file": "interface/event_bridge.py",
-      "kind": "broad_exception_review",
-      "line": 102,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/event_bridge.py",
-      "kind": "unbounded_loop_review",
-      "line": 107,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/event_bridge.py",
-      "kind": "broad_exception_review",
-      "line": 155,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/gui_actor.py",
-      "kind": "broad_exception_review",
-      "line": 97,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/gui_actor.py",
-      "kind": "unbounded_loop_review",
-      "line": 112,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/gui_actor.py",
-      "kind": "broad_exception_review",
-      "line": 120,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/gui_actor.py",
-      "kind": "broad_exception_review",
-      "line": 127,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/gui_actor.py",
-      "kind": "broad_exception_review",
-      "line": 141,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
       "file": "interface/memory_ui.py",
       "kind": "broad_exception_review",
       "line": 29,
@@ -237,66 +181,17 @@
     },
     {
       "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "unbounded_loop_review",
-      "line": 69,
+      "file": "tools/artifact_consistency_validator.py",
+      "kind": "swallowed_broad_exception",
+      "line": 41,
       "severity": "medium"
     },
     {
       "detail": "",
-      "file": "interface/websocket_manager.py",
+      "file": "tools/artifact_consistency_validator.py",
       "kind": "broad_exception_review",
-      "line": 108,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "unbounded_loop_review",
-      "line": 167,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "unbounded_loop_review",
-      "line": 225,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "broad_exception_review",
-      "line": 230,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "broad_exception_review",
-      "line": 241,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "broad_exception_review",
-      "line": 247,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "unbounded_loop_review",
-      "line": 269,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "interface/websocket_manager.py",
-      "kind": "broad_exception_review",
-      "line": 325,
-      "severity": "medium"
+      "line": 71,
+      "severity": "low"
     },
     {
       "detail": "subprocess.run",
@@ -328,9 +223,37 @@
     },
     {
       "detail": "",
+      "file": "tools/final_claim_validator.py",
+      "kind": "broad_exception_review",
+      "line": 180,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/final_claim_validator.py",
+      "kind": "broad_exception_review",
+      "line": 238,
+      "severity": "low"
+    },
+    {
+      "detail": "",
       "file": "tools/preflight_setup.py",
       "kind": "broad_exception_review",
       "line": 94,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/certify_boot.py",
+      "kind": "broad_exception_review",
+      "line": 59,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/certify_boot.py",
+      "kind": "broad_exception_review",
+      "line": 233,
       "severity": "low"
     },
     {
@@ -377,9 +300,93 @@
     },
     {
       "detail": "",
+      "file": "tools/production_surface_lint.py",
+      "kind": "broad_exception_review",
+      "line": 365,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/run_aletheia_live_proof.py",
+      "kind": "swallowed_broad_exception",
+      "line": 59,
+      "severity": "medium"
+    },
+    {
+      "detail": "subprocess.Popen",
+      "file": "tools/run_aletheia_live_proof.py",
+      "kind": "subprocess_usage_review",
+      "line": 213,
+      "severity": "medium"
+    },
+    {
+      "detail": "subprocess.run",
+      "file": "tools/run_aletheia_live_proof.py",
+      "kind": "subprocess_usage_review",
+      "line": 240,
+      "severity": "medium"
+    },
+    {
+      "detail": "# Tested inside mock unstable block below where it actively fails closed under state collapse.",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "placeholder_stub_mock",
+      "line": 55,
+      "severity": "low"
+    },
+    {
+      "detail": "# Register a mock unstable unity state in the ServiceContainer",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "placeholder_stub_mock",
+      "line": 72,
+      "severity": "low"
+    },
+    {
+      "detail": "# Dynamically register mock unity state to inject failure parameters",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "placeholder_stub_mock",
+      "line": 92,
+      "severity": "low"
+    },
+    {
+      "detail": "# We bypass regular register helper to force-inject our mock singleton instance",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "placeholder_stub_mock",
+      "line": 94,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "broad_exception_review",
+      "line": 175,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/receipt_coverage_validator.py",
+      "kind": "swallowed_broad_exception",
+      "line": 231,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
       "file": "tools/client_stream.py",
       "kind": "unbounded_loop_review",
       "line": 25,
+      "severity": "low"
+    },
+    {
+      "detail": "subprocess.run",
+      "file": "tools/certify.py",
+      "kind": "subprocess_usage_review",
+      "line": 27,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "tools/certify.py",
+      "kind": "broad_exception_review",
+      "line": 39,
       "severity": "low"
     },
     {
@@ -450,6 +457,20 @@
       "file": "core/intent_gate.py",
       "kind": "broad_exception_review",
       "line": 409,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "core/reaper.py",
+      "kind": "broad_exception_review",
+      "line": 124,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "core/reaper.py",
+      "kind": "broad_exception_review",
+      "line": 294,
       "severity": "medium"
     },
     {
@@ -796,24 +817,38 @@
       "severity": "medium"
     },
     {
-      "detail": "from unittest.mock import AsyncMock",
+      "detail": "from unittest.mock import AsyncMock, Mock",
       "file": "tests/test_runtime_polish.py",
       "kind": "placeholder_stub_mock",
-      "line": 4,
+      "line": 5,
+      "severity": "low"
+    },
+    {
+      "detail": "result=Mock(side_effect=RuntimeError(\"publish future failed\")),",
+      "file": "tests/test_runtime_polish.py",
+      "kind": "placeholder_stub_mock",
+      "line": 259,
+      "severity": "low"
+    },
+    {
+      "detail": "lambda: SimpleNamespace(decide=Mock(side_effect=RuntimeError(\"will offline\"))),",
+      "file": "tests/test_runtime_polish.py",
+      "kind": "placeholder_stub_mock",
+      "line": 348,
       "severity": "low"
     },
     {
       "detail": "close",
       "file": "tests/test_runtime_polish.py",
       "kind": "raise_only_function",
-      "line": 63,
+      "line": 106,
       "severity": "medium"
     },
     {
       "detail": "stop",
       "file": "tests/test_runtime_polish.py",
       "kind": "raise_only_function",
-      "line": 67,
+      "line": 110,
       "severity": "medium"
     },
     {
@@ -1009,14 +1044,28 @@
       "detail": "(adapter_dir / \"adapters.safetensors\").write_text(\"stub\")",
       "file": "tests/test_personality_adapter_resolution.py",
       "kind": "placeholder_stub_mock",
-      "line": 9,
+      "line": 10,
+      "severity": "low"
+    },
+    {
+      "detail": "(default_dir / \"adapters.safetensors\").write_text(\"stub\")",
+      "file": "tests/test_personality_adapter_resolution.py",
+      "kind": "placeholder_stub_mock",
+      "line": 29,
+      "severity": "low"
+    },
+    {
+      "detail": "(adapter_dir / \"adapters.safetensors\").write_text(\"stub\")",
+      "file": "tests/test_personality_adapter_resolution.py",
+      "kind": "placeholder_stub_mock",
+      "line": 53,
       "severity": "low"
     },
     {
       "detail": "adapter_file.write_text(\"stub\")",
       "file": "tests/test_personality_adapter_resolution.py",
       "kind": "placeholder_stub_mock",
-      "line": 26,
+      "line": 63,
       "severity": "low"
     },
     {
@@ -1142,42 +1191,49 @@
       "detail": "ensure_foreground_ready",
       "file": "tests/test_server_conversation_lane.py",
       "kind": "raise_only_function",
-      "line": 208,
+      "line": 511,
       "severity": "medium"
     },
     {
       "detail": "process",
       "file": "tests/test_server_conversation_lane.py",
       "kind": "raise_only_function",
-      "line": 215,
+      "line": 518,
       "severity": "medium"
     },
     {
       "detail": "process",
       "file": "tests/test_server_conversation_lane.py",
       "kind": "raise_only_function",
-      "line": 612,
-      "severity": "medium"
-    },
-    {
-      "detail": "process",
-      "file": "tests/test_server_conversation_lane.py",
-      "kind": "raise_only_function",
-      "line": 667,
+      "line": 915,
       "severity": "medium"
     },
     {
       "detail": "generate",
       "file": "tests/test_server_conversation_lane.py",
       "kind": "raise_only_function",
-      "line": 724,
+      "line": 958,
       "severity": "medium"
     },
     {
       "detail": "process",
       "file": "tests/test_server_conversation_lane.py",
       "kind": "raise_only_function",
-      "line": 789,
+      "line": 1039,
+      "severity": "medium"
+    },
+    {
+      "detail": "generate",
+      "file": "tests/test_server_conversation_lane.py",
+      "kind": "raise_only_function",
+      "line": 1096,
+      "severity": "medium"
+    },
+    {
+      "detail": "process",
+      "file": "tests/test_server_conversation_lane.py",
+      "kind": "raise_only_function",
+      "line": 1161,
       "severity": "medium"
     },
     {
@@ -1401,7 +1457,7 @@
       "detail": "# Let's mock llm.think to return 10 steps",
       "file": "tests/test_autonomous_task_engine_runtime.py",
       "kind": "placeholder_stub_mock",
-      "line": 640,
+      "line": 725,
       "severity": "low"
     },
     {
@@ -1527,21 +1583,21 @@
       "detail": "# Replace the async mock with a real Future to match runtime behavior.",
       "file": "tests/test_mlx_client_resilience.py",
       "kind": "placeholder_stub_mock",
-      "line": 150,
+      "line": 365,
       "severity": "low"
     },
     {
       "detail": "_cancelled",
       "file": "tests/test_mlx_client_resilience.py",
       "kind": "raise_only_function",
-      "line": 213,
+      "line": 429,
       "severity": "medium"
     },
     {
       "detail": "_cancelled",
       "file": "tests/test_mlx_client_resilience.py",
       "kind": "raise_only_function",
-      "line": 231,
+      "line": 448,
       "severity": "medium"
     },
     {
@@ -1902,6 +1958,13 @@
       "severity": "medium"
     },
     {
+      "detail": "from unittest.mock import AsyncMock",
+      "file": "tests/test_proof_background_quiescence.py",
+      "kind": "placeholder_stub_mock",
+      "line": 3,
+      "severity": "low"
+    },
+    {
       "detail": "",
       "file": "tests/test_realtime_concurrency.py",
       "kind": "unbounded_loop_review",
@@ -2171,105 +2234,42 @@
       "detail": "actor = ActorLifecycle(\"dummy\")",
       "file": "tests/test_server_runtime_hardening.py",
       "kind": "placeholder_stub_mock",
-      "line": 5142,
+      "line": 5375,
       "severity": "low"
-    },
-    {
-      "detail": "__init__",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 502,
-      "severity": "medium"
     },
     {
       "detail": "subprocess.run",
       "file": "tests/test_server_runtime_hardening.py",
       "kind": "subprocess_usage_review",
-      "line": 606,
+      "line": 608,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "tests/test_server_runtime_hardening.py",
       "kind": "broad_exception_review",
-      "line": 821,
+      "line": 823,
       "severity": "low"
     },
     {
       "detail": "",
       "file": "tests/test_server_runtime_hardening.py",
       "kind": "unbounded_loop_review",
-      "line": 884,
+      "line": 886,
       "severity": "low"
     },
     {
-      "detail": "_boom",
+      "detail": "__init__",
       "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 1256,
-      "severity": "medium"
-    },
-    {
-      "detail": "_unexpected_deepcopy",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 1277,
+      "kind": "pass_only_function",
+      "line": 1624,
       "severity": "medium"
     },
     {
       "detail": "__init__",
       "file": "tests/test_server_runtime_hardening.py",
       "kind": "pass_only_function",
-      "line": 1414,
-      "severity": "medium"
-    },
-    {
-      "detail": "_publish_telemetry",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 2889,
-      "severity": "medium"
-    },
-    {
-      "detail": "__init__",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "pass_only_function",
-      "line": 3127,
-      "severity": "medium"
-    },
-    {
-      "detail": "_bad",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 3942,
-      "severity": "medium"
-    },
-    {
-      "detail": "_kaboom",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 4139,
-      "severity": "medium"
-    },
-    {
-      "detail": "_kaboom",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 4159,
-      "severity": "medium"
-    },
-    {
-      "detail": "_decide",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 5770,
-      "severity": "medium"
-    },
-    {
-      "detail": "_decide",
-      "file": "tests/test_server_runtime_hardening.py",
-      "kind": "raise_only_function",
-      "line": 5808,
+      "line": 3338,
       "severity": "medium"
     },
     {
@@ -2542,14 +2542,14 @@
       "detail": "# Mock psutil to avoid system dependency",
       "file": "tests/test_morphogenesis_runtime.py",
       "kind": "placeholder_stub_mock",
-      "line": 204,
+      "line": 202,
       "severity": "low"
     },
     {
       "detail": "_failing_handler",
       "file": "tests/test_morphogenesis_runtime.py",
       "kind": "raise_only_function",
-      "line": 232,
+      "line": 230,
       "severity": "medium"
     },
     {
@@ -2684,6 +2684,13 @@
       "kind": "placeholder_stub_mock",
       "line": 3,
       "severity": "low"
+    },
+    {
+      "detail": "full_suite",
+      "file": "tests/test_self_modification_engine_recovery.py",
+      "kind": "raise_only_function",
+      "line": 344,
+      "severity": "medium"
     },
     {
       "detail": "from unittest.mock import AsyncMock",
@@ -3015,6 +3022,13 @@
       "severity": "low"
     },
     {
+      "detail": "unavailable",
+      "file": "tests/test_agency_bus_governance.py",
+      "kind": "raise_only_function",
+      "line": 42,
+      "severity": "medium"
+    },
+    {
       "detail": "",
       "file": "tests/test_swarm.py",
       "kind": "broad_exception_review",
@@ -3074,15 +3088,22 @@
       "detail": "# Mock memory headroom so test doesn't depend on actual system RAM",
       "file": "tests/test_inference_gate_tiering.py",
       "kind": "placeholder_stub_mock",
-      "line": 309,
+      "line": 323,
       "severity": "low"
     },
     {
       "detail": "# Mock headroom so real system RAM doesn't interfere with test logic",
       "file": "tests/test_inference_gate_tiering.py",
       "kind": "placeholder_stub_mock",
-      "line": 1411,
+      "line": 1531,
       "severity": "low"
+    },
+    {
+      "detail": "_raise_transport",
+      "file": "tests/test_aletheia_runner_live_hardening.py",
+      "kind": "raise_only_function",
+      "line": 142,
+      "severity": "medium"
     },
     {
       "detail": "\"\"\"High-fidelity mock of the MLXLocalClient with realistic enterprise timing.\"\"\"",
@@ -3431,7 +3452,7 @@
       "detail": "_cancelled",
       "file": "tests/test_runtime_stability_edges.py",
       "kind": "raise_only_function",
-      "line": 727,
+      "line": 838,
       "severity": "medium"
     },
     {
@@ -3452,14 +3473,14 @@
       "detail": "_raise_gate_error",
       "file": "tests/test_ontological_hardening.py",
       "kind": "raise_only_function",
-      "line": 242,
+      "line": 261,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "tests/continuity_torture.py",
       "kind": "swallowed_broad_exception",
-      "line": 265,
+      "line": 295,
       "severity": "medium"
     },
     {
@@ -3473,14 +3494,14 @@
       "detail": "type(\"Stub\", (), {\"get_status\": lambda self: {\"version\": 1, \"name\": \"stub\"}})(),",
       "file": "tests/test_forensic_audit_regressions.py",
       "kind": "placeholder_stub_mock",
-      "line": 910,
+      "line": 940,
       "severity": "low"
     },
     {
       "detail": "ServiceContainer.register_instance(\"identity\", type(\"Stub\", (), {\"name\": \"stub\"})(), required=False)",
       "file": "tests/test_forensic_audit_regressions.py",
       "kind": "placeholder_stub_mock",
-      "line": 932,
+      "line": 962,
       "severity": "low"
     },
     {
@@ -3705,6 +3726,13 @@
       "file": "tests/test_consciousness_guarantee_advanced.py",
       "kind": "pass_only_function",
       "line": 1068,
+      "severity": "medium"
+    },
+    {
+      "detail": "fail_start_server",
+      "file": "tests/test_aura_protocol_hardening.py",
+      "kind": "raise_only_function",
+      "line": 38,
       "severity": "medium"
     },
     {
@@ -4012,14 +4040,14 @@
       "detail": "pytest.skip(\"psutil unavailable in this environment\")",
       "file": "tests/test_runtime_hygiene.py",
       "kind": "pytest_skip_xfail",
-      "line": 97,
+      "line": 101,
       "severity": "medium"
     },
     {
       "detail": "pytest.skip(\"psutil child-process inspection is blocked in this sandbox\")",
       "file": "tests/test_runtime_hygiene.py",
       "kind": "pytest_skip_xfail",
-      "line": 101,
+      "line": 105,
       "severity": "medium"
     },
     {
@@ -5745,34 +5773,6 @@
       "severity": "low"
     },
     {
-      "detail": "subprocess.check_call",
-      "file": "scripts/build_app.py",
-      "kind": "subprocess_usage_review",
-      "line": 79,
-      "severity": "medium"
-    },
-    {
-      "detail": "subprocess.run",
-      "file": "scripts/build_app.py",
-      "kind": "subprocess_usage_review",
-      "line": 98,
-      "severity": "medium"
-    },
-    {
-      "detail": "subprocess.run",
-      "file": "scripts/build_app.py",
-      "kind": "subprocess_usage_review",
-      "line": 99,
-      "severity": "medium"
-    },
-    {
-      "detail": "subprocess.run",
-      "file": "scripts/build_app.py",
-      "kind": "subprocess_usage_review",
-      "line": 100,
-      "severity": "medium"
-    },
-    {
       "detail": "",
       "file": "scripts/build_app.py",
       "kind": "broad_exception_review",
@@ -6224,7 +6224,7 @@
       "detail": "",
       "file": "scripts/generate_txt_export.py",
       "kind": "broad_exception_review",
-      "line": 138,
+      "line": 148,
       "severity": "low"
     },
     {
@@ -6614,58 +6614,30 @@
     },
     {
       "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 70,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 76,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 82,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 88,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 94,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 100,
-      "severity": "low"
-    },
-    {
-      "detail": "",
-      "file": "tools/agi/validate_dnu_final_bundle.py",
-      "kind": "broad_exception_review",
-      "line": 106,
+      "file": "tools/agi/run_dnu_agi_proof_battery.py",
+      "kind": "unbounded_loop_review",
+      "line": 418,
       "severity": "low"
     },
     {
       "detail": "",
       "file": "tools/agi/run_dnu_agi_proof_battery.py",
-      "kind": "swallowed_broad_exception",
-      "line": 1061,
+      "kind": "broad_exception_review",
+      "line": 1751,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/agi/run_dnu_agi_proof_battery.py",
+      "kind": "broad_exception_review",
+      "line": 1913,
+      "severity": "low"
+    },
+    {
+      "detail": "subprocess.run",
+      "file": "tools/proof/run_person_in_box_gauntlet.py",
+      "kind": "subprocess_usage_review",
+      "line": 298,
       "severity": "medium"
     },
     {
@@ -6711,6 +6683,104 @@
       "severity": "medium"
     },
     {
+      "detail": "",
+      "file": "tools/longevity/validate_longevity_soak.py",
+      "kind": "broad_exception_review",
+      "line": 47,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/longevity/validate_longevity_soak.py",
+      "kind": "broad_exception_review",
+      "line": 68,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/integration/run_unified_aura_scenario.py",
+      "kind": "broad_exception_review",
+      "line": 403,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/integration/run_unified_aura_scenario.py",
+      "kind": "broad_exception_review",
+      "line": 420,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/environments/validate_novel_environment_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 60,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/environments/validate_novel_environment_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 77,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/environments/validate_novel_environment_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 108,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/environments/validate_novel_environment_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 139,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/learning/validate_continual_learning_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 64,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/learning/validate_continual_learning_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 81,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/learning/validate_continual_learning_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 125,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/learning/validate_continual_learning_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 162,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/benchmarks/zenith_v2_state_benchmark.py",
+      "kind": "unbounded_loop_review",
+      "line": 123,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/aletheia/run_candidate_battery.py",
+      "kind": "broad_exception_review",
+      "line": 1044,
+      "severity": "low"
+    },
+    {
       "detail": "# this stub records intent and returns. A real chaos run wires this",
       "file": "tools/chaos/injector.py",
       "kind": "placeholder_stub_mock",
@@ -6723,6 +6793,83 @@
       "kind": "swallowed_broad_exception",
       "line": 139,
       "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/validate_external_live_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 55,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/validate_external_live_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 68,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/validate_external_live_bundle.py",
+      "kind": "broad_exception_review",
+      "line": 99,
+      "severity": "low"
+    },
+    {
+      "detail": "log_message",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "pass_only_function",
+      "line": 52,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 129,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 136,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 152,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 159,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 175,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 182,
+      "severity": "low"
+    },
+    {
+      "detail": "",
+      "file": "tools/external_validation/run_external_live_validation.py",
+      "kind": "broad_exception_review",
+      "line": 413,
+      "severity": "low"
     },
     {
       "detail": "",
@@ -6757,20 +6904,6 @@
       "file": "core/memory/memory_write_gateway.py",
       "kind": "broad_exception_review",
       "line": 142,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "core/memory/db_writer_queue.py",
-      "kind": "unbounded_loop_review",
-      "line": 120,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "core/memory/db_writer_queue.py",
-      "kind": "broad_exception_review",
-      "line": 168,
       "severity": "medium"
     },
     {
@@ -6819,7 +6952,7 @@
       "detail": "",
       "file": "core/identity/id_rag.py",
       "kind": "unbounded_loop_review",
-      "line": 299,
+      "line": 364,
       "severity": "medium"
     },
     {
@@ -6833,14 +6966,14 @@
       "detail": "",
       "file": "core/consciousness/quantum_entropy.py",
       "kind": "broad_exception_review",
-      "line": 231,
+      "line": 286,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/consciousness/quantum_entropy.py",
       "kind": "broad_exception_review",
-      "line": 245,
+      "line": 300,
       "severity": "medium"
     },
     {
@@ -6875,7 +7008,7 @@
       "detail": "",
       "file": "core/consciousness/aura_protocol.py",
       "kind": "unbounded_loop_review",
-      "line": 341,
+      "line": 353,
       "severity": "medium"
     },
     {
@@ -6883,6 +7016,13 @@
       "file": "core/consciousness/unified_audit.py",
       "kind": "unbounded_loop_review",
       "line": 233,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "core/consciousness/heartbeat.py",
+      "kind": "broad_exception_review",
+      "line": 182,
       "severity": "medium"
     },
     {
@@ -7036,7 +7176,7 @@
       "detail": "",
       "file": "core/runtime/runtime_hygiene.py",
       "kind": "broad_exception_review",
-      "line": 414,
+      "line": 467,
       "severity": "medium"
     },
     {
@@ -7106,14 +7246,7 @@
       "detail": "",
       "file": "core/runtime/self_repair_ladder.py",
       "kind": "broad_exception_review",
-      "line": 166,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "core/runtime/self_repair_ladder.py",
-      "kind": "broad_exception_review",
-      "line": 181,
+      "line": 215,
       "severity": "medium"
     },
     {
@@ -7128,6 +7261,13 @@
       "file": "core/utils/model_manager.py",
       "kind": "unbounded_loop_review",
       "line": 133,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "core/utils/singleton.py",
+      "kind": "broad_exception_review",
+      "line": 99,
       "severity": "medium"
     },
     {
@@ -7293,30 +7433,37 @@
     },
     {
       "detail": "",
-      "file": "core/brain/inference_gate.py",
+      "file": "core/brain/cognitive_engine.py",
       "kind": "broad_exception_review",
-      "line": 1788,
+      "line": 796,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/brain/inference_gate.py",
       "kind": "broad_exception_review",
-      "line": 1798,
+      "line": 1913,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/brain/inference_gate.py",
       "kind": "broad_exception_review",
-      "line": 1808,
+      "line": 1923,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/brain/inference_gate.py",
       "kind": "broad_exception_review",
-      "line": 3725,
+      "line": 1933,
+      "severity": "medium"
+    },
+    {
+      "detail": "",
+      "file": "core/brain/inference_gate.py",
+      "kind": "broad_exception_review",
+      "line": 4073,
       "severity": "medium"
     },
     {
@@ -7344,7 +7491,7 @@
       "detail": "",
       "file": "core/ops/resilient_boot.py",
       "kind": "broad_exception_review",
-      "line": 138,
+      "line": 143,
       "severity": "medium"
     },
     {
@@ -7370,23 +7517,9 @@
     },
     {
       "detail": "",
-      "file": "core/self_modification/self_modification_engine.py",
-      "kind": "broad_exception_review",
-      "line": 502,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "core/self_modification/self_modification_engine.py",
-      "kind": "broad_exception_review",
-      "line": 568,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
       "file": "core/phases/response_generation.py",
       "kind": "broad_exception_review",
-      "line": 414,
+      "line": 465,
       "severity": "medium"
     },
     {
@@ -7412,23 +7545,16 @@
     },
     {
       "detail": "",
-      "file": "core/kernel/zenith_v2_benchmark.py",
-      "kind": "unbounded_loop_review",
-      "line": 53,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
       "file": "core/brain/llm/mlx_client.py",
       "kind": "unbounded_loop_review",
-      "line": 1162,
+      "line": 1184,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/brain/llm/mlx_client.py",
       "kind": "broad_exception_review",
-      "line": 2406,
+      "line": 2550,
       "severity": "medium"
     },
     {
@@ -7442,7 +7568,7 @@
       "detail": "",
       "file": "core/brain/llm/mlx_worker.py",
       "kind": "unbounded_loop_review",
-      "line": 803,
+      "line": 1498,
       "severity": "medium"
     },
     {
@@ -7484,56 +7610,49 @@
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 67,
+      "line": 76,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 96,
+      "line": 131,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 113,
+      "line": 143,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 125,
+      "line": 171,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 153,
+      "line": 202,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 184,
+      "line": 213,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "core/orchestrator/mixins/boot/boot_identity.py",
       "kind": "broad_exception_review",
-      "line": 195,
-      "severity": "medium"
-    },
-    {
-      "detail": "",
-      "file": "core/orchestrator/mixins/boot/boot_identity.py",
-      "kind": "broad_exception_review",
-      "line": 205,
+      "line": 223,
       "severity": "medium"
     },
     {
@@ -7619,6 +7738,20 @@
       "kind": "broad_exception_review",
       "line": 28,
       "severity": "low"
+    },
+    {
+      "detail": "subprocess.run",
+      "file": "tests/proof/test_person_box_artifacts.py",
+      "kind": "subprocess_usage_review",
+      "line": 18,
+      "severity": "medium"
+    },
+    {
+      "detail": "subprocess.run",
+      "file": "tests/proof/test_person_box_artifacts.py",
+      "kind": "subprocess_usage_review",
+      "line": 100,
+      "severity": "medium"
     },
     {
       "detail": "print(\"Generative Dummy Data...\")",
@@ -8646,14 +8779,14 @@
       "detail": "subprocess.run",
       "file": "tests/agi/live/live_harness.py",
       "kind": "subprocess_usage_review",
-      "line": 96,
+      "line": 108,
       "severity": "medium"
     },
     {
       "detail": "",
       "file": "tests/agi/live/live_harness.py",
       "kind": "swallowed_broad_exception",
-      "line": 118,
+      "line": 134,
       "severity": "medium"
     },
     {
@@ -9462,15 +9595,15 @@
       "severity": "low"
     }
   ],
-  "generated_at_unix": 1779483042.2799911,
+  "generated_at_unix": 1780162048.509105,
   "high_or_critical_count": 0,
-  "pytest_collect_ok": null,
-  "pytest_collect_output_tail": "",
-  "pytest_collect_seconds": null,
-  "python_files": 2638,
+  "pytest_collect_ok": true,
+  "pytest_collect_output_tail": "ics_world_model_simulation\ntests/test_worldstate_game.py::test_worldstate_game_coverage\ntests/test_zenith_secrets.py::test_environment_secret_wins_without_touching_keychain\ntests/test_zenith_secrets.py::test_keychain_backend_reads_and_writes_without_subprocess\ntests/test_zenith_secrets.py::test_keychain_unavailable_falls_back_to_environment\ntests/test_zenith_secrets.py::test_zenith_secrets_source_has_no_subprocess_invocation\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_derivation_success\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_reports_event_loop_health\ntests/test_zenith_state_benchmark_tool.py::test_zenith_state_benchmark_records_structured_failure\ntests/topology/test_behavioral_consequence.py::test_bridge_responds_to_substrate_change\ntests/topology/test_behavioral_consequence.py::test_bridge_caps_max_tokens_to_request\ntests/unity/test_co_presence_graph.py::test_related_memory_binds_to_active_focus\ntests/unity/test_co_presence_graph.py::test_unrelated_memory_stays_peripheral\ntests/unity/test_co_presence_graph.py::test_conflicting_charges_raise_conflict_density\ntests/unity/test_draft_reconciliation.py::test_conflicting_drafts_become_conflicted_memory\ntests/unity/test_draft_reconciliation.py::test_similar_drafts_remain_clean\ntests/unity/test_memory_unity_commits.py::test_memory_metadata_carries_unity_fields\ntests/unity/test_memory_unity_commits.py::test_memory_write_defers_when_unity_requires_it\ntests/unity/test_mind_moment.py::test_mind_moment_binds_active_present_and_causal_closure\ntests/unity/test_mind_moment.py::test_mind_moment_lesion_specific_degradation\ntests/unity/test_mind_moment.py::test_will_blocks_external_action_when_mind_moment_closure_collapses\ntests/unity/test_self_world_binding.py::test_will_receipt_increases_authored_trace\ntests/unity/test_self_world_binding.py::test_claimed_authorship_without_receipt_is_flagged\ntests/unity/test_temporal_binding_field.py::test_repeated_contents_raise_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_abrupt_jump_lowers_temporal_continuity\ntests/unity/test_temporal_binding_field.py::test_stale_subsystem_produces_phase_lag_signal\ntests/unity/test_unity_adversarial_prompting.py::test_integrated_frame_warns_against_false_clarity\ntests/unity/test_unity_end_to_end.py::test_end_to_end_unity_changes_tool_decision\ntests/unity/test_unity_end_to_end.py::test_unity_route_exposes_current_summary\ntests/unity/test_unity_lesion_suite.py::test_temporal_binding_lesion_changes_behavior\ntests/unity/test_unity_lesion_suite.py::test_self_world_lesion_reduces_authorship_confidence\ntests/unity/test_unity_lesion_suite.py::test_draft_lesion_removes_conflict_preservation\ntests/unity/test_unity_monitor.py::test_monitor_detects_fragmentation_causes\ntests/unity/test_unity_repair.py::test_projected_repair_improves_unity_without_faking_resolution\ntests/unity/test_unity_self_report_honesty.py::test_fragmented_unity_reports_measurable_cause\ntests/unity/test_unity_self_report_honesty.py::test_nominal_state_does_not_force_fragmentation_language\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_external_tool_action\ntests/unity/test_will_unity_gating.py::test_low_unity_blocks_all_consequential_external_surfaces\ntests/unity/test_will_unity_gating.py::test_low_unity_allows_stabilization\ntests/unity/test_will_unity_gating.py::test_low_unity_defers_memory_write_when_drafts_are_unstable\nproof_kernel/tests/test_proof_kernel.py::test_global_workspace_prefers_higher_effective_priority\nproof_kernel/tests/test_proof_kernel.py::test_temporal_binding_builds_narrative\nproof_kernel/tests/test_proof_kernel.py::test_self_prediction_tracks_surprise\nproof_kernel/tests/test_proof_kernel.py::test_homeostasis_changes_from_signals_and_feedback\nproof_kernel/tests/test_proof_kernel.py::test_structural_opacity_measures_hidden_state\nproof_kernel/tests/test_proof_kernel.py::test_report_generation_contains_all_sections\n\n6244 tests collected in 3.94s\n",
+  "pytest_collect_seconds": 5.226,
+  "python_files": 2751,
   "root": "/Users/bryan/.aura/live-source",
   "severity_counts": {
-    "low": 808,
-    "medium": 542
+    "low": 844,
+    "medium": 525
   }
 }

@@ -280,8 +280,10 @@ def test_godmode_keeps_benchmark_artifacts_out_of_task_engine(monkeypatch):
     state.cognition.current_objective = "Return the reconciled data as a CSV with columns: sku,count."
     state.response_modifiers["intent_type"] = "TASK"
     state.response_modifiers["matched_skills"] = ["run_code"]
+    dispatch_attempts = []
 
     async def _should_not_dispatch(*_args, **_kwargs):
+        dispatch_attempts.append("benchmark_artifact")
         raise AssertionError("benchmark artifact turn entered TaskEngine dispatch")
 
     monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
@@ -290,6 +292,7 @@ def test_godmode_keeps_benchmark_artifacts_out_of_task_engine(monkeypatch):
 
     assert new_state.response_modifiers["intent_type"] == "CHAT"
     assert "matched_skills" not in new_state.response_modifiers
+    assert dispatch_attempts == []
 
 
 def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
@@ -305,8 +308,10 @@ def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
     state.cognition.current_objective = objective
     state.response_modifiers["intent_type"] = "TASK"
     state.response_modifiers["matched_skills"] = ["sovereign_terminal"]
+    dispatch_attempts = []
 
     async def _should_not_dispatch(*_args, **_kwargs):
+        dispatch_attempts.append("operator_explanation")
         raise AssertionError("operator explanation entered TaskEngine dispatch")
 
     monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
@@ -315,6 +320,7 @@ def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
 
     assert new_state.response_modifiers["intent_type"] == "CHAT"
     assert "matched_skills" not in new_state.response_modifiers
+    assert dispatch_attempts == []
 
 
 @pytest.mark.asyncio

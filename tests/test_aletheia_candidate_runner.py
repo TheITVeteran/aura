@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
-import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 def _runner_module():
@@ -75,18 +76,14 @@ def test_report_solver_emits_exact_rounded_values_expected_by_grader(tmp_path):
     assert "0.4545" in report
 
 
-def test_candidate_runner_refuses_evaluator_material(tmp_path):
+def test_candidate_runner_refuses_evaluator_material(tmp_path, monkeypatch):
     root = tmp_path / "candidate_battery_500"
     (root / "worlds").mkdir(parents=True)
     (root / "hidden_grader").mkdir()
-    runner_path = Path(__file__).resolve().parents[1] / "tools" / "aletheia" / "run_candidate_battery.py"
+    runner = _runner_module()
 
-    proc = subprocess.run(
-        [sys.executable, str(runner_path), str(root)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    monkeypatch.setattr(sys, "argv", ["run_candidate_battery.py", str(root)])
 
-    assert proc.returncode != 0
-    assert "forbidden evaluator/private paths" in proc.stderr
+    with pytest.raises(SystemExit) as excinfo:
+        runner.main()
+    assert "forbidden evaluator/private paths" in str(excinfo.value)

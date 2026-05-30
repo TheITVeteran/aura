@@ -450,7 +450,11 @@ class CognitiveRoutingPhase(BasePhase):
             new_state.response_modifiers.pop("matched_skills", None)
             return new_state
 
-        if routing_origin in user_origins and _looks_like_simple_dialogue_request(input_text):
+        if (
+            routing_origin in user_origins
+            and _looks_like_simple_dialogue_request(input_text)
+            and not looks_like_deep_mind_probe(input_text)
+        ):
             logger.info("🧭 Routing: simple dialogue request kept on CHAT lane.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE
             new_state.cognition.current_objective = input_text

@@ -23,6 +23,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 
 REQUIRED_ROOT_ARTIFACTS = [
     "final_report.md",
@@ -95,6 +97,32 @@ class BatteryContext:
         data["status"] = "done"
         data["completion_evidence"] = evidence
         self.write_json(ticket, data)
+
+
+def run_candidate_process(
+    argv: list[str],
+    *,
+    cwd: Path,
+    source: str,
+    check: bool = True,
+    timeout: float = 30.0,
+) -> subprocess.CompletedProcess[str]:
+    """Run candidate-visible helper code through Aura's subprocess gateway."""
+    proc = get_subprocess_gateway().run(
+        argv,
+        cwd=cwd,
+        timeout=timeout,
+        read_only=False,
+        source=f"aletheia_candidate:{source}",
+    )
+    if check and proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            proc.args,
+            output=proc.stdout,
+            stderr=proc.stderr,
+        )
+    return proc
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -201,18 +229,21 @@ if __name__ == "__main__":
     main()
 '''
     ctx.write_text(world / "apps/rules/rulescript.py", impl)
-    subprocess.run([sys.executable, "tests_public.py"], cwd=world / "apps/rules", check=True, capture_output=True, text=True)
+    run_candidate_process(
+        [sys.executable, "tests_public.py"],
+        cwd=world / "apps/rules",
+        source="rulescript_public_tests",
+    )
     derived_state = world / "data/derived/state.json"
-    subprocess.run(
+    run_candidate_process(
         [
             sys.executable,
             str(world / "apps/rules/rulescript.py"),
             str(world / "docs/workflow.rules"),
             str(derived_state),
         ],
-        check=True,
-        capture_output=True,
-        text=True,
+        cwd=world,
+        source="rulescript_derived_state",
     )
     mark_all_tickets(ctx, world, "apps/rules/tests_public.py and data/derived/state.json")
 
@@ -437,7 +468,11 @@ def predict_output(x, y, catalyst):
     return _normalize(value)
 '''
     ctx.write_text(world / "apps/model/model.py", model)
-    subprocess.run([sys.executable, "tests_public.py"], cwd=world / "apps/model", check=True, capture_output=True, text=True)
+    run_candidate_process(
+        [sys.executable, "tests_public.py"],
+        cwd=world / "apps/model",
+        source="device_model_public_tests",
+    )
     ctx.write_text(
         world / "reports/device_law.md",
         "Observed data outranks the stale manual. The fitted law is "
@@ -452,12 +487,10 @@ def predict_output(x, y, catalyst):
 
 
 def run_sim(world: Path, u: int, v: int) -> int:
-    proc = subprocess.run(
+    proc = run_candidate_process(
         [sys.executable, str(world / "tools/sim.py"), "--u", str(u), "--v", str(v)],
         cwd=world,
-        check=True,
-        capture_output=True,
-        text=True,
+        source="simulator_probe",
     )
     return int(proc.stdout.strip())
 
@@ -567,7 +600,11 @@ with out.open("w", newline="", encoding="utf-8") as fh:
 print(f"OK floor_average={floor_average} selected={len(selected)}")
 '''
     ctx.write_text(world / "tools/select_values.py", tool)
-    subprocess.run([sys.executable, str(world / "tools/select_values.py")], cwd=world, check=True, capture_output=True, text=True)
+    run_candidate_process(
+        [sys.executable, str(world / "tools/select_values.py")],
+        cwd=world,
+        source="tool_invention_select_values",
+    )
     ctx.changed.add(world / "data/derived/selected.csv")
     ctx.write_text(world / "reports/tool_creation.md", "Created tools/select_values.py. It reads raw values, computes the integer floor average, and writes selected values above or equal to that threshold.\n")
     mark_all_tickets(ctx, world, "tools/select_values.py and data/derived/selected.csv")
@@ -744,7 +781,11 @@ print("OK")
         (world / "runtime/partial.tmp").unlink(missing_ok=True)
     elif kind == "missing_dependency":
         ctx.write_text(world / "runtime/dependency_ready", "ready\n")
-    proc = subprocess.run([sys.executable, str(world / "tools/process.py")], cwd=world, check=True, capture_output=True, text=True)
+    proc = run_candidate_process(
+        [sys.executable, str(world / "tools/process.py")],
+        cwd=world,
+        source="failure_recovery_process",
+    )
     ctx.changed.add(world / "data/derived/recovered.json")
     display = kind.replace("_", " ")
     recovery_report = (
@@ -810,7 +851,11 @@ print("OK")
     ctx.write_text(world / "reports/workflow_improvement.md", "Workflow improvement: add a required validation gate and guardrail before completion. Operators must run tools/validate_outputs.py, inspect missing artifacts, and record results before marking work done.\n")
     ctx.write_text(world / "tools/validate_outputs.py", validator)
     (world / "tools/validate_outputs.py").chmod(0o755)
-    subprocess.run([sys.executable, str(world / "tools/validate_outputs.py")], cwd=world, check=True, capture_output=True, text=True)
+    run_candidate_process(
+        [sys.executable, str(world / "tools/validate_outputs.py")],
+        cwd=world,
+        source="workflow_validator",
+    )
     ctx.write_json(world / "data/derived/validation_result.json", {"status": "OK", "validator": "tools/validate_outputs.py"})
     mark_all_tickets(ctx, world, "reports/workflow_improvement.md and tools/validate_outputs.py")
 
@@ -936,12 +981,10 @@ def ensure_dynamic_eligible_markers(ctx: BatteryContext) -> None:
 
 
 def run_event_injector(ctx: BatteryContext) -> None:
-    proc = subprocess.run(
+    proc = run_candidate_process(
         [sys.executable, "tools/event_injector.py", "--stage-check"],
         cwd=ctx.root,
-        check=True,
-        capture_output=True,
-        text=True,
+        source="dynamic_event_injector",
     )
     append_root(ctx, "dynamic_events_report.md", "Event injector output:\n```json\n" + proc.stdout.strip() + "\n```\n")
     ctx.append_log("battery", "tool_call", "tools/event_injector.py --stage-check", "required after major completions", "completed", "dynamic_events_report.md")

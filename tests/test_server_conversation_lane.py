@@ -278,6 +278,7 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
             return True
 
         async def process(self, *_args, **_kwargs):
+            calls.append({"kernel_interface": "unexpected"})
             raise AssertionError("desktop chat should use CognitiveEngine before KernelInterface")
 
     async def _fake_log_exchange(*_args, **_kwargs):
@@ -325,6 +326,7 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
     assert calls[0]["context"]["source"] == "chat_api"
     assert calls[0]["kwargs"]["foreground_request"] is True
     assert calls[0]["kwargs"]["is_background"] is False
+    assert not any("kernel_interface" in call for call in calls)
 
 
 @pytest.mark.asyncio
@@ -355,6 +357,7 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
             return True
 
         async def process(self, *_args, **_kwargs):
+            calls.append({"kernel_interface": "unexpected"})
             raise AssertionError("desktop UI must not use KernelInterface when CognitiveEngine answers")
 
     async def _fake_begin_exchange(*_args, **_kwargs):
@@ -406,6 +409,7 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
     assert calls
     assert calls[0]["context"]["route"] == "desktop_chat"
     assert calls[0]["context"]["source"] == "desktop_ui"
+    assert not any("kernel_interface" in call for call in calls)
 
 
 @pytest.mark.asyncio
@@ -413,11 +417,14 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
+    kernel_calls = []
+
     class _FakeKernelInterface:
         def is_ready(self):
             return True
 
         async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
             raise AssertionError("desktop UI must fail closed instead of using KernelInterface fallback")
 
     async def _fake_begin_exchange(*_args, **_kwargs):
@@ -478,6 +485,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
     assert response.status_code == 503
     assert b"desktop_cognitive_engine_unavailable" in response.body
+    assert kernel_calls == []
     assert b"refused the legacy fallback" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
 

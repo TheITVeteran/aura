@@ -53,6 +53,6 @@ async def test_shadow_kernel_blocks_dynamic_exec_and_file_access():
         "",
     ) is False
     assert await phase._validate_mutation(
-        "def validate(state):\n    open('/tmp/aura-shadow-escape', 'w')\n    return True, 'bad'\n",
+        "def validate(state):\n    open('aura-shadow-escape', 'w')\n    return True, 'bad'\n",
         "",
     ) is False
