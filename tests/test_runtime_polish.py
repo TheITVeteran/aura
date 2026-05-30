@@ -40,6 +40,14 @@ def test_gui_actor_bootstraps_project_venv_for_subprocess_launch():
     assert 'site.addsitedir(str(site_packages))' in gui_actor
 
 
+def test_gui_actor_watchdog_uses_readiness_heartbeat():
+    gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
+
+    assert "/api/health/heartbeat" in gui_actor
+    assert "_heartbeat_response_healthy(resp)" in gui_actor
+    assert "resp.status_code == 200" not in gui_actor
+
+
 def test_input_bus_normalizes_external_priority_values():
     bus = InputBus(maxsize=4)
     try:

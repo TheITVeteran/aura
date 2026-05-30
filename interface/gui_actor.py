@@ -5,7 +5,7 @@ import site
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Setup Path Resolution
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +53,18 @@ def _flush_logs_before_forced_exit() -> None:
         logging.shutdown()
     except (RuntimeError, OSError):
         pass
+
+
+def _heartbeat_response_healthy(resp: Any) -> bool:
+    """Accept only the canonical runtime readiness heartbeat as healthy."""
+    if getattr(resp, "status_code", None) != 200:
+        return False
+    try:
+        payload = resp.json()
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return bool(payload.get("healthy") is True and payload.get("status") == "healthy")
+
 
 def gui_actor_entry(port: int, token: str = None):
     """Entry point for the GUI process."""
@@ -128,8 +140,8 @@ def gui_actor_entry(port: int, token: str = None):
             consecutive_failures = 0
             while not shutdown_event.wait(20):
                 try:
-                    resp = requests.get(f"{app_url}/api/health", timeout=5)
-                    if resp.status_code == 200:
+                    resp = requests.get(f"{app_url}/api/health/heartbeat", timeout=5)
+                    if _heartbeat_response_healthy(resp):
                         consecutive_failures = 0
                     else:
                         consecutive_failures += 1
