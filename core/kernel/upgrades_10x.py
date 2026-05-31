@@ -1397,11 +1397,23 @@ class GodModeToolPhase(Phase):
                 )
 
             # 5. Execute the skill
+            # [HARDENING v55] Desktop tool handoff: Mark user-authorized execution
+            # If the tool source is user-facing or the current origin is user,
+            # authorize tool execution even if it goes through godmode_phase.
+            current_origin = self._normalize_origin(getattr(state.cognition, "current_origin", "") or "")
+            is_user_facing_origin = tool_source in {
+                "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external"
+            }
+            is_user_initiated = current_origin in {
+                "user", "voice", "admin", "desktop", "desktop-ui", "native-shell"
+            }
+            
             context = {
                 "objective": objective,
                 "origin": tool_source,
                 "intent_source": tool_source,
                 "state_version": state.version,
+                "user_requested_action": is_user_facing_origin or is_user_initiated,
                 "affect": {
                     "valence": getattr(state.affect, "valence", 0.0),
                     "curiosity": getattr(state.affect, "curiosity", 0.5),

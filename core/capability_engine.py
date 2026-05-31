@@ -92,6 +92,10 @@ _USER_FACING_CONTEXT_ORIGINS = frozenset(
         "websocket",
         "direct",
         "external",
+        "desktop",
+        "desktop-ui",
+        "native-shell",
+        "tauri",
     }
 )
 
