@@ -725,6 +725,7 @@ class HealthAwareLLMRouter:
                 handoff_kwargs = dict(kwargs)
                 handoff_kwargs.pop("origin", None)
                 handoff_kwargs.pop("is_background", None)
+                handoff_kwargs.pop("_contract_tool_handoff", None)
                 result = await self.think_and_act(
                     objective=prompt,
                     system_prompt=system_prompt or "",
@@ -1001,12 +1002,14 @@ class HealthAwareLLMRouter:
                 logger.warning("think_and_act on %s failed: %s", ep.name, exc)
                 ep.record_failure(str(exc))
 
+        kwargs_clean = dict(kwargs)
+        kwargs_clean.pop("_contract_tool_handoff", None)
         text = await self.think(
             objective,
             system_prompt=system_prompt,
             state=runtime_state,
             _contract_tool_handoff=True,
-            **kwargs,
+            **kwargs_clean,
         )
         return {"content": text or "", "turns": 0, "tool_calls": []}
 
