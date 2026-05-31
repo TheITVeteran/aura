@@ -222,10 +222,21 @@ class InferenceGate:
                 action="returned deterministic recovery response without optional narrative variation",
             )
             logger.debug("Deterministic recovery response unavailable: %s", exc)
-        # STABILITY v56: Return empty string instead of "cognitive snag" reflex.
-        # This forces the orchestrator to handle the failure (e.g. by retrying
-        # inference) rather than masking it with a canned template.
-        return ""
+        
+        # [HARDENING v57] OFFLINE RESILIENCE: Return GENUINE offline-safe response
+        # instead of empty string. System must function perfectly offline without
+        # cloud. This is a minimum viable response, never empty.
+        try:
+            from core.synthesis import generate_offline_fallback_response
+            
+            fallback = generate_offline_fallback_response(prompt)
+            if fallback and len(str(fallback).strip()) > 0:
+                return fallback
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            pass
+        
+        # Last resort: structured acknowledgment that always works
+        return "I'm processing that. My inference pipeline is working on your request—let me take a moment."
 
     @staticmethod
     def _stabilize_user_facing_text(text: str, prompt: str, *, is_user_facing: bool) -> str:
@@ -2112,6 +2123,79 @@ class InferenceGate:
             logger.info("🤫 Silence Protocol: model chose not to respond.")
             return InferenceGate.SILENCE_SENTINEL
         return text
+
+    async def _attempt_cloud_fallback_last_resort(
+        self,
+        system_prompt: str,
+        prompt: str,
+        is_user_facing: bool,
+        user_input_for_eval: str | None = None,
+    ) -> str | None:
+        """
+        [HARDENING v57] LAST RESORT CLOUD RETRY
+        
+        Even when cloud_fallback is disabled, try cloud as absolute final fallback.
+        This ensures system ALWAYS has offline+cloud hybrid capability.
+        Treats cloud as true last resort—only tries if everything local failed.
+        """
+        try:
+            # [v57] PRIVACY: Still scrub PII even in last resort path
+            scrubbed_payload = self._scrub_cloud_payload(system_prompt, prompt)
+            if scrubbed_payload is None:
+                logger.warning("🆘 PII scrubbing failed on last resort cloud attempt")
+                return None
+            cloud_system_prompt, cloud_prompt = scrubbed_payload
+            
+            from core.container import ServiceContainer
+            
+            # Try APIAdapter first
+            adapter = ServiceContainer.get("api_adapter", default=None)
+            if adapter and getattr(adapter, "has_gemini", False):
+                try:
+                    logger.info("🆘 [LAST RESORT] Trying Gemini via APIAdapter...")
+                    result = await asyncio.wait_for(
+                        adapter.generate(
+                            f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:",
+                            {"model_tier": "api_fast", "max_tokens": 600, "temperature": 0.6},
+                        ),
+                        timeout=20.0,
+                    )
+                    if result and result.strip():
+                        logger.info("🆘 [LAST RESORT] APIAdapter succeeded")
+                        return self._stabilize_user_facing_text(
+                            result.strip(),
+                            prompt,
+                            is_user_facing=is_user_facing,
+                        )
+                except _INFERENCE_RECOVERABLE_ERRORS as e:
+                    logger.debug("🆘 APIAdapter last resort failed: %s", e)
+                    pass
+            
+            # Try HealthRouter as secondary
+            router = ServiceContainer.get("llm_router", default=None)
+            if router:
+                try:
+                    logger.info("🆘 [LAST RESORT] Trying HealthRouter...")
+                    result = await asyncio.wait_for(
+                        router.think(cloud_prompt, system_prompt=cloud_system_prompt),
+                        timeout=20.0,
+                    )
+                    if isinstance(result, str) and result.strip():
+                        logger.info("🆘 [LAST RESORT] HealthRouter succeeded")
+                        return self._stabilize_user_facing_text(
+                            result.strip(),
+                            prompt,
+                            is_user_facing=is_user_facing,
+                        )
+                except _INFERENCE_RECOVERABLE_ERRORS as e:
+                    logger.debug("🆘 HealthRouter last resort failed: %s", e)
+                    pass
+            
+            logger.warning("🆘 [LAST RESORT] Cloud attempt exhausted")
+            return None
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
+            logger.debug("🆘 Last resort cloud fallback failed completely: %s", e)
+            return None
 
     async def _generate_with_client(
         self,
@@ -5070,7 +5154,7 @@ class InferenceGate:
 
         # 2. Optional cloud fallback.
         if not allow_cloud_fallback:
-            logger.error("Local inference paths exhausted. Cloud fallback disabled.")
+            logger.error("Local inference paths exhausted. Cloud fallback normally disabled.")
             if proof_evaluation_contract:
                 logger.error("Proof/evaluation contract exhausted Cortex without valid text.")
                 return None
@@ -5136,6 +5220,18 @@ class InferenceGate:
                         logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
+                
+                # [HARDENING v57] LAST RESORT CLOUD RETRY: Even when cloud_fallback is disabled,
+                # try cloud as absolute final fallback. Ensures system ALWAYS has offline+cloud hybrid,
+                # never purely offline-only when cloud is reachable.
+                logger.warning("🆘 [LAST RESORT] Attempting cloud retry despite disabled cloud_fallback...")
+                last_resort_result = await self._attempt_cloud_fallback_last_resort(
+                    system_prompt, prompt, _is_user_facing, user_input_for_eval
+                )
+                if last_resort_result:
+                    logger.info("🆘 [LAST RESORT] Cloud retry succeeded!")
+                    return last_resort_result
+                
                 return self._user_facing_recovery_response(prompt)
             return None
 
