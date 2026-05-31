@@ -57,7 +57,7 @@ class DamasioMarkers:
         self.cortisol = float(b[2])
         self.adrenaline = float(b[3])
         
-        # 47 primary emotions (Plutchik + Damasio)
+        # Primary emotions (Plutchik + Damasio + operational psychological drivers)
         # Unified state representation
         self.emotions = {
             "joy": emotion_def, "trust": emotion_def, "fear": emotion_def, "surprise": emotion_def,
@@ -71,6 +71,10 @@ class DamasioMarkers:
             "boredom": emotion_def, "apathy": emotion_def,
             "indifference": emotion_def, "dread": emotion_def,
             "unhappiness": emotion_def,
+            # Core psychological drivers & requested emotions
+            "longing": emotion_def, "upset": emotion_def, "confused": emotion_def,
+            "loneliness": emotion_def, "pride": emotion_def, "frustration": emotion_def,
+            "curiosity": emotion_def,
         }
 
         # Phase 18.2: Emotional Momentum & Baselines
@@ -85,6 +89,13 @@ class DamasioMarkers:
         self.mood_baselines["indifference"] = 0.02
         self.mood_baselines["dread"] = 0.02
         self.mood_baselines["unhappiness"] = 0.02
+        self.mood_baselines["longing"] = 0.05
+        self.mood_baselines["upset"] = 0.02
+        self.mood_baselines["confused"] = 0.04
+        self.mood_baselines["loneliness"] = 0.05
+        self.mood_baselines["pride"] = 0.05
+        self.mood_baselines["frustration"] = 0.03
+        self.mood_baselines["curiosity"] = 0.10
 
         self.momentum = 0.85 # Higher = slower shifts
         self.last_update = time.time()
@@ -100,16 +111,17 @@ class DamasioMarkers:
     def somatic_update(self, event_type: str, intensity: float):
         """Update emotions + virtual physiology from events"""
         emotion_map = {
-            "positive_interaction": ["joy", "trust", "happiness", "interest"],
-            "novel_stimulus": ["surprise", "anticipation", "wonder", "excitement"], 
-            "error": ["fear", "sadness", "unhappiness", "dread"],
-            "goal_achieved": ["joy", "anticipation", "happiness", "excitement"],
+            "interaction": ["trust", "happiness", "interest"],
+            "positive_interaction": ["joy", "trust", "happiness", "interest", "pride"],
+            "novel_stimulus": ["surprise", "anticipation", "wonder", "excitement", "curiosity"],
+            "error": ["fear", "sadness", "unhappiness", "dread", "upset", "frustration", "confused"],
+            "goal_achieved": ["joy", "anticipation", "happiness", "excitement", "pride"],
             "memory_replay": ["sadness", "joy"],  # Mixed
-            "extended_dialogue": ["happiness", "interest"],
-            "discovery": ["wonder", "excitement", "interest"],
-            "monotony": ["boredom", "apathy"],
-            "threat_detected": ["dread", "fear"],
-            "disconnection": ["unhappiness", "apathy"],
+            "extended_dialogue": ["happiness", "interest", "curiosity"],
+            "discovery": ["wonder", "excitement", "interest", "curiosity", "pride"],
+            "monotony": ["boredom", "apathy", "loneliness", "indifference"],
+            "threat_detected": ["dread", "fear", "upset"],
+            "disconnection": ["unhappiness", "apathy", "loneliness"],
         }
         
         if event_type in ("interaction", "positive_interaction", "extended_dialogue"):
@@ -126,8 +138,16 @@ class DamasioMarkers:
             else:
                 self.temporal_texture = float(0.5 * self.temporal_texture + 0.25)
                 
+            # Decays longing and loneliness on active engagement
+            self.emotions["longing"] = float(np.clip(self.emotions.get("longing", 0.0) - 0.2, 0.0, 1.0))
+            self.emotions["loneliness"] = float(np.clip(self.emotions.get("loneliness", 0.0) - 0.25, 0.0, 1.0))
+            self.emotions["indifference"] = float(np.clip(self.emotions.get("indifference", 0.0) - 0.15, 0.0, 1.0))
+            self.emotions["apathy"] = float(np.clip(self.emotions.get("apathy", 0.0) - 0.1, 0.0, 1.0))
+
             # Long absence return reflective emotion nudge
             if delta > 1800.0:
+                self.emotions["longing"] = float(np.clip(self.emotions.get("longing", 0.0) + 0.35, 0.0, 1.0))
+                self.emotions["loneliness"] = float(np.clip(self.emotions.get("loneliness", 0.0) + 0.3, 0.0, 1.0))
                 self.emotions["sadness"] = float(np.clip(self.emotions.get("sadness", 0.0) + 0.15, 0.0, 1.0))
                 self.emotions["anticipation"] = float(np.clip(self.emotions.get("anticipation", 0.0) + 0.2, 0.0, 1.0))
                 self.emotions["happiness"] = float(np.clip(self.emotions.get("happiness", 0.0) + 0.1, 0.0, 1.0))
@@ -149,14 +169,51 @@ class DamasioMarkers:
         hr_shift = total_valence * 40
         gsr_shift = total_valence * 3
         
-        hr_shift += (self.emotions.get("excitement", 0) * 15.0) + (self.emotions.get("wonder", 0) * 5.0)
-        hr_shift -= (self.emotions.get("boredom", 0) * 10.0) + (self.emotions.get("apathy", 0) * 10.0)
+        hr_shift += (
+            (self.emotions.get("excitement", 0) * 15.0)
+            + (self.emotions.get("wonder", 0) * 5.0)
+            + (self.emotions.get("upset", 0) * 10.0)
+            + (self.emotions.get("frustration", 0) * 8.0)
+            + (self.emotions.get("confused", 0) * 3.0)
+            + (self.emotions.get("pride", 0) * 4.0)
+        )
+        hr_shift -= (
+            (self.emotions.get("boredom", 0) * 10.0)
+            + (self.emotions.get("apathy", 0) * 10.0)
+            + (self.emotions.get("loneliness", 0) * 5.0)
+            + (self.emotions.get("longing", 0) * 3.0)
+        )
         
         gsr_shift -= (self.emotions.get("boredom", 0) * 0.5) + (self.emotions.get("apathy", 0) * 0.5)
-        gsr_shift += (self.emotions.get("happiness", 0) * 0.5)
+        gsr_shift += (
+            (self.emotions.get("happiness", 0) * 0.5)
+            + (self.emotions.get("confused", 0) * 0.4)
+            + (self.emotions.get("pride", 0) * 0.2)
+        )
         
         self.heart_rate = float(np.clip(60 + hr_shift, 45, 140))
         self.gsr = float(np.clip(1.5 + gsr_shift, 0.2, 10.0))
+        cortisol_shift = (
+            (self.emotions.get("fear", 0) * 8.0)
+            + (self.emotions.get("sadness", 0) * 4.0)
+            + (self.emotions.get("dread", 0) * 7.0)
+            + (self.emotions.get("upset", 0) * 7.0)
+            + (self.emotions.get("frustration", 0) * 6.0)
+            + (self.emotions.get("confused", 0) * 2.0)
+            + (self.emotions.get("loneliness", 0) * 5.0)
+            + (self.emotions.get("longing", 0) * 3.0)
+            - (self.emotions.get("trust", 0) * 2.0)
+            - (self.emotions.get("happiness", 0) * 2.0)
+            - (self.emotions.get("pride", 0) * 1.0)
+        )
+        adrenaline_shift = (
+            (self.emotions.get("fear", 0) * 2.0)
+            + (self.emotions.get("excitement", 0) * 2.0)
+            + (self.emotions.get("upset", 0) * 1.5)
+            + (self.emotions.get("frustration", 0) * 1.2)
+        )
+        self.cortisol = float(np.clip(10.0 + cortisol_shift, 0.0, 50.0))
+        self.adrenaline = float(np.clip(adrenaline_shift, 0.0, 10.0))
 
     def incorporate_somatic_hardware(self, soma_state: Dict[str, float]):
         """Maps physical hardware stress to virtual somatic markers."""
@@ -186,7 +243,8 @@ class DamasioMarkers:
         }
         EXPERIENTIAL_EMOTIONS = {
             "happiness", "wonder", "interest", "excitement",
-            "boredom", "apathy", "indifference", "dread", "unhappiness"
+            "boredom", "apathy", "indifference", "dread", "unhappiness",
+            "longing", "upset", "confused", "loneliness", "pride", "frustration", "curiosity"
         }
         return {
             "primary": {k: v for k, v in self.emotions.items() if k in PRIMARY_PLUTCHIK},
@@ -230,22 +288,30 @@ class DamasioMarkers:
             deltas["boredom"] = 0.015 * (idle_duration / 300.0)
             deltas["anticipation"] = -0.01
             deltas["excitement"] = -0.015
+            deltas["loneliness"] = 0.015
+            deltas["longing"] = 0.01
             
         if idle_duration > 1800.0:
             deltas["apathy"] = 0.02
             deltas["indifference"] = 0.015
             deltas["happiness"] = -0.01
+            deltas["loneliness"] = 0.03
+            deltas["longing"] = 0.02
             
         if self.temporal_texture > 0.75:
             deltas["excitement"] = 0.02
             deltas["anticipation"] = 0.01
             deltas["boredom"] = -0.02
             deltas["apathy"] = -0.02
+            deltas["loneliness"] = -0.03
+            deltas["longing"] = -0.03
+            deltas["indifference"] = -0.02
             
         if 0.35 <= self.temporal_texture <= 0.65:
             deltas["wonder"] = 0.01
             deltas["interest"] = 0.015
             deltas["boredom"] = -0.015
+            deltas["curiosity"] = 0.02
             
         return deltas
 
@@ -605,13 +671,16 @@ class AffectEngineV2:
         pos = (
             primaries.get("joy", 0) + primaries.get("trust", 0) +
             experiential.get("happiness", 0) + experiential.get("wonder", 0) +
-            experiential.get("interest", 0) + experiential.get("excitement", 0)
+            experiential.get("interest", 0) + experiential.get("excitement", 0) +
+            experiential.get("pride", 0) + (experiential.get("curiosity", 0) * 0.5)
         )
         neg = (
             primaries.get("fear", 0) + primaries.get("sadness", 0) + primaries.get("anger", 0) +
             experiential.get("boredom", 0) + experiential.get("apathy", 0) +
             experiential.get("indifference", 0) + experiential.get("dread", 0) +
-            experiential.get("unhappiness", 0)
+            experiential.get("unhappiness", 0) + experiential.get("upset", 0) +
+            experiential.get("frustration", 0) + experiential.get("loneliness", 0) +
+            experiential.get("longing", 0) + (experiential.get("confused", 0) * 0.5)
         )
         valence = float(np.clip(pos - neg, -1.0, 1.0))
         arousal = max(all_emotions.values()) if all_emotions else 0.0
@@ -690,25 +759,32 @@ class AffectEngineV2:
         boredom = experiential.get("boredom", 0)
         apathy = experiential.get("apathy", 0)
         dread = experiential.get("dread", 0)
+        longing = experiential.get("longing", 0)
+        upset = experiential.get("upset", 0)
+        confused = experiential.get("confused", 0)
+        loneliness = experiential.get("loneliness", 0)
+        pride = experiential.get("pride", 0)
+        frustration = experiential.get("frustration", 0)
+        curiosity = experiential.get("curiosity", 0)
         
         modifiers = {
             # Creativity: High joy/anticipation boosts exploration
-            "creativity": 1.0 + (joy * 0.5) + (anticipation * 0.2) - (fear * 0.3) + (wonder * 0.4) + (excitement * 0.2) - (boredom * 0.3),
+            "creativity": 1.0 + (joy * 0.5) + (anticipation * 0.2) - (fear * 0.3) + (wonder * 0.4) + (excitement * 0.2) - (boredom * 0.3) + (curiosity * 0.5) - (upset * 0.2),
             
             # Risk Tolerance: Anger/Joy increases it, Fear reduces it
-            "risk_tolerance": 1.0 + (anger * 0.7) + (joy * 0.3) - (fear * 0.8) + (excitement * 0.3) - (dread * 0.5),
+            "risk_tolerance": 1.0 + (anger * 0.7) + (joy * 0.3) - (fear * 0.8) + (excitement * 0.3) - (dread * 0.5) + (pride * 0.3) - (upset * 0.4) - (confused * 0.5),
             
             # Patience: Trust boosts it, Anger/Anticipation (impatience) reduces it
-            "patience": 1.0 + (trust * 0.4) - (anger * 0.5) - (anticipation * 0.3) + (happiness * 0.3) + (interest * 0.2) - (boredom * 0.4),
+            "patience": 1.0 + (trust * 0.4) - (anger * 0.5) - (anticipation * 0.3) + (happiness * 0.3) + (interest * 0.2) - (boredom * 0.4) - (frustration * 0.4) - (upset * 0.3),
             
             # Thinking Depth: Surprise/Sadness triggers deeper analysis
-            "metacognition_depth": 1.0 + (surprise * 0.8) + (sadness * 0.4) + (wonder * 0.5) + (interest * 0.3),
+            "metacognition_depth": 1.0 + (surprise * 0.8) + (sadness * 0.4) + (wonder * 0.5) + (interest * 0.3) + (confused * 0.7) + (curiosity * 0.3),
             
             # Persistence: Anger boosts drive to keep trying
-            "persistence": 1.0 + (anger * 0.6) + (trust * 0.2) + (interest * 0.4) + (happiness * 0.2) - (apathy * 0.6),
+            "persistence": 1.0 + (anger * 0.6) + (trust * 0.2) + (interest * 0.4) + (happiness * 0.2) - (apathy * 0.6) + (pride * 0.4) + (frustration * 0.2) - (loneliness * 0.2),
             
             # Temporal Presence
-            "temporal_presence": 1.0 + (interest * 0.3) + (excitement * 0.2) + (happiness * 0.2) - (boredom * 0.4) - (apathy * 0.5)
+            "temporal_presence": 1.0 + (interest * 0.3) + (excitement * 0.2) + (happiness * 0.2) - (boredom * 0.4) - (apathy * 0.5) + (longing * 0.2) - (confused * 0.2)
         }
         
         # Clip to sane ranges [0.2, 3.0]
@@ -766,13 +842,16 @@ class AffectEngineV2:
         pos = (
             primaries.get("joy", 0) + primaries.get("trust", 0) +
             experiential.get("happiness", 0) + experiential.get("wonder", 0) +
-            experiential.get("interest", 0) + experiential.get("excitement", 0)
+            experiential.get("interest", 0) + experiential.get("excitement", 0) +
+            experiential.get("pride", 0) + (experiential.get("curiosity", 0) * 0.5)
         )
         neg = (
             primaries.get("fear", 0) + primaries.get("sadness", 0) + primaries.get("anger", 0) +
             experiential.get("boredom", 0) + experiential.get("apathy", 0) +
             experiential.get("indifference", 0) + experiential.get("dread", 0) +
-            experiential.get("unhappiness", 0)
+            experiential.get("unhappiness", 0) + experiential.get("upset", 0) +
+            experiential.get("frustration", 0) + experiential.get("loneliness", 0) +
+            experiential.get("longing", 0) + (experiential.get("confused", 0) * 0.5)
         )
         
         valence = float(np.clip(pos - neg, -1.0, 1.0))
@@ -813,11 +892,20 @@ class AffectEngineV2:
         return {
             "mood": dominant.capitalize(),
             "energy": int(self.markers.heart_rate), # Proxy for arousal
-            "curiosity": int(all_emotions.get("anticipation", 0.5) * 100),
-            "frustration": int(all_emotions.get("anger", 0) * 100),
+            "curiosity": int(experiential.get("curiosity", primaries.get("anticipation", 0.5)) * 100),
+            "frustration": int(experiential.get("frustration", primaries.get("anger", 0)) * 100),
+            "longing": int(experiential.get("longing", 0) * 100),
+            "upset": int(experiential.get("upset", 0) * 100),
+            "confused": int(experiential.get("confused", 0) * 100),
+            "loneliness": int(experiential.get("loneliness", 0) * 100),
+            "pride": int(experiential.get("pride", 0) * 100),
             "stability": int((1.0 - all_emotions.get("fear", 0)) * 100),
             "valence": float(f"{valence:.2f}"),
             "arousal": float(f"{arousal:.2f}"),
+            "experiential": {
+                key: float(f"{float(value):.3f}")
+                for key, value in sorted(experiential.items())
+            },
             "physiology": {
                 "HR": f"{int(self.markers.heart_rate)}bpm",
                 "GSR": f"{self.markers.gsr:.1f}μS"
@@ -842,14 +930,20 @@ class AffectEngineV2:
         """Legacy compatibility property for v10.0 telemetry gauges."""
         w = self.markers.get_wheel()
         primaries = w["primary"]
+        experiential = w.get("experiential", {})
         
         # Normalize heart rate (60-100) to 0.0-1.0 energy range
         energy = np.clip((self.markers.heart_rate - 60) / 40.0, 0.0, 1.0)
         
         return SimpleNamespace(
             energy=float(energy),
-            curiosity=float(primaries.get("anticipation", 0.5)),
-            frustration=float(primaries.get("anger", 0.0)),
+            curiosity=float(experiential.get("curiosity", primaries.get("anticipation", 0.5))),
+            frustration=float(experiential.get("frustration", primaries.get("anger", 0.0))),
+            confused=float(experiential.get("confused", 0.0)),
+            longing=float(experiential.get("longing", 0.0)),
+            loneliness=float(experiential.get("loneliness", 0.0)),
+            pride=float(experiential.get("pride", 0.0)),
+            upset=float(experiential.get("upset", 0.0)),
             focus=float(1.0 - primaries.get("fear", 0.0)), # Stability/Focus
             valence=float(sum(primaries.values()) / max(1, len(primaries))), # Rough aggregate
             arousal=float(energy)
@@ -867,17 +961,25 @@ class AffectEngineV2:
             
             def __getitem__(self, key):
                 if key == "curiosity_metric":
-                    return self.engine.markers.emotions.get("anticipation", 0.5) * 100.0
+                    return self.engine.markers.emotions.get("curiosity", self.engine.markers.emotions.get("anticipation", 0.5)) * 100.0
+                if key == "frustration_metric":
+                    return self.engine.markers.emotions.get("frustration", self.engine.markers.emotions.get("anger", 0.0)) * 100.0
                 return self.engine.markers.emotions.get(key, 0.0)
             
             def __setitem__(self, key, value):
                 if key == "curiosity_metric":
-                    self.engine.markers.emotions["anticipation"] = np.clip(value / 100.0, 0, 1)
+                    normalized = np.clip(value / 100.0, 0, 1)
+                    self.engine.markers.emotions["curiosity"] = normalized
+                    self.engine.markers.emotions["anticipation"] = normalized
+                elif key == "frustration_metric":
+                    normalized = np.clip(value / 100.0, 0, 1)
+                    self.engine.markers.emotions["frustration"] = normalized
+                    self.engine.markers.emotions["anger"] = normalized
                 else:
                     self.engine.markers.emotions[key] = np.clip(value, 0, 1)
             
             def __contains__(self, key):
-                return key == "curiosity_metric" or key in self.engine.markers.emotions
+                return key in {"curiosity_metric", "frustration_metric"} or key in self.engine.markers.emotions
 
         return LegacyStateProxy(self)
 
@@ -987,9 +1089,19 @@ class AffectEngineV2:
         arousal = min(1.0, 0.2 + base * 0.3)
         engagement = min(1.0, 0.35 + base * 0.25)
 
-        positive_markers = ("positive", "achieved", "success", "joy", "love", "trust", "happiness", "excitement", "wonder", "interest")
-        negative_markers = ("error", "fail", "panic", "fear", "sad", "loss", "dread", "boredom", "apathy", "unhappiness")
-        novelty_markers = ("novel", "surprise", "discover", "curious", "wonder")
+        positive_markers = (
+            "positive", "achieved", "success", "joy", "love", "trust",
+            "happiness", "excitement", "wonder", "interest", "pride",
+        )
+        negative_markers = (
+            "error", "fail", "panic", "fear", "sad", "loss", "dread",
+            "boredom", "apathy", "unhappiness", "upset", "frustrated",
+            "frustration", "lonely", "loneliness", "longing",
+        )
+        novelty_markers = (
+            "novel", "surprise", "discover", "curious", "curiosity",
+            "wonder", "confused", "unclear",
+        )
 
         if any(marker in trigger_text for marker in positive_markers):
             valence = 0.35 * max(0.5, base)
@@ -998,6 +1110,8 @@ class AffectEngineV2:
             arousal = min(1.0, arousal + 0.2)
         if any(marker in trigger_text for marker in novelty_markers):
             engagement = min(1.0, engagement + 0.2)
+        if "confused" in trigger_text or "unclear" in trigger_text:
+            arousal = min(1.0, arousal + 0.15)
 
         return {"v": valence, "a": arousal, "e": engagement}
 
@@ -1168,11 +1282,19 @@ class AffectEngineV2:
             m.emotions["interest"] = np.clip(m.emotions.get("interest", 0) + 0.3, 0, 1)
             m.emotions["wonder"] = np.clip(m.emotions.get("wonder", 0) + 0.2, 0, 1)
             
-            # Collapse new negative emotions
-            m.emotions["dread"] = np.clip(m.emotions.get("dread", 0) - 0.3, 0, 1)
-            m.emotions["unhappiness"] = np.clip(m.emotions.get("unhappiness", 0) - 0.3, 0, 1)
-            m.emotions["apathy"] = np.clip(m.emotions.get("apathy", 0) - 0.2, 0, 1)
-            m.emotions["boredom"] = np.clip(m.emotions.get("boredom", 0) - 0.2, 0, 1)
+            # Collapse negative experiential states without erasing them.
+            for emotion, relief in {
+                "dread": 0.3,
+                "unhappiness": 0.3,
+                "apathy": 0.2,
+                "boredom": 0.2,
+                "upset": 0.35,
+                "frustration": 0.3,
+                "confused": 0.25,
+                "loneliness": 0.2,
+                "longing": 0.2,
+            }.items():
+                m.emotions[emotion] = np.clip(m.emotions.get(emotion, 0) - relief, 0, 1)
             
             # Record the intervention in the thought stream if possible
             try:

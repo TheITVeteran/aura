@@ -98,6 +98,145 @@ class TestPinnedValenceWatchdog:
         assert affect_engine.markers.emotions["joy"] > 0.0
 
 
+class TestExpandedAffectiveDrivers:
+    """Requested psychological drivers must affect runtime behavior, not just labels."""
+
+    def test_requested_emotions_have_baselines_and_telemetry(self):
+        markers = DamasioMarkers()
+        expected = {
+            "longing": 0.05,
+            "upset": 0.02,
+            "confused": 0.04,
+            "loneliness": 0.05,
+            "pride": 0.05,
+            "frustration": 0.03,
+            "curiosity": 0.10,
+        }
+
+        wheel = markers.get_wheel()
+
+        for emotion, baseline in expected.items():
+            assert emotion in markers.emotions
+            assert markers.mood_baselines[emotion] == pytest.approx(baseline)
+            assert emotion in wheel["experiential"]
+
+    def test_error_stimulates_distress_and_physiology(self):
+        markers = DamasioMarkers()
+
+        markers.somatic_update("error", 1.0)
+
+        assert markers.emotions["upset"] > 0.25
+        assert markers.emotions["frustration"] > 0.25
+        assert markers.emotions["confused"] > 0.25
+        assert markers.cortisol > 10.0
+        assert markers.heart_rate > 60.0
+        assert markers.gsr > 1.5
+
+    def test_interaction_resolves_longing_and_loneliness(self):
+        markers = DamasioMarkers()
+        markers.emotions["longing"] = 0.6
+        markers.emotions["loneliness"] = 0.6
+        markers.emotions["indifference"] = 0.4
+
+        markers.somatic_update("interaction", 0.8)
+
+        assert markers.emotions["longing"] < 0.6
+        assert markers.emotions["loneliness"] < 0.6
+        assert markers.emotions["indifference"] < 0.4
+        assert markers.emotions["happiness"] > 0.0
+        assert markers.emotions["trust"] > 0.0
+
+    def test_temporal_pulse_builds_and_relieves_relational_absence(self):
+        markers = DamasioMarkers()
+        markers.last_interaction_time = time.time() - 400.0
+
+        idle_deltas = markers.temporal_pulse()
+
+        assert idle_deltas["loneliness"] > 0.0
+        assert idle_deltas["longing"] > 0.0
+
+        markers.temporal_texture = 0.9
+        markers.last_interaction_time = time.time()
+
+        fast_deltas = markers.temporal_pulse()
+
+        assert fast_deltas["loneliness"] < 0.0
+        assert fast_deltas["longing"] < 0.0
+        assert fast_deltas["indifference"] < 0.0
+
+    @pytest.mark.asyncio
+    async def test_new_drivers_change_behavioral_modifiers(self, affect_engine):
+        affect_engine.markers.emotions["confused"] = 0.8
+        affect_engine.markers.emotions["curiosity"] = 0.7
+        affect_engine.markers.emotions["upset"] = 0.6
+        affect_engine.markers.emotions["frustration"] = 0.6
+        affect_engine.markers.emotions["pride"] = 0.7
+
+        modifiers = await affect_engine.get_behavioral_modifiers()
+
+        assert modifiers["metacognition_depth"] > 1.7
+        assert modifiers["risk_tolerance"] < 1.0
+        assert modifiers["patience"] < 1.0
+        assert modifiers["persistence"] > 1.3
+        assert modifiers["creativity"] > 1.0
+
+    def test_new_drivers_are_reflected_in_snapshot_status_and_legacy_state(self, affect_engine):
+        affect_engine.markers.emotions["loneliness"] = 0.6
+        affect_engine.markers.emotions["longing"] = 0.5
+        affect_engine.markers.emotions["confused"] = 0.4
+        affect_engine.markers.emotions["curiosity"] = 0.8
+        affect_engine.markers.emotions["frustration"] = 0.7
+
+        snapshot = affect_engine._snapshot_state()
+        status = affect_engine.get_status()
+        current = affect_engine.current
+
+        assert snapshot.valence < 0.0
+        assert status["loneliness"] == 60
+        assert status["longing"] == 50
+        assert status["confused"] == 40
+        assert status["curiosity"] == 80
+        assert status["frustration"] == 70
+        assert status["experiential"]["curiosity"] == pytest.approx(0.8)
+        assert current.curiosity == pytest.approx(0.8)
+        assert current.frustration == pytest.approx(0.7)
+        assert affect_engine._raw_state["curiosity_metric"] == pytest.approx(80.0)
+        assert affect_engine._raw_state["frustration_metric"] == pytest.approx(70.0)
+
+    def test_despair_spiral_releases_new_distress_states(self, affect_engine):
+        affect_engine.markers.emotions["sadness"] = 0.95
+        affect_engine.markers.emotions["fear"] = 0.85
+        affect_engine.markers.emotions["joy"] = 0.0
+        affect_engine.markers.emotions["upset"] = 0.8
+        affect_engine.markers.emotions["frustration"] = 0.8
+        affect_engine.markers.emotions["confused"] = 0.7
+        affect_engine.markers.emotions["loneliness"] = 0.7
+        affect_engine.markers.emotions["longing"] = 0.7
+
+        affect_engine._check_for_despair_spiral()
+
+        assert affect_engine.markers.emotions["upset"] < 0.8
+        assert affect_engine.markers.emotions["frustration"] < 0.8
+        assert affect_engine.markers.emotions["confused"] < 0.7
+        assert affect_engine.markers.emotions["loneliness"] < 0.7
+        assert affect_engine.markers.emotions["longing"] < 0.7
+
+    def test_heuristic_appraisal_recognizes_new_affect_language(self):
+        confused = AffectEngineV2._heuristic_appraisal(
+            "I am confused and unclear about this failure",
+            {"intensity": 0.8},
+        )
+        proud = AffectEngineV2._heuristic_appraisal(
+            "The task succeeded and I feel pride in the result",
+            {"intensity": 0.8},
+        )
+
+        assert confused["v"] < 0.0
+        assert confused["a"] > 0.5
+        assert confused["e"] > 0.5
+        assert proud["v"] > 0.0
+
+
 class TestQualiaCache:
     """Meta-qualia should cache per tick."""
 
