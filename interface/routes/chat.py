@@ -1137,7 +1137,15 @@ async def _run_cognitive_engine_chat_turn(
     The HTTP and WebSocket desktop surfaces call this before falling back to
     KernelInterface so the UI uses the same causal cognitive path as the live
     runtime instead of a thinner transport-specific lane.
+    
+    Now with:
+    - Persistent connection pooling
+    - Automatic retry with exponential backoff
+    - Health monitoring
+    - Graceful fallback support
     """
+    from core.providers.engine_connection_pool import get_engine_connection_pool
+    
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
         return None
@@ -1161,19 +1169,36 @@ async def _run_cognitive_engine_chat_turn(
         },
     }
     timeout_s = max(2.0, float(timeout if timeout is not None else 120.0))
+    
+    # Use connection pool with retry logic
+    pool = get_engine_connection_pool()
+    await pool.acquire_engine_connection(engine, connection_id="desktop_chat")
+    
+    async def engine_think_operation():
+        return await engine.think(
+            effective_user_message,
+            context=context,
+            mode=mode,
+            origin=origin,
+            foreground_request=True,
+            is_background=False,
+            priority=True,
+        )
+    
     try:
-        thought = await asyncio.wait_for(
-            engine.think(
-                effective_user_message,
-                context=context,
-                mode=mode,
-                origin=origin,
-                foreground_request=True,
-                is_background=False,
-                priority=True,
-            ),
+        thought = await pool.execute_with_retry(
+            "CognitiveEngine.desktop_chat_turn",
+            engine_think_operation,
+            connection_id="desktop_chat",
             timeout=timeout_s,
         )
+        
+        if thought is None:
+            logger.warning(
+                "CognitiveEngine desktop chat turn exhausted retries; falling back to kernel lane."
+            )
+            return None
+            
     except TimeoutError:
         _force_clear_mlx_foreground_owner(
             reason="cognitive_engine_chat_timeout",
@@ -5841,40 +5866,22 @@ async def api_chat(
                         len(reply_text),
                     )
 
-        if desktop_requires_cognitive_engine and not reply_text:
+        # [HARDENING v54] Desktop chat path now has graceful fallback instead of hard failure.
+        # If desktop_requires_cognitive_engine but engine failed, we:
+        # 1. Mark the lane state to track the degradation
+        # 2. Allow fallback to KernelInterface (don't block it)
+        # 3. Only return error if BOTH engine and kernel fail
+        desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
+        if desktop_engine_failed:
             lane = _mark_conversation_lane_state(
-                "desktop_cognitive_engine_required_no_reply",
-                state="failed",
+                "desktop_cognitive_engine_required_degraded",
+                state="degraded",  # Mark degraded, not failed — fallback available
             )
-            failure_reply = (
-                "The desktop chat path requires CognitiveEngine, and it did not return a clean reply. "
-                "I refused the legacy fallback so this surface cannot display an incoherent answer."
-            )
-            if pending_exchange_id:
-                await _complete_logged_exchange(
-                    pending_exchange_id,
-                    _semantic_user_message,
-                    failure_reply,
-                    record_experience=False,
-                )
-                pending_exchange_id = None
-            await _emit_chat_output_receipt(
-                failure_reply,
-                cause="chat_cognitive_engine_required",
-                metadata={
-                    "response_confidence": "failed",
-                    "path": "desktop_cognitive_required",
-                    "surface": request_surface or "unknown",
-                },
-            )
-            return JSONResponse(
-                {
-                    "response": failure_reply,
-                    "status": "desktop_cognitive_engine_unavailable",
-                    "conversation_lane": lane,
-                    "response_confidence": "failed",
-                },
-                status_code=503,
+            logger.warning(
+                "⚠️ Desktop chat path required CognitiveEngine but it failed. "
+                "Gracefully falling back to Sovereign Kernel Interface. "
+                "Surface=%s",
+                request_surface or "unknown",
             )
 
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
