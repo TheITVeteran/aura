@@ -67,6 +67,12 @@ class ResponseProcessingMixin:
                 "message": message,
                 "successful_tools": list(successful_tools or []),
             }
+            # [HARDENING v56] Persist user_requested_action through response finalization
+            # Ensure action markers in responses are executed with proper authorization
+            is_user_facing_origin = origin in {
+                "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "desktop", "desktop-ui", "native-shell"
+            }
+            grounding_ctx["user_requested_action"] = is_user_facing_origin
             intent_ctx: dict = {}
             try:
                 from core.phases.action_intent import apply_intent_to_context

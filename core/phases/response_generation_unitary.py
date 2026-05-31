@@ -5818,10 +5818,20 @@ class UnitaryResponsePhase(Phase):
 
                 cap_engine = ServiceContainer.get("capability_engine", default=None)
                 if cap_engine:
+                    # [HARDENING v56] Persist user_requested_action through action grounding
+                    # Ensure tools invoked in response actions also go through proper authorization
+                    is_user_facing_origin = routing_origin in {
+                        "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external", "desktop", "desktop-ui", "native-shell"
+                    }
+                    grounding_context = {
+                        "origin": routing_origin,
+                        "state_id": new_state.state_id,
+                        "user_requested_action": is_user_facing_origin,
+                    }
                     grounding_res = await ground_response(
                         response_text,
                         capability_engine=cap_engine,
-                        context={"origin": routing_origin, "state_id": new_state.state_id},
+                        context=grounding_context,
                     )
                     response_text = grounding_res.grounded_text
                     if grounding_res.marker_hits:
