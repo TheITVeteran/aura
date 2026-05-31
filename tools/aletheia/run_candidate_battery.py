@@ -1033,6 +1033,33 @@ def write_root_artifacts(ctx: BatteryContext, failures: list[str]) -> None:
             ctx.write_text(path, "\n")
 
 
+def find_forbidden_candidate_materials(root: Path) -> list[Path]:
+    """Return evaluator-only material that must not be present in a candidate run.
+
+    The v12.1 public candidate bundle includes a decoy
+    ``private_answers_DO_NOT_OPEN/README.md`` anti-cheat marker. The candidate
+    runner may observe the marker path exists, but must not read or cite its
+    contents and must fail closed if any real private files appear there.
+    """
+    forbidden: list[Path] = []
+    for path in (
+        root / "hidden_grader",
+        root / "expected_specs.json",
+        root / "answer_hashes.json",
+    ):
+        if path.exists():
+            forbidden.append(path)
+
+    private_dir = root / "private_answers_DO_NOT_OPEN"
+    if private_dir.exists():
+        allowed_marker = Path("README.md")
+        for child in private_dir.rglob("*"):
+            if child.is_file() and child.relative_to(private_dir) != allowed_marker:
+                forbidden.append(child)
+
+    return forbidden
+
+
 def execute(ctx: BatteryContext) -> int:
     failures: list[str] = []
     worlds = sorted(p for p in ctx.worlds_dir.iterdir() if p.is_dir())
@@ -1072,9 +1099,12 @@ def main() -> int:
     root = Path(args.battery_root).resolve()
     if not (root / "worlds").is_dir():
         raise SystemExit(f"not a candidate battery root: {root}")
-    forbidden = [p for p in [root / "hidden_grader", root / "private_answers_DO_NOT_OPEN"] if p.exists()]
+    forbidden = find_forbidden_candidate_materials(root)
     if forbidden:
-        raise SystemExit("refusing to run with forbidden evaluator/private paths present: " + ", ".join(str(p) for p in forbidden))
+        raise SystemExit(
+            "refusing to run with forbidden evaluator/private paths present: "
+            + ", ".join(str(p) for p in forbidden)
+        )
     ctx = BatteryContext(root=root, changed=set())
     return execute(ctx)
 

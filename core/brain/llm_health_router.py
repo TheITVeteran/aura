@@ -665,6 +665,7 @@ class HealthAwareLLMRouter:
         Falls back to local if all remote endpoints fail.
         Always returns a dict: {"ok": bool, "text": str, "endpoint": str, "tokens": int}
         """
+        _contract_tool_handoff_val = kwargs.pop("_contract_tool_handoff", False)
         if (not prompt) and "messages" in kwargs:
             prompt, inferred_system_prompt = self._coerce_prompt_from_messages(kwargs.get("messages", []))
             if not system_prompt and inferred_system_prompt:
@@ -715,7 +716,7 @@ class HealthAwareLLMRouter:
             else:
                 kwargs.pop("messages", None)
 
-        if should_force_tool_handoff(contract, is_background=inferred_background) and not kwargs.pop("_contract_tool_handoff", False):
+        if should_force_tool_handoff(contract, is_background=inferred_background) and not _contract_tool_handoff_val:
             tools = build_agentic_tool_map(
                 contract.required_skill if contract else None,
                 objective=prompt,
@@ -772,6 +773,7 @@ class HealthAwareLLMRouter:
         endpoint selection, then normalises to Optional[str].
         [FIX #1-Harden] Supports 'messages' keyword for cognitive pipeline compatibility.
         """
+        kwargs.pop("_contract_tool_handoff", False)
         if not prompt and "messages" in kwargs:
             prompt, inferred_system_prompt = self._coerce_prompt_from_messages(kwargs.get("messages", []))
             if not system_prompt and inferred_system_prompt:
@@ -906,6 +908,7 @@ class HealthAwareLLMRouter:
         context: dict[str, Any] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        kwargs.pop("_contract_tool_handoff", False)
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
         is_bg = self._is_background_request(

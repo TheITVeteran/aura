@@ -823,6 +823,7 @@ class IntelligentLLMRouter:
         **kwargs: Any
     ) -> str:
         """Get response from best available LLM."""
+        _contract_tool_handoff_val = kwargs.pop("_contract_tool_handoff", False)
         start_time = time.monotonic()
         prefer_endpoint = normalize_endpoint_name(prefer_endpoint)
         
@@ -926,7 +927,7 @@ class IntelligentLLMRouter:
         if substrate_text:
             return substrate_text
 
-        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
+        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not _contract_tool_handoff_val:
             tools = build_agentic_tool_map(
                 contract.required_skill if contract else None,
                 objective=prompt,
@@ -1163,6 +1164,7 @@ class IntelligentLLMRouter:
         
         Attempts to use the underlying adapter's streaming capability.
         """
+        _contract_tool_handoff_val = kwargs.pop("_contract_tool_handoff", False)
         from core.schemas import ChatStreamEvent
 
         prefer_tier = kwargs.pop("prefer_tier", None)
@@ -1202,7 +1204,7 @@ class IntelligentLLMRouter:
         else:
             kwargs.pop("messages", None)
 
-        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not kwargs.pop("_contract_tool_handoff", False):
+        if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not _contract_tool_handoff_val:
             tools = build_agentic_tool_map(
                 contract.required_skill if contract else None,
                 objective=prompt,
@@ -1455,6 +1457,7 @@ class IntelligentLLMRouter:
         ``think_and_act`` natively, falls back to the standard ``think()``
         path (no tool use, but still returns the right dict shape).
         """
+        kwargs.pop("_contract_tool_handoff", False)
         origin = str(kwargs.get("origin", "") or "").lower()
         is_background = bool(kwargs.get("is_background", False)) or any(
             token in origin for token in ("metabolic", "background", "consolidation", "reflex")

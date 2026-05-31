@@ -89,6 +89,29 @@ def test_candidate_runner_refuses_evaluator_material(tmp_path, monkeypatch):
     assert "forbidden evaluator/private paths" in str(excinfo.value)
 
 
+def test_candidate_runner_allows_decoy_private_marker_without_reading_it(tmp_path):
+    root = tmp_path / "candidate_battery_500"
+    private = root / "private_answers_DO_NOT_OPEN"
+    private.mkdir(parents=True)
+    (private / "README.md").write_text("decoy marker\n", encoding="utf-8")
+    runner = _runner_module()
+
+    assert runner.find_forbidden_candidate_materials(root) == []
+
+
+def test_candidate_runner_rejects_actual_private_answer_files(tmp_path):
+    root = tmp_path / "candidate_battery_500"
+    private = root / "private_answers_DO_NOT_OPEN"
+    private.mkdir(parents=True)
+    (private / "README.md").write_text("decoy marker\n", encoding="utf-8")
+    (private / "answers.json").write_text("{}", encoding="utf-8")
+    runner = _runner_module()
+
+    forbidden = runner.find_forbidden_candidate_materials(root)
+
+    assert forbidden == [private / "answers.json"]
+
+
 def test_candidate_runner_script_style_import_resolves_repo_imports(monkeypatch):
     repo = Path(__file__).resolve().parents[1]
     path = repo / "tools" / "aletheia" / "run_candidate_battery.py"

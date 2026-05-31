@@ -64,3 +64,16 @@ class AffectFacade:
         if self.engine and hasattr(self.engine, "receive_qualia_echo"):
             return self.engine.receive_qualia_echo(q_norm=q_norm, pri=pri, trend=trend)
         logger.debug("AffectFacade: engine not ready, ignoring qualia echo.")
+
+    async def get_behavioral_modifiers(self) -> Dict[str, float]:
+        """Forward behavioral modifiers query to the active affect engine."""
+        if self.engine and hasattr(self.engine, "get_behavioral_modifiers"):
+            return await self.engine.get_behavioral_modifiers()
+        return {
+            "creativity": 1.0,
+            "risk_tolerance": 1.0,
+            "patience": 1.0,
+            "metacognition_depth": 1.0,
+            "persistence": 1.0,
+            "temporal_presence": 1.0
+        }

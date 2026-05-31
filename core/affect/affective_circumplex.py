@@ -323,7 +323,19 @@ class AffectiveCircumplex:
             record_degradation('affective_circumplex', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
 
-        return f"Somatically {mood}{cpu_note}."
+        # Include temporal texture if available
+        temporal_note = ""
+        try:
+            from core.container import ServiceContainer
+            affect = ServiceContainer.get("affect_engine", default=None)
+            if affect and hasattr(affect, "markers"):
+                feel = getattr(affect.markers, "duration_feel", "flowing")
+                temporal_note = f" Time feels {feel}."
+        except Exception as _exc:
+            record_degradation('affective_circumplex', _exc)
+            logger.debug("Failed to fetch duration feel: %s", _exc)
+
+        return f"Somatically {mood}{cpu_note}.{temporal_note}"
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
