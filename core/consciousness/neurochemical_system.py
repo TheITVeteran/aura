@@ -634,6 +634,28 @@ class NeurochemicalSystem:
                 action="normalized all chemical state after NeurochemicalSystem failure"
             )
 
+    def _get_temporal_drivers(self) -> dict[str, float]:
+        """Get neurochemical drivers from temporal experience system."""
+        try:
+            from core.consciousness.temporal_experience import get_temporal_experience_engine
+            engine = get_temporal_experience_engine()
+            return engine.get_drivers()
+        except (ImportError, AttributeError, RuntimeError) as e:
+            record_degradation("neurochemical_system", e)
+            logger.debug("Temporal drivers unavailable: %s", e)
+            return {}
+
+    def _get_emotion_drivers(self) -> dict[str, float]:
+        """Get neurochemical drivers from emotion signature system."""
+        try:
+            from core.consciousness.emotion_signatures import get_emotion_signature_engine
+            engine = get_emotion_signature_engine()
+            return engine.get_neurochemical_modulation()
+        except (ImportError, AttributeError, RuntimeError) as e:
+            record_degradation("neurochemical_system", e)
+            logger.debug("Emotion drivers unavailable: %s", e)
+            return {}
+
     # ── Core tick ────────────────────────────────────────────────────────
 
     def _metabolic_tick(self):
@@ -689,12 +711,25 @@ class NeurochemicalSystem:
         # production reduced proportionally (negative feedback). This
         # prevents the cross-interaction matrix from pushing chemicals
         # away from baseline indefinitely.
+        
+        # Get temporal and emotion drivers to apply
+        temporal_drivers = self._get_temporal_drivers()
+        emotion_drivers = self._get_emotion_drivers()
+        
         for i, name in enumerate(self._order):
             chem = self.chemicals[name]
             # Damping: reduce production when above baseline
             above_baseline = max(0.0, chem.level - chem.baseline)
             damping = 1.0 / (1.0 + above_baseline * 5.0)  # sigmoid damping
+            
+            # Base production + interactions
             raw_production = chem._base_production + interaction_deltas[i]
+            
+            # Apply temporal and emotion drivers (additive modulation)
+            temporal_mod = temporal_drivers.get(name, 0.0)
+            emotion_mod = emotion_drivers.get(name, 0.0)
+            raw_production = raw_production + temporal_mod + emotion_mod
+            
             chem.production_rate = max(0.0, min(0.15, raw_production * damping))
             chem.tick(dt)
 
