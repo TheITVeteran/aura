@@ -1625,25 +1625,61 @@ def _reap_orphaned_aura_processes() -> int:
         if "gui_actor.py" in cmd or "reaper" in cmd.lower():
             continue
         stale_pids.append(pid)
-    for pid in stale_pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            killed += 1
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            continue
-    if stale_pids:
-        time.sleep(1.5)
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+
+    if psutil:
         for pid in stale_pids:
             try:
-                os.kill(pid, 0)  # still alive?
-            except OSError:
-                continue
+                parent_proc = psutil.Process(pid)
+                # Terminate children recursively first to prevent orphans
+                for child in parent_proc.children(recursive=True):
+                    try:
+                        child.terminate()
+                    except psutil.Error:
+                        pass
+                parent_proc.terminate()
+                killed += 1
+            except psutil.Error:
+                pass
+    else:
+        for pid in stale_pids:
             try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError as exc:
-                logger.debug("Stale Aura process %s exited before SIGKILL: %s", pid, exc)
+                os.kill(pid, signal.SIGTERM)
+                killed += 1
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                continue
+
+    if stale_pids:
+        time.sleep(1.5)
+        if psutil:
+            for pid in stale_pids:
+                try:
+                    parent_proc = psutil.Process(pid)
+                    for child in parent_proc.children(recursive=True):
+                        try:
+                            if child.is_running():
+                                child.kill()
+                        except psutil.Error:
+                            pass
+                    if parent_proc.is_running():
+                        parent_proc.kill()
+                except psutil.Error:
+                    continue
+        else:
+            for pid in stale_pids:
+                try:
+                    os.kill(pid, 0)  # still alive?
+                except OSError:
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError as exc:
+                    logger.debug("Stale Aura process %s exited before SIGKILL: %s", pid, exc)
         logger.warning(
             "🧹 Reaped %d orphaned Aura process(es) before boot: %s",
             killed, stale_pids,
@@ -1773,27 +1809,66 @@ def stop_aura():
             _unlink_orchestrator_lock(lock_file)
             return
 
-        print(f"Stopping Aura (PID: {pid})...")
         try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            print("Process already dead or inaccessible.")
-            _unlink_orchestrator_lock(lock_file)
-            return
+            import psutil
+        except ImportError:
+            psutil = None
+
+        print(f"Stopping Aura (PID: {pid})...")
+        if psutil:
+            try:
+                p = psutil.Process(pid)
+                # Terminate children recursively first to prevent orphans
+                for child in p.children(recursive=True):
+                    try:
+                        child.terminate()
+                    except psutil.Error:
+                        pass
+                p.terminate()
+            except psutil.Error:
+                print("Process already dead or inaccessible.")
+                _unlink_orchestrator_lock(lock_file)
+                return
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                print("Process already dead or inaccessible.")
+                _unlink_orchestrator_lock(lock_file)
+                return
 
         # Wait for cleanup
         for _ in range(10):
             try:
-                os.kill(pid, 0) # Check if alive
-            except (ProcessLookupError, PermissionError):
+                if psutil:
+                    p = psutil.Process(pid)
+                    if not p.is_running():
+                        break
+                else:
+                    os.kill(pid, 0) # Check if alive
+            except (ProcessLookupError, PermissionError, psutil.Error):
                 break
             time.sleep(0.5)
         else:
             print("Aura is stubborn. Sending SIGKILL...")
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError) as exc:
-                logger.debug("Process %s unavailable for SIGKILL during stop: %s", pid, exc)
+            if psutil:
+                try:
+                    p = psutil.Process(pid)
+                    for child in p.children(recursive=True):
+                        try:
+                            if child.is_running():
+                                child.kill()
+                        except psutil.Error:
+                            pass
+                    if p.is_running():
+                        p.kill()
+                except psutil.Error:
+                    pass
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError) as exc:
+                    logger.debug("Process %s unavailable for SIGKILL during stop: %s", pid, exc)
             
         # Force remove lock if still there
         if lock_file.exists():
