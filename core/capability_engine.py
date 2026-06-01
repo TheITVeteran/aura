@@ -2842,7 +2842,7 @@ class CapabilityEngine(AuraBaseModule):
                     if "CoreRuntime not initialized" not in str(exc):
                         raise
                     rt = await CoreRuntime.get()
-                gov = rt.container.get("memory_governor")
+                gov = rt.container.get("memory_governor", default=None)
                 if gov:
                     import inspect
 
@@ -3354,3 +3354,37 @@ class CapabilityEngine(AuraBaseModule):
         if not isinstance(self.active_skills, set) or not self.active_skills:
             return False
         return any(name in self.active_skills for name in self.skills)
+
+
+async def execute_tool(tool_name: str, parameters: dict[str, Any] | None = None, **kwargs) -> dict[str, Any]:
+    """Module-level helper to execute a tool via the registered CapabilityEngine.
+
+    Resolves the active skill_router instance from the ServiceContainer.
+    """
+    from core.container import ServiceContainer
+    engine = ServiceContainer.get("skill_router", default=None)
+    if not engine:
+        engine = CapabilityEngine()
+        ServiceContainer.register_instance("skill_router", engine)
+
+    params = parameters or {}
+    
+    # Map legacy virtual tool names used in tests/legacy flows
+    if tool_name == "write_file":
+        real_tool = "file_operation"
+        real_params = {
+            "action": "write",
+            "path": params.get("file_path", params.get("path")),
+            "content": params.get("content", "")
+        }
+        return await engine.execute(real_tool, real_params, **kwargs)
+    elif tool_name == "read_file":
+        real_tool = "file_operation"
+        real_params = {
+            "action": "read",
+            "path": params.get("file_path", params.get("path"))
+        }
+        return await engine.execute(real_tool, real_params, **kwargs)
+
+    return await engine.execute(tool_name, params, **kwargs)
+

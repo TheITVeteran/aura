@@ -33,6 +33,7 @@ class Hypervisor:
         if self._running:
             return
         self._running = True
+        self._start_time = time.time()
         self._task = get_task_tracker().create_task(self._watchdog_loop())
         logger.info("👁️ Hypervisor Watchdog active (Threshold: %.2fs)", self._lag_threshold)
 
@@ -127,20 +128,27 @@ class Hypervisor:
                 metrics.increment("hypervisor.lag_spikes_total")
 
                 if lag > 5.0:
-                    self._last_severe_lag_at = time.time()
-                    self._last_failure_reason = f"severe event-loop lag {lag:.3f}s"
-                    self._healthy_lag_samples_after_failure = 0
-                    record_degradation(
-                        "hypervisor",
-                        RuntimeError(self._last_failure_reason),
-                        severity="critical",
-                        action="marked hypervisor unhealthy until healthy lag samples confirm recovery",
-                        enforce_failure_policy=False,
-                    )
-                    logger.critical(
-                        "🚨 SEVERE FREEZE: Loop lag > 5s. System stability compromised."
-                    )
-                    # In a real enterprise system, we might trigger a graceful restart here.
+                    uptime = time.time() - getattr(self, "_start_time", time.time())
+                    if uptime < 180.0:
+                        logger.warning(
+                            "🚨 Loop lag > 5s during boot/warmup grace period (uptime: %.1fs). "
+                            "Skipping severe freeze failure recording to allow model load to complete.",
+                            uptime,
+                        )
+                    else:
+                        self._last_severe_lag_at = time.time()
+                        self._last_failure_reason = f"severe event-loop lag {lag:.3f}s"
+                        self._healthy_lag_samples_after_failure = 0
+                        record_degradation(
+                            "hypervisor",
+                            RuntimeError(self._last_failure_reason),
+                            severity="critical",
+                            action="marked hypervisor unhealthy until healthy lag samples confirm recovery",
+                            enforce_failure_policy=False,
+                        )
+                        logger.critical(
+                            "🚨 SEVERE FREEZE: Loop lag > 5s. System stability compromised."
+                        )
             elif self._last_severe_lag_at:
                 self._healthy_lag_samples_after_failure += 1
                 if self._healthy_lag_samples_after_failure >= self._required_recovery_samples:

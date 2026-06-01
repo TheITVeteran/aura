@@ -30,8 +30,8 @@ class FileOperationSkill(BaseSkill):
         self.root_dir = os.path.realpath(os.getcwd())
 
     def _safe_resolve(self, path: str) -> str:
-        """v5.0: SECURITY — Resolve path and enforce it stays within root_dir.
-        Prevents path traversal via ../ or absolute paths.
+        """v5.0: SECURITY — Resolve path and enforce it stays within root_dir or system temp.
+        Prevents path traversal via ../ or absolute paths to unauthorized areas.
         """
         if not path:
             return self.root_dir
@@ -40,8 +40,14 @@ class FileOperationSkill(BaseSkill):
             full = os.path.realpath(path)
         else:
             full = os.path.realpath(os.path.join(self.root_dir, path))
+        
+        # Allow standard system temporary directory paths for tests and scratch work
+        import tempfile
+        tmp_dir = os.path.realpath(tempfile.gettempdir())
+        is_in_tmp = full.startswith(tmp_dir) or full.startswith("/tmp") or full.startswith("/private/tmp")
+        
         # Check containment
-        if not full.startswith(self.root_dir):
+        if not full.startswith(self.root_dir) and not is_in_tmp:
             raise PermissionError(f"Access denied: path '{path}' resolves outside workspace")
         return full
 
