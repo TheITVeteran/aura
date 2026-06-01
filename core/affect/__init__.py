@@ -119,3 +119,11 @@ class AffectEngine:
             self.state.dominant_emotion = "Sad"
         else:
             self.state.dominant_emotion = "Neutral"
+
+
+# Phenomenal Substrate Integration
+# Lazy import to avoid circular dependencies
+def get_phenomenal_integrator():
+    """Lazy accessor for the phenomenal integrator singleton."""
+    from core.affect.phenomenal_integration import PhenomenalIntegrator
+    return PhenomenalIntegrator._sync_instance()

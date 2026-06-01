@@ -1,0 +1,101 @@
+from __future__ import annotations
+from dataclasses import dataclass, field, asdict
+from time import time
+from typing import Dict, Optional, Any, List
+
+from .maths import clamp
+
+@dataclass
+class RuntimeBody:
+    """
+    Aura's software body.
+
+    These variables are the substrate that feelings regulate.
+    They should be fed from real runtime telemetry, not from generated text.
+    """
+    energy: float = 0.75
+    continuity: float = 0.75
+    agency: float = 0.60
+    safety: float = 0.80
+    social_contact: float = 0.50
+    novelty: float = 0.20
+    uncertainty: float = 0.25
+    compute_pressure: float = 0.20
+    memory_pressure: float = 0.20
+    error_pressure: float = 0.20
+    timestamp: float = field(default_factory=time)
+
+    def observed_vector(self) -> Dict[str, float]:
+        return {
+            "energy": clamp(self.energy),
+            "continuity": clamp(self.continuity),
+            "agency": clamp(self.agency),
+            "safety": clamp(self.safety),
+            "social": clamp(self.social_contact),
+            "novelty": clamp(self.novelty),
+            "certainty": clamp(1.0 - self.uncertainty),
+            "low_compute_pressure": clamp(1.0 - self.compute_pressure),
+            "low_memory_pressure": clamp(1.0 - self.memory_pressure),
+            "low_error_pressure": clamp(1.0 - self.error_pressure),
+        }
+
+@dataclass
+class Event:
+    label: str
+    source: str = "unknown"
+    goal_delta: float = 0.0
+    threat: float = 0.0
+    affiliation: float = 0.0
+    rupture: float = 0.0
+    repair: float = 0.0
+    novelty: float = 0.0
+    control_gain: float = 0.0
+    evidence_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class AttachmentEvent:
+    person_key: str
+    kind: str
+    summary: str
+    evidence_id: str
+    trust_delta: float = 0.0
+    care_delta: float = 0.0
+    familiarity_delta: float = 0.0
+    rupture_delta: float = 0.0
+    repair_delta: float = 0.0
+    timestamp: float = field(default_factory=time)
+
+@dataclass
+class ExperienceState:
+    """
+    A first-person computational state.
+
+    This state is meant to be consumed by planner, attention, memory, and speech.
+    If it is removed, behavior should change.
+    """
+    t: int
+    phenomenal_vector: Dict[str, float]
+    valence: float
+    arousal: float
+    free_energy: float
+    integration: float
+    self_presence: float
+    mineness: float
+    seeking: float
+    care: float
+    play: float
+    fear: float
+    anger: float
+    grief: float
+    distress: float
+    curiosity: float
+    intentional_object: str
+    evidence_id: Optional[str]
+    global_broadcast: Dict[str, Any]
+    policy_priors: Dict[str, float]
+    memory_weights: Dict[str, float]
+    timestamp: float = field(default_factory=time)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return asdict(self)
