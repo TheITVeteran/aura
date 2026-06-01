@@ -120,6 +120,29 @@ class TestExpandedAffectiveDrivers:
             assert markers.mood_baselines[emotion] == pytest.approx(baseline)
             assert emotion in wheel["experiential"]
 
+    @pytest.mark.asyncio
+    async def test_affect_lock_timeout_is_visible_in_status(self, affect_engine):
+        class LockedOut:
+            async def acquire_robust(self, timeout=None):
+                return False
+
+            def locked(self):
+                return False
+
+            def release(self):
+                self.release_called = True
+                raise AssertionError("release should not run when lock was not acquired")
+
+        affect_engine._lock = LockedOut()
+
+        await affect_engine.react("error", {"intensity": 1.0})
+
+        status = affect_engine.get_status()
+        assert status["lock_health"]["ok"] is False
+        assert status["lock_health"]["timeouts"] == 1
+        assert status["lock_health"]["last_timeout_reason"] == "affect lock timeout during react"
+        assert status["lock_health"]["last_timeout_age_s"] is not None
+
     def test_error_stimulates_distress_and_physiology(self):
         markers = DamasioMarkers()
 

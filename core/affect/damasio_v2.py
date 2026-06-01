@@ -376,6 +376,18 @@ class AffectEngineV2:
         # Oscillation detector: tracks valence zero-crossings
         self._valence_history = []
         self._oscillation_flag = False
+        self._lock_timeout_count = 0
+        self._last_lock_timeout_reason = ""
+        self._last_lock_timeout_at = 0.0
+
+    def _mark_lock_timeout(self, operation: str) -> None:
+        reason = f"affect lock timeout during {operation}"
+        exc = TimeoutError(reason)
+        self._lock_timeout_count += 1
+        self._last_lock_timeout_reason = reason
+        self._last_lock_timeout_at = time.time()
+        record_degradation("damasio_v2", exc)
+        logger.warning("⚠️ %s.", reason)
 
     def _prune_background_tasks(self) -> None:
         self._background_tasks = {task for task in self._background_tasks if not task.done()}
@@ -513,7 +525,7 @@ class AffectEngineV2:
                         ) / 2.0 or intensity
 
         if not await self._lock.acquire_robust(timeout=2.0):
-            logger.warning("⚠️ Affect reaction lock timeout.")
+            self._mark_lock_timeout("react")
             return self.markers.get_wheel()
 
         try:
@@ -559,6 +571,7 @@ class AffectEngineV2:
                 logger.debug("Soma pulse failed during affect update: %s", exc)
 
         if not await self._lock.acquire_robust(timeout=2.0):
+            self._mark_lock_timeout("pulse")
             return self.markers.get_wheel()
 
         try:
@@ -743,6 +756,7 @@ class AffectEngineV2:
     async def update(self, delta_curiosity: float = 0.0, delta_frustration: float = 0.0, **kwargs):
         """Unified update for emotional shifts, supporting both Plutchik and legacy PAD logic."""
         if not await self._lock.acquire_robust(timeout=2.0):
+            self._mark_lock_timeout("update")
             return self.markers.get_wheel()
 
         try:
@@ -975,6 +989,10 @@ class AffectEngineV2:
         valence = float(np.clip(pos - neg, -1.0, 1.0))
         arousal = max(all_emotions.values()) if all_emotions else 0.0
 
+        lock_timeout_recent = (
+            self._last_lock_timeout_at > 0.0
+            and (time.time() - self._last_lock_timeout_at) < 60.0
+        )
         return {
             "mood": dominant.capitalize(),
             "energy": int(self.markers.heart_rate), # Proxy for arousal
@@ -997,6 +1015,16 @@ class AffectEngineV2:
             "experiential": {
                 key: float(f"{float(value):.3f}")
                 for key, value in sorted(experiential.items())
+            },
+            "lock_health": {
+                "ok": not lock_timeout_recent,
+                "timeouts": int(self._lock_timeout_count),
+                "last_timeout_reason": self._last_lock_timeout_reason,
+                "last_timeout_age_s": (
+                    float(f"{time.time() - self._last_lock_timeout_at:.3f}")
+                    if self._last_lock_timeout_at > 0.0
+                    else None
+                ),
             },
             "physiology": {
                 "HR": f"{int(self.markers.heart_rate)}bpm",
