@@ -872,7 +872,7 @@ def _unexpected_short_foreign_name(user_message: Any, reply_text: Any) -> bool:
 
 def _has_reliability_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
-    if _word_count(reply) < 18:
+    if _word_count(reply) < 8:
         return False
     return any(marker in reply for marker in _SUBSTANTIVE_RELIABILITY_MARKERS)
 
