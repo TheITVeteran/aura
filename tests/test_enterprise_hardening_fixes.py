@@ -256,18 +256,27 @@ def test_strict_answer_tags_are_valid_short_replies():
 
 
 def test_strict_proof_solver_solves_unique_assignment_without_fixture_answers():
-    from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
+    from core.reasoning.proof_answer_solver import (
+        solve_strict_proof_prompt,
+        validate_strict_proof_answer,
+    )
 
-    solved = solve_strict_proof_prompt(
+    prompt = (
         "Alice, Bob, and Carol each own one unique pet: a cat, a dog, or a parrot. "
         "Clues: 1. Alice does not own the cat. 2. Bob does not own the dog. "
         "3. Carol owns the parrot. Who owns the dog? "
         "Output your final answer inside <answer>...</answer> tags."
     )
+    solved = solve_strict_proof_prompt(prompt)
 
     assert solved is not None
     assert solved.answer == "Alice"
     assert solved.solver == "unique_assignment"
+    assert validate_strict_proof_answer(prompt, "Alice").valid is True
+    rejected = validate_strict_proof_answer(prompt, "Bob")
+    assert rejected.valid is False
+    assert rejected.reason == "candidate_conflicts_with_prompt_constraints"
+    assert rejected.solver == "unique_assignment"
 
     joined = solve_strict_proof_prompt(
         "Return the lowercase token formed by joining 'o' and 'k'. "
@@ -276,6 +285,28 @@ def test_strict_proof_solver_solves_unique_assignment_without_fixture_answers():
     assert joined is not None
     assert joined.answer == "ok"
     assert joined.solver == "joined_quoted_tokens"
+
+
+def test_strict_proof_response_path_symbolically_rejects_contradictions():
+    import inspect
+
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+
+    prompt = (
+        "Alice, Bob, and Carol each own one unique pet: a cat, a dog, or a parrot. "
+        "Clues: 1. Alice does not own the cat. 2. Bob does not own the dog. "
+        "3. Carol owns the parrot. Who owns the dog? "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    validation = UnitaryResponsePhase._validate_strict_answer_symbolically(prompt, "Bob")
+    assert validation is not None
+    assert validation.valid is False
+    assert validation.solver == "unique_assignment"
+
+    source = inspect.getsource(UnitaryResponsePhase.execute)
+    assert "_ensure_symbolic_consistency(" in source
+    assert "strict_proof_answer_symbolic_repair" in source
+    assert "strict_proof_symbolic_validation_failed" in source
 
 
 def test_proof_policy_defaults_acceptance_runs_to_primary_cortex(monkeypatch):

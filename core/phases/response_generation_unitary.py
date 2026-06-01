@@ -315,6 +315,24 @@ class UnitaryResponsePhase(Phase):
             return ""
         return f"<answer>{canonical}</answer>"
 
+    @classmethod
+    def _validate_strict_answer_symbolically(cls, objective: Any, answer_value: Any) -> Any | None:
+        try:
+            from core.reasoning.proof_answer_solver import validate_strict_proof_answer
+        except _RESPONSE_RECOVERABLE_ERRORS as exc:
+            logger.debug("UnitaryResponse: strict proof symbolic validator unavailable: %s", exc)
+            return None
+        try:
+            return validate_strict_proof_answer(str(objective or ""), str(answer_value or ""))
+        except _RESPONSE_RECOVERABLE_ERRORS as exc:
+            _record_response_degradation(
+                exc,
+                "UnitaryResponse: strict proof symbolic validator failed: %s",
+                action="continued strict proof answer validation through model verifier after symbolic validator failed",
+                severity="warning",
+            )
+            return None
+
     @staticmethod
     def _strip_answer_envelope_instruction(text: Any) -> str:
         """Remove XML-envelope formatting instructions before raw model solving.
@@ -4984,6 +5002,134 @@ class UnitaryResponsePhase(Phase):
                     raise RuntimeError("benchmark_artifact_contract_validation_failed") from contract_exc
 
             if strict_proof_answer_request:
+                async def _repair_symbolically_rejected_answer(
+                    current_envelope: str,
+                    *,
+                    stage: str,
+                    reason: str,
+                ) -> str:
+                    current_value = self._strict_answer_value_from_envelope(current_envelope)
+                    repair_system_prompt = (
+                        "You are Aura's governed proof-answer repair lane. A prior candidate "
+                        "failed a prompt-derived consistency check before emission. Do not "
+                        "trust the candidate. Re-solve the original task from scratch, test "
+                        "the constraints privately, and return only the final atomic answer "
+                        "inside exactly one <answer>...</answer> envelope. No explanation."
+                    )
+                    repair_messages = [
+                        {"role": "system", "content": repair_system_prompt},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Original task:\n{objective}\n\n"
+                                f"Rejected candidate from {stage}:\n{current_value}\n\n"
+                                f"Consistency rejection reason:\n{reason}\n\n"
+                                "Return only <answer>final</answer>."
+                            ),
+                        },
+                    ]
+                    try:
+                        repaired_value = await asyncio.wait_for(
+                            llm.think(
+                                objective,
+                                messages=repair_messages,
+                                system_prompt=repair_system_prompt,
+                                prefer_tier=model_tier,
+                                deep_handoff=False,
+                                allow_cloud_fallback=False,
+                                origin=routing_origin,
+                                purpose="strict_proof_answer_symbolic_repair",
+                                is_background=False,
+                                foreground_request=True,
+                                protected_foreground_lane=True,
+                                strict_answer_contract=mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
+                                strict_value_contract=not mlx_strict_answer_contract_enabled(
+                                    origin=routing_origin
+                                ),
+                                skip_runtime_payload=True,
+                                disable_prompt_cache=True,
+                                clear_prompt_cache=True,
+                                temperature=0.0,
+                                max_tokens=96,
+                                num_predict=96,
+                                timeout=min(request_timeout, 90.0),
+                                state=new_state,
+                            ),
+                            timeout=min(request_timeout, 90.0) + 5.0,
+                        )
+                    except _RESPONSE_RECOVERABLE_ERRORS as symbolic_repair_exc:
+                        _record_response_degradation(
+                            symbolic_repair_exc,
+                            "UnitaryResponse: strict proof symbolic repair failed: %s",
+                            action="failed closed after strict proof answer contradicted prompt-derived constraints",
+                            severity="error",
+                        )
+                        return ""
+                    if isinstance(repaired_value, dict):
+                        repaired_value = (
+                            repaired_value.get("content") or repaired_value.get("response") or ""
+                        )
+                    return self._coerce_strict_answer_envelope(repaired_value)
+
+                async def _ensure_symbolic_consistency(current_envelope: str, *, stage: str) -> str:
+                    if not current_envelope:
+                        return ""
+                    current_value = self._strict_answer_value_from_envelope(current_envelope)
+                    validation = self._validate_strict_answer_symbolically(objective, current_value)
+                    validation_verdict = self._response_contract_attr(validation, "valid", None)
+                    if validation_verdict is not False:
+                        if validation_verdict is True:
+                            new_state.response_modifiers["strict_proof_symbolic_validation"] = {
+                                "stage": stage,
+                                "solver": self._response_contract_attr(validation, "solver", None),
+                                "reason": self._response_contract_attr(validation, "reason", ""),
+                            }
+                        return current_envelope
+
+                    reason = str(
+                        self._response_contract_attr(
+                            validation,
+                            "reason",
+                            "candidate_conflicts_with_prompt_constraints",
+                        )
+                    )
+                    solver = self._response_contract_attr(validation, "solver", None)
+                    logger.warning(
+                        "UnitaryResponse: rejected strict proof candidate from %s via %s validator (%s).",
+                        stage,
+                        solver or "symbolic",
+                        reason,
+                    )
+                    repaired_envelope = await _repair_symbolically_rejected_answer(
+                        current_envelope,
+                        stage=stage,
+                        reason=reason,
+                    )
+                    if not repaired_envelope:
+                        raise RuntimeError("strict_proof_symbolic_validation_failed")
+                    repaired_value = self._strict_answer_value_from_envelope(repaired_envelope)
+                    repaired_validation = self._validate_strict_answer_symbolically(
+                        objective,
+                        repaired_value,
+                    )
+                    repaired_verdict = self._response_contract_attr(repaired_validation, "valid", None)
+                    if repaired_verdict is False:
+                        logger.error(
+                            "UnitaryResponse: strict proof symbolic repair still contradicted %s validator.",
+                            self._response_contract_attr(repaired_validation, "solver", None)
+                            or "symbolic",
+                        )
+                        raise RuntimeError("strict_proof_symbolic_validation_failed")
+                    if repaired_verdict is True:
+                        new_state.response_modifiers["strict_proof_symbolic_validation"] = {
+                            "stage": f"{stage}_repair",
+                            "solver": self._response_contract_attr(repaired_validation, "solver", None),
+                            "reason": self._response_contract_attr(repaired_validation, "reason", ""),
+                        }
+                    return repaired_envelope
+
                 strict_envelope = self._coerce_strict_answer_envelope(response_text)
                 if not strict_envelope:
                     repair_system_prompt = (
@@ -5045,6 +5191,10 @@ class UnitaryResponsePhase(Phase):
                         repaired = repaired.get("content") or repaired.get("response") or ""
                     strict_envelope = self._coerce_strict_answer_envelope(repaired)
                 if strict_envelope:
+                    strict_envelope = await _ensure_symbolic_consistency(
+                        strict_envelope,
+                        stage="candidate",
+                    )
                     candidate_match = re.search(
                         r"<answer>\s*(.*?)\s*</answer>",
                         strict_envelope,
@@ -5119,6 +5269,10 @@ class UnitaryResponsePhase(Phase):
                         self._strict_answer_value_from_envelope(verified_envelope),
                     ):
                         strict_envelope = verified_envelope
+                        strict_envelope = await _ensure_symbolic_consistency(
+                            strict_envelope,
+                            stage="model_verifier",
+                        )
                     elif verified_envelope:
                         logger.warning(
                             "UnitaryResponse: rejected strict proof verifier meta-answer: %r",
@@ -5216,6 +5370,10 @@ class UnitaryResponsePhase(Phase):
                                 option_values=option_values,
                             ):
                                 strict_envelope = option_envelope
+                                strict_envelope = await _ensure_symbolic_consistency(
+                                    strict_envelope,
+                                    stage="option_verifier",
+                                )
                             elif option_envelope:
                                 logger.warning(
                                     "UnitaryResponse: rejected strict proof option verifier non-option: %r",
@@ -5231,6 +5389,10 @@ class UnitaryResponsePhase(Phase):
                         objective,
                         strict_envelope,
                         option_values=strict_option_values,
+                    )
+                    strict_envelope = await _ensure_symbolic_consistency(
+                        strict_envelope,
+                        stage="canonicalized_final",
                     )
                     if not strict_envelope:
                         raise RuntimeError("strict_proof_answer_contract_unmet")

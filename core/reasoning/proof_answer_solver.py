@@ -66,6 +66,69 @@ class ProofAnswer:
     confidence: float = 1.0
 
 
+@dataclass(frozen=True)
+class ProofAnswerValidation:
+    valid: bool | None
+    solver: str | None
+    candidate_answer: str
+    derived_answer: str | None = None
+    reason: str = "unknown_prompt_shape"
+
+
+def _normalize_answer_value(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"<answer>\s*(.*?)\s*</answer>", r"\1", normalized, flags=re.DOTALL)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def validate_strict_proof_answer(prompt: str, candidate_answer: str) -> ProofAnswerValidation:
+    """Validate a candidate exact answer against prompt-derived constraints.
+
+    This validator intentionally uses only the prompt text and the candidate
+    answer. It does not read task ids, fixtures, grader salts, answer hashes, or
+    benchmark files. When the prompt shape is unsupported it returns an
+    indeterminate result so the live model/verifier path remains responsible.
+    """
+
+    candidate = str(candidate_answer or "").strip()
+    if not candidate:
+        return ProofAnswerValidation(
+            valid=False,
+            solver=None,
+            candidate_answer="",
+            reason="empty_candidate",
+        )
+
+    solved = solve_strict_proof_prompt(prompt)
+    if solved is None:
+        return ProofAnswerValidation(
+            valid=None,
+            solver=None,
+            candidate_answer=candidate,
+            reason="unknown_prompt_shape",
+        )
+
+    candidate_norm = _normalize_answer_value(candidate)
+    expected_norm = _normalize_answer_value(solved.answer)
+    if candidate_norm and candidate_norm == expected_norm:
+        return ProofAnswerValidation(
+            valid=True,
+            solver=solved.solver,
+            candidate_answer=candidate,
+            derived_answer=solved.answer,
+            reason="prompt_constraints_satisfied",
+        )
+
+    return ProofAnswerValidation(
+        valid=False,
+        solver=solved.solver,
+        candidate_answer=candidate,
+        derived_answer=solved.answer,
+        reason="candidate_conflicts_with_prompt_constraints",
+    )
+
+
 def solve_strict_proof_prompt(prompt: str) -> ProofAnswer | None:
     """Return a derived exact answer for known symbolic prompt shapes."""
     text = str(prompt or "").strip()

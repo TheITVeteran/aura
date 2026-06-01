@@ -5931,22 +5931,45 @@ async def api_chat(
                         len(reply_text),
                     )
 
-        # [HARDENING v54] Desktop chat path now has graceful fallback instead of hard failure.
-        # If desktop_requires_cognitive_engine but engine failed, we:
-        # 1. Mark the lane state to track the degradation
-        # 2. Allow fallback to KernelInterface (don't block it)
-        # 3. Only return error if BOTH engine and kernel fail
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
             lane = _mark_conversation_lane_state(
-                "desktop_cognitive_engine_required_degraded",
-                state="degraded",  # Mark degraded, not failed — fallback available
+                "desktop_cognitive_engine_required_no_reply",
+                state="failed",
             )
-            logger.warning(
-                "⚠️ Desktop chat path required CognitiveEngine but it failed. "
-                "Gracefully falling back to Sovereign Kernel Interface. "
-                "Surface=%s",
-                request_surface or "unknown",
+            failure_reply = (
+                "The desktop chat path required CognitiveEngine, but the live cognitive turn "
+                "did not produce an acceptable reply, so Aura refused the legacy fallback. "
+                "status=desktop_cognitive_engine_required_no_reply"
+            )
+            logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            await _emit_chat_output_receipt(
+                failure_reply,
+                cause="chat_response",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "desktop_cognitive_engine",
+                    "status": "desktop_cognitive_engine_unavailable",
+                    "reason": "desktop_cognitive_engine_required_no_reply",
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": failure_reply,
+                    "status": "desktop_cognitive_engine_unavailable",
+                    "reason": "desktop_cognitive_engine_required_no_reply",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
             )
 
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
