@@ -849,6 +849,9 @@ end tell
         """Read the live menu bar clock through System Events."""
         script = """
 tell application "System Events"
+    set ccError to "none"
+    set suiError to "none"
+    
     try
         if exists process "ControlCenter" then
             tell process "ControlCenter"
@@ -858,16 +861,66 @@ tell application "System Events"
                     return clockVal
                 end if
             end tell
+        else
+            set ccError to "ControlCenter process does not exist"
+        end if
+    on error errStr number errNum
+        set ccError to errStr & " (" & errNum & ")"
+    end try
+    
+    try
+        if exists process "ControlCenter" then
+            tell process "ControlCenter"
+                repeat with item1 in menu bar items of menu bar 1
+                    try
+                        set d to description of item1
+                        set v to value of item1
+                        if v is not missing value then
+                            set d_lower to my lowercase(d as string)
+                            if d_lower contains "clock" or d_lower contains "time" or v contains "AM" or v contains "PM" or v contains ":" or v contains " " then
+                                return v
+                            end if
+                        end if
+                    end try
+                end repeat
+            end tell
+        end if
+    on error errStr number errNum
+        if ccError is "none" or ccError contains "does not exist" then
+            set ccError to "Fallback search: " & errStr & " (" & errNum & ")"
         end if
     end try
+    
     try
         if exists process "SystemUIServer" then
             tell process "SystemUIServer"
-                return name of first menu bar item of menu bar 1 whose description is "Clock"
+                set clockItem to first menu bar item of menu bar 1 whose description is "Clock"
+                return name of clockItem
             end tell
+        else
+            set suiError to "SystemUIServer process does not exist"
         end if
+    on error errStr number errNum
+        set suiError to errStr & " (" & errNum & ")"
     end try
-    error "Clock menu bar item not found via ControlCenter or SystemUIServer."
+    
+    error "Clock menu bar item not found. ControlCenter error: " & ccError & ". SystemUIServer error: " & suiError
 end tell
+
+on lowercase(txt)
+    set the_alphabet to "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    set the_lowercase to "abcdefghijklmnopqrstuvwxyz"
+    set the_result to ""
+    repeat with i from 1 to count of characters in txt
+        set the_char to character i of txt
+        set the_index to offset of the_char in the_alphabet
+        if the_index is not 0 then
+            set the_result to the_result & character the_index of the_lowercase
+        else
+            set the_result to the_result & the_char
+        end if
+    end repeat
+    return the_result
+end lowercase
 """
         return self._run_applescript(script, timeout=10)[:240]
