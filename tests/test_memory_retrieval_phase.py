@@ -304,3 +304,59 @@ async def test_memory_retrieval_handles_legacy_string_working_memory_entry():
     assert any(
         "legacy working memory entry" in item for item in new_state.cognition.long_term_memory
     )
+
+
+@pytest.mark.asyncio
+async def test_memory_retrieval_retains_recent_episodes_score_and_metadata():
+    from core.memory.episodic_memory import Episode
+
+    class MockEpisode:
+        def __init__(self):
+            self.episode_id = "test-ep-123"
+            self.timestamp = 123456.0
+            self.context = "Bryan works at Stanford"
+            self.action = "conversation_reply"
+            self.outcome = "Aura confirmed"
+            self.emotional_valence = 0.8
+            self.importance = 0.9
+
+        def to_retrieval_text(self):
+            return f"[Episodic Memory] {self.context}"
+
+    episode = MockEpisode()
+    memory_facade = SimpleNamespace(
+        search=lambda _q, limit=5: [],
+        get_hot_memory=lambda limit=3: {"recent_episodes": [episode]}
+    )
+    knowledge_graph = SimpleNamespace(
+        search_knowledge=lambda query, limit=5: [
+            {
+                "type": "fact",
+                "content": "A high scoring semantic fact.",
+                "metadata": {"emotional_valence": 0.0, "importance": 0.5},
+                "score": 0.9
+            }
+        ]
+    )
+
+    container = SimpleNamespace(
+        get=lambda name, default=None: (
+            memory_facade
+            if name == "memory_facade"
+            else knowledge_graph
+            if name == "knowledge_graph"
+            else default
+        )
+    )
+
+    phase = MemoryRetrievalPhase(container)
+    state = AuraState.default()
+    state.cognition.working_memory.append({"role": "user", "content": "What do we know about Stanford?"})
+
+    new_state = await phase.execute(state)
+
+    # Verify both the KG semantic fact and the hot recent episode exist in long_term_memory
+    # Because hot episode has score=0.85 and metadata set properly, it won't be pruned.
+    assert any("Bryan works at Stanford" in item for item in new_state.cognition.long_term_memory)
+    assert any("high scoring semantic fact" in item for item in new_state.cognition.long_term_memory)
+

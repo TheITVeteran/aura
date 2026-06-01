@@ -289,10 +289,38 @@ class MemoryRetrievalPhase(BasePhase):
                         hot = await _maybe_await(memory.get_hot_memory(limit=hot_limit))
                     if isinstance(hot, dict):
                         for episode in hot.get("recent_episodes", []) or []:
+                            content_str = ""
+                            if hasattr(episode, "to_retrieval_text"):
+                                content_str = episode.to_retrieval_text()
+                            elif hasattr(episode, "full_description"):
+                                content_str = episode.full_description
+                            elif isinstance(episode, dict):
+                                content_str = episode.get("content") or episode.get("description") or episode.get("context") or str(episode)
+                            else:
+                                content_str = _safe_text(episode, max_chars=2_000)
+
+                            metadata_dict = {"type": "recent_episode"}
+                            valence_val = 0.0
+                            importance_val = 0.5
+
+                            if hasattr(episode, "emotional_valence"):
+                                valence_val = _safe_float(episode.emotional_valence)
+                            elif isinstance(episode, dict):
+                                valence_val = _safe_float(episode.get("emotional_valence", 0.0))
+
+                            if hasattr(episode, "importance"):
+                                importance_val = _safe_float(episode.importance, default=0.5)
+                            elif isinstance(episode, dict):
+                                importance_val = _safe_float(episode.get("importance", 0.5), default=0.5)
+
+                            metadata_dict["emotional_valence"] = valence_val
+                            metadata_dict["importance"] = importance_val
+
                             recalled.append(
                                 {
-                                    "content": _safe_text(episode, max_chars=2_000),
-                                    "metadata": {"type": "recent_episode"},
+                                    "content": content_str,
+                                    "metadata": metadata_dict,
+                                    "score": 0.85,
                                 }
                             )
 
