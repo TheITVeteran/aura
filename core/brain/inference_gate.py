@@ -294,6 +294,9 @@ class InferenceGate:
         load is different: it adds tens of GB of unified-memory pressure in one
         burst. This snapshot is therefore stricter and is used before any
         background/recovery/foreground warmup that would spawn the Cortex worker.
+        
+        [HARDENING v57-CORTEX] PRIORITY: 32B cortex is PRIMARY model. Must be less
+        deferent to memory pressure to ensure system works regardless of cloud.
         """
         context_key = str(context or "background").strip().upper()
         try:
@@ -302,12 +305,14 @@ class InferenceGate:
             available_gb = float(vm.available) / float(1024**3)
             pressure_pct = float(vm.percent)
 
+            # [v57-CORTEX] Relaxed memory constraints: cortex is PRIORITY
+            # Foreground always admits, background is less strict
             if total_gb >= 60.0:
-                default_max_pressure = 72.0
-                default_min_available = 28.0 if context_key == "FOREGROUND" else 32.0
+                default_max_pressure = 80.0 if context_key == "FOREGROUND" else 75.0
+                default_min_available = 16.0 if context_key == "FOREGROUND" else 20.0
             else:
-                default_max_pressure = 64.0
-                default_min_available = 22.0
+                default_max_pressure = 72.0 if context_key == "FOREGROUND" else 68.0
+                default_min_available = 12.0 if context_key == "FOREGROUND" else 16.0
 
             max_pressure = InferenceGate._env_float(
                 f"AURA_CORTEX_{context_key}_WARMUP_MAX_PRESSURE_PCT",
@@ -346,6 +351,8 @@ class InferenceGate:
                 action="continued bounded inference fallback after non-fatal degradation",
             )
             logger.debug("Cortex warmup memory probe failed: %s", exc)
+            # [v57-CORTEX] On probe failure, ADMIT for primary workloads
+            # Better to try and OOM than to never try at all
             return {
                 "context": str(context or "background"),
                 "pressure_pct": 0.0,
@@ -353,11 +360,16 @@ class InferenceGate:
                 "total_gb": 0.0,
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
-                "can_admit": False,
-                "reason": "memory_probe_failed",
+                "can_admit": True if context_key in {"FOREGROUND", "RECOVERY"} else False,
+                "reason": "memory_probe_failed" if context_key not in {"FOREGROUND", "RECOVERY"} else "",
             }
 
     def _cortex_warmup_deferral_reason(self, context: str = "background") -> str | None:
+        # [HARDENING v57-CORTEX] User-facing requests MUST have cortex priority
+        # System should function with 32B as primary, never defer for memory when user is waiting
+        if context == "foreground":
+            return None  # NEVER defer cortex for foreground user requests
+        
         if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
             "1",
             "true",

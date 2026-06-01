@@ -2447,6 +2447,27 @@ async def main():
     (run_dir / "RESOURCE_TRACE.jsonl").touch()
     (run_dir / "LIFECYCLE_EVENTS.jsonl").touch()
 
+    def fail_run_status(
+        *,
+        phase: str,
+        error: str,
+        tasks_completed: int = 0,
+        total_tasks: int | None = None,
+    ) -> int:
+        """Persist a terminal failed status before returning from a fatal gate."""
+        write_run_status(
+            run_dir,
+            status="failed",
+            run_id=run_id,
+            commit_sha=commit_sha,
+            phase=phase,
+            tasks_completed=tasks_completed,
+            total_tasks=total_tasks,
+            error=error,
+            lifecycle_events=lifecycle_events,
+        )
+        return 1
+
     # -----------------------------------------------------------------------
     # 0. Proof runtime exclusivity
     # -----------------------------------------------------------------------
@@ -2464,7 +2485,10 @@ async def main():
             print("  [FATAL] Stale proof runner remained alive after stop request:")
             for instance in remaining_proof_runners:
                 print(f"    PID {instance['pid']}: {instance['command'][:180]}")
-            return 1
+            return fail_run_status(
+                phase="runtime_exclusivity",
+                error="proof_runner_stop_failed",
+            )
     elif existing_proof_runners and not args.allow_coexisting_runtime:
         write_exclusive_runtime_report(
             exclusive_report_path,
@@ -2475,7 +2499,10 @@ async def main():
         print("          Re-run with --stop-existing-runtime to stop it first.")
         for instance in existing_proof_runners:
             print(f"    PID {instance['pid']}: {instance['command'][:180]}")
-        return 1
+        return fail_run_status(
+            phase="runtime_exclusivity",
+            error="blocked_existing_proof_runner",
+        )
 
     existing_runtimes = find_existing_aura_runtimes()
     if existing_runtimes and args.stop_existing_runtime:
@@ -2489,7 +2516,10 @@ async def main():
             print("  [FATAL] Existing Aura runtime remained alive after stop request:")
             for instance in remaining:
                 print(f"    PID {instance['pid']}: {instance['command'][:180]}")
-            return 1
+            return fail_run_status(
+                phase="runtime_exclusivity",
+                error="aura_runtime_stop_failed",
+            )
     elif existing_runtimes and not args.allow_coexisting_runtime:
         exclusive_report = write_exclusive_runtime_report(
             exclusive_report_path,
@@ -2500,7 +2530,10 @@ async def main():
         print("          Re-run with --stop-existing-runtime to stop it first.")
         for instance in existing_runtimes:
             print(f"    PID {instance['pid']}: {instance['command'][:180]}")
-        return 1
+        return fail_run_status(
+            phase="runtime_exclusivity",
+            error="blocked_existing_aura_runtime",
+        )
     else:
         status = "coexisting_runtime_allowed" if existing_runtimes else "exclusive"
         exclusive_report = write_exclusive_runtime_report(
@@ -2533,7 +2566,10 @@ async def main():
     fixture_dir = PROJECT_ROOT / "tests" / "agi" / "fixtures" / "dnu_tasks"
     if not fixture_dir.exists():
         print(f"  [FATAL] Fixture directory not found: {fixture_dir}")
-        return 1
+        return fail_run_status(
+            phase="load_task_packs",
+            error=f"fixture_directory_not_found:{fixture_dir}",
+        )
 
     all_tasks, grader_data = load_task_packs(fixture_dir)
     print(f"  Total tasks loaded: {len(all_tasks)}")
@@ -2617,7 +2653,11 @@ async def main():
     )
     if engine is None:
         print("  [FATAL] Canonical boot completed without cognitive_engine.")
-        return 1
+        return fail_run_status(
+            phase="boot_runtime",
+            error="canonical_boot_completed_without_cognitive_engine",
+            total_tasks=len(all_tasks),
+        )
     if hasattr(engine, "setup") and not getattr(engine, "_phases", None):
         engine.setup()
     print(f"  [OK] CognitiveEngine resolved from canonical boot. Lobotomized: {getattr(engine, 'lobotomized', False)}")
@@ -2625,12 +2665,20 @@ async def main():
 
     if getattr(engine, "lobotomized", False):
         print("  [FATAL] CognitiveEngine is lobotomized. Cannot run battery.")
-        return 1
+        return fail_run_status(
+            phase="boot_runtime",
+            error="cognitive_engine_lobotomized",
+            total_tasks=len(all_tasks),
+        )
 
     runtime_manifest_src = PROJECT_ROOT / "artifacts" / "current" / "runtime_manifest.json"
     if not runtime_manifest_src.exists():
         print(f"  [FATAL] Canonical boot did not emit runtime manifest: {runtime_manifest_src}")
-        return 1
+        return fail_run_status(
+            phase="boot_runtime",
+            error=f"runtime_manifest_missing:{runtime_manifest_src}",
+            total_tasks=len(all_tasks),
+        )
     runtime_manifest_copy = run_dir / "RUNTIME_MANIFEST.json"
     runtime_manifest_copy.write_text(runtime_manifest_src.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"  [OK] Runtime manifest captured in {runtime_manifest_copy.name}.")
@@ -2663,7 +2711,15 @@ async def main():
             f"{model_lane_probe.get('error') or model_lane_probe.get('text_preview')}"
         )
         await shutdown_proof_runtime(orch)
-        return 1
+        return fail_run_status(
+            phase="model_lane_probe",
+            error=str(
+                model_lane_probe.get("error")
+                or model_lane_probe.get("text_preview")
+                or "model_lane_probe_failed"
+            ),
+            total_tasks=len(all_tasks),
+        )
     print(
         "  [OK] Model lane probe passed via "
         f"{model_lane_probe.get('endpoint')} ({model_lane_probe.get('endpoint_tier')})."
@@ -2679,7 +2735,11 @@ async def main():
         for blocker in initial_health_blockers:
             print(f"    - {blocker}")
         await shutdown_proof_runtime(orch)
-        return 1
+        return fail_run_status(
+            phase="model_lane_probe",
+            error="; ".join(initial_health_blockers),
+            total_tasks=len(all_tasks),
+        )
 
     # -----------------------------------------------------------------------
     # 4. Execute Tasks
@@ -2840,7 +2900,12 @@ async def main():
                 for blocker in task_health_blockers:
                     print(f"    - {blocker}")
                 await shutdown_proof_runtime(orch)
-                return 1
+                return fail_run_status(
+                    phase="task_execution",
+                    error="; ".join(task_health_blockers),
+                    tasks_completed=len(results),
+                    total_tasks=len(all_tasks),
+                )
             write_run_status(
                 run_dir,
                 status="running",
@@ -2877,7 +2942,12 @@ async def main():
                         f"{recycle_event.get('error')}"
                     )
                     await shutdown_proof_runtime(orch)
-                    return 1
+                    return fail_run_status(
+                        phase="model_lane_recycle",
+                        error=str(recycle_event.get("error") or "model_lane_recycle_failed"),
+                        tasks_completed=len(results),
+                        total_tasks=len(all_tasks),
+                    )
                 recycle_health_blockers = proof_runtime_health_blockers(
                     recycle_event.get("after") or {}
                 )
@@ -2886,7 +2956,12 @@ async def main():
                     for blocker in recycle_health_blockers:
                         print(f"    - {blocker}")
                     await shutdown_proof_runtime(orch)
-                    return 1
+                    return fail_run_status(
+                        phase="model_lane_recycle",
+                        error="; ".join(recycle_health_blockers),
+                        tasks_completed=len(results),
+                        total_tasks=len(all_tasks),
+                    )
 
     # -----------------------------------------------------------------------
     # 5. Anti-Theater Post-Check
@@ -3358,7 +3433,12 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
     if not anti_theater["all_passed"]:
         print("\n[!] Anti-theater violations detected. Review report.")
         await shutdown_proof_runtime(orch)
-        return 1
+        return fail_run_status(
+            phase="anti_theater_post_check",
+            error="anti_theater_violations_detected",
+            tasks_completed=len(results),
+            total_tasks=len(all_tasks),
+        )
 
     await shutdown_proof_runtime(orch)
     print("\n[+] DNU AGI Proof Battery: COMPLETE")

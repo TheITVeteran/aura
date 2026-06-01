@@ -3579,6 +3579,36 @@ class UnitaryResponsePhase(Phase):
         if strict_proof_answer_request:
             new_state.response_modifiers["strict_proof_answer_request"] = True
 
+        # [CRITICAL FIX v58] Check if a task was already dispatched asynchronously.
+        # If outcome="started", the task engine is running in background.
+        # Do NOT generate a normal response claiming actions are being taken;
+        # instead acknowledge the background work and skip misleading LLM generation.
+        last_task_outcome = new_state.response_modifiers.get("last_task_outcome", "")
+        if last_task_outcome == "started":
+            last_task_payload = new_state.response_modifiers.get("last_task_result_payload", {})
+            if isinstance(last_task_payload, dict):
+                task_summary = str(last_task_payload.get("summary", "")).strip()
+                if task_summary:
+                    # Task dispatch was successful - generate acknowledgment response
+                    ack_response = (
+                        f"I've started working on this task in the background. {task_summary}"
+                    )
+                    new_state.cognition.last_response = ack_response
+                    logger.info(
+                        "🎯 [CRITICAL FIX] Background task already started (outcome=started). "
+                        "Returning acknowledgment instead of LLM-generated response."
+                    )
+                    return new_state
+            # Fallback if payload is missing
+            new_state.cognition.last_response = (
+                "I've started working on that task. I'll keep you updated as it progresses."
+            )
+            logger.info(
+                "🎯 [CRITICAL FIX] Background task dispatched (outcome=started). "
+                "Returning generic acknowledgment."
+            )
+            return new_state
+
         # Pre-generation refusal gate: catch identity erosion BEFORE wasting LLM compute
         if self._refusal and objective and not strict_proof_answer_request:
             identity_violation = self._refusal._detect_identity_erosion(objective)
