@@ -77,6 +77,7 @@ class TaskTracker:
         self._records: Dict[int, TaskRecord] = {}
         self._recently_completed: Deque[Dict[str, Any]] = deque(maxlen=128)
         self._installed_loop_factories: Dict[int, Any] = {}
+        self._max_records_in_memory = 256  # Bounded history of completed tasks
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Lazy-init semaphore (must be in event loop context)."""
@@ -338,6 +339,21 @@ class TaskTracker:
                     )
 
         self._recently_completed.append(record.to_dict())
+        
+        # CRITICAL FIX: Clean up old records to prevent unbounded memory growth
+        # This was causing 114GB memory leak - keeping ALL completed task records forever
+        if len(self._records) > self._max_records_in_memory:
+            # Find and remove oldest completed records
+            completed_records = [
+                (task_id, rec) for task_id, rec in self._records.items() 
+                if rec.done and rec.finished_at is not None
+            ]
+            if completed_records:
+                # Sort by finish time, remove oldest 25% of completed records
+                completed_records.sort(key=lambda x: x[1].finished_at or 0)
+                remove_count = max(1, len(completed_records) // 4)
+                for task_id, _ in completed_records[:remove_count]:
+                    del self._records[task_id]
 
     @property
     def active_count(self) -> int:
@@ -370,6 +386,24 @@ class TaskTracker:
             logger.warning("%d tasks still pending after timeout. Forcing abandonment.", len(remaining))
         for task in remaining:
             self.tasks.discard(task)
+
+    def cleanup_old_records(self, max_age_s: float = 300.0):
+        """Explicitly clean up task records older than max_age_s.
+        
+        Called periodically to prevent unbounded memory growth from completed tasks.
+        """
+        now = time.monotonic()
+        removed = 0
+        for task_id in list(self._records.keys()):
+            record = self._records[task_id]
+            if record.done and record.finished_at is not None:
+                age = now - record.finished_at
+                if age > max_age_s:
+                    del self._records[task_id]
+                    removed += 1
+        if removed > 0:
+            logger.debug("TaskTracker[%s]: cleaned up %d old records", self.name, removed)
+        return removed
 
     def get_stats(self) -> dict:
         explicit_active = 0
