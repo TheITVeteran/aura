@@ -22,6 +22,14 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Memory.SemanticFactExtractor")
 
+_FACT_EXTRACTOR_RECOVERABLE_ERRORS = (
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    re.error,
+)
+
 
 class FactType(Enum):
     """Types of facts that can be extracted."""
@@ -147,7 +155,7 @@ class SemanticFactExtractor:
                 session_id=session_id
             )
             facts.extend(user_facts)
-        except Exception as e:
+        except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
             record_degradation("fact_extractor", e)
             logger.debug("User fact extraction failed: %s", e)
         
@@ -159,7 +167,7 @@ class SemanticFactExtractor:
                 session_id=session_id
             )
             facts.extend(aura_facts)
-        except Exception as e:
+        except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
             record_degradation("fact_extractor", e)
             logger.debug("Aura fact extraction failed: %s", e)
         
@@ -216,7 +224,8 @@ class SemanticFactExtractor:
                         }
                     )
                     facts.append(fact)
-            except Exception as e:
+            except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
+                record_degradation("fact_extractor.pattern", e)
                 logger.debug("Pattern matching failed for %s: %s", pattern, e)
                 continue
         
@@ -261,7 +270,7 @@ async def extract_facts_auto(
             aura_response=aura_response,
             session_id=session_id,
         )
-    except Exception as e:
+    except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
         record_degradation("fact_extractor", e)
         logger.warning("Fact extraction failed: %s", e)
         return []

@@ -19,6 +19,15 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Memory.ProfileManager")
 
+_PROFILE_MANAGER_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+)
+
 
 class ProfileManager:
     """Manages continuous profile learning from conversations."""
@@ -30,6 +39,17 @@ class ProfileManager:
         self._fact_extractor = SemanticFactExtractor()
         self._user_profile: Optional[UserProfile] = None
         self._aura_profile: Optional[AuraSelfProfile] = None
+        self._learning_attempts = 0
+        self._learning_failures = 0
+        self._fact_processing_failures = 0
+        self._last_failure_reason = ""
+
+    def _record_learning_failure(self, exc: BaseException, *, fact_level: bool = False) -> None:
+        self._learning_failures += 1
+        if fact_level:
+            self._fact_processing_failures += 1
+        self._last_failure_reason = f"{type(exc).__name__}: {exc}"
+        record_degradation("profile_manager", exc)
     
     @classmethod
     async def get_instance(cls) -> "ProfileManager":
@@ -47,8 +67,8 @@ class ProfileManager:
             self._user_profile = await UserProfile.get_instance()
             self._aura_profile = await AuraSelfProfile.get_instance()
             logger.debug("✓ ProfileManager initialized")
-        except Exception as e:
-            record_degradation("profile_manager", e)
+        except _PROFILE_MANAGER_RECOVERABLE_ERRORS as e:
+            self._record_learning_failure(e)
             logger.warning("ProfileManager initialization failed: %s", e)
     
     async def learn_from_turn(
@@ -71,6 +91,7 @@ class ProfileManager:
             logger.debug("ProfileManager not initialized, skipping learning")
             return (0, 0)
         
+        self._learning_attempts += 1
         user_count = 0
         aura_count = 0
         
@@ -164,8 +185,8 @@ class ProfileManager:
                         )
                         aura_count += 1
                 
-                except Exception as e:
-                    record_degradation("profile_manager", e)
+                except _PROFILE_MANAGER_RECOVERABLE_ERRORS as e:
+                    self._record_learning_failure(e, fact_level=True)
                     logger.debug("Failed to process fact: %s", e)
                     continue
             
@@ -174,8 +195,8 @@ class ProfileManager:
             
             return (user_count, aura_count)
         
-        except Exception as e:
-            record_degradation("profile_manager", e)
+        except _PROFILE_MANAGER_RECOVERABLE_ERRORS as e:
+            self._record_learning_failure(e)
             logger.warning("Profile learning failed: %s", e)
             return (0, 0)
     
@@ -193,8 +214,8 @@ class ProfileManager:
                 aura_context = self._aura_profile.to_identity_block()
                 if aura_context:
                     blocks.append(aura_context)
-        except Exception as e:
-            record_degradation("profile_manager", e)
+        except _PROFILE_MANAGER_RECOVERABLE_ERRORS as e:
+            self._record_learning_failure(e)
             logger.debug("Failed to generate context injection: %s", e)
         
         if blocks:
@@ -208,6 +229,16 @@ class ProfileManager:
     def get_aura_profile(self) -> Optional[AuraSelfProfile]:
         """Get Aura profile instance."""
         return self._aura_profile
+
+    def get_status(self) -> dict[str, object]:
+        """Return observable profile-learning health for runtime health and tests."""
+        return {
+            "initialized": bool(self._user_profile and self._aura_profile),
+            "learning_attempts": int(self._learning_attempts),
+            "learning_failures": int(self._learning_failures),
+            "fact_processing_failures": int(self._fact_processing_failures),
+            "last_failure_reason": self._last_failure_reason,
+        }
 
 
 async def learn_from_turn_auto(
@@ -223,7 +254,7 @@ async def learn_from_turn_auto(
             aura_response=aura_response,
             session_id=session_id,
         )
-    except Exception as e:
+    except _PROFILE_MANAGER_RECOVERABLE_ERRORS as e:
         record_degradation("profile_manager", e)
         logger.warning("Auto-learning failed: %s", e)
         return (0, 0)
