@@ -3,7 +3,21 @@
 
 import asyncio
 import sys
-sys.path.insert(0, '/Users/bryan/.aura/live-source')
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+SCRIPT_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 from core.memory.semantic_fact_extractor import SemanticFactExtractor
 from core.memory.user_profile import UserProfile
@@ -100,7 +114,7 @@ async def main():
         test3 = await test_context_injection()
         results.append(("Context Injection", test3))
         
-    except Exception as e:
+    except SCRIPT_RECOVERABLE_ERRORS as e:
         print(f"\n❌ Test failed with error: {e}")
         import traceback
         traceback.print_exc()

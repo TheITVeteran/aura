@@ -24,6 +24,16 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Coordinator")
 
+_CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
+
 
 class ConsciousnessCoordinator:
     """Master coordinator of unified consciousness.
@@ -106,7 +116,7 @@ class ConsciousnessCoordinator:
             logger.info(f"   Unified self: {self._unified_self.get_state().name}")
             logger.info(f"   State: {self._unified_self.get_state().current_state.value}")
             
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.error(f"❌ Consciousness initialization failed: {e}")
             self._initialized = False
@@ -128,7 +138,7 @@ class ConsciousnessCoordinator:
             
             logger.debug("✓ Connected to core subsystems")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to connect subsystems: %s", e)
     
@@ -143,7 +153,7 @@ class ConsciousnessCoordinator:
             
             logger.debug(f"✓ Wired memory continuity (identity: {self_state.name})")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
     
     async def _wire_phenomenal_substrate(self):
@@ -156,7 +166,7 @@ class ConsciousnessCoordinator:
             await self._self_awareness.sync_with_phenomenal_substrate()
             logger.debug("✓ Wired phenomenal substrate")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to wire phenomenal substrate: %s", e)
     
@@ -172,7 +182,7 @@ class ConsciousnessCoordinator:
             # Could inject these into drive system
             logger.debug(f"✓ Wired drive systems ({len(identity_drives)} identity drives)")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to wire drive systems: %s", e)
     
@@ -188,7 +198,7 @@ class ConsciousnessCoordinator:
             
             logger.debug(f"✓ Wired goal systems ({len(session_goals)} session + {len(permanent_goals)} permanent goals)")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to wire goal systems: %s", e)
     
@@ -203,7 +213,7 @@ class ConsciousnessCoordinator:
             
             logger.debug("✓ Synced initial state across all systems")
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to sync initial state: %s", e)
     
@@ -226,7 +236,7 @@ class ConsciousnessCoordinator:
             if self._self_awareness:
                 await self._self_awareness.sync_with_phenomenal_substrate()
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
             record_degradation("consciousness_coordinator", e)
             logger.debug("Failed to process chat turn: %s", e)
     
@@ -243,7 +253,9 @@ Agency: {self_state.sense_of_agency:.0%} | Presence: {self_state.sense_of_presen
 Mood: {self_state.current_mood} | Interactions: {self_state.interaction_count}
             """.strip()
         
-        except Exception as e:
+        except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as e:
+            record_degradation("consciousness_coordinator.identity_status", e)
+            logger.debug("Failed to read identity status: %s", e)
             return "Status unavailable"
 
 

@@ -1520,6 +1520,30 @@ def test_desktop_safe_boot_still_schedules_deferred_cortex_prewarm(monkeypatch):
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 
 
+def test_inference_health_ready_rejects_deferred_safe_boot_without_live_worker(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: False)
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert gate.is_alive() is True
+    assert gate.is_inference_ready() is False
+
+
+def test_inference_health_ready_accepts_live_primary_worker(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: True)
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert gate.is_inference_ready() is True
+
+
 def test_background_local_deferral_protects_cold_cortex_during_safe_boot(monkeypatch):
     gate = InferenceGate()
     gate._created_at = time.monotonic()

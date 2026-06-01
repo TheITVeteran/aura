@@ -12,7 +12,21 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.EngineConnectionPool")
+
+_CONNECTION_POOL_RECOVERABLE_ERRORS = (
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    ConnectionError,
+    LookupError,
+    asyncio.TimeoutError,
+)
 
 
 class ConnectionHealth(Enum):
@@ -221,7 +235,7 @@ class CognitiveEngineConnectionPool:
                 # Trigger connection recovery on timeout
                 await self._trigger_recovery(connection_id)
                 
-            except Exception as e:
+            except _CONNECTION_POOL_RECOVERABLE_ERRORS as e:
                 stats.record_failure(is_timeout=False)
                 last_exception = e
                 logger.warning(
@@ -281,10 +295,14 @@ class CognitiveEngineConnectionPool:
                     logger.info("✅ Connection recovery completed (id=%s)", connection_id)
                     if stats:
                         stats.record_success()
-            except Exception as e:
+            except _CONNECTION_POOL_RECOVERABLE_ERRORS as e:
+                record_degradation("engine_connection_pool.recovery", e)
                 logger.error("🛑 Connection recovery failed: %s", str(e))
         
-        task = asyncio.create_task(recovery_task())
+        task = get_task_tracker().create_task(
+            recovery_task(),
+            name=f"engine_connection_recovery_{connection_id}",
+        )
         self._recovery_tasks[connection_id] = task
     
     def get_health_status(self, connection_id: str = "default") -> dict[str, Any]:

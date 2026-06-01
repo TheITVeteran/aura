@@ -1096,6 +1096,7 @@ async def recycle_proof_model_lane(
         return "7b" in text or "brainstem" in text or "fast" in text
 
     recycled = 0
+    recycled_candidate: Any | None = None
     candidates: list[tuple[str, Any]] = []
     seen: set[int] = set()
 
@@ -1142,6 +1143,7 @@ async def recycle_proof_model_lane(
         if asyncio.iscoroutine(result):
             await asyncio.wait_for(result, timeout=180.0)
         recycled += 1
+        recycled_candidate = candidate
         event["recycled_clients"].append(
             {
                 "owner": label,
@@ -1155,7 +1157,36 @@ async def recycle_proof_model_lane(
         event["status"] = "failed"
         event["error"] = "no_rebootable_model_client_for_requested_tier"
     else:
-        event["status"] = "complete"
+        warmup = getattr(recycled_candidate, "warmup", None)
+        if not callable(warmup):
+            warmup = getattr(recycled_candidate, "warm_up", None)
+        if callable(warmup):
+            try:
+                try:
+                    warmup_result = warmup(
+                        foreground_request=requested_tier == "primary",
+                        skip_swap_cooldown=True,
+                    )
+                except TypeError:
+                    warmup_result = warmup()
+                if asyncio.iscoroutine(warmup_result):
+                    await asyncio.wait_for(warmup_result, timeout=240.0)
+            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                event["status"] = "failed"
+                event["error"] = f"model_lane_rewarm_failed:{type(exc).__name__}: {exc}"
+                event["after"] = collect_proof_resource_snapshot(
+                    label="after_model_lane_recycle_failed",
+                    task_index=task_index,
+                )
+                append_jsonl(lifecycle_path, event)
+                return event
+        live_check = getattr(recycled_candidate, "is_alive", None)
+        lane_live = bool(callable(live_check) and live_check())
+        if not lane_live:
+            event["status"] = "failed"
+            event["error"] = "recycled_model_lane_not_live_after_warmup"
+        else:
+            event["status"] = "complete"
     event["after"] = collect_proof_resource_snapshot(
         label="after_model_lane_recycle",
         task_index=task_index,

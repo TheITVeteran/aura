@@ -63,7 +63,7 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "inference_gate",
         ServiceTier.CRITICAL,
         "Routes LLM requests to local MLX or cloud. Without it, Aura cannot generate any response.",
-        liveness_check="is_alive",
+        liveness_check="is_inference_ready",
     ),
     ServiceRequirement(
         "LLM Router",

@@ -5563,3 +5563,43 @@ class InferenceGate:
         if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
             return True
         return False
+
+    def is_inference_ready(self) -> bool:
+        """Return true only when a concrete inference backend is live now.
+
+        ``is_alive()`` intentionally supports deferred/safe-boot semantics so a
+        desktop turn can cold-start Cortex on demand. The runtime health
+        contract is stricter: healthy must mean an actual backend can accept a
+        generation without relying on deferred startup. Proof-primary runs also
+        require the primary Cortex lane specifically, not a lower-tier fallback.
+        """
+        if not self._initialized:
+            return False
+
+        def _client_alive(client: Any) -> bool:
+            try:
+                return bool(
+                    client is not None
+                    and hasattr(client, "is_alive")
+                    and client.is_alive()
+                )
+            except _INFERENCE_RECOVERABLE_ERRORS:
+                return False
+
+        primary_ready = _client_alive(self._mlx_client)
+        if primary_ready:
+            return True
+
+        try:
+            from core.runtime.proof_policy import proof_model_tier, proof_run_active
+
+            if proof_run_active(origin="inference_gate_health") and proof_model_tier() == "primary":
+                return False
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            return False
+
+        try:
+            local_clients = self._iter_local_clients()
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            local_clients = {}
+        return any(_client_alive(client) for client in local_clients.values())

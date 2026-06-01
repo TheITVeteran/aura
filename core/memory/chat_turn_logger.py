@@ -16,8 +16,19 @@ import logging
 from typing import Any, Optional
 
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Memory.ChatTurnLogger")
+
+_CHAT_TURN_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 
 class ChatTurnLogger:
@@ -64,7 +75,7 @@ class ChatTurnLogger:
         if len(aura_response.strip()) < 10:
             return False
         
-        # Exclude common error/placeholder responses
+        # Exclude common fallback responses that should not become memories.
         error_markers = [
             "i'm still with you",
             "i'm still here",
@@ -152,14 +163,19 @@ class ChatTurnLogger:
                             )
                             if user_facts > 0 or aura_facts > 0:
                                 logger.debug(f"📚 Profile learning: {user_facts} user facts, {aura_facts} self facts")
-                        except Exception as e:
-                            logger.debug(f"Profile learning skipped: {e}")
+                        except _CHAT_TURN_RECOVERABLE_ERRORS as e:
+                            record_degradation("chat_turn_logger.profile_learning", e)
+                            logger.debug("Profile learning skipped: %s", e)
                     
                     # Schedule without blocking
-                    asyncio.create_task(_learn_profiles())
+                    get_task_tracker().create_task(
+                        _learn_profiles(),
+                        name=f"profile_learning_{session_id}",
+                    )
                 
-                except Exception as e:
-                    logger.debug(f"Profile learning unavailable: {e}")
+                except _CHAT_TURN_RECOVERABLE_ERRORS as e:
+                    record_degradation("chat_turn_logger.profile_learning", e)
+                    logger.debug("Profile learning unavailable: %s", e)
                 
                 return True
             else:
@@ -223,7 +239,7 @@ async def log_chat_turn_auto(
             emotional_valence=emotional_valence,
             metadata=metadata,
         )
-    except Exception as e:
+    except _CHAT_TURN_RECOVERABLE_ERRORS as e:
         record_degradation("chat_turn_logger", e)
         logger.warning("Auto-logging failed: %s", e)
         return False

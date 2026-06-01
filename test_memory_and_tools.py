@@ -13,8 +13,11 @@ import psutil
 import os
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, '/Users/bryan/.aura/live-source')
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from core.utils.task_tracker import get_task_tracker
 

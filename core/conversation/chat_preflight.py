@@ -77,6 +77,16 @@ MAX_REASON_CHARS = 240
 MAX_QUEUE_LINE_CHARS = 256_000
 _QUEUE_LOCK = threading.RLock()
 
+_CHAT_PREFLIGHT_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
+
 
 def _emit_chat_fault(
     error: BaseException,
@@ -756,8 +766,13 @@ async def inject_profile_context() -> str:
         if context:
             return f"[Learned Context From Prior Conversations]\n{context}\n[End context]\n\n"
         return ""
-    except Exception:
-        # Silently fail if profile system unavailable
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued without learned profile context",
+            severity="degraded",
+            stage="profile_context.inject",
+        )
         return ""
 
 
@@ -795,8 +810,13 @@ async def inject_unified_consciousness_context() -> str:
         
         return "\n".join(lines) + "\n\n"
     
-    except Exception:
-        # Silently fail if consciousness system unavailable
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued without unified consciousness context",
+            severity="degraded",
+            stage="unified_consciousness_context.inject",
+        )
         return ""
 
 

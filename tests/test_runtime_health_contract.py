@@ -103,7 +103,7 @@ def test_runtime_contract_fails_closed_when_required_liveness_method_is_missing(
     assert report["status"] == HealthLevel.CRITICAL.value
     assert report["operational"] is False
     assert report["failures"]["critical"][0]["container_key"] == "inference_gate"
-    assert report["failures"]["critical"][0]["error"] == "missing liveness check: is_alive()"
+    assert report["failures"]["critical"][0]["error"] == "missing liveness check: is_inference_ready()"
     assert probes["inference"]["ok"] is False
     assert probes["all_passed"] is False
 
@@ -206,7 +206,7 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
     }
 
     assert required["kernel_interface"].liveness_check == "is_ready"
-    assert required["inference_gate"].liveness_check == "is_alive"
+    assert required["inference_gate"].liveness_check == "is_inference_ready"
     assert required["llm_router"].tier == ServiceTier.CRITICAL
     assert required["state_repository"].liveness_check == "is_initialized"
     assert required["memory_facade"].liveness_check == "is_ready"
@@ -240,3 +240,20 @@ def test_observability_readiness_uses_runtime_health_contract():
     assert result["status"] == "not_ready"
     assert any(issue.startswith("runtime_contract:") for issue in result["issues"])
     assert any(issue.startswith("required_probes:") for issue in result["issues"])
+
+
+def test_runtime_contract_rejects_deferred_inference_as_healthy():
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    ServiceContainer.register_instance(
+        "inference_gate",
+        SimpleNamespace(is_alive=lambda: True, is_inference_ready=lambda: False),
+    )
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.CRITICAL.value
+    assert report["operational"] is False
+    assert report["failures"]["critical"][0]["container_key"] == "inference_gate"
+    assert report["failures"]["critical"][0]["error"] == "is_inference_ready() returned False"
+    assert probes["inference"]["ok"] is False

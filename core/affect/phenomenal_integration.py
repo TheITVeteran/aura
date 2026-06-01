@@ -35,6 +35,16 @@ from core.phenomenal_substrate.reporting import ExperienceReporter
 
 logger = logging.getLogger("Aura.PhenomenalIntegration")
 
+_PHENOMENAL_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
+
 
 class PhenomenalIntegrator:
     """Bridge between Aura's runtime and the phenomenal substrate.
@@ -182,7 +192,7 @@ class PhenomenalIntegrator:
 
             return state
 
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("PhenomenalIntegrator.step failed: %s", exc)
             # Return a neutral baseline state to keep aura running
             return self._baseline_state()
@@ -246,7 +256,7 @@ class PhenomenalIntegrator:
                 kind,
                 summary,
             )
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("Failed to record attachment event: %s", exc)
 
     async def get_bond_status(self, person_key: str) -> Dict[str, Any]:
@@ -270,7 +280,7 @@ class PhenomenalIntegrator:
                 result["care"] = float(care_match.group(1))
             
             return result or {"person": person_key, "trust": 0.0, "care": 0.0}
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("Failed to get bond status for %s: %s", person_key, exc)
             return {"person": person_key, "trust": 0.0, "care": 0.0}
 
@@ -328,7 +338,7 @@ class PhenomenalIntegrator:
                     ls = getattr(orchestrator, 'liquid_state', None)
                     if ls and hasattr(ls, 'current'):
                         observations["energy"] = max(0.1, getattr(ls.current, 'energy', 0.75))
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect energy observation: %s", exc)
 
             # Continuity: Self-model identity coherence
@@ -336,7 +346,7 @@ class PhenomenalIntegrator:
                 self_model = orchestrator.self_model if hasattr(orchestrator, 'self_model') else None
                 if self_model and hasattr(self_model, 'identity_coherence'):
                     observations["continuity"] = self_model.identity_coherence()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect continuity observation: %s", exc)
 
             # Agency: Sense of control from planner
@@ -344,7 +354,7 @@ class PhenomenalIntegrator:
                 planner = orchestrator.planner if hasattr(orchestrator, 'planner') else None
                 if planner and hasattr(planner, 'actionability'):
                     observations["agency"] = planner.actionability()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect agency observation: %s", exc)
 
             # Safety: Governance/safety constraints
@@ -352,7 +362,7 @@ class PhenomenalIntegrator:
                 governance = orchestrator.governance if hasattr(orchestrator, 'governance') else None
                 if governance and hasattr(governance, 'safety_score'):
                     observations["safety"] = governance.safety_score()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect safety observation: %s", exc)
 
             # Social contact: Recent trust/interaction signals
@@ -360,7 +370,7 @@ class PhenomenalIntegrator:
                 social = orchestrator.social_engine if hasattr(orchestrator, 'social_engine') else None
                 if social and hasattr(social, 'recent_trust_signal'):
                     observations["social_contact"] = social.recent_trust_signal()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect social observation: %s", exc)
 
             # Novelty: Newness in current perception
@@ -368,7 +378,7 @@ class PhenomenalIntegrator:
                 perception = orchestrator.perception if hasattr(orchestrator, 'perception') else None
                 if perception and hasattr(perception, 'novelty_score'):
                     observations["novelty"] = perception.novelty_score()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect novelty observation: %s", exc)
 
             # Uncertainty: Model uncertainty about next state
@@ -376,7 +386,7 @@ class PhenomenalIntegrator:
                 world_model = orchestrator.world_model if hasattr(orchestrator, 'world_model') else None
                 if world_model and hasattr(world_model, 'prediction_uncertainty'):
                     observations["uncertainty"] = world_model.prediction_uncertainty()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect uncertainty observation: %s", exc)
 
             # Compute pressure: Runtime load
@@ -384,7 +394,7 @@ class PhenomenalIntegrator:
                 runtime = orchestrator.runtime if hasattr(orchestrator, 'runtime') else None
                 if runtime and hasattr(runtime, 'compute_load'):
                     observations["compute_pressure"] = runtime.compute_load()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect compute_pressure observation: %s", exc)
 
             # Memory pressure: Memory system pressure
@@ -392,17 +402,17 @@ class PhenomenalIntegrator:
                 memory = orchestrator.memory if hasattr(orchestrator, 'memory') else None
                 if memory and hasattr(memory, 'pressure_score'):
                     observations["memory_pressure"] = memory.pressure_score()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect memory_pressure observation: %s", exc)
 
             # Error pressure: Accumulated errors/failures
             try:
                 from core.runtime.errors import get_degradation_score
                 observations["error_pressure"] = get_degradation_score()
-            except Exception as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect error_pressure observation: %s", exc)
 
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("Observation collection failed, using defaults: %s", exc)
 
         return observations
@@ -442,14 +452,14 @@ class PhenomenalIntegrator:
                     planner = getattr(orchestrator, 'planner', None)
                     if planner and hasattr(planner, 'goal_delta'):
                         goal_delta = planner.goal_delta()
-                except Exception as exc:
+                except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                     logger.debug("Failed to collect goal_delta: %s", exc)
 
                 try:
                     governance = getattr(orchestrator, 'governance', None)
                     if governance and hasattr(governance, 'threat_assessment'):
                         threat = governance.threat_assessment()
-                except Exception as exc:
+                except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                     logger.debug("Failed to collect threat: %s", exc)
 
             # Run phenomenal step
@@ -478,12 +488,12 @@ class PhenomenalIntegrator:
             if orchestrator:
                 try:
                     await self._route_to_downstream(orchestrator, state)
-                except Exception as exc:
+                except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                     logger.debug("Failed to route phenomenal state downstream: %s", exc)
 
             return state
 
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("pulse_from_orchestrator failed: %s", exc)
             return None
 
@@ -525,7 +535,7 @@ class PhenomenalIntegrator:
             self.last_state = state
             self.step_count += 1
             return state
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Blocking phenomenal pulse failed: %s", exc)
             return None
 
@@ -545,7 +555,7 @@ class PhenomenalIntegrator:
             if planner and hasattr(planner, 'consume_affect'):
                 planner.consume_affect(state)
                 logger.debug("Routed phenomenal state to planner")
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Failed to route to planner: %s", exc)
 
         try:
@@ -554,7 +564,7 @@ class PhenomenalIntegrator:
             if memory and hasattr(memory, 'set_write_weights'):
                 memory.set_write_weights(state.memory_weights)
                 logger.debug("Routed phenomenal memory_weights to memory system")
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Failed to route to memory: %s", exc)
 
         try:
@@ -563,7 +573,7 @@ class PhenomenalIntegrator:
             if attention and hasattr(attention, 'route'):
                 attention.route(state.global_broadcast)
                 logger.debug("Routed phenomenal broadcast to attention system")
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Failed to route to attention: %s", exc)
 
         try:
@@ -576,7 +586,7 @@ class PhenomenalIntegrator:
                     integration=state.integration,
                 )
                 logger.debug("Updated self-model with phenomenal presence")
-        except Exception as exc:
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Failed to route to self-model: %s", exc)
 
 

@@ -74,6 +74,17 @@ SENSITIVE_VALUE_PATTERNS = [
 
 REDACTED = "[REDACTED]"
 
+_DIAGNOSTICS_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    tarfile.TarError,
+    json.JSONDecodeError,
+)
+
 
 def redact_value(value: Any) -> Any:
     """Recursively scrub sensitive fields and high-entropy values."""
@@ -101,7 +112,7 @@ def redact_value(value: Any) -> Any:
 def _safe_call(label: str, fn: Callable[[], Any]) -> Tuple[Any, Optional[str]]:
     try:
         return fn(), None
-    except Exception as e:  # noqa: BLE001 - last-resort safety net
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001 - last-resort safety net
         logger.debug("Safe call failed on %s: %s", label, e)
         return None, f"{type(e).__name__}: {e}"
 
@@ -113,7 +124,7 @@ def collect_health() -> Dict[str, Any]:
         import asyncio
 
         return asyncio.run(agg.get_report())
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect health report: %s", e)
         # Fall back to a minimal snapshot so the bundle still has *something*.
         return {
@@ -134,7 +145,7 @@ def _basic_system_metrics() -> Dict[str, Any]:
             "threads": proc.num_threads(),
             "pid": proc.pid,
         }
-    except Exception as e:
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:
         logger.debug("Failed to collect basic system metrics: %s", e)
         return {"available": False}
 
@@ -150,7 +161,7 @@ def collect_config_redacted() -> Dict[str, Any]:
             raw = config.dict()
         else:
             raw = {k: getattr(config, k) for k in dir(config) if not k.startswith("_")}
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         raw = {"_collector_error": f"{type(e).__name__}: {e}"}
     return redact_value(raw)
 
@@ -165,10 +176,10 @@ def collect_metrics() -> Dict[str, Any]:
             if svc is not None and hasattr(svc, "snapshot"):
                 try:
                     out[name] = redact_value(svc.snapshot())
-                except Exception as e:  # noqa: BLE001
+                except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
                     out[name] = {"_collector_error": str(e)}
         return out
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect metrics: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -188,7 +199,7 @@ def collect_tasks() -> Dict[str, Any]:
                 }
             )
         return {"count": len(snapshot), "tasks": snapshot[:200]}
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect tasks: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -207,10 +218,10 @@ def collect_models() -> Dict[str, Any]:
                     try:
                         out[name] = redact_value(getattr(svc, method)())
                         break
-                    except Exception as e:  # noqa: BLE001
+                    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
                         out[name] = {"_collector_error": str(e)}
         return out
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect models: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -229,10 +240,10 @@ def collect_memory() -> Dict[str, Any]:
                     try:
                         out[name] = redact_value(getattr(svc, method)())
                         break
-                    except Exception as e:  # noqa: BLE001
+                    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
                         out[name] = {"_collector_error": str(e)}
         return out
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect memory: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -248,7 +259,7 @@ def collect_gateway() -> Dict[str, Any]:
             ready = instance is not None
             out["registered"].append({"name": name, "ready": ready})
         return out
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect gateway services: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -259,7 +270,7 @@ def collect_research_core() -> Dict[str, Any]:
         from core.research_core.doctor import collect_research_core_status
 
         return collect_research_core_status()
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect research core status: %s", e)
         return {"available": False, "_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -296,12 +307,12 @@ def collect_recent_receipts(per_kind_limit: int = 20) -> Dict[str, Any]:
                         payload = dict(payload)
                         payload.setdefault("kind", kind)
                         recent_payloads.append(redact_value(payload))
-                except Exception as e:
+                except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:
                     logger.debug("Failed to read receipt at %s: %s", path, e)
                     continue
             kinds[kind] = recent_payloads
         return {"counts": counts, "recent": kinds}
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect recent receipts: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
@@ -322,7 +333,7 @@ def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
                 try:
                     if hasattr(chain, "flush"):
                         chain.flush()
-                except Exception as _exc:
+                except _DIAGNOSTICS_RECOVERABLE_ERRORS as _exc:
                     logger.debug("Suppressed %s in core.runtime.diagnostics_bundle: %s", type(_exc).__name__, _exc)
                 tail_entries = max(1, int(os.environ.get("AURA_DOCTOR_AUDIT_TAIL_ENTRIES", "200")))
                 chain_src = Path(getattr(chain, "path", ""))
@@ -383,7 +394,7 @@ def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
                     "body_verification": "skipped",
                 }
         return {"export": info, "verify": verify}
-    except Exception as e:  # noqa: BLE001
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect audit chain: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 

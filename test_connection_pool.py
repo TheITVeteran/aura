@@ -4,6 +4,7 @@
 import asyncio
 import sys
 import logging
+from pathlib import Path
 
 # Setup logging
 logging.basicConfig(
@@ -11,9 +12,21 @@ logging.basicConfig(
     format='%(asctime)s [%(name)s] %(levelname)s: %(message)s'
 )
 
+SCRIPT_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
+
 async def test_connection_pool():
-    """Test the connection pool with mock engine."""
-    sys.path.insert(0, '/Users/bryan/.aura/live-source')
+    """Test the connection pool with a controlled in-memory engine."""
+    repo_root = Path(__file__).resolve().parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     
     from core.providers.engine_connection_pool import (
         get_engine_connection_pool,
@@ -38,17 +51,17 @@ async def test_connection_pool():
         print(f"  Attempt {attempt + 1}: backoff={delay:.1f}s, timeout={timeout:.1f}s")
     
     # Test health status tracking
-    class MockEngine:
+    class InMemoryEngine:
         async def think(self, message, **kwargs):
             return f"Response to: {message}"
     
-    mock_engine = MockEngine()
-    await pool.acquire_engine_connection(mock_engine, connection_id="test_conn")
+    engine = InMemoryEngine()
+    await pool.acquire_engine_connection(engine, connection_id="test_conn")
     print("✅ Acquired connection")
     
     # Test successful operation
     async def test_operation():
-        return await mock_engine.think("Test message")
+        return await engine.think("Test message")
     
     result = await pool.execute_with_retry(
         "test_operation",
@@ -66,6 +79,7 @@ async def test_connection_pool():
     
     # Test failing operation (should retry and eventually fail)
     async def failing_operation():
+        await asyncio.sleep(0)
         raise ValueError("Simulated failure")
     
     result = await pool.execute_with_retry(
@@ -93,7 +107,7 @@ if __name__ == "__main__":
     try:
         success = asyncio.run(test_connection_pool())
         sys.exit(0 if success else 1)
-    except Exception as e:
+    except SCRIPT_RECOVERABLE_ERRORS as e:
         print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()

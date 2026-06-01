@@ -2,6 +2,7 @@ import json
 import sys
 import asyncio
 import multiprocessing as multiprocessing_module
+from types import SimpleNamespace
 
 from tools.agi import run_dnu_agi_proof_battery as dnu_runner
 
@@ -123,6 +124,77 @@ def test_primary_full_dnu_defaults_to_periodic_model_recycling(monkeypatch):
         )
         == 0
     )
+
+
+def test_dnu_model_recycle_rewarms_requested_lane(tmp_path):
+    class FakeClient:
+        def __init__(self):
+            self.rebooted = False
+            self.warmed = False
+
+        def get_lane_status(self):
+            return {"desired_model": "Cortex 32B", "state": "ready"}
+
+        async def reboot_worker(self, reason, mark_failed=False):
+            self.rebooted = True
+            self.warmed = False
+
+        async def warmup(self, *, foreground_request=False, skip_swap_cooldown=False):
+            assert foreground_request is True
+            assert skip_swap_cooldown is True
+            self.warmed = True
+
+        def is_alive(self):
+            return self.warmed
+
+    client = FakeClient()
+    router = SimpleNamespace(endpoints={"Cortex": SimpleNamespace(client=client)})
+
+    event = asyncio.run(
+        dnu_runner.recycle_proof_model_lane(
+            router,
+            "primary",
+            run_dir=tmp_path,
+            reason="test_recycle",
+            task_index=40,
+        )
+    )
+
+    assert client.rebooted is True
+    assert client.warmed is True
+    assert event["status"] == "complete"
+    assert event["error"] is None
+    assert len((tmp_path / "LIFECYCLE_EVENTS.jsonl").read_text().splitlines()) == 2
+
+
+def test_dnu_model_recycle_fails_if_rewarmed_lane_is_not_live(tmp_path):
+    class FakeClient:
+        def get_lane_status(self):
+            return {"desired_model": "Cortex 32B", "state": "ready"}
+
+        async def reboot_worker(self, reason, mark_failed=False):
+            return None
+
+        async def warmup(self, *, foreground_request=False, skip_swap_cooldown=False):
+            return None
+
+        def is_alive(self):
+            return False
+
+    router = SimpleNamespace(endpoints={"Cortex": SimpleNamespace(client=FakeClient())})
+
+    event = asyncio.run(
+        dnu_runner.recycle_proof_model_lane(
+            router,
+            "primary",
+            run_dir=tmp_path,
+            reason="test_recycle",
+            task_index=40,
+        )
+    )
+
+    assert event["status"] == "failed"
+    assert event["error"] == "recycled_model_lane_not_live_after_warmup"
 
 
 def test_dnu_orphan_cleanup_recognizes_temp_aura_checkouts(tmp_path):

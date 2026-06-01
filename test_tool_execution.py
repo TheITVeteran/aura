@@ -7,12 +7,27 @@ Verifies tools work cleanly without crashes or hangs
 
 import sys
 import asyncio
+import tempfile
+from pathlib import Path
 
-sys.path.insert(0, '/Users/bryan/.aura/live-source')
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-async def test_file_write_read():
+SCRIPT_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    asyncio.TimeoutError,
+)
+
+async def test_file_write_read(work_dir: Path):
     """Test basic file write/read tool operations"""
     from core.capability_engine import execute_tool
+    test_file = work_dir / "test_aura_write.txt"
     
     print("🧪 Testing File Write Operation...")
     
@@ -20,7 +35,7 @@ async def test_file_write_read():
     result = await execute_tool(
         tool_name="write_file",
         parameters={
-            "file_path": "/tmp/test_aura_write.txt",
+            "file_path": str(test_file),
             "content": "Hello from Aura v62 - memory leak fixed!",
             "mode": "w"
         }
@@ -38,7 +53,7 @@ async def test_file_write_read():
     result = await execute_tool(
         tool_name="read_file",
         parameters={
-            "file_path": "/tmp/test_aura_write.txt"
+            "file_path": str(test_file)
         }
     )
     
@@ -53,7 +68,7 @@ async def test_file_write_read():
     
     return False
 
-async def test_multiple_tools_sequential():
+async def test_multiple_tools_sequential(work_dir: Path):
     """Test multiple tool calls in sequence"""
     from core.capability_engine import execute_tool
     
@@ -63,7 +78,7 @@ async def test_multiple_tools_sequential():
         result = await execute_tool(
             tool_name="write_file",
             parameters={
-                "file_path": f"/tmp/test_sequential_{i}.txt",
+                "file_path": str(work_dir / f"test_sequential_{i}.txt"),
                 "content": f"Test {i} - memory stable",
                 "mode": "w"
             }
@@ -83,8 +98,10 @@ async def main():
     print("=" * 60)
     
     try:
-        test1 = await test_file_write_read()
-        test2 = await test_multiple_tools_sequential()
+        with tempfile.TemporaryDirectory(prefix="aura_tool_execution_") as tmp:
+            work_dir = Path(tmp)
+            test1 = await test_file_write_read(work_dir)
+            test2 = await test_multiple_tools_sequential(work_dir)
         
         print("\n" + "=" * 60)
         if test1 and test2:
@@ -96,7 +113,7 @@ async def main():
         else:
             print("❌ SOME TESTS FAILED")
             return 1
-    except Exception as e:
+    except SCRIPT_RECOVERABLE_ERRORS as e:
         print(f"\n❌ ERROR: {e}")
         import traceback
         traceback.print_exc()

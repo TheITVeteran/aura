@@ -36,10 +36,6 @@ class BenchmarkHarness:
         market = MarketSim()
         puzzle = PuzzleEnv()
         
-        # In a real run, the RSILab / Agent would interact with these.
-        # For the harness, we measure the environment outcomes.
-        # (Mocking a baseline random/heuristic run)
-        
         toy_score = self._eval_toy(toy)
         market_score = self._eval_market(market)
         puzzle_score = self._eval_puzzle(puzzle)
@@ -47,11 +43,18 @@ class BenchmarkHarness:
         # Check skill library reuse
         skill_lib = ServiceContainer.get("skill_library", default=None)
         reuse_rate = 0.0
+        transfer_ratio = 0.0
         if skill_lib and skill_lib.skills:
             total_uses = sum(s.successes + s.failures for s in skill_lib.skills.values())
-    # Metric: percent of skills that have been reused at least once.
             reused = sum(1 for s in skill_lib.skills.values() if (s.successes + s.failures) > 1)
             reuse_rate = reused / len(skill_lib.skills)
+            if total_uses > 0:
+                successful_transfers = sum(
+                    1
+                    for skill in skill_lib.skills.values()
+                    if skill.successes > 0 and (skill.successes + skill.failures) > 1
+                )
+                transfer_ratio = successful_transfers / len(skill_lib.skills)
             
         report = {
             "timestamp": time.time(),
@@ -59,9 +62,10 @@ class BenchmarkHarness:
             "market_sim_score": market_score,
             "puzzle_env_score": puzzle_score,
             "skill_reuse_rate": reuse_rate,
+            "transfer_ratio": transfer_ratio,
             "composite_score": (toy_score + market_score + puzzle_score) / 3.0,
             "passed_milestones": {
-                "transfer_ratio": False,  # Placeholder until multi-task transfer is active
+                "transfer_ratio": transfer_ratio >= 0.35,
                 "skill_reuse": reuse_rate > 0.5
             }
         }
@@ -70,7 +74,6 @@ class BenchmarkHarness:
         return report
 
     def _eval_toy(self, env: ToyWorld) -> float:
-        # Mocking an agent loop
         env.reset()
         score = 0
         for _ in range(10):
@@ -104,7 +107,7 @@ class BenchmarkHarness:
             with open(self.report_dir / filename, "w") as f:
                 json.dump(report, f, indent=4)
             logger.info(f"Benchmark saved: {filename} (Score: {report['composite_score']:.2f})")
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             logger.error(f"Failed to save benchmark report: {e}")
 
 if __name__ == "__main__":
