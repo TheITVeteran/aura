@@ -807,6 +807,39 @@ async def test_intent_router_route_execution_drives_capability_engine():
 
 
 @pytest.mark.asyncio
+async def test_legacy_interface_router_delegates_to_canonical_capability_path():
+    from pathlib import Path
+
+    from interface.router import IntentRouter
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context))
+            return {"ok": True, "skill": skill_name, "params": params, "context": context}
+
+    result = await IntentRouter().route_execution(
+        "forge_skill",
+        {"name": "diagnostic_skill"},
+        FakeCapabilityEngine(),
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        (
+            "forge_skill",
+            {"name": "diagnostic_skill"},
+            {"origin": "api", "route": "intent_router.route_execution"},
+        )
+    ]
+
+    source = Path("interface/router.py").read_text(encoding="utf-8")
+    assert "execute_skill_task.delay" not in source
+    assert "CanonicalIntentRouter" in source
+
+
+@pytest.mark.asyncio
 async def test_state_machine_live_coding_artifact_writes_runnable_snake_html():
     from core.cognitive.state_machine import StateMachine
 
