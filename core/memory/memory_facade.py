@@ -510,6 +510,68 @@ class MemoryFacade:
             limit=limit,
         )
 
+    async def search_by_entity_mention(self, entity_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search for memories mentioning a specific entity by name.
+        
+        Args:
+            entity_name: The entity to search for (e.g., "Claude", "GPT-4")
+            limit: Maximum results to return
+            
+        Returns:
+            List of memory records that mention this entity, with highest importance first
+        """
+        results = []
+        
+        # Normalize entity name
+        normalized_entity = entity_name.strip().title()
+        
+        # Search vector memory if available
+        if self.vector:
+            try:
+                # First try metadata-based search if supported
+                if hasattr(self.vector, "_collection"):
+                    collection_data = self.vector._collection.get(include=["documents", "metadatas"])
+                    docs = list(collection_data.get("documents", []) or [])
+                    metas = list(collection_data.get("metadatas", []) or [])
+                    ids = list(collection_data.get("ids", []) or [])
+                    
+                    for idx in range(len(metas)):
+                        metadata = metas[idx] if isinstance(metas[idx], dict) else {}
+                        mentions = metadata.get("entity_mentions", [])
+                        if isinstance(mentions, list) and normalized_entity in mentions:
+                            results.append({
+                                "id": ids[idx] if idx < len(ids) else "",
+                                "content": docs[idx] if idx < len(docs) else "",
+                                "metadata": metadata,
+                                "relevance": "entity_mention",
+                            })
+                
+                # Fallback: semantic search with entity name
+                if not results and hasattr(self.vector, "search_similar"):
+                    semantic_results = self.vector.search_similar(f"about {entity_name}", limit=limit)
+                    for record in list(semantic_results or []):
+                        results.append(self._normalize_memory_result(
+                            content=record.get("content") or record.get("text") or "",
+                            metadata=record.get("metadata") or {},
+                            memory_id=record.get("id") or "",
+                            score=record.get("score"),
+                        ))
+            except (OSError, ConnectionError, TimeoutError, AttributeError, TypeError) as e:
+                record_degradation('memory_facade', e)
+                logger.debug(f"Entity mention search failed for '{entity_name}': {e}")
+        
+        # Sort by importance if available
+        if results:
+            results.sort(
+                key=lambda r: (
+                    -float(r.get("metadata", {}).get("importance", 0.5)),
+                    -float(r.get("score", 0)),
+                ),
+                reverse=True
+            )
+        
+        return results[:limit]
+
     @staticmethod
     async def _call_maybe_async(method: Any, *args: Any, **kwargs: Any) -> Any:
         if method is None:
@@ -521,6 +583,49 @@ class MemoryFacade:
             return await result
         return result
 
+    def _extract_and_track_entity_mentions(self, interaction_text: str, metadata: Dict[str, Any]) -> None:
+        """Extract named entity mentions from interaction text and add to metadata.
+        
+        This enables proper tracking and recall of specific entities mentioned
+        (e.g., "Claude", "GPT-4", "Llama") so Aura can reference them later
+        with specificity and retrieve the context they were mentioned in.
+        
+        Modifies metadata dict in-place to add 'entity_mentions' list.
+        """
+        # Known AI systems and entities to track
+        known_entities = {
+            # Major LLMs
+            "Claude": ["claude", "anthropic"],
+            "GPT-4": ["gpt-4", "gpt4", "openai"],
+            "GPT-3.5": ["gpt-3.5", "gpt3.5"],
+            "Gemini": ["gemini", "google"],
+            "Llama": ["llama", "meta"],
+            "Mistral": ["mistral"],
+            "Qwen": ["qwen", "alibaba"],
+            "PaLM": ["palm"],
+            # People and organizations
+            "Anthropic": ["anthropic"],
+            "OpenAI": ["openai"],
+            "Google": ["google"],
+            "Meta": ["meta", "facebook"],
+            "Mistral AI": ["mistral"],
+            "DeepSeek": ["deepseek"],
+        }
+        
+        combined_text = f"{interaction_text} {metadata.get('objective', '')} {metadata.get('context', '')}".lower()
+        mentions = set()
+        
+        for canonical_name, search_terms in known_entities.items():
+            for term in search_terms:
+                # Use word boundaries to avoid false matches
+                pattern = rf"\b{re.escape(term)}\b"
+                if re.search(pattern, combined_text, re.IGNORECASE):
+                    mentions.add(canonical_name)
+        
+        if mentions:
+            metadata["entity_mentions"] = sorted(list(mentions))
+            logger.debug(f"Extracted entity mentions: {metadata['entity_mentions']}")
+
     async def commit_interaction(self,
                                  context: str,
                                  action: str,
@@ -531,6 +636,11 @@ class MemoryFacade:
                                  metadata: Optional[Dict[str, Any]] = None):
         """Unified commit for an interaction across all relevant systems."""
         metadata = self._merge_unity_metadata(metadata)
+        
+        # Extract and track entity mentions for specificity in later recall
+        combined_text = f"{context} {action} {outcome}"
+        self._extract_and_track_entity_mentions(combined_text, metadata)
+        
         if self._unity_requires_write_deferral(metadata):
             logger.info("MemoryFacade: deferring interaction commit under low-unity draft conflict.")
             return None
@@ -787,6 +897,10 @@ class MemoryFacade:
     ) -> bool:
         """Compatibility API for legacy callers expecting async long-term memory writes."""
         payload = self._merge_unity_metadata(metadata)
+        
+        # Extract and track entity mentions for specificity in later recall
+        self._extract_and_track_entity_mentions(text, payload)
+        
         # Provenance envelope: every memory write gets stamped with
         # source / confidence / identity_relevant / contested so downstream
         # readers can distinguish memory from inference / fantasy.
