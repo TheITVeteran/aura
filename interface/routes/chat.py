@@ -5397,6 +5397,37 @@ async def api_chat(
                 logger.debug("Fastpath final quality gate skipped: %s", fastpath_gate_exc)
 
             _record_recent_response(final_text, _semantic_user_message)
+            
+            # CRITICAL: Ensure conversation is logged to persistent memory to prevent loss
+            # This runs in the background to not block response
+            try:
+                from core.memory.chat_turn_logger import log_chat_turn_auto
+                
+                # Schedule memory logging without blocking response
+                async def _log_and_continue():
+                    try:
+                        await log_chat_turn_auto(
+                            user_message=_semantic_user_message,
+                            aura_response=final_text,
+                            session_id=_chat_session_id,
+                            emotional_valence=0.0,
+                            metadata={"conversation_lane": True, "origin": chat_origin},
+                        )
+                    except _CHAT_RECOVERABLE_ERRORS as _turn_log_exc:
+                        record_degradation('chat', _turn_log_exc)
+                        logger.debug("Chat turn logging failed: %s", _turn_log_exc)
+                
+                # Fire-and-forget background task
+                try:
+                    task_tracker = get_task_tracker()
+                    task_tracker.create_task(_log_and_continue(), name="ChatTurnMemoryLog")
+                except _CHAT_RECOVERABLE_ERRORS as _task_exc:
+                    record_degradation('chat', _task_exc)
+                    logger.debug("Chat turn logging task creation failed: %s", _task_exc)
+            except _CHAT_RECOVERABLE_ERRORS as _turn_log_import_exc:
+                record_degradation('chat', _turn_log_import_exc)
+                logger.debug("Chat turn logger import skipped: %s", _turn_log_import_exc)
+            
             response_data = {
                 "response": final_text,
                 "status": status,

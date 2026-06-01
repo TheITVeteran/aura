@@ -427,11 +427,12 @@ async def record_conversation_experience(
         logger.debug("Coding session turn recording skipped: %s", exc)
 
     used_memory_facade = False
+    memory_commit_result = None
     try:
         memory_facade = service_access.optional_service("memory_facade", default=None)
         if memory_facade and hasattr(memory_facade, "commit_interaction"):
             used_memory_facade = True
-            await memory_facade.commit_interaction(
+            memory_commit_result = await memory_facade.commit_interaction(
                 context=str(user_input).strip(),
                 action="conversation_reply",
                 outcome=str(aura_response).strip(),
@@ -446,8 +447,17 @@ async def record_conversation_experience(
                     "intent_type": str(analysis.intent_type).lower(),
                     "semantic_mode": str(analysis.semantic_mode),
                     "memory_salience": round(float(importance), 4),
+                    "conversation_turn": True,
+                    "preserve_for_continuity": True,
                 },
             )
+            
+            # Check if facade actually saved it (not deferred or blocked)
+            if memory_commit_result is None:
+                logger.warning("⚠️ Memory facade commit_interaction returned None (governance/deferral may have blocked it). Falling back to episodic...")
+                used_memory_facade = False
+            else:
+                logger.debug(f"✓ Conversation turn saved to memory facade: {memory_commit_result}")
     except (RuntimeError, AttributeError, TypeError) as exc:
         _record_conversation_degradation(
             exc,

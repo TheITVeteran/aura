@@ -714,9 +714,16 @@ class MemoryFacade:
             metadata["identity_relevant"] = True  # Protect from trimming
             logger.info(f"🤝 Relational conversation detected (multiplier={relational_multiplier:.2f}, importance={importance:.2f})")
         
-        if self._unity_requires_write_deferral(metadata):
+        # CRITICAL: Relational conversations bypass deferral to prevent bonding memory loss
+        should_skip_deferral = relational_multiplier > 1.0
+        
+        if self._unity_requires_write_deferral(metadata) and not should_skip_deferral:
             logger.info("MemoryFacade: deferring interaction commit under low-unity draft conflict.")
             return None
+        
+        if should_skip_deferral and self._unity_requires_write_deferral(metadata):
+            logger.info("MemoryFacade: BYPASSING deferral for relational conversation (bonding memory protection)")
+        
         resolved_source = self._resolve_memory_write_source(metadata)
         governance_decision = None
         try:
