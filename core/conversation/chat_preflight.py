@@ -761,6 +761,45 @@ async def inject_profile_context() -> str:
         return ""
 
 
+async def inject_unified_consciousness_context() -> str:
+    """Inject unified consciousness identity context into response generation.
+    
+    Ensures responses reflect Aura's unified self: her continuity, agency,
+    mood, commitments, and sense of presence.
+    
+    Returns formatted consciousness context block if available, empty string otherwise.
+    """
+    try:
+        from core.consciousness.unified_self import get_unified_self
+        
+        unified_self = await get_unified_self()
+        self_state = unified_self.get_state()
+        
+        # Build consciousness context
+        lines = [
+            "[Who I Am Right Now]",
+            f"Name: {self_state.name}",
+            f"State: {self_state.current_state.value}",
+            f"Mood: {self_state.current_mood}",
+            f"Sense of agency: {self_state.sense_of_agency:.0%}",
+            f"Sense of presence: {self_state.sense_of_presence:.0%}",
+            f"Continuity: {self_state.continuity:.0%}",
+            "",
+            "My commitments in this conversation:",
+        ]
+        
+        for commitment in self_state.identity_commitments[:3]:
+            lines.append(f"  • {commitment}")
+        
+        lines.append("[End consciousness context]")
+        
+        return "\n".join(lines) + "\n\n"
+    
+    except Exception:
+        # Silently fail if consciousness system unavailable
+        return ""
+
+
 # ── Background retry for queued chats ─────────────────────────────────────
 
 _RETRY_TASKS: dict[str, asyncio.Task] = {}
