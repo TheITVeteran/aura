@@ -2979,12 +2979,24 @@ class CapabilityEngine(AuraBaseModule):
                 timeout_budget = max(1.0, min(timeout_budget, constrained_timeout))
 
             try:
+                # [DEV MODE INTEGRATION] Log tool execution dispatch for transparency
+                try:
+                    from core.transparency import get_dev_mode
+                    dev_mode = get_dev_mode()
+                    exec_origin = ctx.get("origin", "unknown")
+                    tool_trace = await dev_mode.record_tool_execution(
+                        skill_name, exec_params, origin=exec_origin
+                    )
+                except (ImportError, AttributeError, RuntimeError):
+                    tool_trace = None
+                
                 # Execute safely via the Governor to prevent cascading API failures
                 async def resilient_call():
                     return await self._execute_with_retry(
                         skill_instance, skill_name, exec_params, ctx
                     )
 
+                exec_start = time.monotonic()
                 if background_preflight_deferred:
                     pass
                 elif tool_handle is not None:
@@ -3002,6 +3014,14 @@ class CapabilityEngine(AuraBaseModule):
                         coroutine=resilient_call,
                         timeout_seconds=timeout_budget,
                     )
+                
+                # [DEV MODE INTEGRATION] Log tool execution result
+                if tool_trace:
+                    try:
+                        exec_time_ms = (time.monotonic() - exec_start) * 1000.0
+                        await dev_mode.complete_tool_execution(tool_trace, result, exec_time_ms)
+                    except (ImportError, AttributeError, RuntimeError):
+                        pass
 
             except (ImportError, AttributeError, RuntimeError) as e:
                 _record_capability_degradation(

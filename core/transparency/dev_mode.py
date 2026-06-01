@@ -1,0 +1,286 @@
+"""
+Development Mode & Transparency Layer (v2026.5.1)
+
+Provides Bryan with real-time visibility into:
+- Aura's thought processes and reasoning
+- Tool execution dispatch and results
+- Memory operations and consolidation
+- Constitutional approval workflows
+- System state and diagnostics
+
+This enables collaborative development and debugging while maintaining
+security boundaries.
+"""
+
+import json
+import logging
+import time
+from dataclasses import dataclass, asdict, field
+from typing import Any, Dict, List, Optional, Callable
+from enum import Enum
+import asyncio
+
+logger = logging.getLogger(__name__)
+
+
+class TransparencyLevel(str, Enum):
+    """Verbosity levels for transparency output."""
+    SILENT = "silent"          # No transparency
+    MINIMAL = "minimal"        # Errors and major milestones only
+    NORMAL = "normal"          # Standard logging + key operations
+    VERBOSE = "verbose"        # Detailed operation traces
+    DEBUG = "debug"             # Full internal state dumps
+
+
+@dataclass
+class ThoughtTrace:
+    """Records a thought or reasoning step."""
+    timestamp: float = field(default_factory=time.time)
+    objective: str = ""
+    reasoning: str = ""
+    confidence: float = 0.0
+    decision: str = ""
+    alternatives: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ToolExecutionTrace:
+    """Records a tool execution event."""
+    timestamp: float = field(default_factory=time.time)
+    tool_name: str = ""
+    params: Dict[str, Any] = field(default_factory=dict)
+    status: str = "pending"  # pending, running, succeeded, failed
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    execution_time_ms: float = 0.0
+    origin: str = "unknown"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        # Don't leak sensitive param details in logs
+        d["params"] = {k: "***" if k in {"password", "token", "secret", "key"} else v 
+                      for k, v in self.params.items()}
+        return d
+
+
+@dataclass
+class ConsentRequest:
+    """Records a consent/approval request."""
+    timestamp: float = field(default_factory=time.time)
+    request_type: str = ""  # tool_execution, memory_write, state_mutation, etc.
+    description: str = ""
+    details: Dict[str, Any] = field(default_factory=dict)
+    requires_user_input: bool = False
+    approved: bool = False
+    approval_reason: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class DevMode:
+    """
+    Development Mode: Real-time transparency into Aura's operations.
+    
+    This system allows Bryan to:
+    - See Aura's reasoning in real-time
+    - Watch tool execution and results
+    - Monitor consent/approval workflows
+    - Get system diagnostics
+    - Trace memory operations
+    - Understand decision-making
+    """
+    
+    def __init__(self, level: TransparencyLevel = TransparencyLevel.NORMAL):
+        self.level = level
+        self.thought_traces: List[ThoughtTrace] = []
+        self.tool_traces: List[ToolExecutionTrace] = []
+        self.consent_requests: List[ConsentRequest] = []
+        self.active_session_id = ""
+        self._callbacks: List[Callable[[str, Dict[str, Any]], None]] = []
+        self._lock = asyncio.Lock()
+        
+    async def set_transparency_level(self, level: TransparencyLevel):
+        """Change transparency level at runtime."""
+        async with self._lock:
+            self.level = level
+            logger.info("🔍 DevMode: Transparency level changed to %s", level)
+    
+    async def record_thought(self, objective: str, reasoning: str, 
+                            confidence: float = 0.5, decision: str = "",
+                            alternatives: List[str] = None) -> ThoughtTrace:
+        """Record a reasoning step for visibility."""
+        if self.level == TransparencyLevel.SILENT:
+            return ThoughtTrace()
+        
+        trace = ThoughtTrace(
+            objective=objective,
+            reasoning=reasoning,
+            confidence=confidence,
+            decision=decision,
+            alternatives=alternatives or []
+        )
+        
+        async with self._lock:
+            self.thought_traces.append(trace)
+            if len(self.thought_traces) > 100:  # Keep memory bounded
+                self.thought_traces = self.thought_traces[-100:]
+        
+        if self.level in {TransparencyLevel.DEBUG, TransparencyLevel.VERBOSE}:
+            logger.debug("💭 Thought: %s | Decision: %s | Conf: %.2f", 
+                        objective[:60], decision[:40], confidence)
+            await self._emit_event("thought_recorded", trace.to_dict())
+        
+        return trace
+    
+    async def record_tool_execution(self, tool_name: str, params: Dict[str, Any],
+                                   origin: str = "unknown") -> ToolExecutionTrace:
+        """Record the start of tool execution."""
+        trace = ToolExecutionTrace(
+            tool_name=tool_name,
+            params=params,
+            status="running",
+            origin=origin
+        )
+        
+        async with self._lock:
+            self.tool_traces.append(trace)
+            if len(self.tool_traces) > 50:  # Keep memory bounded
+                self.tool_traces = self.tool_traces[-50:]
+        
+        if self.level != TransparencyLevel.SILENT:
+            logger.info("🔧 Tool Dispatch: %s (origin=%s)", tool_name, origin)
+            if self.level in {TransparencyLevel.DEBUG, TransparencyLevel.VERBOSE}:
+                logger.debug("   Params: %s", {k: "***" if k in {"password", "token"} else v 
+                                              for k, v in params.items()})
+        
+        return trace
+    
+    async def complete_tool_execution(self, trace: ToolExecutionTrace, 
+                                     result: Dict[str, Any], 
+                                     execution_time_ms: float = 0.0):
+        """Record tool execution completion."""
+        trace.status = "succeeded" if result.get("ok", False) else "failed"
+        trace.result = result
+        trace.execution_time_ms = execution_time_ms
+        trace.error = result.get("error") if not result.get("ok") else None
+        
+        if self.level != TransparencyLevel.SILENT:
+            status_emoji = "✅" if result.get("ok") else "❌"
+            logger.info("%s Tool Result: %s in %.0fms", 
+                       status_emoji, trace.tool_name, execution_time_ms)
+            if self.level in {TransparencyLevel.DEBUG}:
+                summary = result.get("summary") or result.get("result") or ""
+                if isinstance(summary, str):
+                    logger.debug("   Summary: %s", summary[:100])
+        
+        await self._emit_event("tool_completed", trace.to_dict())
+    
+    async def record_consent_request(self, request_type: str, description: str,
+                                    details: Dict[str, Any] = None,
+                                    requires_user: bool = False) -> ConsentRequest:
+        """Record a consent/approval request."""
+        request = ConsentRequest(
+            request_type=request_type,
+            description=description,
+            details=details or {},
+            requires_user_input=requires_user
+        )
+        
+        async with self._lock:
+            self.consent_requests.append(request)
+            if len(self.consent_requests) > 25:
+                self.consent_requests = self.consent_requests[-25:]
+        
+        if self.level != TransparencyLevel.SILENT:
+            marker = "🔐" if requires_user else "✓"
+            logger.info("%s Consent: %s — %s", marker, request_type, description)
+        
+        if requires_user and self.level != TransparencyLevel.SILENT:
+            logger.warning("⚠️  User input required for: %s", description)
+        
+        await self._emit_event("consent_requested", request.to_dict())
+        return request
+    
+    async def approve_consent(self, request: ConsentRequest, 
+                             reason: str = "auto-approved"):
+        """Mark a consent request as approved."""
+        request.approved = True
+        request.approval_reason = reason
+        
+        if self.level != TransparencyLevel.SILENT:
+            logger.info("✅ Approved: %s (%s)", request.request_type, reason)
+        
+        await self._emit_event("consent_approved", request.to_dict())
+    
+    async def deny_consent(self, request: ConsentRequest,
+                          reason: str = "user-denied"):
+        """Mark a consent request as denied."""
+        request.approved = False
+        request.approval_reason = reason
+        
+        if self.level != TransparencyLevel.SILENT:
+            logger.warning("❌ Denied: %s (%s)", request.request_type, reason)
+        
+        await self._emit_event("consent_denied", request.to_dict())
+    
+    def get_thought_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent thoughts for inspection."""
+        return [t.to_dict() for t in self.thought_traces[-limit:]]
+    
+    def get_tool_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent tool executions for inspection."""
+        return [t.to_dict() for t in self.tool_traces[-limit:]]
+    
+    def get_consent_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent consent requests for inspection."""
+        return [c.to_dict() for c in self.consent_requests[-limit:]]
+    
+    async def get_session_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current session."""
+        async with self._lock:
+            return {
+                "session_id": self.active_session_id,
+                "transparency_level": self.level.value,
+                "thoughts_recorded": len(self.thought_traces),
+                "tools_executed": len(self.tool_traces),
+                "consent_requests": len(self.consent_requests),
+                "recent_thoughts": self.get_thought_history(3),
+                "recent_tools": self.get_tool_history(3),
+                "recent_consents": self.get_consent_history(3),
+                "timestamp": time.time(),
+            }
+    
+    async def register_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
+        """Register a callback for transparency events."""
+        async with self._lock:
+            self._callbacks.append(callback)
+    
+    async def _emit_event(self, event_type: str, data: Dict[str, Any]):
+        """Emit a transparency event to all registered callbacks."""
+        async with self._lock:
+            callbacks = list(self._callbacks)
+        
+        for callback in callbacks:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(event_type, data)
+                else:
+                    callback(event_type, data)
+            except Exception as e:
+                logger.warning("DevMode callback failed: %s", e)
+
+
+# Global dev mode instance
+_dev_mode_instance: Optional[DevMode] = None
+
+
+def get_dev_mode(level: TransparencyLevel = TransparencyLevel.NORMAL) -> DevMode:
+    """Get or create the global dev mode instance."""
+    global _dev_mode_instance
+    if _dev_mode_instance is None:
+        _dev_mode_instance = DevMode(level)
+    return _dev_mode_instance
