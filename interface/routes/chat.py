@@ -1144,8 +1144,6 @@ async def _run_cognitive_engine_chat_turn(
     - Health monitoring
     - Graceful fallback support
     """
-    from core.providers.engine_connection_pool import get_engine_connection_pool
-    
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
         return None
@@ -1170,9 +1168,18 @@ async def _run_cognitive_engine_chat_turn(
     }
     timeout_s = max(2.0, float(timeout if timeout is not None else 120.0))
     
-    # Use connection pool with retry logic
-    pool = get_engine_connection_pool()
-    await pool.acquire_engine_connection(engine, connection_id="desktop_chat")
+    # Use connection pool with retry logic. Acquisition is part of the live
+    # CognitiveEngine path; if it fails, return no reply so desktop callers
+    # hit the explicit fail-closed branch instead of a generic chat fallback.
+    try:
+        from core.providers.engine_connection_pool import get_engine_connection_pool
+
+        pool = get_engine_connection_pool()
+        await pool.acquire_engine_connection(engine, connection_id="desktop_chat")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.warning("CognitiveEngine desktop chat connection unavailable: %s", exc)
+        return None
     
     async def engine_think_operation():
         return await engine.think(
