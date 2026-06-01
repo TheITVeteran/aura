@@ -48,6 +48,46 @@ _WEBSOCKET_DELIVERY_ERRORS = (
 _WEBSOCKET_HEARTBEAT_ERRORS = (asyncio.TimeoutError,) + _WEBSOCKET_DELIVERY_ERRORS
 
 
+def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
+    """Return a heartbeat that cannot be mistaken for transport-only health."""
+    try:
+        from core.runtime.health_contract import required_probe_status, runtime_health_report
+
+        report = runtime_health_report()
+        required = required_probe_status(report)
+        healthy = bool(report.get("healthy", False)) and bool(required.get("all_passed", False))
+        blockers = []
+        if not healthy:
+            blockers.append("runtime_required_probes")
+            blockers.extend(
+                f"probe:{name}"
+                for name, probe in required.items()
+                if isinstance(probe, dict) and not bool(probe.get("ok", False))
+            )
+        return {
+            "type": kind,
+            "timestamp": time.time(),
+            "transport_connected": True,
+            "transport_only": False,
+            "healthy": healthy,
+            "runtime_status": str(report.get("status", "unknown")),
+            "required_probes": required,
+            "blockers": list(dict.fromkeys(blockers)),
+        }
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("websocket_manager", exc)
+        return {
+            "type": kind,
+            "timestamp": time.time(),
+            "transport_connected": True,
+            "transport_only": False,
+            "healthy": False,
+            "runtime_status": "unknown",
+            "required_probes": {"all_passed": False},
+            "blockers": ["runtime_health_probe_error"],
+        }
+
+
 # ── Broadcast Bus ────────────────────────────────────────────
 
 class MessageBroadcastBus:
@@ -262,7 +302,7 @@ class WebSocketManager:
                             logger.warning("WS queue task accounting failed: %s", exc)
                 except asyncio.TimeoutError:
                     try:
-                        await websocket.send_json({"type": "heartbeat", "timestamp": time.time()})
+                        await websocket.send_json(runtime_heartbeat_payload("heartbeat"))
                     except _WEBSOCKET_DELIVERY_ERRORS as exc:
                         logger.debug("WS heartbeat failed; closing pump: %s", exc)
                         break
@@ -308,7 +348,7 @@ class WebSocketManager:
 
                 try:
                     await asyncio.wait_for(
-                        websocket.send_json({"type": "ping", "timestamp": time.monotonic()}),
+                        websocket.send_json(runtime_heartbeat_payload("ping")),
                         timeout=5.0,
                     )
                 except _WEBSOCKET_HEARTBEAT_ERRORS:

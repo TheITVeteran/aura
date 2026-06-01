@@ -43,6 +43,8 @@ const state = {
     bootstrapTimer: null,
     conversationReady: true,
     conversationLane: null,
+    runtimeHealthy: false,
+    runtimeHealthBlockers: [],
     version: 'Aura Luna (live runtime)',
     interactionSignals: null,
     typingSignalSession: null,
@@ -1289,6 +1291,9 @@ function applyToolEvent(event) {
 function applyBootstrapPayload(payload, { hydrateConversationHistory = false } = {}) {
     if (!payload || typeof payload !== 'object') return;
     state.bootstrapLoaded = true;
+    const runtimeHealthy = payloadRuntimeHealthy(payload);
+    state.runtimeHealthy = runtimeHealthy;
+    state.runtimeHealthBlockers = runtimeHealthBlockers(payload);
     if (payload.identity && payload.identity.version) {
         state.version = payload.identity.version;
         if ($('ui-ver')) $('ui-ver').textContent = payload.identity.version;
@@ -1333,12 +1338,14 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     const laneStandby = laneIsStandby(lane);
     const connectionMode = flags.includes('booting')
         ? 'booting'
+        : !runtimeHealthy
+            ? 'degraded'
         : (laneNotReady && !laneStandby)
             ? 'degraded'
         : flags.some(flag => ['thermal_guard', 'coherence_low', 'fragmentation_high', 'contradictions_present', 'beliefs_contested', 'tool_unavailable', 'executive_hold'].includes(flag))
             ? 'degraded'
-            : (payload.session && payload.session.connected) ? 'online' : 'offline';
-    setConnectionVisual(connectionMode, laneNotReady ? conversationLaneStatusText(lane) : '');
+        : (payload.session && payload.session.connected) ? 'online' : 'offline';
+    setConnectionVisual(connectionMode, !runtimeHealthy ? runtimeHealthStatusText(payload) : laneNotReady ? conversationLaneStatusText(lane) : '');
     syncSplashState(payload);
 
     if (hydrateConversationHistory && payload.conversation && Array.isArray(payload.conversation.recent)) {
@@ -1476,13 +1483,15 @@ function connect() {
         const wasDisconnected = !state.connected;
         const hadRetried = (state.retryCount || 0) > 0;
         state.connected = true;
+        state.runtimeHealthy = false;
+        state.runtimeHealthBlockers = ['runtime_health_unverified'];
         state.retryCount = 0;
         showConnToast(false); // Hide disconnection toast
         if (wasDisconnected && hadRetried) {
             showConnToast('reconnected'); // Show brief reconnected confirmation
         }
-        setConnectionVisual('online');
-        dismissSplash();
+        setConnectionVisual('reconnecting', 'checking runtime');
+        pollHealth();
         hydrateBootstrap({ hydrateConversationHistory: !state.bootstrapLoaded, quiet: true });
 
         // ZENITH: Flush pending messages
@@ -1731,17 +1740,11 @@ function handleWsEvent(data) {
         const error = data.error || 'stalled';
         appendMsg('aura', `⚠️ _Shift in cognitive processing: ${from} was unresponsive. Switching to a different neural pathway (${error})._`, false, { diagnostic: true });
     } else if (type === 'heartbeat') {
-        if (!state.connected) {
-            state.connected = true;
-            showConnToast(false);
-            setConnectionVisual('online');
-        }
+        state.lastPong = Date.now();
+        applyRuntimeHeartbeat(data);
     } else if (type === 'pong') {
         state.lastPong = Date.now();
-        if (!state.connected) {
-            state.connected = true;
-            showConnToast(false);
-        }
+        applyRuntimeHeartbeat(data);
     }
 }
 
@@ -2810,7 +2813,82 @@ function laneIsStandby(lane) {
 
 function laneHealthIsOperational(lane, healthStatus = '') {
     const normalized = String(healthStatus || '').toLowerCase();
-    return normalized === 'ok' || normalized === 'ready' || (laneIsStandby(lane) && normalized === 'warming');
+    return state.runtimeHealthy && (
+        normalized === 'ok'
+        || normalized === 'ready'
+        || normalized === 'healthy'
+        || (laneIsStandby(lane) && normalized === 'warming')
+    );
+}
+
+const REQUIRED_RUNTIME_PROBES = ['kernel', 'inference', 'memory', 'scheduler', 'tool_governance'];
+
+function requiredRuntimeProbesPass(requiredProbes) {
+    if (!requiredProbes || typeof requiredProbes !== 'object') return false;
+    if (requiredProbes.all_passed !== true) return false;
+    return REQUIRED_RUNTIME_PROBES.every(group => {
+        const probe = requiredProbes[group];
+        return !!(probe && typeof probe === 'object' && probe.ok === true);
+    });
+}
+
+function requiredProbesFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.required_probes) return payload.required_probes;
+    if (payload.boot && payload.boot.required_probes) return payload.boot.required_probes;
+    const boot = payload.telemetry && payload.telemetry.boot;
+    if (boot && boot.required_probes) return boot.required_probes;
+    return null;
+}
+
+function payloadRuntimeHealthy(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    const requiredProbes = requiredProbesFromPayload(payload);
+    if (!requiredRuntimeProbesPass(requiredProbes)) return false;
+    if (payload.healthy === false) return false;
+    const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
+    if (boot.ready === false || boot.system_ready === false) return false;
+    const status = String(payload.status || boot.status || '').toLowerCase();
+    return !status || ['ok', 'ready', 'healthy'].includes(status);
+}
+
+function runtimeHealthBlockers(payload) {
+    if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
+    const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
+    const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
+    if (Array.isArray(boot.blockers)) blockers.push(...boot.blockers);
+    const required = requiredProbesFromPayload(payload);
+    if (!requiredRuntimeProbesPass(required)) {
+        blockers.push('runtime_required_probes');
+        REQUIRED_RUNTIME_PROBES.forEach(group => {
+            const probe = required && required[group];
+            if (!probe || probe.ok !== true) blockers.push(`probe:${group}`);
+        });
+    }
+    return Array.from(new Set(blockers));
+}
+
+function runtimeHealthStatusText(payload = null) {
+    const blockers = payload ? runtimeHealthBlockers(payload) : state.runtimeHealthBlockers;
+    if (!blockers || blockers.length === 0) return 'checking runtime';
+    return blockers.slice(0, 2).join(', ');
+}
+
+function applyRuntimeHeartbeat(payload) {
+    state.connected = true;
+    const healthy = payloadRuntimeHealthy(payload);
+    state.runtimeHealthy = healthy;
+    state.runtimeHealthBlockers = runtimeHealthBlockers(payload);
+    if (healthy) {
+        showConnToast(false);
+        if (state.conversationLane) {
+            applyConversationLane(state.conversationLane, payload.runtime_status || payload.status || 'healthy');
+        } else {
+            setConnectionVisual('online');
+        }
+    } else {
+        setConnectionVisual('degraded', runtimeHealthStatusText(payload));
+    }
 }
 
 function conversationLaneStatusText(lane) {
@@ -2885,6 +2963,8 @@ async function pollHealth() {
         }
         const d = await res.json();
         if (!d) return;
+        state.runtimeHealthy = payloadRuntimeHealthy(d);
+        state.runtimeHealthBlockers = runtimeHealthBlockers(d);
         const fmtPct01 = (value) => `${Math.round((value || 0) * 100)}%`;
         const runtimeAffect = (d.boot && d.boot.runtime && d.boot.runtime.affect)
             || (d.runtime && d.runtime.state && d.runtime.state.affect)
@@ -2907,7 +2987,7 @@ async function pollHealth() {
             syncSplashState({
                 telemetry: { boot: d.boot || {} },
                 conversation: { lane: d.conversation_lane || null },
-                session: { connected: state.connected || d.status === 'ok' || d.status === 'ready' }
+                session: { connected: state.runtimeHealthy }
             });
         }
 
@@ -4317,9 +4397,9 @@ function syncSplashState(payload) {
 
     const boot = payload && payload.telemetry && payload.telemetry.boot ? payload.telemetry.boot : {};
     const lane = payload && payload.conversation ? payload.conversation.lane : null;
-    const sessionConnected = !!(payload && payload.session && payload.session.connected);
+    const runtimeHealthy = payloadRuntimeHealthy(payload);
     const standby = laneIsStandby(lane);
-    const bootReady = boot.ready === true || String(boot.status || '').toLowerCase() === 'ready';
+    const bootReady = runtimeHealthy && (boot.ready === true || String(boot.status || '').toLowerCase() === 'ready');
     const message = String(boot.status_message || '').trim();
 
     if (state._splashInterval) {
@@ -4328,11 +4408,11 @@ function syncSplashState(payload) {
     }
 
     updateSplashProgress(
-        boot.progress != null ? boot.progress : (sessionConnected || standby ? 100 : 15),
-        message || (standby ? 'Aura is awake. Cortex will warm on first turn.' : '')
+        boot.progress != null ? boot.progress : (runtimeHealthy && standby ? 100 : runtimeHealthy ? 90 : 15),
+        message || (runtimeHealthy && standby ? 'Aura is awake. Cortex will warm on first turn.' : runtimeHealthStatusText(payload))
     );
 
-    if (sessionConnected || bootReady || standby) {
+    if (runtimeHealthy && (bootReady || standby)) {
         dismissSplash(message || (standby ? 'Aura is awake. Cortex will warm on first turn.' : 'Neural link established.'));
     }
 }

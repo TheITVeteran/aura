@@ -146,6 +146,7 @@ from interface.websocket_manager import (
 from interface.websocket_manager import (
     broadcast_bus,
     log_queue,
+    runtime_heartbeat_payload,
     ws_manager,
 )
 
@@ -935,7 +936,7 @@ async def websocket_endpoint(ws: WebSocket):
                             name="server.ws.handle_message",
                         )
                 elif msg_type == "ping":
-                    await ws.send_text(json.dumps({"type": "pong"}))
+                    await ws.send_text(json.dumps(runtime_heartbeat_payload("pong")))
 
             elif "bytes" in msg:
                 if _voice_engine_fn:

@@ -98,6 +98,54 @@ def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
     assert _heartbeat_response_healthy(_Response()) is False
 
 
+def test_websocket_runtime_heartbeat_requires_runtime_probe_groups(monkeypatch):
+    from core.runtime import health_contract as health_contract_module
+    from interface.websocket_manager import runtime_heartbeat_payload
+
+    monkeypatch.setattr(
+        health_contract_module,
+        "runtime_health_report",
+        lambda: {"healthy": True, "status": "healthy"},
+    )
+    monkeypatch.setattr(
+        health_contract_module,
+        "required_probe_status",
+        lambda _report: {
+            "all_passed": False,
+            "kernel": {"ok": True},
+            "inference": {"ok": False},
+            "memory": {"ok": True},
+            "scheduler": {"ok": True},
+            "tool_governance": {"ok": True},
+        },
+    )
+
+    payload = runtime_heartbeat_payload("pong")
+
+    assert payload["type"] == "pong"
+    assert payload["transport_connected"] is True
+    assert payload["healthy"] is False
+    assert payload["required_probes"]["inference"]["ok"] is False
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "probe:inference" in payload["blockers"]
+
+
+def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
+    websocket_manager = (PROJECT_ROOT / "interface" / "websocket_manager.py").read_text(encoding="utf-8")
+
+    assert "runtime_heartbeat_payload(\"pong\")" in server
+    assert "runtime_heartbeat_payload(\"heartbeat\")" in websocket_manager
+    assert "runtime_heartbeat_payload(\"ping\")" in websocket_manager
+    assert "payloadRuntimeHealthy(payload)" in aura_js
+    assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
+    assert "runtime_health_unverified" in aura_js
+    assert "applyRuntimeHeartbeat(data)" in aura_js
+    assert "setConnectionVisual('online');\n        dismissSplash();" not in aura_js
+    assert "if (runtimeHealthy && (bootReady || standby))" in aura_js
+
+
 def test_native_shell_waits_for_readiness_heartbeat():
     native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
 
