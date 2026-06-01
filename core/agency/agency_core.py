@@ -128,11 +128,22 @@ class SovereignSwarm:
         self.active_shards = {k: v for k, v in self.active_shards.items() if not v.done()}
 
         try:
-            _schedule_agency_task(
-                get_registry().update(active_shards=len(self.active_shards)),
-                name="agency.registry.active_shards",
-            )
+            # Guard shard count registry update to prevent accumulation
+            if not self._registry_shards_update_pending:
+                self._registry_shards_update_pending = True
+                
+                async def _run_shards_update():
+                    try:
+                        await get_registry().update(active_shards=len(self.active_shards))
+                    finally:
+                        self._registry_shards_update_pending = False
+                
+                _schedule_agency_task(
+                    _run_shards_update(),
+                    name="agency.registry.active_shards",
+                )
         except _AGENCY_BOUNDARY_ERRORS as e:
+            self._registry_shards_update_pending = False
             _record_agency_degradation(e, action="active shard count registry update skipped")
             capture_and_log(e, {"context": "AgencyCore.spawn_shard"})
 
@@ -552,6 +563,9 @@ class AgencyCore:
         self.state.last_user_interaction = self.last_interaction_timestamp
         self.phenomenology = PrivatePhenomenology()
         self._phenomenal_pulse_pending = False  # Guard against task accumulation
+        self._self_play_pulse_pending = False  # Guard self_play task accumulation
+        self._registry_update_pending = False  # Guard registry update task accumulation
+        self._registry_shards_update_pending = False  # Guard shard count registry updates
 
         try:
             from core.orchestrator.meta_cognition_shard import MetaCognitionShard
@@ -671,10 +685,20 @@ class AgencyCore:
             except _AGENCY_BOUNDARY_ERRORS as exc:
                 _record_agency_degradation(exc, action="meta-cognition start skipped")
 
-        _schedule_agency_task(
-            self.self_play_engine.trigger_cycle(self.last_interaction_timestamp),
-            name="agency.self_play.initial_cycle",
-        )
+        # Guard self_play task to prevent accumulation
+        if not self._self_play_pulse_pending:
+            self._self_play_pulse_pending = True
+            
+            async def _run_self_play():
+                try:
+                    await self.self_play_engine.trigger_cycle(self.last_interaction_timestamp)
+                finally:
+                    self._self_play_pulse_pending = False
+            
+            _schedule_agency_task(
+                _run_self_play(),
+                name="agency.self_play.initial_cycle",
+            )
         _schedule_agency_task(
             self._setup_spatial_empathy_watcher(),
             name="agency.spatial_empathy.watch",
@@ -961,22 +985,43 @@ class AgencyCore:
                     logger.debug("AgencyCore viability emission window update failed: %s", exc)
 
             try:
-                _schedule_agency_task(
-                    get_registry().update(
-                        engagement_mode=self.state.engagement_mode.value,
-                        initiative_energy=self.state.initiative_energy,
-                        curiosity_pressure=self.state.curiosity_pressure,
-                    ),
-                    name="agency.registry.state",
-                )
+                # Guard registry update to prevent task accumulation
+                if not self._registry_update_pending:
+                    self._registry_update_pending = True
+                    
+                    async def _run_registry_update():
+                        try:
+                            await get_registry().update(
+                                engagement_mode=self.state.engagement_mode.value,
+                                initiative_energy=self.state.initiative_energy,
+                                curiosity_pressure=self.state.curiosity_pressure,
+                            )
+                        finally:
+                            self._registry_update_pending = False
+                    
+                    _schedule_agency_task(
+                        _run_registry_update(),
+                        name="agency.registry.state",
+                    )
             except _AGENCY_BOUNDARY_ERRORS as e:
+                self._registry_update_pending = False
                 _record_agency_degradation(e, action="agency state registry update skipped")
                 capture_and_log(e, {"context": "AgencyCore.InnerMonologueThink"})
 
-            _schedule_agency_task(
-                self.self_play_engine.trigger_cycle(self.state.last_user_interaction),
-                name="agency.self_play.pulse_cycle",
-            )
+            # Guard self_play task to prevent accumulation
+            if not self._self_play_pulse_pending:
+                self._self_play_pulse_pending = True
+                
+                async def _run_self_play():
+                    try:
+                        await self.self_play_engine.trigger_cycle(self.state.last_user_interaction)
+                    finally:
+                        self._self_play_pulse_pending = False
+                
+                _schedule_agency_task(
+                    _run_self_play(),
+                    name="agency.self_play.pulse_cycle",
+                )
 
             self._trigger_phenomenological_pulse()
 
