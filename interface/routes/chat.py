@@ -5125,6 +5125,18 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
                 record_degradation('chat', _dir_exc)
                 logger.debug("Chat directive preflight skipped: %s", _dir_exc)
+            
+            # Inject learned user/Aura profiles for continuity across conversations
+            try:
+                from core.conversation.chat_preflight import inject_profile_context
+                
+                _profile_context = await inject_profile_context()
+                if _profile_context:
+                    body.message = f"{_profile_context}{body.message}"
+                    logger.info("Chat preflight: injected learned profile context.")
+            except _CHAT_RECOVERABLE_ERRORS as _profile_exc:
+                record_degradation('chat', _profile_exc)
+                logger.debug("Chat profile context preflight skipped: %s", _profile_exc)
     except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
         record_degradation('chat', _preflight_outer)
         logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)

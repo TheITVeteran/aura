@@ -742,6 +742,25 @@ def compose_chat_directive_prefix(message: str) -> str:
     return "[Response guidance for this turn]\n" + "\n\n".join(directives) + "\n[End guidance]\n\n"
 
 
+async def inject_profile_context() -> str:
+    """Inject learned user/Aura profile context for continuity across conversations.
+    
+    Returns formatted profile context block if profiles exist, empty string otherwise.
+    """
+    try:
+        from core.memory.profile_manager import ProfileManager
+        
+        manager = await ProfileManager.get_instance()
+        context = await manager.get_context_injection()
+        
+        if context:
+            return f"[Learned Context From Prior Conversations]\n{context}\n[End context]\n\n"
+        return ""
+    except Exception:
+        # Silently fail if profile system unavailable
+        return ""
+
+
 # ── Background retry for queued chats ─────────────────────────────────────
 
 _RETRY_TASKS: dict[str, asyncio.Task] = {}

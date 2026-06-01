@@ -137,6 +137,30 @@ class ChatTurnLogger:
             
             if episode_id:
                 logger.debug(f"✓ Chat turn logged to episodic memory (episode={episode_id})")
+                
+                # CRITICAL: Learn profiles from this turn in background
+                try:
+                    from core.memory.profile_manager import learn_from_turn_auto
+                    
+                    # Fire-and-forget profile learning
+                    async def _learn_profiles():
+                        try:
+                            user_facts, aura_facts = await learn_from_turn_auto(
+                                user_message=user_message,
+                                aura_response=aura_response,
+                                session_id=session_id,
+                            )
+                            if user_facts > 0 or aura_facts > 0:
+                                logger.debug(f"📚 Profile learning: {user_facts} user facts, {aura_facts} self facts")
+                        except Exception as e:
+                            logger.debug(f"Profile learning skipped: {e}")
+                    
+                    # Schedule without blocking
+                    asyncio.create_task(_learn_profiles())
+                
+                except Exception as e:
+                    logger.debug(f"Profile learning unavailable: {e}")
+                
                 return True
             else:
                 logger.debug("Chat turn logging returned empty episode_id (governance blocked or deferral)")
