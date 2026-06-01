@@ -38,6 +38,8 @@ training/adapters/**/*.safetensors
 node_modules/
 
 # Development dumps (not source code)
+/enterprise_gate_report.json
+/report.json
 aura_chat_stack.txt
 aura_architecture.txt
 audit/aura_critical_source_compilation.txt
