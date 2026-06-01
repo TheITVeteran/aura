@@ -1360,47 +1360,62 @@ async function hydrateBootstrap({ hydrateConversationHistory = false, quiet = tr
 }
 
 // ── Tab switching ────────────────────────────────────────
-document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.onclick = () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-        const tab = btn.dataset.tab;
-        $(`pane-${tab}`).classList.add('active');
+// Use event delegation for reliable click handling
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab-btn');
+    if (!btn) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    const pane = $(`pane-${tab}`);
+    if (pane) {
+        pane.classList.add('active');
         state.activeTab = tab;
         if (tab === 'telemetry' && !state.beliefGraphInit) initBeliefGraph();
         if (tab === 'skills') loadSkills();
         if (tab === 'memory') loadMemory(state.activeMem);
-    };
-});
+    } else {
+        console.warn(`Pane not found for tab: ${tab}`);
+    }
+}, true);
 
 // ── Mobile Tab switching ──────────────────────────────────
-document.querySelectorAll('.m-nav-btn').forEach(btn => {
-    btn.onclick = () => {
-        const mTab = btn.dataset.mTab;
-        if (!mTab) return;
+// Use event delegation for mobile nav buttons
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.m-nav-btn');
+    if (!btn) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const mTab = btn.dataset.mTab;
+    if (!mTab) return;
 
-        // Remove active state from all mobile buttons
-        document.querySelectorAll('.m-nav-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
+    // Remove active state from all mobile buttons
+    document.querySelectorAll('.m-nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
 
-        const chatPanel = document.querySelector('.chat-panel');
-        const sidebar = document.querySelector('.sidebar');
+    const chatPanel = document.querySelector('.chat-panel');
+    const sidebar = document.querySelector('.sidebar');
 
-        if (mTab === 'chat') {
-            chatPanel.classList.add('mobile-active');
-            sidebar.classList.remove('mobile-active');
-        } else {
-            // Switch to any sidebar tab (Neural, Telemetry, etc.)
-            chatPanel.classList.remove('mobile-active');
-            sidebar.classList.add('mobile-active');
+    if (mTab === 'chat') {
+        chatPanel.classList.add('mobile-active');
+        sidebar.classList.remove('mobile-active');
+    } else {
+        // Switch to any sidebar tab (Neural, Telemetry, etc.)
+        chatPanel.classList.remove('mobile-active');
+        sidebar.classList.add('mobile-active');
 
-            // Trigger the desktop tab logic to show the right pane
-            const desktopTabBtn = document.querySelector(`.tab-btn[data-tab="${mTab}"]`);
-            if (desktopTabBtn) desktopTabBtn.click();
-        }
-    };
-});
+        // Trigger the desktop tab logic to show the right pane
+        const desktopTabBtn = document.querySelector(`.tab-btn[data-tab="${mTab}"]`);
+        if (desktopTabBtn) desktopTabBtn.click();
+    }
+}, true);
 
 // Initial mobile state: Chat active
 if (window.innerWidth <= 1100) {
@@ -1408,14 +1423,19 @@ if (window.innerWidth <= 1100) {
 }
 
 // ── Memory sub-tabs ──────────────────────────────────────
-document.querySelectorAll('.mem-sub-btn').forEach(btn => {
-    btn.onclick = () => {
-        document.querySelectorAll('.mem-sub-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        state.activeMem = btn.dataset.mem;
-        loadMemory(state.activeMem);
-    };
-});
+// Use event delegation for reliable click handling
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mem-sub-btn');
+    if (!btn) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    document.querySelectorAll('.mem-sub-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.activeMem = btn.dataset.mem;
+    loadMemory(state.activeMem);
+}, true);
 
 // ── WebSocket ────────────────────────────────────────────
 function connect() {
@@ -3217,7 +3237,15 @@ async function pollHealth() {
                     muteBtn.classList.add('disabled');
                     muteBtn.innerHTML = '<span>● MUTED</span>';
                 }
-                muteBtn.onclick = () => togglePrivacy('microphone', voiceEnabled, muteBtn);
+                // Remove old onclick if exists and add new listener
+                const muteHandler = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    togglePrivacy('microphone', voiceEnabled, muteBtn);
+                };
+                muteBtn.removeEventListener('click', muteBtn._clickHandler);
+                muteBtn._clickHandler = muteHandler;
+                muteBtn.addEventListener('click', muteHandler);
                 if (!voiceEnabled && state.voiceActive) {
                     toggleVoice();
                 }
@@ -3230,7 +3258,15 @@ async function pollHealth() {
                     camBtn.classList.add('disabled');
                     camBtn.innerHTML = '<span>● CAM OFF</span>';
                 }
-                camBtn.onclick = () => togglePrivacy('camera', p.camera_enabled, camBtn);
+                // Remove old onclick if exists and add new listener
+                const camHandler = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    togglePrivacy('camera', p.camera_enabled, camBtn);
+                };
+                camBtn.removeEventListener('click', camBtn._clickHandler);
+                camBtn._clickHandler = camHandler;
+                camBtn.addEventListener('click', camHandler);
                 if (p.camera_enabled === false) {
                     state.cameraSignalWanted = false;
                     stopCameraSignals();
@@ -3282,8 +3318,17 @@ async function togglePrivacy(type, currentEnabled, btn) {
         const d = await res.json();
         if (d.ok) {
             // Privacy toggle applied
-            // Update the onclick to reflect new state
-            if (btn) btn.onclick = () => togglePrivacy(type, next, btn);
+            // Update the click handler to reflect new state
+            if (btn) {
+                const handler = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    togglePrivacy(type, next, btn);
+                };
+                btn.removeEventListener('click', btn._clickHandler);
+                btn._clickHandler = handler;
+                btn.addEventListener('click', handler);
+            }
             if (type === 'camera') {
                 state.cameraSignalWanted = !!next;
                 if (next) {
@@ -3653,14 +3698,28 @@ async function refreshKnowledgeGraph() {
 }
 
 // ── Header buttons ───────────────────────────────────────
-// Immediate MUTE/CAM bindings (before first pollHealth delivers privacy state)
-$('btn-mute').onclick = () => togglePrivacy('microphone', true, $('btn-mute'));
-$('btn-cam').onclick = () => togglePrivacy('camera', true, $('btn-cam'));
+// Use addEventListener for reliable click handling
 
-$('btn-brain').onclick = async () => {
-    const btn = $('btn-brain');
-    btn.style.opacity = '0.5';
-    btn.textContent = '◇ ...';
+const muteBtn = $('btn-mute');
+if (muteBtn) muteBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePrivacy('microphone', true, muteBtn);
+});
+
+const camBtn = $('btn-cam');
+if (camBtn) camBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePrivacy('camera', true, camBtn);
+});
+
+const brainBtn = $('btn-brain');
+if (brainBtn) brainBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    brainBtn.style.opacity = '0.5';
+    brainBtn.textContent = '◇ ...';
     try {
         const res = await fetch('/api/brain/retry', { method: 'POST' });
         const d = await res.json();
@@ -3668,19 +3727,24 @@ $('btn-brain').onclick = async () => {
     } catch (e) {
         appendMsg('aura', '⚠ Failed to contact brain retry endpoint.');
     } finally {
-        btn.style.opacity = '1';
-        btn.textContent = '◇ BRAIN';
+        brainBtn.style.opacity = '1';
+        brainBtn.textContent = '◇ BRAIN';
     }
-};
+});
 
-$('btn-apk').onclick = () => {
+const apkBtn = $('btn-apk');
+if (apkBtn) apkBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     appendMsg('aura', '📱 APK not available yet — Aura runs as a web app at this URL.');
-};
+});
 
-$('btn-src').onclick = async () => {
-    const btn = $('btn-src');
-    btn.style.opacity = '0.5';
-    btn.textContent = '↓ ...';
+const srcBtn = $('btn-src');
+if (srcBtn) srcBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    srcBtn.style.opacity = '0.5';
+    srcBtn.textContent = '↓ ...';
     try {
         const res = await fetch('/api/source');
         if (res.ok) {
@@ -3698,15 +3762,17 @@ $('btn-src').onclick = async () => {
     } catch (e) {
         appendMsg('aura', '⚠ Source download error.');
     } finally {
-        btn.style.opacity = '1';
-        btn.textContent = '↓ SRC';
+        srcBtn.style.opacity = '1';
+        srcBtn.textContent = '↓ SRC';
     }
-};
+});
 
-$('btn-update').onclick = async () => {
-    const btn = $('btn-update');
-    btn.style.opacity = '0.5';
-    btn.textContent = '↻ ...';
+const updateBtn = $('btn-update');
+if (updateBtn) updateBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    updateBtn.style.opacity = '0.5';
+    updateBtn.textContent = '↻ ...';
     appendMsg('aura', '♻️ Hot-reloading Aura code from disk...');
     try {
         const res = await fetch('/api/system/hot-reload', { method: 'POST' });
@@ -3722,12 +3788,15 @@ $('btn-update').onclick = async () => {
     } catch (e) {
         appendMsg('aura', '❌ Hot-reload request failed — is the server running?');
     } finally {
-        btn.style.opacity = '1';
-        btn.textContent = '↻ UPDATE';
+        updateBtn.style.opacity = '1';
+        updateBtn.textContent = '↻ UPDATE';
     }
-};
+});
 
-$('btn-soul').onclick = () => {
+const soulBtn = $('btn-soul');
+if (soulBtn) soulBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const overlay = $('soul-overlay');
     const frame = $('soul-frame');
     if (overlay && frame) {
@@ -3735,16 +3804,22 @@ $('btn-soul').onclick = () => {
         frame.src = '/static/mycelial.html';
         // Soul Map opened
     }
-};
+});
 
-$('soul-close').onclick = () => {
+const soulCloseBtn = $('soul-close');
+if (soulCloseBtn) soulCloseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const overlay = $('soul-overlay');
     const frame = $('soul-frame');
     overlay.classList.remove('visible');
     frame.src = '';  // Stop the 3D renderer to save GPU
-};
+});
 
-$('btn-mem-map').onclick = () => {
+const memMapBtn = $('btn-mem-map');
+if (memMapBtn) memMapBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const overlay = $('soul-overlay');
     const frame = $('soul-frame');
     if (overlay && frame) {
@@ -3752,9 +3827,12 @@ $('btn-mem-map').onclick = () => {
         frame.src = '/memory';
         // Memory Map opened
     }
-};
+});
 
-$('btn-term').onclick = async () => {
+const termBtn = $('btn-term');
+if (termBtn) termBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const modal = $('terminal-modal');
     if (!modal) return;
     modal.style.display = 'flex';
@@ -3775,14 +3853,20 @@ $('btn-term').onclick = async () => {
         }
         if (pendingEl) pendingEl.textContent = d.pending_messages || 0;
     } catch (e) { console.warn('Terminal status fetch failed', e); }
-};
+});
 
-$('term-close-btn') && ($('term-close-btn').onclick = () => {
+const termCloseBtn = $('term-close-btn');
+if (termCloseBtn) termCloseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const modal = $('terminal-modal');
     if (modal) modal.style.display = 'none';
 });
 
-$('term-send-btn') && ($('term-send-btn').onclick = async () => {
+const termSendBtn = $('term-send-btn');
+if (termSendBtn) termSendBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const input = $('term-msg-input');
     const result = $('term-send-result');
     if (!input || !input.value.trim()) return;
@@ -3803,13 +3887,16 @@ $('term-send-btn') && ($('term-send-btn').onclick = async () => {
     }
 });
 
-$('btn-reboot').onclick = async () => {
+const rebootBtn = $('btn-reboot');
+if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (confirm('Reboot Aura? This will restart the server process.')) {
         try {
             await fetch('/api/reboot', { method: 'POST' });
         } catch (e) { }
     }
-};
+});
 
 // ── Voice toggle ─────────────────────────────────────────
 let audioContext = null;
@@ -3922,7 +4009,13 @@ async function toggleVoice() {
         state.voiceSignalAggregation = null;
     }
 }
-$('mic-btn').onclick = toggleVoice;
+
+const micBtn = $('mic-btn');
+if (micBtn) micBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleVoice();
+});
 
 // Heartbeat is handled by the 25s pingInterval in connect()
 
@@ -4290,15 +4383,17 @@ function dismissSplash(finalStatus = 'Neural link established.') {
     if (state._splashInterval) clearInterval(state._splashInterval);
     if (state._splashTimeout) clearTimeout(state._splashTimeout);
 
-    // Show the START button and attach an onclick listener
+    // Show the START button and attach a click listener
     if (startBtn) {
         startBtn.style.display = 'inline-block';
-        startBtn.onclick = () => {
+        startBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             splash.classList.add('hidden');
             setTimeout(() => {
                 splash.remove();
             }, 1000);
-        };
+        });
     } else {
         // Fallback if button does not exist in DOM
         setTimeout(() => {

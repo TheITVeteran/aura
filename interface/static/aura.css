@@ -568,6 +568,11 @@ header {
     background: rgba(138, 43, 226, 0.15);
 }
 
+.hdr-btn:active {
+    transform: scale(0.95);
+    opacity: 0.9;
+}
+
 .hdr-btn.reboot {
     padding: 6px 10px;
     font-size: 0.8rem;
@@ -1160,6 +1165,11 @@ main {
 .tab-btn:hover:not(.active) {
     color: var(--text);
     background: rgba(255, 255, 255, 0.01);
+}
+
+.tab-btn:active {
+    transform: scale(0.98);
+    opacity: 0.8;
 }
 
 .sidebar-body {
@@ -2077,6 +2087,11 @@ body.neural-visual-paused #pane-neural .live-dot {
     background: var(--primary);
     color: #fff;
     border-color: var(--primary);
+}
+
+.mem-sub-btn:active {
+    transform: scale(0.96);
+    opacity: 0.9;
 }
 
 .mem-content {
