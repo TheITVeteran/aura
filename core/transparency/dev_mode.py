@@ -101,11 +101,17 @@ class DevMode:
         self.consent_requests: List[ConsentRequest] = []
         self.active_session_id = ""
         self._callbacks: List[Callable[[str, Dict[str, Any]], None]] = []
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None  # Lazy-loaded in async context
+    
+    async def _get_lock(self) -> asyncio.Lock:
+        """Get or create the async lock (lazy-loaded)."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
         
     async def set_transparency_level(self, level: TransparencyLevel):
         """Change transparency level at runtime."""
-        async with self._lock:
+        async with await self._get_lock():
             self.level = level
             logger.info("🔍 DevMode: Transparency level changed to %s", level)
     
@@ -124,7 +130,7 @@ class DevMode:
             alternatives=alternatives or []
         )
         
-        async with self._lock:
+        async with await self._get_lock():
             self.thought_traces.append(trace)
             if len(self.thought_traces) > 100:  # Keep memory bounded
                 self.thought_traces = self.thought_traces[-100:]
@@ -146,7 +152,7 @@ class DevMode:
             origin=origin
         )
         
-        async with self._lock:
+        async with await self._get_lock():
             self.tool_traces.append(trace)
             if len(self.tool_traces) > 50:  # Keep memory bounded
                 self.tool_traces = self.tool_traces[-50:]
@@ -190,7 +196,7 @@ class DevMode:
             requires_user_input=requires_user
         )
         
-        async with self._lock:
+        async with await self._get_lock():
             self.consent_requests.append(request)
             if len(self.consent_requests) > 25:
                 self.consent_requests = self.consent_requests[-25:]
@@ -241,7 +247,7 @@ class DevMode:
     
     async def get_session_summary(self) -> Dict[str, Any]:
         """Get a summary of the current session."""
-        async with self._lock:
+        async with await self._get_lock():
             return {
                 "session_id": self.active_session_id,
                 "transparency_level": self.level.value,
@@ -256,12 +262,12 @@ class DevMode:
     
     async def register_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
         """Register a callback for transparency events."""
-        async with self._lock:
+        async with await self._get_lock():
             self._callbacks.append(callback)
     
     async def _emit_event(self, event_type: str, data: Dict[str, Any]):
         """Emit a transparency event to all registered callbacks."""
-        async with self._lock:
+        async with await self._get_lock():
             callbacks = list(self._callbacks)
         
         for callback in callbacks:

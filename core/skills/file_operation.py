@@ -80,11 +80,11 @@ class FileOperationSkill(BaseSkill):
             # Classify operation sensitivity
             if action == "delete":
                 operation_type = "delete_file"
-            elif action == "write" and "/System" in full_path or "/etc" in full_path:
+            elif action == "write" and ("/System" in full_path or "/etc" in full_path):
                 operation_type = "write_system_file"
             elif action == "write":
                 operation_type = "write_file_downloads" if "Downloads" in full_path else "write_file_home"
-            elif action == "read" and "/System" in full_path or "/etc" in full_path:
+            elif action == "read" and ("/System" in full_path or "/etc" in full_path):
                 operation_type = "read_system_file"
             else:
                 operation_type = None
