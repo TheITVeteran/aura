@@ -872,6 +872,21 @@ def _unexpected_short_foreign_name(user_message: Any, reply_text: Any) -> bool:
 
 def _has_reliability_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
+    # Conversational presence confirmations are highly valid for simple check-ins.
+    presence_phrases = (
+        "i'm here",
+        "i am here",
+        "still here",
+        "i'm still here",
+        "i am still here",
+        "i'm with you",
+        "i am with you",
+        "hey",
+        "what's up",
+    )
+    if any(phrase in reply for phrase in presence_phrases):
+        return True
+
     if _word_count(reply) < 8:
         return False
     return any(marker in reply for marker in _SUBSTANTIVE_RELIABILITY_MARKERS)
