@@ -105,6 +105,7 @@ class LongTermMemoryEngine:
 
     def __init__(self):
         self.memories: list[TaggedMemory] = []
+        self._max_memories = 10000  # Absolute cap to prevent unbounded growth
         self.memory_facade = None
         self.drive_engine = None
         self.cel = None
@@ -303,6 +304,15 @@ class LongTermMemoryEngine:
             tags=normalized_tags,
         )
         self.memories.append(memory)
+
+        # Enforce absolute memory cap - remove oldest 10% if exceeded
+        if len(self.memories) > self._max_memories:
+            # Sort by importance and age, keep highest-importance recent memories
+            self.memories.sort(key=lambda m: (m.importance, m.timestamp))
+            keep_count = int(self._max_memories * 0.9)
+            self.memories = self.memories[-keep_count:]  # Keep 90% (newest)
+            logger.debug(f"LongTermMemory capped: kept {len(self.memories)} memories")
+        
         self._save_memories()
 
         if self.cel is not None:

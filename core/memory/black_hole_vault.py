@@ -30,6 +30,7 @@ class BlackHoleVault:
         self.horcrux = HorcruxManager(base_dir=os.path.dirname(self.data_dir))
         self.key = "fallback-locked-key"
         self.memories = []
+        self._max_memories = 5000  # Absolute cap to prevent unbounded growth
         self._dirty = False
         self._fallback_mode = False
         self._collection = self # Shim for SemanticDefragmenter
@@ -161,6 +162,13 @@ class BlackHoleVault:
                 "created": now_ms,
                 "access_count": 0
             })
+            
+            # Enforce absolute memory cap - remove oldest 20% if exceeded
+            if len(self.memories) > self._max_memories:
+                sorted_mems = grav_queue_sort(self.memories)
+                keep_count = int(len(self.memories) * 0.8)
+                self.memories = sorted_mems[:keep_count]
+                logger.debug(f"BlackHoleVault capped: kept {keep_count} of {len(sorted_mems)} memories")
             
         self._dirty = True
         self._save_vault()
