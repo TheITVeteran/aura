@@ -69,6 +69,24 @@ def test_browser_executor_enforces_allowlist_for_localhost_ports(monkeypatch):
     assert not browser_executor._is_domain_allowed("https://example.net", {"localhost"})
 
 
+@pytest.mark.parametrize(
+    ("action_spec", "error"),
+    [
+        (["not", "a", "dict"], "invalid_action_spec"),
+        ({"params": ["not", "params"]}, "invalid_params"),
+        ({"url": 42}, "invalid_url"),
+    ],
+)
+def test_browser_executor_rejects_malformed_action_specs(action_spec, error):
+    browser_executor = pytest.importorskip("executors.browser_executor")
+
+    result = browser_executor.run_browser_action(action_spec)
+
+    assert result["ok"] is False
+    assert result["error"] == error
+    assert result["audit"] == []
+
+
 def test_integrity_guardian_rebuild_clears_current_alert_state(monkeypatch):
     from core.security.integrity_guardian import IntegrityGuardian
 
@@ -94,11 +112,18 @@ def test_integrity_guardian_rebuild_clears_current_alert_state(monkeypatch):
 
 
 def test_integrity_guardian_verify_all_suppresses_git_active_paths(monkeypatch, tmp_path):
+    import builtins
+
     from core.security import integrity_guardian as ig_mod
 
     monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
     core_dir = tmp_path / "core"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(core_dir, cause='test_integrity_guardian_verify_all_suppresses_git_active_paths'))
+    builtins.get_task_tracker().create_task(
+        builtins.get_storage_gateway().create_dir(
+            core_dir,
+            cause="test_integrity_guardian_verify_all_suppresses_git_active_paths",
+        )
+    )
     edited = core_dir / "capability_engine.py"
     stable = core_dir / "health.py"
     edited.write_text("print('edited')\n", encoding="utf-8")

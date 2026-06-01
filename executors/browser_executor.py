@@ -8,6 +8,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -67,7 +68,7 @@ def _is_domain_allowed(url: str, allowlist: set[str] | None = None) -> bool:
                 return True
                 
         return False
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
         record_degradation("browser_executor", exc)
         logger.debug("Browser domain allowlist check failed for %r: %s", url, exc)
         return False
@@ -112,8 +113,23 @@ def run_browser_action(
     page = None
 
     try:
+        if not isinstance(action_spec, dict):
+            return {
+                "ok": False,
+                "error": "invalid_action_spec",
+                "detail": f"Expected dict, got {type(action_spec).__name__}",
+                "audit": audit,
+            }
+
         # Extract parameters (handle both direct and nested params)
         params = action_spec.get("params", action_spec)
+        if not isinstance(params, dict):
+            return {
+                "ok": False,
+                "error": "invalid_params",
+                "detail": f"Expected params dict, got {type(params).__name__}",
+                "audit": audit,
+            }
         
         # Extract URL with fallbacks
         url = params.get("url")
@@ -128,6 +144,13 @@ def run_browser_action(
                 "error": "missing_url",
                 "detail": "No 'url' found in params or action_spec",
                 "audit": audit
+            }
+        if not isinstance(url, str):
+            return {
+                "ok": False,
+                "error": "invalid_url",
+                "detail": f"Expected URL string, got {type(url).__name__}",
+                "audit": audit,
             }
 
         # Security check
@@ -155,12 +178,12 @@ def run_browser_action(
                     "headless": headless,
                     "time": time.time()
                 })
-            except Exception as e:
-                logger.exception(f"Failed to launch browser: {e}")
+            except PlaywrightError as exc:
+                logger.exception("Failed to launch browser: %s", exc)
                 return {
                     "ok": False,
                     "error": "browser_launch_failed",
-                    "detail": str(e),
+                    "detail": str(exc),
                     "audit": audit
                 }
 
@@ -182,12 +205,12 @@ def run_browser_action(
                     "url": url,
                     "audit": audit
                 }
-            except Exception as e:
-                logger.exception(f"Navigation error: {e}")
+            except PlaywrightError as exc:
+                logger.exception("Navigation error: %s", exc)
                 return {
                     "ok": False,
                     "error": "navigation_failed",
-                    "detail": str(e),
+                    "detail": str(exc),
                     "url": url,
                     "audit": audit
                 }
@@ -261,7 +284,7 @@ def run_browser_action(
                         try:
                             # Try fill first (faster)
                             page.fill(selector, text, timeout=timeout)
-                        except Exception:
+                        except PlaywrightError:
                             # Fallback to type (slower but more reliable)
                             page.type(selector, text, timeout=timeout)
                         
@@ -286,8 +309,12 @@ def run_browser_action(
                             # Extract from specific element
                             try:
                                 text = page.locator(selector).inner_text(timeout=timeout)
-                            except Exception as e:
-                                logger.warning(f"Failed to extract text from {selector}: {e}")
+                            except PlaywrightError as exc:
+                                logger.warning(
+                                    "Failed to extract text from %s: %s",
+                                    selector,
+                                    exc,
+                                )
                                 text = ""
                         else:
                             # Extract entire page content
@@ -318,7 +345,7 @@ def run_browser_action(
                             # Try pixel value
                             try:
                                 page.evaluate(f"window.scrollTo(0, {int(to)})")
-                            except Exception:
+                            except (TypeError, ValueError):
                                 logger.warning(f"Invalid scroll target: {to}")
                         
                         audit.append({
@@ -407,7 +434,7 @@ def run_browser_action(
                         "step_index": idx,
                         "audit": audit
                     }
-                except Exception as exc:
+                except PlaywrightError as exc:
                     logger.exception(f"Exception during step {idx} ({step_type})")
                     return {
                         "ok": False,
@@ -435,7 +462,7 @@ def run_browser_action(
                 "audit": audit
             }
             
-    except Exception as exc:
+    except PlaywrightError as exc:
         logger.exception(f"Browser action failed: {exc}")
         return {
             "ok": False,
@@ -448,20 +475,20 @@ def run_browser_action(
         try:
             if page:
                 page.close()
-        except Exception as e:
-            logger.debug(f"Error closing page: {e}")
+        except PlaywrightError as exc:
+            logger.debug("Error closing page: %s", exc)
         
         try:
             if context:
                 context.close()
-        except Exception as e:
-            logger.debug(f"Error closing context: {e}")
+        except PlaywrightError as exc:
+            logger.debug("Error closing context: %s", exc)
         
         try:
             if browser:
                 browser.close()
-        except Exception as e:
-            logger.debug(f"Error closing browser: {e}")
+        except PlaywrightError as exc:
+            logger.debug("Error closing browser: %s", exc)
 
 
 def add_allowed_domain(domain: str):
