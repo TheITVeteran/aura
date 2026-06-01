@@ -252,8 +252,24 @@ class PhenomenalIntegrator:
     async def get_bond_status(self, person_key: str) -> Dict[str, Any]:
         """Query bond state with a person."""
         try:
-            bond = self.reporter.bond(person_key)
-            return bond or {"person": person_key, "trust": 0.0, "care": 0.0}
+            bond_str = self.reporter.bond(person_key)
+            if not bond_str:
+                return {"person": person_key, "trust": 0.0, "care": 0.0}
+            
+            # Parse the string output from reporter
+            # Format: "bond[key] trust=X care=Y familiarity=Z rupture=A attachment=B evidence=C"
+            result = {"person": person_key}
+            
+            # Try to extract values from string
+            import re
+            trust_match = re.search(r'trust=([\d.]+)', bond_str)
+            care_match = re.search(r'care=([\d.]+)', bond_str)
+            if trust_match:
+                result["trust"] = float(trust_match.group(1))
+            if care_match:
+                result["care"] = float(care_match.group(1))
+            
+            return result or {"person": person_key, "trust": 0.0, "care": 0.0}
         except Exception as exc:
             logger.exception("Failed to get bond status for %s: %s", person_key, exc)
             return {"person": person_key, "trust": 0.0, "care": 0.0}
