@@ -382,6 +382,28 @@ class AutonomousSelfModification:
             self._publish_event("self_modification.queued", receipt)
             return receipt
 
+        audit_ok, audit_detail = self._audit_log_ready()
+        if not audit_ok:
+            receipt = ModificationReceipt(
+                proposal_id=proposal.proposal_id,
+                target_path=proposal.target_path,
+                description=proposal.description,
+                diff_summary=proposal.diff_summary,
+                source=proposal.source,
+                outcome=ProposalOutcome.ERROR,
+                zone=zone.value,
+                will_receipt_id=decision.receipt_id,
+                will_reason=f"Audit log unavailable; refused runtime application: {audit_detail}",
+                simulation_result=sim_detail,
+            )
+            self._record_receipt(receipt)
+            logger.error(
+                "REFUSED runtime self-modification because audit log is unavailable: %s",
+                audit_detail,
+            )
+            self._publish_event("self_modification.refused", receipt)
+            return receipt
+
         # 5. Apply the runtime-only modification.
         apply_detail = await self._apply(proposal)
 
@@ -541,6 +563,18 @@ class AutonomousSelfModification:
 
     # ── Audit Logging ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _audit_log_ready() -> tuple[bool, str]:
+        """Verify durable audit storage before any live runtime mutation."""
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            with open(_AUDIT_LOG_PATH, "a", encoding="utf-8"):
+                pass
+            return True, "audit log writable"
+        except OSError as exc:
+            record_degradation("self_modification", exc)
+            return False, str(exc)
+
     def _record_receipt(self, receipt: ModificationReceipt) -> None:
         """Record receipt in memory and append to persistent JSONL log."""
         self._receipts.append(receipt)
@@ -551,7 +585,7 @@ class AutonomousSelfModification:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(_AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(receipt.to_dict(), default=str) + "\n")
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('self_modification', exc)
             logger.debug("Audit log write failed: %s", exc)
 

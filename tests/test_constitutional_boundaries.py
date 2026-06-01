@@ -132,3 +132,74 @@ async def test_autonomous_self_modification_queues_code_patch_after_will_approva
     assert events == [("self_modification.queued", receipt)]
     assert domains
     assert str(domains[0]).endswith("self_modification")
+
+
+@pytest.mark.asyncio
+async def test_autonomous_self_modification_refuses_runtime_apply_without_audit_log(monkeypatch):
+    from core.autonomy.self_modification import (
+        AutonomousSelfModification,
+        ModificationProposal,
+        ProposalOutcome,
+    )
+    import core.will as will_module
+
+    receipts = []
+    events = []
+    apply_called = False
+
+    class _Decision:
+        receipt_id = "will-runtime"
+        reason = "approved runtime tuning"
+
+        def is_approved(self):
+            return True
+
+    class _Will:
+        def decide(self, **_kwargs):
+            return _Decision()
+
+    async def _apply_must_not_run(self, proposal):
+        nonlocal apply_called
+        apply_called = True
+        raise AssertionError("runtime mutation must be blocked before apply when audit is unavailable")
+
+    monkeypatch.setenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", "1")
+    monkeypatch.setattr(will_module, "get_will", lambda: _Will())
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_audit_log_ready",
+        staticmethod(lambda: (False, "disk full")),
+    )
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_record_receipt",
+        lambda self, receipt: receipts.append(receipt),
+    )
+    monkeypatch.setattr(AutonomousSelfModification, "_apply", _apply_must_not_run)
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_publish_event",
+        lambda self, topic, receipt: events.append((topic, receipt)),
+    )
+
+    engine = AutonomousSelfModification.__new__(AutonomousSelfModification)
+    proposal = ModificationProposal(
+        proposal_id="p-runtime",
+        target_path="core/affect/heartstone_values.py",
+        description="adjust bounded value",
+        diff_summary="sets curiosity drive",
+        changes={
+            "type": "value_adjustment",
+            "target_system": "heartstone",
+            "new_values": {"curiosity": 0.7},
+        },
+        source="test",
+    )
+
+    receipt = await engine.propose(proposal)
+
+    assert receipt.outcome == ProposalOutcome.ERROR
+    assert "Audit log unavailable" in receipt.will_reason
+    assert apply_called is False
+    assert receipts == [receipt]
+    assert events == [("self_modification.refused", receipt)]
