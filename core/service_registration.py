@@ -285,8 +285,13 @@ def register_all_services(is_proxy: bool = False):
         from core.agency.initiative_arbiter import InitiativeArbiter
         return InitiativeArbiter()
 
+    def _create_tool_orchestrator():
+        from core.agency.tool_orchestrator import ToolOrchestrator
+        return ToolOrchestrator()
+
     container.register('tension_engine', _create_tension_engine, lifetime=ServiceLifetime.SINGLETON)
     container.register('initiative_arbiter', _create_initiative_arbiter, lifetime=ServiceLifetime.SINGLETON)
+    container.register('tool_orchestrator', _create_tool_orchestrator, lifetime=ServiceLifetime.SINGLETON, required=False)
 
     # Patch 27: Container lock deferred to aura_main.py after all top-level components register
     logger.info("✅ All modular services registered and validated (Lock deferred).")
