@@ -17,7 +17,7 @@ metrics = get_metrics()
 
 
 class Hypervisor:
-    def __init__(self, lag_threshold_s: float = 0.5):
+    def __init__(self, lag_threshold_s: float = 1.5):
         self._lag_threshold = lag_threshold_s
         self._active_lag_threshold = max(lag_threshold_s, 5.0)
         self._running = False
