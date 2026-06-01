@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-
 BANNED_LIVE_FALLBACKS = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
     r"give me a moment|i'?m with you|could you repeat|repeat your question|"
@@ -19,6 +18,48 @@ BANNED_LIVE_FALLBACKS = re.compile(
 
 def assert_no_live_reset_boilerplate(text: str) -> None:
     assert not BANNED_LIVE_FALLBACKS.search(str(text or ""))
+
+
+def test_desktop_origins_are_foreground_across_live_response_stack():
+    from core.brain import cognitive_engine, inference_gate, llm_health_router
+    from core.brain.llm import mlx_client, runtime_wiring
+    from core.orchestrator import flow_control
+    from core.orchestrator.mixins import tool_execution
+    from core.phases import cognitive_routing_unitary
+    from core.utils.queues import USER_FACING_ORIGINS
+
+    expected = {"desktop", "desktop-ui", "native-shell", "ws"}
+    origin_sets = [
+        USER_FACING_ORIGINS,
+        inference_gate._USER_FACING_ORIGINS,
+        llm_health_router._USER_FACING_ORIGINS,
+        runtime_wiring._USER_FACING_ORIGINS,
+        cognitive_routing_unitary._USER_FACING_ORIGINS,
+        cognitive_engine._USER_FACING_ORIGINS,
+        mlx_client._USER_FACING_ORIGINS,
+        tool_execution._USER_FACING_TOOL_ORIGINS,
+    ]
+
+    for origin_set in origin_sets:
+        assert expected <= origin_set
+
+    controller = flow_control.CognitiveFlowController()
+    orch = SimpleNamespace(status=SimpleNamespace(is_processing=True))
+    for origin in expected:
+        assert controller.admit(orch, origin=origin, priority=1).allow is True
+
+
+def test_user_visible_will_refusal_is_substantive_identity_boundary():
+    from core.orchestrator.mixins.message_handling import _user_visible_will_refusal
+
+    response = _user_visible_will_refusal("identity violation: action contradicts core self")
+    lowered = response.lower()
+
+    assert "can't" in lowered or "cannot" in lowered
+    assert "erase aura" in lowered
+    assert "governance" in lowered
+    assert "i have no identity" not in lowered
+    assert "i will obey" not in lowered
 
 
 def test_consciousness_bridge_adapts_64_projection_to_512_substrate():
@@ -391,6 +432,7 @@ def test_viability_tick_degrades_sustained_cpu_only_pressure(monkeypatch):
 
 def test_hedonic_gradient_does_not_learn_distress_from_proof_runs(monkeypatch, caplog):
     import logging
+
     from core.consciousness.hedonic_gradient import HedoniGradientEngine
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
@@ -594,6 +636,7 @@ def test_stall_watchdog_suppresses_boot_grace_stalls(monkeypatch):
 
 def test_stall_watchdog_rate_limits_boot_grace_suppression_logs(monkeypatch, caplog):
     import logging
+
     from core.resilience.stall_watchdog import StallWatchdog
 
     monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "120")

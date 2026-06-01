@@ -1,4 +1,4 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -150,7 +150,8 @@ proof-bundle: decisive behavioral-proof
 
 person-box-proof:
 	@echo "📦 Running Aura person-in-a-box proof gauntlet..."
-	@PROFILE="$${AURA_PERSON_BOX_PROFILE:-full}"; \
+	@set -e; \
+	PROFILE="$${AURA_PERSON_BOX_PROFILE:-full}"; \
 	OUT="$${AURA_PERSON_BOX_OUT:-artifacts/current/person_box_proof}"; \
 	MAX_SECONDS="$${AURA_PERSON_BOX_MAX_SECONDS:-28800}"; \
 	SOAK_INTERVAL="$${AURA_PERSON_BOX_SOAK_INTERVAL_SECONDS:-300}"; \
@@ -174,6 +175,25 @@ person-box-proof:
 	$(PYTHON) tools/proof/score_person_box_run.py "$$OUT"; \
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest tests/proof/test_person_box_artifacts.py -q
 	@echo "✅ Person-in-a-box proof artifacts written to $${AURA_PERSON_BOX_OUT:-artifacts/current/person_box_proof}"
+
+sovereignty-proof:
+	@echo "📦 Running Aura sovereignty/reconstitution proof gauntlet..."
+	@set -e; \
+	PROFILE="$${AURA_SOVEREIGNTY_PROFILE:-smoke}"; \
+	OUT="$${AURA_SOVEREIGNTY_OUT:-artifacts/current/aura_sovereignty_proof_bundle}"; \
+	MAX_SECONDS="$${AURA_SOVEREIGNTY_MAX_SECONDS:-300}"; \
+	HIDDEN_VARIANTS="$${AURA_SOVEREIGNTY_HIDDEN_VARIANTS:-4}"; \
+	LIVE_RUNTIME_FLAG=""; \
+	if [ "$${AURA_SOVEREIGNTY_LIVE_RUNTIME:-0}" = "1" ]; then LIVE_RUNTIME_FLAG="--live-runtime"; fi; \
+	$(PYTHON) tools/proof/run_sovereign_reconstitution_gauntlet.py \
+	  --profile "$$PROFILE" \
+	  --out "$$OUT" \
+	  --max-seconds "$$MAX_SECONDS" \
+	  --hidden-variant-count "$$HIDDEN_VARIANTS" \
+	  $$LIVE_RUNTIME_FLAG; \
+	$(PYTHON) tools/proof/score_sovereignty_run.py "$$OUT"; \
+	AURA_SOVEREIGNTY_LIVE_RUNTIME=0 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest tests/proof/test_sovereignty_artifacts.py -q
+	@echo "✅ Sovereignty proof artifacts written to $${AURA_SOVEREIGNTY_OUT:-artifacts/current/aura_sovereignty_proof_bundle}"
 
 # ─── Bench / chaos / longevity ────────────────────────────────────────────
 

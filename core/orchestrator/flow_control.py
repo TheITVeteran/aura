@@ -93,7 +93,8 @@ class CognitiveFlowController:
     def admit(self, orch: Any, origin: str, priority: int) -> FlowDecision:
         normalized_origin = str(origin or "").strip().lower()
         is_user_facing = normalized_origin in {
-            "user", "voice", "admin", "api", "gui", "websocket", "direct", "external",
+            "user", "voice", "admin", "api", "desktop", "desktop-ui", "gui", "websocket",
+            "ws", "direct", "external", "native-shell",
         }
 
         if is_user_facing:

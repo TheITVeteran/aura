@@ -74,11 +74,14 @@ _USER_FACING_ORIGINS = frozenset(
         "voice",
         "admin",
         "api",
+        "desktop",
+        "desktop-ui",
         "gui",
         "ws",
         "websocket",
         "direct",
         "external",
+        "native-shell",
         "test",
     }
 )

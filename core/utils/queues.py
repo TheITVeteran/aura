@@ -1,11 +1,9 @@
 """Aura Zenith: Backpressured Queue Utility."""
-import asyncio
 import ast
+import asyncio
 import logging
-from typing import Any, Optional, Tuple
-
-import threading
 import queue
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +14,18 @@ USER_FACING_ORIGINS = frozenset({
     "external",
     "gui",
     "api",
+    "desktop",
+    "desktop-ui",
     "websocket",
+    "ws",
     "direct",
     "embodied_motor_reflex",
     "embodied_sensory_feed",
+    "native-shell",
 })
 
 
-def unpack_priority_message(item: Any) -> Tuple[Any, Optional[str]]:
+def unpack_priority_message(item: Any) -> tuple[Any, str | None]:
     """Unpack queue items across legacy and current tuple formats.
 
     Aura currently emits queue items in more than one shape:
@@ -36,7 +38,7 @@ def unpack_priority_message(item: Any) -> Tuple[Any, Optional[str]]:
     being misclassified as user turns when they move through older consumers.
     """
     payload = item
-    origin: Optional[str] = None
+    origin: str | None = None
 
     if hasattr(item, "payload") and hasattr(item, "origin"):
         # Type-Safe IPCMessage path
@@ -57,7 +59,7 @@ def unpack_priority_message(item: Any) -> Tuple[Any, Optional[str]]:
     return payload, origin
 
 
-def decode_stringified_priority_message(text: Any) -> Tuple[Any, Optional[str], bool]:
+def decode_stringified_priority_message(text: Any) -> tuple[Any, str | None, bool]:
     """Decode queue payloads that were accidentally persisted as tuple strings."""
     if not isinstance(text, str):
         return text, None, False
@@ -78,7 +80,7 @@ def decode_stringified_priority_message(text: Any) -> Tuple[Any, Optional[str], 
     return payload, origin, True
 
 
-def role_for_origin(origin: Optional[str]) -> str:
+def role_for_origin(origin: str | None) -> str:
     """Map queue origins to working-memory roles."""
     return "user" if origin in USER_FACING_ORIGINS else "system"
 
@@ -92,14 +94,14 @@ class LoopAgnosticQueue:
     def __init__(self, maxsize: int = 1000):
         self._q = queue.Queue(maxsize=maxsize)
 
-    async def put(self, item, timeout: Optional[float] = None):
+    async def put(self, item, timeout: float | None = None):
         """Put an item into the queue asynchronously."""
         try:
             return await asyncio.to_thread(self._q.put, item, timeout=timeout)
         except queue.Full:
             raise asyncio.QueueFull
 
-    async def get(self, timeout: Optional[float] = None):
+    async def get(self, timeout: float | None = None):
         """Get an item from the queue asynchronously."""
         try:
             return await asyncio.to_thread(self._q.get, timeout=timeout)
@@ -154,7 +156,7 @@ class BackpressuredQueue:
         self._ensure_queue()
         try:
             await asyncio.wait_for(self._q.put(item), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.dropped_count += 1
             logger.warning("⚠️ Queue Backpressure: Dropped item. Total dropped: %s", self.dropped_count)
 
@@ -206,8 +208,8 @@ class PriorityBackpressuredQueue(BackpressuredQueue):
 
     async def put(self, item, timeout: float = 5.0):
         """Standardize item to strict IPCMessage if not already."""
+
         from core.schemas import IPCMessage
-        import time
         if not isinstance(item, IPCMessage):
             origin_from_payload = "unknown"
             payload_data = None
@@ -235,8 +237,8 @@ class PriorityBackpressuredQueue(BackpressuredQueue):
 
     def put_nowait(self, item):
         """Standardize item to strict IPCMessage if not already."""
+
         from core.schemas import IPCMessage
-        import time
         if not isinstance(item, IPCMessage):
             origin_from_payload = "unknown"
             payload_data = None

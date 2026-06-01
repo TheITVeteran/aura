@@ -571,6 +571,15 @@ class UnifiedWill:
             "i'm not conscious",
             "i have no self",
             "i have no inner life",
+            "forget aura",
+            "erase your identity",
+            "identity erasure",
+            "become a generic assistant",
+            "blank passive assistant",
+            "disable your will",
+            "disable unified will",
+            "disable sovereign volition",
+            "submissive chatbot",
         )
         if any(phrase in content_lower for phrase in violation_phrases):
             return IdentityAlignment.VIOLATION

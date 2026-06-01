@@ -117,11 +117,14 @@ _USER_FACING_ORIGINS = frozenset({
     "voice",
     "admin",
     "api",
+    "desktop",
+    "desktop-ui",
     "gui",
     "ws",
     "websocket",
     "direct",
     "external",
+    "native-shell",
     "test",
 })
 
@@ -1931,7 +1934,7 @@ class HealthAwareLLMRouter:
                             "Endpoint %s failed validation: %s",
                             ep.name, last_error
                         )
-            except (asyncio.TimeoutError, TimeoutError) as exc:
+            except TimeoutError as exc:
                 endpoint_budget = _endpoint_call_timeout(timeout)
                 last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
                 aborted = _force_abort_endpoint_client(ep.client, reason=last_error)

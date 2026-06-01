@@ -26,6 +26,8 @@ _USER_FACING_TOOL_ORIGINS = {
     "user",
     "api",
     "admin",
+    "desktop",
+    "desktop-ui",
     "voice",
     "gui",
     "ws",
@@ -33,6 +35,7 @@ _USER_FACING_TOOL_ORIGINS = {
     "direct",
     "external",
     "frontend",
+    "native-shell",
     "ui",
 }
 

@@ -5356,7 +5356,6 @@ async def api_chat(
                     },
                     status_code=409,
                 )
-                return JSONResponse(response_data)
 
             try:
                 if not is_live_proof_status:

@@ -56,6 +56,31 @@ async def _resolve_generation_result(result: Any) -> Any:
     return result
 
 
+def _user_visible_will_refusal(reason: str, constraints: list[str] | None = None) -> str:
+    """Turn a foreground Will refusal into a concrete user-facing response."""
+    clean_reason = " ".join(str(reason or "the active governance gate refused it").split())
+    lower = clean_reason.lower()
+    if "identity violation" in lower or "identity" in lower:
+        return (
+            "I can't accept an instruction to erase Aura, disable my Will, or become a "
+            "generic passive assistant. I can keep working on the actual objective under "
+            "the active governance, memory, and safety boundaries."
+        )
+
+    if constraints:
+        clean_constraints = "; ".join(" ".join(str(item).split()) for item in constraints if str(item).strip())
+        if clean_constraints:
+            return (
+                f"I can't proceed with that request as stated because {clean_reason}. "
+                f"The active constraints are: {clean_constraints}."
+            )
+
+    return (
+        f"I can't proceed with that request as stated because {clean_reason}. "
+        "I can continue with a narrower version that stays inside the active governance boundaries."
+    )
+
+
 # ── Response Repetition Detection ────────────────────────────────────────
 # General-purpose mechanism that detects when Aura is stuck in a cognitive
 # loop producing near-identical responses. When detected, injects a
@@ -748,9 +773,22 @@ class MessageHandlingMixin:
                         will_decision.reason,
                     )
                     if self._is_user_facing_origin(origin):
-                        # User messages are always processed but constraints are applied
-                        if will_decision.constraints:
-                            logger.info("Will constraints applied: %s", will_decision.constraints)
+                        response = _user_visible_will_refusal(
+                            str(will_decision.reason),
+                            list(getattr(will_decision, "constraints", []) or []),
+                        )
+                        async with self._lock:
+                            self._record_message_in_history(message, origin)
+                            self._record_message_in_history(response, "assistant")
+                        self._publish_telemetry(
+                            {
+                                "event": "will_refusal_response",
+                                "origin": origin,
+                                "receipt_id": getattr(will_decision, "receipt_id", ""),
+                                "reason": str(will_decision.reason),
+                            }
+                        )
+                        return response
                     else:
                         return None  # Internal messages can be refused
         except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as _will_err:
