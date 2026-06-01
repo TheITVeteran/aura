@@ -1092,7 +1092,7 @@ class InferenceGate:
                 if lane.get("conversation_ready") or lane.get("warmup_in_flight"):
                     return
                 if lane_state == "failed":
-                    if self._rearm_runtime_failed_lane(force_probe=False):
+                    if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=False):
                         lane = self.get_conversation_status()
                         lane_state = str(lane.get("state", "") or "").lower()
                     elif str(lane.get("last_failure_reason", "") or "").startswith(
@@ -1222,7 +1222,7 @@ class InferenceGate:
         if lane_state == "failed" and lane_reason.startswith(
             ("mlx_runtime_unavailable", "local_runtime_unavailable")
         ):
-            if self._rearm_runtime_failed_lane(force_probe=True):
+            if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
                 lane = self.get_conversation_status()
             else:
                 raise RuntimeError(lane_reason)
@@ -1354,7 +1354,7 @@ class InferenceGate:
         if lane_state == "failed" and lane_reason.startswith(
             ("mlx_runtime_unavailable", "local_runtime_unavailable")
         ):
-            if self._rearm_runtime_failed_lane(force_probe=True):
+            if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
                 lane = self.get_conversation_status()
                 lane_state = str(lane.get("state", "") or "").lower()
                 lane_reason = str(lane.get("last_failure_reason", "") or "")
@@ -5237,6 +5237,12 @@ class InferenceGate:
                 # try cloud as absolute final fallback. Ensures system ALWAYS has offline+cloud hybrid,
                 # never purely offline-only when cloud is reachable.
                 logger.warning("🆘 [LAST RESORT] Attempting cloud retry despite disabled cloud_fallback...")
+                user_input_for_eval = prompt
+                if messages:
+                    for m in reversed(messages):
+                        if str(m.get("role", "") or "").strip().lower() == "user":
+                            user_input_for_eval = str(m.get("content", ""))
+                            break
                 last_resort_result = await self._attempt_cloud_fallback_last_resort(
                     system_prompt, prompt, _is_user_facing, user_input_for_eval
                 )

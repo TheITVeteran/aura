@@ -2067,7 +2067,7 @@ class MLXLocalClient:
                 _spawn_fails = getattr(self, "_consecutive_spawn_failures", 0)
                 _spawn_backoff_until = getattr(self, "_spawn_backoff_until", 0.0)
                 if time.time() < _spawn_backoff_until:
-                    if not self.refresh_runtime_availability(force_probe=True):
+                    if not await asyncio.to_thread(self.refresh_runtime_availability, force_probe=True):
                         return False  # Still in backoff window
 
                 self._drain_queue()

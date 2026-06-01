@@ -270,7 +270,7 @@ class BootManager:
     def _init_metabolism(self):
         try:
             from core.ops.metabolic_monitor import MetabolicMonitor
-            monitor = MetabolicMonitor(ram_threshold_mb=3072, cpu_threshold=85.0)
+            monitor = MetabolicMonitor(cpu_threshold=85.0)
             monitor.start()
             ServiceContainer.register_instance("metabolic_monitor", monitor)
         except (ImportError, AttributeError, RuntimeError) as e:

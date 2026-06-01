@@ -1456,14 +1456,14 @@ def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
         lambda: SimpleNamespace(
             percent=55.0,
             total=64 * 1024 ** 3,
-            available=int(28.0 * 1024 ** 3),
+            available=int(15.0 * 1024 ** 3),
         ),
     )
 
     snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
 
     assert snapshot["can_admit"] is False
-    assert snapshot["min_available_gb"] == 32.0
+    assert snapshot["min_available_gb"] == 20.0
     assert "memory_pressure" in snapshot["reason"]
 
 
@@ -1491,7 +1491,7 @@ async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_foreground_ready_refuses_cold_cortex_spawn_without_headroom(monkeypatch):
+async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(monkeypatch):
     gate = InferenceGate()
     client = _LaneWarmupClient()
     gate._mlx_client = client
@@ -1505,12 +1505,12 @@ async def test_foreground_ready_refuses_cold_cortex_spawn_without_headroom(monke
         ),
     )
 
-    with pytest.raises(RuntimeError, match="foreground_warmup_deferred"):
-        await gate.ensure_foreground_ready(timeout=15.0)
+    lane = await gate.ensure_foreground_ready(timeout=15.0)
 
-    gate._shed_background_workers_for_memory_pressure.assert_awaited_once()
-    client.warmup.assert_not_awaited()
-    assert client.last_error == "foreground_warmup_deferred_memory_pressure"
+    # In v57/v67/v68, foreground requests NEVER defer cortex warmup for memory pressure
+    client.warmup.assert_awaited_once()
+    assert lane["conversation_ready"] is True
+    assert lane["state"] == "ready"
 
 
 def test_desktop_safe_boot_still_schedules_deferred_cortex_prewarm(monkeypatch):
