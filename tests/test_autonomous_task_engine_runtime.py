@@ -796,3 +796,32 @@ async def test_task_engine_search_and_browser_fallbacks():
     assert plan_browser_search.steps[0].args["mode"] == "search"
     assert "quantum mechanics" in plan_browser_search.steps[0].args["query"]
 
+
+@pytest.mark.asyncio
+async def test_task_engine_universal_fallbacks():
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=''))  # empty triggers failure
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+
+    engine = AutonomousTaskEngine(kernel)
+
+    # 1. Generic clock skill fallback
+    plan_clock = await engine._decompose_goal(
+        "Check the system clock, perform this on your own.",
+        "plan_clock_fallback",
+        context={"matched_skills": ["clock"]},
+    )
+    assert len(plan_clock.steps) == 1
+    assert plan_clock.steps[0].tool == "clock"
+    assert plan_clock.steps[0].args == {}
+
+    # 2. Generic custom social media skill fallback
+    plan_social = await engine._decompose_goal(
+        "Open your social_post skill and write a post about neuroscience, actually do it.",
+        "plan_social_fallback",
+        context={"matched_skills": ["social_post"]},
+    )
+    assert len(plan_social.steps) == 1
+    assert plan_social.steps[0].tool == "social_post"
+    assert "neuroscience" in plan_social.steps[0].args["content"]
+
+

@@ -1998,6 +1998,72 @@ Respond ONLY with a JSON array, no other text:
                     context=dict(context or {}),
                 )
 
+        # 6. Universal Grounded Fallback (for any other matched skills / tools / abilities)
+        for skill in matched_skills:
+            if skill in (
+                "think",
+                "sovereign_terminal",
+                "computer_use",
+                "web_search",
+                "search_web",
+                "sovereign_browser",
+            ):
+                continue
+
+            # Fetch the skill contract from the registry to see what fields it expects
+            try:
+                from core.runtime.skill_contract import get_skill_registry
+                registry = get_skill_registry()
+                contract = registry.get(skill)
+            except (ImportError, AttributeError, RuntimeError):
+                contract = None
+
+            args = {}
+            if contract and isinstance(contract.input_schema, dict):
+                properties = contract.input_schema.get("properties") or {}
+                for prop_name in properties:
+                    prop_name_lower = prop_name.lower()
+                    if prop_name_lower in ("query", "q", "search"):
+                        args[prop_name] = self._extract_search_query(goal)
+                    elif prop_name_lower in ("url", "uri", "target", "path", "filename"):
+                        args[prop_name] = self._extract_url(goal) or goal
+                    elif prop_name_lower in ("command", "code"):
+                        args[prop_name] = goal
+                    elif prop_name_lower in ("content", "message", "text", "prompt", "body", "input", "suggestion"):
+                        args[prop_name] = goal
+                    else:
+                        prop_info = properties[prop_name] or {}
+                        if prop_info.get("type") == "string":
+                            args[prop_name] = goal
+
+            if not args:
+                lowered_skill = skill.lower()
+                if "search" in lowered_skill or "find" in lowered_skill or "lookup" in lowered_skill:
+                    args = {"query": self._extract_search_query(goal)}
+                elif "browser" in lowered_skill or "url" in lowered_skill or "web" in lowered_skill:
+                    url = self._extract_url(goal)
+                    args = {"url": url} if url else {"query": goal}
+                elif "clock" in lowered_skill or "time" in lowered_skill:
+                    args = {}
+                else:
+                    args = {"content": goal}
+
+            return TaskPlan(
+                plan_id=plan_id,
+                goal=goal,
+                steps=[
+                    TaskStep(
+                        step_id=f"{plan_id}_s0",
+                        description=f"Execute fallback action for '{skill}' capability.",
+                        tool=skill,
+                        args=args,
+                        success_criterion="step completes without error",
+                    )
+                ],
+                trace_id="",
+                context=dict(context or {}),
+            )
+
         return None
 
     def _build_grounded_fallback_plan(
