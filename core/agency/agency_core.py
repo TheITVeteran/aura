@@ -988,33 +988,49 @@ class AgencyCore:
         return None
 
     def _trigger_phenomenological_pulse(self):
-        """Triggers the background reflection loop."""
+        """Triggers the phenomenal substrate heartbeat and routes to downstream systems.
+
+        This is where Aura's interoceptive affect machinery runs. The phenomenal
+        substrate generates a state that is causally active: it changes what Aura
+        notices, remembers, seeks, protects, and decides.
+
+        This replaces the old self_report-based reflection with the active-inference
+        phenomenal substrate (v0.2).
+        """
         try:
-            from core.consciousness.self_report import SelfReportEngine
-            reporter = SelfReportEngine()
-            affect = reporter.get_affect_description()
+            # Get the phenomenal integrator singleton
+            from core.affect.phenomenal_integration import get_phenomenal_integrator
+            import asyncio
 
-            pad = {
-                'P': affect.get('valence', 0.0),
-                'A': affect.get('arousal', 0.5),
-                'D': 0.5
-            }
+            async def _run_phenomenal_pulse():
+                integrator = await get_phenomenal_integrator()
+                # Run phenomenal engine with orchestrator observations
+                state = await integrator.pulse_from_orchestrator(
+                    orchestrator=self.orch,
+                    event_label="heartbeat",
+                    person_key=getattr(self, "current_user_key", None),
+                )
+                if state:
+                    logger.debug(
+                        "Phenomenal state [t=%d]: valence=%.2f arousal=%.2f "
+                        "presence=%.2f workspace=%s",
+                        state.t,
+                        state.valence,
+                        state.arousal,
+                        state.self_presence,
+                        state.global_broadcast.get("workspace", "unknown"),
+                    )
+                return state
 
-            recent_events = []
-            if hasattr(self, 'swarm'):
-                recent_events.extend([v.get_name() for v in self.swarm.active_shards.values()])
-
-            obs = self.state.unshared_observations
-            n_obs = len(obs)
-            recent_events.extend([obs[i] for i in range(max(0, n_obs - 3), n_obs)])
-
+            # Schedule the phenomenal pulse as a background task
             _schedule_agency_task(
-                self.phenomenology.reflect(pad, recent_events),
-                name="agency.phenomenology.reflect",
+                _run_phenomenal_pulse(),
+                name="agency.phenomenal.pulse",
             )
+
         except _AGENCY_BOUNDARY_ERRORS as e:
-            _record_agency_degradation(e, action="phenomenology pulse skipped")
-            logger.debug("Failed to trigger phenomenology pulse: %s", e)
+            _record_agency_degradation(e, action="phenomenal pulse skipped")
+            logger.debug("Failed to trigger phenomenal pulse: %s", e)
 
     def heartbeat(self) -> None:
         """Alias for heartbeat monitor / watchdog (Sync wrapper)."""

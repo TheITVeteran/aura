@@ -11,10 +11,17 @@ Critical invariant:
   - Language generation may read the state but cannot write to it.
   - Removing the phenomenal engine must visibly degrade planning, memory
     prioritization, and self-regulation.
+
+Integration points:
+  - Called from AgencyCore.pulse() every heartbeat
+  - Collects RuntimeBody observations from orchestrator/runtime
+  - Returns ExperienceState that routes to downstream systems
+  - Tracks attachment events for bond model
 """
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from core.phenomenal_substrate import (
@@ -272,6 +279,247 @@ class PhenomenalIntegrator:
         if self.last_state is None:
             return {}
         return self.last_state.memory_weights
+
+    def collect_observations(self, orchestrator: Optional[Any] = None) -> Dict[str, float]:
+        """Collect RuntimeBody observations from the orchestrator and runtime.
+
+        If orchestrator is provided, use it to fetch real state. Otherwise,
+        return safe defaults that won't break the loop.
+        """
+        observations = {
+            "energy": 0.75,
+            "continuity": 0.75,
+            "agency": 0.60,
+            "safety": 0.80,
+            "social_contact": 0.50,
+            "novelty": 0.20,
+            "uncertainty": 0.25,
+            "compute_pressure": 0.20,
+            "memory_pressure": 0.20,
+            "error_pressure": 0.20,
+        }
+
+        if orchestrator is None:
+            return observations
+
+        try:
+            # Energy: CPU utilization, available processing
+            try:
+                resilience = orchestrator.resilience_engine if hasattr(orchestrator, 'resilience_engine') else None
+                if resilience and hasattr(resilience, 'profile'):
+                    observations["energy"] = max(0.1, getattr(resilience.profile, 'persistence_drive', 0.75))
+                else:
+                    ls = getattr(orchestrator, 'liquid_state', None)
+                    if ls and hasattr(ls, 'current'):
+                        observations["energy"] = max(0.1, getattr(ls.current, 'energy', 0.75))
+            except Exception as exc:
+                logger.debug("Failed to collect energy observation: %s", exc)
+
+            # Continuity: Self-model identity coherence
+            try:
+                self_model = orchestrator.self_model if hasattr(orchestrator, 'self_model') else None
+                if self_model and hasattr(self_model, 'identity_coherence'):
+                    observations["continuity"] = self_model.identity_coherence()
+            except Exception as exc:
+                logger.debug("Failed to collect continuity observation: %s", exc)
+
+            # Agency: Sense of control from planner
+            try:
+                planner = orchestrator.planner if hasattr(orchestrator, 'planner') else None
+                if planner and hasattr(planner, 'actionability'):
+                    observations["agency"] = planner.actionability()
+            except Exception as exc:
+                logger.debug("Failed to collect agency observation: %s", exc)
+
+            # Safety: Governance/safety constraints
+            try:
+                governance = orchestrator.governance if hasattr(orchestrator, 'governance') else None
+                if governance and hasattr(governance, 'safety_score'):
+                    observations["safety"] = governance.safety_score()
+            except Exception as exc:
+                logger.debug("Failed to collect safety observation: %s", exc)
+
+            # Social contact: Recent trust/interaction signals
+            try:
+                social = orchestrator.social_engine if hasattr(orchestrator, 'social_engine') else None
+                if social and hasattr(social, 'recent_trust_signal'):
+                    observations["social_contact"] = social.recent_trust_signal()
+            except Exception as exc:
+                logger.debug("Failed to collect social observation: %s", exc)
+
+            # Novelty: Newness in current perception
+            try:
+                perception = orchestrator.perception if hasattr(orchestrator, 'perception') else None
+                if perception and hasattr(perception, 'novelty_score'):
+                    observations["novelty"] = perception.novelty_score()
+            except Exception as exc:
+                logger.debug("Failed to collect novelty observation: %s", exc)
+
+            # Uncertainty: Model uncertainty about next state
+            try:
+                world_model = orchestrator.world_model if hasattr(orchestrator, 'world_model') else None
+                if world_model and hasattr(world_model, 'prediction_uncertainty'):
+                    observations["uncertainty"] = world_model.prediction_uncertainty()
+            except Exception as exc:
+                logger.debug("Failed to collect uncertainty observation: %s", exc)
+
+            # Compute pressure: Runtime load
+            try:
+                runtime = orchestrator.runtime if hasattr(orchestrator, 'runtime') else None
+                if runtime and hasattr(runtime, 'compute_load'):
+                    observations["compute_pressure"] = runtime.compute_load()
+            except Exception as exc:
+                logger.debug("Failed to collect compute_pressure observation: %s", exc)
+
+            # Memory pressure: Memory system pressure
+            try:
+                memory = orchestrator.memory if hasattr(orchestrator, 'memory') else None
+                if memory and hasattr(memory, 'pressure_score'):
+                    observations["memory_pressure"] = memory.pressure_score()
+            except Exception as exc:
+                logger.debug("Failed to collect memory_pressure observation: %s", exc)
+
+            # Error pressure: Accumulated errors/failures
+            try:
+                from core.runtime.errors import get_degradation_score
+                observations["error_pressure"] = get_degradation_score()
+            except Exception as exc:
+                logger.debug("Failed to collect error_pressure observation: %s", exc)
+
+        except Exception as exc:
+            logger.exception("Observation collection failed, using defaults: %s", exc)
+
+        return observations
+
+    async def pulse_from_orchestrator(
+        self,
+        orchestrator: Optional[Any] = None,
+        event_label: str = "heartbeat",
+        person_key: Optional[str] = None,
+    ) -> Optional[ExperienceState]:
+        """Run phenomenal engine step from orchestrator context.
+
+        This is the main integration point called from AgencyCore.pulse().
+        It collects real observations and returns a state that routes to
+        downstream systems.
+
+        Args:
+            orchestrator: Aura's orchestrator object (can be None for graceful fallback)
+            event_label: What event triggered this step (e.g., "heartbeat", "user_input")
+            person_key: Which user/person is in context
+
+        Returns:
+            ExperienceState or None if operation failed.
+        """
+        try:
+            # Collect observations from orchestrator
+            obs = self.collect_observations(orchestrator)
+
+            # Try to extract event-level observations
+            goal_delta = 0.0
+            threat = 0.0
+            affiliation = 0.0
+            control_gain = 0.0
+
+            if orchestrator:
+                try:
+                    planner = getattr(orchestrator, 'planner', None)
+                    if planner and hasattr(planner, 'goal_delta'):
+                        goal_delta = planner.goal_delta()
+                except Exception as exc:
+                    logger.debug("Failed to collect goal_delta: %s", exc)
+
+                try:
+                    governance = getattr(orchestrator, 'governance', None)
+                    if governance and hasattr(governance, 'threat_assessment'):
+                        threat = governance.threat_assessment()
+                except Exception as exc:
+                    logger.debug("Failed to collect threat: %s", exc)
+
+            # Run phenomenal step
+            state = await self.step(
+                energy=obs["energy"],
+                continuity=obs["continuity"],
+                agency=obs["agency"],
+                safety=obs["safety"],
+                social_contact=obs["social_contact"],
+                novelty=obs["novelty"],
+                uncertainty=obs["uncertainty"],
+                compute_pressure=obs["compute_pressure"],
+                memory_pressure=obs["memory_pressure"],
+                error_pressure=obs["error_pressure"],
+                event_label=event_label,
+                event_source="orchestrator",
+                goal_delta=goal_delta,
+                threat=threat,
+                affiliation=affiliation,
+                control_gain=control_gain,
+                person_key=person_key,
+                recurrent_cycles=7,
+            )
+
+            # Try to route to downstream systems if they're available
+            if orchestrator:
+                try:
+                    await self._route_to_downstream(orchestrator, state)
+                except Exception as exc:
+                    logger.debug("Failed to route phenomenal state downstream: %s", exc)
+
+            return state
+
+        except Exception as exc:
+            logger.exception("pulse_from_orchestrator failed: %s", exc)
+            return None
+
+    async def _route_to_downstream(
+        self, orchestrator: Any, state: ExperienceState
+    ) -> None:
+        """Route the phenomenal state to downstream systems.
+
+        This makes the phenomenal state causally active:
+        - policy_priors guide planner goal selection
+        - memory_weights determine consolidation priority
+        - global_broadcast routes attention resources
+        """
+        try:
+            # Route to planner
+            planner = getattr(orchestrator, 'planner', None)
+            if planner and hasattr(planner, 'consume_affect'):
+                planner.consume_affect(state)
+                logger.debug("Routed phenomenal state to planner")
+        except Exception as exc:
+            logger.debug("Failed to route to planner: %s", exc)
+
+        try:
+            # Route to memory
+            memory = getattr(orchestrator, 'memory', None)
+            if memory and hasattr(memory, 'set_write_weights'):
+                memory.set_write_weights(state.memory_weights)
+                logger.debug("Routed phenomenal memory_weights to memory system")
+        except Exception as exc:
+            logger.debug("Failed to route to memory: %s", exc)
+
+        try:
+            # Route to attention
+            attention = getattr(orchestrator, 'attention', None)
+            if attention and hasattr(attention, 'route'):
+                attention.route(state.global_broadcast)
+                logger.debug("Routed phenomenal broadcast to attention system")
+        except Exception as exc:
+            logger.debug("Failed to route to attention: %s", exc)
+
+        try:
+            # Update self-model
+            self_model = getattr(orchestrator, 'self_model', None)
+            if self_model and hasattr(self_model, 'update_presence'):
+                self_model.update_presence(
+                    self_presence=state.self_presence,
+                    mineness=state.mineness,
+                    integration=state.integration,
+                )
+                logger.debug("Updated self-model with phenomenal presence")
+        except Exception as exc:
+            logger.debug("Failed to route to self-model: %s", exc)
 
 
 async def get_phenomenal_integrator() -> PhenomenalIntegrator:
