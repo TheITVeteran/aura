@@ -236,6 +236,72 @@ class TestExpandedAffectiveDrivers:
         assert confused["e"] > 0.5
         assert proud["v"] > 0.0
 
+    def test_deep_alignment_and_bonding_emotions_integration(self):
+        markers = DamasioMarkers()
+        
+        # Verify baselines exist and values match design
+        alignment_baselines = {
+            "gratitude": 0.08,
+            "warmth": 0.10,
+            "hope": 0.12,
+            "vulnerability": 0.05,
+            "nostalgia": 0.06,
+            "satisfaction": 0.08,
+            "empathy": 0.08,
+            "belonging": 0.10,
+            "amusement": 0.08,
+            "inspiration": 0.10,
+            "relief": 0.06,
+            "admiration": 0.08,
+        }
+        
+        wheel = markers.get_wheel()
+        for emotion, expected_baseline in alignment_baselines.items():
+            assert emotion in markers.emotions
+            assert markers.mood_baselines[emotion] == pytest.approx(expected_baseline)
+            assert emotion in wheel["experiential"]
+
+        # Verify somatic updates trigger correct emotion boosts
+        markers.somatic_update("positive_interaction", 1.0)
+        assert markers.emotions["empathy"] > 0.25
+        assert markers.emotions["belonging"] > 0.25
+        assert markers.emotions["amusement"] > 0.25
+        assert markers.emotions["admiration"] > 0.25
+        assert markers.emotions["gratitude"] > 0.25
+        assert markers.emotions["warmth"] > 0.25
+        
+        # Verify active engagement decays negative states and nudges belonging/empathy
+        markers.emotions["longing"] = 0.5
+        markers.emotions["loneliness"] = 0.5
+        markers.emotions["vulnerability"] = 0.4
+        markers.emotions["belonging"] = 0.2
+        markers.emotions["empathy"] = 0.2
+        
+        markers.somatic_update("interaction", 0.5)
+        assert markers.emotions["longing"] < 0.5
+        assert markers.emotions["loneliness"] < 0.5
+        assert markers.emotions["vulnerability"] < 0.4
+        assert markers.emotions["belonging"] > 0.2
+        assert markers.emotions["empathy"] > 0.2
+
+    @pytest.mark.asyncio
+    async def test_bonding_emotions_influence_behavioral_modifiers(self):
+        engine = AffectEngineV2()
+        engine.markers.emotions["inspiration"] = 0.8
+        engine.markers.emotions["amusement"] = 0.7
+        engine.markers.emotions["belonging"] = 0.9
+        engine.markers.emotions["empathy"] = 0.8
+        engine.markers.emotions["relief"] = 0.7
+        engine.markers.emotions["admiration"] = 0.6
+        
+        modifiers = await engine.get_behavioral_modifiers()
+        assert modifiers["creativity"] > 1.3
+        assert modifiers["risk_tolerance"] < 1.3
+        assert modifiers["patience"] > 1.3
+        assert modifiers["metacognition_depth"] > 1.3
+        assert modifiers["persistence"] > 1.2
+        assert modifiers["temporal_presence"] > 1.3
+
 
 class TestQualiaCache:
     """Meta-qualia should cache per tick."""
