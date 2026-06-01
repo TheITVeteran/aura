@@ -1619,10 +1619,17 @@ def _reap_orphaned_aura_processes() -> int:
             continue
         if current_user and user != current_user:
             continue
-        if "aura_main.py" not in cmd:
+        # Target main orchestrator, GUI actors, and MLX workers owned by this user
+        is_stale_aura = (
+            "aura_main.py" in cmd
+            or "gui_actor.py" in cmd
+            or "mlx_worker" in cmd
+            or "MLXWorker" in cmd
+        )
+        if not is_stale_aura:
             continue
-        # Skip launcher/reaper children; we only want the top-level orchestrator.
-        if "gui_actor.py" in cmd or "reaper" in cmd.lower():
+        # Skip this launcher/reaper context
+        if "reaper" in cmd.lower():
             continue
         stale_pids.append(pid)
     try:
