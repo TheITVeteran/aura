@@ -2895,16 +2895,16 @@ class MLXLocalClient:
                 self._mark_progress()
                 self._last_generation_completed_at = time.time()
                 if not text:
-                    # Empty generation: log as debug, not warning. During warmup
-                    # or short max_tokens requests, empty output is NORMAL — the
-                    # model compiled its Metal shaders successfully even if it
-                    # didn't produce text. Don't crash the lane to "recovering".
+                    # Empty warmup can prove process/shader liveness, but it
+                    # cannot prove conversation readiness. Keep the lane out of
+                    # "ready" until a visible generation succeeds.
                     is_warmup = getattr(self, "_warmup_in_flight", False)
                     if is_warmup:
-                        logger.debug(
-                            "MLX warmup produced empty text — benign (shader precompile succeeded)."
+                        logger.info(
+                            "MLX warmup produced empty text — shader precompile may be complete, "
+                            "but conversation readiness still requires a visible response."
                         )
-                        self._set_lane_state("ready")
+                        self._set_lane_state("warming", "warmup_precompile_no_text")
                         return ""
                     self._record_degraded_event(
                         "empty_generation",
@@ -3190,22 +3190,30 @@ class MLXLocalClient:
                     ),
                     timeout=warmup_timeout + (10.0 * attempt),
                 )
-                # max_tokens=1 against a fresh worker often returns "" (empty
-                # generation) or None (no payload from the IPC channel before
-                # Metal kernels finish compiling). Both states mean the same
-                # thing operationally: the worker is alive, weights are
-                # resident, and shader compile took place. Only a hard worker
-                # death should fail warmup — verify with is_alive() instead of
-                # treating None as fatal, which previously caused a reboot
-                # loop on every cold start.
                 if warmup_text is None and not self.is_alive():
                     raise RuntimeError("warmup_precompile_worker_dead")
                 if not warmup_text or not str(warmup_text).strip():
                     logger.info(
-                        "🔥 [MLX] Warmup produced no visible text for %s — worker is alive, treating shader precompile as successful.",
+                        "🔥 [MLX] Warmup produced no visible text for %s — verifying conversation readiness with a visible probe.",
                         os.path.basename(self.model_path),
                     )
+                    readiness_text = await asyncio.wait_for(
+                        self._generate_inner(
+                            "Reply exactly: ready",
+                            _retry=True,
+                            request_is_background=request_is_background,
+                            foreground_request=foreground_request,
+                            owner_label=owner_name,
+                            max_tokens=8,
+                            temp=0.0,
+                        ),
+                        timeout=min(max(10.0, warmup_timeout), 60.0),
+                    )
+                    if not readiness_text or not str(readiness_text).strip():
+                        self._set_lane_state("recovering", "warmup_readiness_no_text")
+                        raise RuntimeError("warmup_readiness_no_text")
                 self._set_lane_state("ready")
+                self._last_ready_at = time.time()
                 logger.info("🔥 [MLX] Warmup complete — Metal shaders compiled.")
                 return
             except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:

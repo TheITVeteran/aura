@@ -782,14 +782,14 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(current_future.done())
 
-    async def test_warmup_precompile_accepts_empty_text_as_successful_compile(self):
+    async def test_warmup_precompile_requires_visible_readiness_after_empty_compile(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._warmup_in_flight = True
         client._process = MagicMock()
         client._process.is_alive.return_value = True
         client._init_done = True
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(return_value="")):
+        with patch.object(client, "_generate_inner", new=AsyncMock(side_effect=["", "ready"])):
             await client._run_warmup_precompile(
                 request_is_background=False,
                 foreground_request=True,
@@ -798,6 +798,29 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(client.get_lane_status()["state"], "ready")
+        self.assertTrue(client.get_lane_status()["conversation_ready"])
+
+    async def test_warmup_precompile_rejects_empty_readiness_probe(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._warmup_in_flight = True
+        client._process = MagicMock()
+        client._process.is_alive.return_value = True
+        client._init_done = True
+
+        with patch.object(client, "_generate_inner", new=AsyncMock(side_effect=["", "", "", ""])):
+            with patch.object(client, "reboot_worker", new=AsyncMock()):
+                with self.assertRaises(RuntimeError):
+                    await client._run_warmup_precompile(
+                        request_is_background=False,
+                        foreground_request=True,
+                        owner_name="warmup:test",
+                        warmup_timeout=1.0,
+                    )
+
+        lane = client.get_lane_status()
+        self.assertEqual(lane["state"], "recovering")
+        self.assertFalse(lane["conversation_ready"])
+        self.assertEqual(lane["last_error"], "warmup_readiness_no_text")
 
     async def test_foreground_empty_generation_marks_recoverable_reboot(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

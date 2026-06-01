@@ -1113,7 +1113,7 @@ class LocalServerClient:
                 foreground_request=request_is_foreground,
                 owner_label=f"warmup:{self._lane_name}",
             )
-            if text is not None:
+            if text and text.strip():
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
                 logger.info("✅ [%s] Local runtime warmup complete.", self._lane_name)
@@ -1456,11 +1456,10 @@ class LocalServerClient:
                 is_warmup = bool(self._warmup_in_flight)
                 if is_warmup:
                     logger.debug(
-                        "[%s] Empty warmup generation treated as benign runtime precompile.",
+                        "[%s] Empty warmup generation did not prove conversation readiness.",
                         self._lane_name,
                     )
-                    self._set_lane_state("ready")
-                    self._last_ready_at = time.time()
+                    self._set_lane_state("warming", "warmup_no_visible_text")
                     return ""
 
                 self._record_degraded_event(

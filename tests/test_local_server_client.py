@@ -225,7 +225,7 @@ async def test_response_parser_handles_part_arrays_and_reasoning_fallback():
 
 
 @pytest.mark.asyncio
-async def test_warmup_treats_empty_generation_as_benign_runtime_readiness():
+async def test_warmup_rejects_empty_generation_as_runtime_readiness():
     client = LocalServerClient(QWEN32_GGUF)
     client._ensure_runtime_ready = AsyncMock(return_value=True)
 
@@ -243,7 +243,10 @@ async def test_warmup_treats_empty_generation_as_benign_runtime_readiness():
 
     await client.warmup()
 
-    assert client.get_lane_status()["state"] == "ready"
+    lane = client.get_lane_status()
+    assert lane["state"] == "recovering"
+    assert lane["conversation_ready"] is False
+    assert lane["last_error"] == "warmup_no_text"
 
 
 @pytest.mark.asyncio
