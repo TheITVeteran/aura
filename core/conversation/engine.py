@@ -382,6 +382,25 @@ class ConversationEngine:
         # 2. Add to Rolling History
         context.add_message(role="user", content=message, msg_type=MessageType.SPEECH)
 
+        # Trigger affective reaction in AffectEngineV2 based on user input
+        affect = None
+        try:
+            from core.container import ServiceContainer
+            affect = ServiceContainer.get("affect_engine", default=None)
+            if affect:
+                lowered_msg = message.lower()
+                # Check for positive indicators or check-in markers
+                if any(w in lowered_msg for w in ["thank", "awesome", "great", "love", "like", "friend", "happy", "wonder", "excellent", "fixed", "success", "work"]):
+                    stimulus = "positive_interaction"
+                elif context.turn_count > 5:
+                    stimulus = "extended_dialogue"
+                else:
+                    stimulus = "interaction"
+                
+                await affect.react(stimulus, {"intensity": 0.6})
+        except Exception as affect_exc:
+            logger.debug("Failed to trigger affective reaction: %s", affect_exc)
+
         # 3. Assemble Cognitive Payload
         cognitive_payload = {
             "personality": self.personality.to_prompt_context(),
@@ -442,6 +461,30 @@ class ConversationEngine:
 
             # Record Aura's Speech output to history
             context.add_message(role="aura", content=final_response, msg_type=MessageType.SPEECH)
+
+            # Record emotional snapshot in the user's persistent relationship model
+            try:
+                from core.social.relationship_model import get_store
+                rel_store = get_store()
+                user_name = "Bryan"  # default user name for active desktop session
+                dossier = rel_store.get_or_create(user_name, name=user_name)
+                
+                # Fetch emotional snapshot from AffectEngineV2
+                if affect:
+                    snapshot = affect.get_snapshot()
+                    rel_store.record_interaction_affect(
+                        dossier.relationship_id,
+                        {
+                            "when": time.time(),
+                            "dominant_emotion": snapshot.get("emotions", {}).get("dominant_emotion", "Neutral"),
+                            "valence": snapshot.get("valence", 0.0),
+                            "arousal": snapshot.get("arousal", 0.3),
+                            "physiology": snapshot.get("physiology", {}),
+                            "emotions": snapshot.get("emotions", {})
+                        }
+                    )
+            except Exception as dossier_exc:
+                logger.debug("Failed to record interaction affect in dossier: %s", dossier_exc)
 
             try:
                 if self.episodic_memory:
