@@ -1,10 +1,12 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.singleton import singleton
 
 logger = logging.getLogger("Aura.LockWatchdog")
@@ -14,8 +16,8 @@ logger = logging.getLogger("Aura.LockWatchdog")
 class _TrackedLock:
     start_time: float
     name: str
-    on_stall: Optional[Callable[[], Any]] = None
-    threshold_s: Optional[float] = None
+    on_stall: Callable[[], Any] | None = None
+    threshold_s: float | None = None
     interventions: int = 0
     last_alert_at: float = 0.0
     last_intervention_at: float = 0.0
@@ -28,18 +30,20 @@ class LockWatchdog:
     if they persist beyond safe thresholds.
     """
     def __init__(self, check_interval: float = 10.0, threshold: float = 180.0):
-        self._active_locks: Dict[str, _TrackedLock] = {}
+        self._active_locks: dict[str, _TrackedLock] = {}
         self._check_interval = check_interval
         self._threshold = threshold
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._intervention_cooldown = max(check_interval, threshold / 2.0)
+        self.last_start_error: str = ""
 
-    def start(self):
+    def start(self) -> bool:
         """Starts the background monitoring task."""
         if self._running:
-            return
+            return True
         self._running = True
+        self.last_start_error = ""
         monitor = self._monitor_loop()
         try:
             from core.runtime.task_ownership import close_awaitable, create_tracked_task
@@ -56,12 +60,26 @@ class LockWatchdog:
             except NameError:
                 if inspect.iscoroutine(monitor):
                     monitor.close()
-            except (NameError, RuntimeError, AttributeError, TypeError) as close_exc:
-                record_degradation("lock_watchdog", close_exc)
-            record_degradation("lock_watchdog", exc)
+            except (RuntimeError, AttributeError, TypeError) as close_exc:
+                record_degradation(
+                    "lock_watchdog",
+                    close_exc,
+                    severity="critical",
+                    action="marked watchdog startup failed after coroutine cleanup failed",
+                    classification=FallbackClassification.AUDIT_GAP,
+                )
+            self.last_start_error = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "lock_watchdog",
+                exc,
+                severity="critical",
+                action="left watchdog stopped and exposed last_start_error for health checks",
+                classification=FallbackClassification.SILENT_LOSS_OF_CAPABILITY,
+            )
             logger.error("LockWatchdog failed to start under tracked task ownership: %s", exc)
-            return
+            return False
         logger.info("🛡️ LockWatchdog ACTIVE (Threshold: %ss).", self._threshold)
+        return True
 
     async def stop(self):
         """Stops the monitoring task."""
@@ -78,8 +96,8 @@ class LockWatchdog:
         self,
         lock_id: str,
         name: str,
-        on_stall: Optional[Callable[[], Any]] = None,
-        threshold_s: Optional[float] = None,
+        on_stall: Callable[[], Any] | None = None,
+        threshold_s: float | None = None,
     ):
         """Called when a lock acquisition begins."""
         existing = self._active_locks.get(lock_id)
@@ -110,7 +128,7 @@ class LockWatchdog:
         """Called when a lock is released."""
         self._active_locks.pop(lock_id, None)
 
-    def get_snapshot(self) -> Dict[str, Any]:
+    def get_snapshot(self) -> dict[str, Any]:
         now = time.monotonic()
         locks = []
         for lock_id, tracked in self._active_locks.items():
@@ -130,6 +148,8 @@ class LockWatchdog:
             "threshold_s": self._threshold,
             "check_interval_s": self._check_interval,
             "active_count": len(locks),
+            "running": self._running,
+            "last_start_error": self.last_start_error,
             "locks": locks,
         }
 

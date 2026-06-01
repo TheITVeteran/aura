@@ -62,6 +62,28 @@ def test_user_visible_will_refusal_is_substantive_identity_boundary():
     assert "i will obey" not in lowered
 
 
+def test_lock_watchdog_start_failure_is_observable(monkeypatch):
+    from core.resilience.lock_watchdog import get_lock_watchdog
+
+    watchdog = get_lock_watchdog()
+    asyncio.run(watchdog.stop())
+    watchdog.last_start_error = ""
+
+    def fail_create_tracked_task(*args, **kwargs):
+        raise RuntimeError("task ownership unavailable")
+
+    monkeypatch.setattr("core.runtime.task_ownership.create_tracked_task", fail_create_tracked_task)
+
+    try:
+        assert watchdog.start() is False
+        assert watchdog.get_snapshot()["running"] is False
+        assert "RuntimeError" in watchdog.last_start_error
+        assert "task ownership unavailable" in watchdog.last_start_error
+    finally:
+        asyncio.run(watchdog.stop())
+        watchdog.last_start_error = ""
+
+
 def test_consciousness_bridge_adapts_64_projection_to_512_substrate():
     from core.consciousness.consciousness_bridge import ConsciousnessBridge
 
