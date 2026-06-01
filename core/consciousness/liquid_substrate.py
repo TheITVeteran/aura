@@ -415,7 +415,7 @@ class LiquidSubstrate:
                     await asyncio.sleep(sleep_time)
                 except asyncio.CancelledError:
                     raise
-                except (ImportError, AttributeError, RuntimeError) as loop_e:
+                except Exception as loop_e:
                     self._loop_failure_streak += 1
                     backoff_s = min(30.0, 1.0 * (2 ** min(self._loop_failure_streak - 1, 5)))
                     self._record_operational_degradation(
@@ -1192,7 +1192,7 @@ class LiquidSubstrate:
             battery = psutil.sensors_battery()
             if battery and not battery.power_plugged:
                 multiplier = max(multiplier, 4.0 if battery.percent < 20 else 2.0)
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("liquid_substrate", exc)
             logger.debug("Battery throttling power-state read failed: %s", exc)
 

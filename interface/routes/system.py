@@ -27,6 +27,7 @@ from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 from core.runtime.errors import record_degradation
 from core.runtime_tools import get_runtime_state
 from core.scheduler import scheduler
+import subprocess
 from core.version import VERSION, version_string
 from interface.auth import _require_internal, _restore_owner_session_from_request
 from interface.websocket_manager import broadcast_bus, ws_manager
@@ -45,6 +46,7 @@ _SYSTEM_RECOVERABLE_ERRORS = (
     asyncio.QueueFull,
     json.JSONDecodeError,
     psutil.Error,
+    subprocess.SubprocessError,
 )
 
 
@@ -601,7 +603,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                 try:
                     text = skill._read_menu_clock_macos()
                     return {"ready": True, "text": text[:240]}
-                except _SYSTEM_RECOVERABLE_ERRORS as exc:
+                except Exception as exc:
                     record_degradation('system', exc)
                     return {"ready": False, "error": str(exc)[:240]}
 

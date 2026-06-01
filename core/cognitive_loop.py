@@ -143,7 +143,7 @@ class CognitiveLoop:
                 await self._recover_from_stall()
                 if self.is_running:
                     await asyncio.sleep(1.0)
-            except _COGNITIVE_LOOP_RECOVERABLE_ERRORS as e:
+            except Exception as e:
                 _record_cognitive_loop_degradation(
                     e,
                     action="kept cognitive loop alive after failed cycle and applied backoff",
