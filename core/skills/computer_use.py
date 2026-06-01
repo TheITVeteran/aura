@@ -849,9 +849,25 @@ end tell
         """Read the live menu bar clock through System Events."""
         script = """
 tell application "System Events"
-    tell process "SystemUIServer"
-        return name of first menu bar item of menu bar 1 whose description is "Clock"
-    end tell
+    try
+        if exists process "ControlCenter" then
+            tell process "ControlCenter"
+                set clockItem to first menu bar item of menu bar 1 whose description is "Clock"
+                set clockVal to value of clockItem
+                if clockVal is not missing value then
+                    return clockVal
+                end if
+            end tell
+        end if
+    end try
+    try
+        if exists process "SystemUIServer" then
+            tell process "SystemUIServer"
+                return name of first menu bar item of menu bar 1 whose description is "Clock"
+            end tell
+        end if
+    end try
+    error "Clock menu bar item not found via ControlCenter or SystemUIServer."
 end tell
 """
         return self._run_applescript(script, timeout=10)[:240]
