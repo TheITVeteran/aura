@@ -143,8 +143,10 @@ class MetabolicMonitor:
                 action="using conservative metabolic RAM threshold after host RAM probe failed",
                 severity="warning",
             )
-            total_ram_mb = 8192.0
-        return max(8192, int(min(total_ram_mb * 0.70, max(8192.0, total_ram_mb - 8192.0))))
+            total_ram_mb = 12288.0
+        # Scale to 85% of physical RAM while leaving at least 4 GB for the OS (with a baseline minimum of 12 GB).
+        # This prevents false alarms on M-series Macs running local models with large weight footprints.
+        return max(12288, int(min(total_ram_mb * 0.85, max(12288.0, total_ram_mb - 4096.0))))
 
     def start(self, interval: float = 5.0) -> None:
         """Start the background monitoring thread."""

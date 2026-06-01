@@ -288,7 +288,7 @@ def test_metabolic_monitor_default_ram_threshold_scales_for_primary_model_lane(m
 
     monitor = metabolic_module.MetabolicMonitor()
 
-    assert monitor.ram_threshold_mb == 45875
+    assert monitor.ram_threshold_mb == 55705
     assert (
         monitor._classify_pressure(
             cpu_percent=20.0,

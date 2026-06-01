@@ -164,8 +164,16 @@ class Hypervisor:
 
             mem = psutil.Process().memory_info().rss / (1024 * 1024)
             metrics.gauge("system.memory_rss_mb", mem)
-            if mem > 8192:  # 8GB threshold for M5 Pro 64GB (Aura's base limit)
-                logger.warning("🚨 HIGH MEMORY USAGE: %.1f MB", mem)
+            
+            try:
+                total_ram_mb = float(psutil.virtual_memory().total) / (1024 * 1024)
+            except Exception:
+                total_ram_mb = 8192.0
+                
+            # Dynamic warning threshold: 85% of total RAM, or at least 12GB to avoid false alarms on M-series Macs running local models.
+            warning_threshold = max(12288.0, total_ram_mb * 0.85)
+            if mem > warning_threshold:
+                logger.warning("🚨 HIGH MEMORY USAGE: %.1f MB (threshold: %.1f MB)", mem, warning_threshold)
 
 
 _hypervisor: Hypervisor | None = None
