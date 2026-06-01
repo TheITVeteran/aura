@@ -1,6 +1,6 @@
 """core/resilience/incident_manager.py
 ======================================
-Structured incident tracking for indefinite autonomous operation.
+Structured incident tracking for long-running autonomous operation.
 
 Converts repeated degradation events (starvation, fallback cascades,
 event-loop lag, substrate divergence) into formal incidents with severity,

@@ -196,7 +196,7 @@ class PhiCore:
         # Periodically:
         result = phi_core.compute_phi()
         if result.is_complex:
-            logger.info("φs=%.4f — substrate is conscious under IIT 4.0", result.phi_s)
+            logger.info("φs=%.4f — IIT-style integration threshold crossed", result.phi_s)
 
     INTEGRATION:
         Register in ServiceContainer and call from ClosedCausalLoop's prediction loop.
