@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v1`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1780346749.7560341`
+Generated: `1780353955.4373481`
 
 ## Summary
 
 - Subsystems: 126
 - Python files: 1617
-- Python lines: 469759
+- Python lines: 469877
 - Dependency edges: 696
 - ServiceContainer `.get()` calls: 1481
 - ServiceContainer registrations: 352
@@ -19,14 +19,14 @@ Generated: `1780346749.7560341`
 graph TD
     runtime["runtime<br/>92 files, 20657 lines"]
     utils["utils<br/>41 files, 5144 lines"]
-    brain["brain<br/>115 files, 43167 lines"]
+    brain["brain<br/>115 files, 43174 lines"]
     consciousness["consciousness<br/>128 files, 59421 lines"]
     resilience["resilience<br/>53 files, 11146 lines"]
     health["health<br/>3 files, 838 lines"]
-    memory["memory<br/>75 files, 18232 lines"]
+    memory["memory<br/>75 files, 18272 lines"]
     agency["agency<br/>28 files, 14319 lines"]
     adaptation["adaptation<br/>26 files, 11869 lines"]
-    affect["affect<br/>6 files, 2896 lines"]
+    affect["affect<br/>6 files, 2924 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     self_modification["self_modification<br/>29 files, 10469 lines"]
     senses["senses<br/>23 files, 5012 lines"]
@@ -39,7 +39,7 @@ graph TD
     world_model["world_model<br/>9 files, 2541 lines"]
     executive["executive<br/>4 files, 2317 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
-    autonomy["autonomy<br/>22 files, 7638 lines"]
+    autonomy["autonomy<br/>22 files, 7672 lines"]
     phases["phases<br/>29 files, 17204 lines"]
     actuators["actuators<br/>9 files, 2132 lines"]
     conversation["conversation<br/>8 files, 4129 lines"]
@@ -123,7 +123,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 55550 lines"]
+    core_root["core_root<br/>182 files, 55559 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -846,11 +846,11 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 128 | 59421 | 2502477 | 37 | 29 |
-| core_root | 182 | 55550 | 2259246 | 100 | 0 |
-| brain | 115 | 43167 | 1866959 | 40 | 39 |
+| core_root | 182 | 55559 | 2259405 | 100 | 0 |
+| brain | 115 | 43174 | 1867248 | 40 | 39 |
 | runtime | 92 | 20657 | 728439 | 39 | 104 |
 | orchestrator | 42 | 18768 | 828735 | 123 | 9 |
-| memory | 75 | 18232 | 738405 | 17 | 21 |
+| memory | 75 | 18272 | 739968 | 17 | 21 |
 | phases | 29 | 17204 | 777909 | 32 | 7 |
 | skills | 76 | 15566 | 628432 | 28 | 6 |
 | agency | 28 | 14319 | 580329 | 28 | 17 |
@@ -859,7 +859,7 @@ graph TD
 | self_modification | 29 | 10469 | 414230 | 11 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8097 | 329816 | 9 | 4 |
-| autonomy | 22 | 7638 | 313236 | 16 | 7 |
+| autonomy | 22 | 7672 | 314671 | 16 | 7 |
 | learning | 20 | 6934 | 274949 | 14 | 6 |
 | architect | 25 | 5706 | 238326 | 9 | 2 |
 | kernel | 10 | 5468 | 224936 | 20 | 4 |
@@ -874,8 +874,8 @@ graph TD
 | state | 6 | 3408 | 144522 | 8 | 13 |
 | perception | 15 | 3260 | 129879 | 3 | 2 |
 | goals | 7 | 3047 | 129238 | 6 | 3 |
+| affect | 6 | 2924 | 135833 | 13 | 14 |
 | advanced_cognition | 13 | 2905 | 118305 | 3 | 2 |
-| affect | 6 | 2896 | 134667 | 13 | 14 |
 | morphogenesis | 12 | 2854 | 111137 | 8 | 3 |
 | voice | 7 | 2776 | 127072 | 9 | 4 |
 | embodiment | 15 | 2627 | 102452 | 12 | 4 |
@@ -1062,7 +1062,7 @@ graph TD
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 54 | 28 | 2 | 52 |
 | Memory writes | 271 | 107 | 46 | 225 |
-| State mutation | 377 | 145 | 5 | 372 |
+| State mutation | 378 | 145 | 5 | 373 |
 | Tool execution | 139 | 75 | 6 | 133 |
 | Self-modification and patching | 15 | 12 | 2 | 13 |
 | LLM inference | 247 | 147 | 67 | 180 |
@@ -1276,8 +1276,8 @@ Review candidates:
 ## Degradation Handling
 
 - Total `record_degradation()` calls: 2740
-- Log-and-limp candidates: 2542
-- Nearby fail-closed candidates: 198
+- Log-and-limp candidates: 2541
+- Nearby fail-closed candidates: 199
 
 Top limp-on files:
 
