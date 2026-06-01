@@ -755,3 +755,44 @@ async def test_task_engine_resilience_integration(monkeypatch):
     # Since should_persist is False, it breaks out on first attempt
     assert step.attempts == 0
     assert "Suppressed by ResilienceEngine" in step.error
+
+
+@pytest.mark.asyncio
+async def test_task_engine_search_and_browser_fallbacks():
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=''))  # empty triggers failure
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+
+    engine = AutonomousTaskEngine(kernel)
+
+    # 1. Fallback for search query via web_search
+    plan_search = await engine._decompose_goal(
+        "Search the web for recent discoveries in neuroscience, actually do it on your own.",
+        "plan_search_fallback",
+        context={"matched_skills": ["web_search", "computer_use"]},
+    )
+    assert len(plan_search.steps) == 1
+    assert plan_search.steps[0].tool == "web_search"
+    assert "discoveries in neuroscience" in plan_search.steps[0].args["query"]
+
+    # 2. Fallback for browse via sovereign_browser
+    plan_browse = await engine._decompose_goal(
+        "Please open a browser tab to https://example.com/neuroscience and report what you see.",
+        "plan_browse_fallback",
+        context={"matched_skills": ["sovereign_browser"]},
+    )
+    assert len(plan_browse.steps) == 1
+    assert plan_browse.steps[0].tool == "sovereign_browser"
+    assert plan_browse.steps[0].args["mode"] == "browse"
+    assert plan_browse.steps[0].args["url"] == "https://example.com/neuroscience"
+
+    # 3. Fallback for search query via sovereign_browser (when web_search is not in matched_skills)
+    plan_browser_search = await engine._decompose_goal(
+        "Use your browser to look up quantum mechanics, actually do it.",
+        "plan_browser_search_fallback",
+        context={"matched_skills": ["sovereign_browser"]},
+    )
+    assert len(plan_browser_search.steps) == 1
+    assert plan_browser_search.steps[0].tool == "sovereign_browser"
+    assert plan_browser_search.steps[0].args["mode"] == "search"
+    assert "quantum mechanics" in plan_browser_search.steps[0].args["query"]
+

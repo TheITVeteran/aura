@@ -1876,6 +1876,27 @@ Respond ONLY with a JSON array, no other text:
     ) -> TaskPlan | None:
         matched_skills = self._matched_skills_from_context(context)
 
+        # 1. Sovereign Browser Browse mode (if a URL is requested)
+        if "sovereign_browser" in matched_skills:
+            url = self._extract_url(goal)
+            if url:
+                return TaskPlan(
+                    plan_id=plan_id,
+                    goal=goal,
+                    steps=[
+                        TaskStep(
+                            step_id=f"{plan_id}_s0",
+                            description=f"Browse to '{url}' using sovereign browser.",
+                            tool="sovereign_browser",
+                            args={"mode": "browse", "url": url},
+                            success_criterion="response is non-empty",
+                        )
+                    ],
+                    trace_id="",
+                    context=dict(context or {}),
+                )
+
+        # 2. Sovereign Terminal
         if "sovereign_terminal" in matched_skills:
             command = self._extract_terminal_command(goal)
             if command:
@@ -1899,6 +1920,7 @@ Respond ONLY with a JSON array, no other text:
                     context=dict(context or {}),
                 )
 
+        # 3. Computer Use (URLs and Apps)
         if "computer_use" in matched_skills:
             url = self._extract_url(goal)
             if url:
@@ -1929,6 +1951,47 @@ Respond ONLY with a JSON array, no other text:
                             tool="computer_use",
                             args={"action": "open_app", "target": app_name},
                             success_criterion=f"result contains '{app_name}'",
+                        )
+                    ],
+                    trace_id="",
+                    context=dict(context or {}),
+                )
+
+        # 4. Web Search / Search Web
+        if "web_search" in matched_skills or "search_web" in matched_skills:
+            query = self._extract_search_query(goal)
+            if query:
+                tool_name = "web_search" if "web_search" in matched_skills else "search_web"
+                return TaskPlan(
+                    plan_id=plan_id,
+                    goal=goal,
+                    steps=[
+                        TaskStep(
+                            step_id=f"{plan_id}_s0",
+                            description=f"Search the web for '{query}'.",
+                            tool=tool_name,
+                            args={"query": query},
+                            success_criterion="response is non-empty",
+                        )
+                    ],
+                    trace_id="",
+                    context=dict(context or {}),
+                )
+
+        # 5. Sovereign Browser Search mode (if no direct web_search was matched, but browser is available)
+        if "sovereign_browser" in matched_skills:
+            query = self._extract_search_query(goal)
+            if query:
+                return TaskPlan(
+                    plan_id=plan_id,
+                    goal=goal,
+                    steps=[
+                        TaskStep(
+                            step_id=f"{plan_id}_s0",
+                            description=f"Search using sovereign browser for '{query}'.",
+                            tool="sovereign_browser",
+                            args={"mode": "search", "query": query},
+                            success_criterion="response is non-empty",
                         )
                     ],
                     trace_id="",
