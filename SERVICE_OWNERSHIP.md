@@ -90,6 +90,7 @@ This file outlines every registered service, its source code location, registrat
 | `context_manager` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
 | `continuity` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `continuous_cognition` | `core/continuous_cognition.py` | `core/continuous_cognition.py` | optional features | `degrade_with_receipt` |
+| `continuous_experience_frame` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
 | `continuous_experience_stream` | `core/consciousness/continuous_experience.py` | `core/consciousness/continuous_experience.py` | optional features | `degrade_with_receipt` |
 | `continuous_learner` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
 | `continuous_vision` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
@@ -224,6 +225,7 @@ This file outlines every registered service, its source code location, registrat
 | `metrics_exporter` | `core/orchestrator/boot.py` | `core/orchestrator/boot.py` | boot | `fail-closed` |
 | `mhaf` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
 | `mind_model` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
+| `mind_moment` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
 | `minimal_selfhood` | `core/consciousness/system.py` | `core/consciousness/system.py` | boot | `fail-closed` |
 | `mist` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
 | `mist_scheduler` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
@@ -368,7 +370,11 @@ This file outlines every registered service, its source code location, registrat
 | `tts_stream` | `core/providers/sensory_provider.py` | `core/providers/sensory_provider.py` | optional features | `degrade_with_receipt` |
 | `unified_field` | `core/consciousness/consciousness_bridge.py` | `core/consciousness/consciousness_bridge.py` | boot | `fail-closed` |
 | `unified_will` | `core/governance/will.py` | `core/governance/will.py` | optional features | `degrade_with_receipt` |
-| `unity_runtime` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
+| `unity_draft_set` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
+| `unity_fragmentation_report` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
+| `unity_repair_plan` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
+| `unity_runtime` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
+| `unity_state` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
 | `user_recognizer` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
 | `value_autopoiesis` | `core/adaptation/value_autopoiesis.py` | `core/adaptation/value_autopoiesis.py` | optional features | `degrade_with_receipt` |
 | `value_system` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |

@@ -677,6 +677,16 @@ class AgencyCore:
 
     async def initialize(self):
         """Deferred initialization for asynchronous tasks."""
+        
+        # Initialize unified consciousness - THE core integration point
+        try:
+            from core.consciousness.coordinator import get_consciousness_coordinator
+            coordinator = await get_consciousness_coordinator()
+            logger.info("🧠 Unified consciousness initialized and wired through agency core")
+        except Exception as e:
+            _record_agency_degradation(e, action="consciousness coordinator initialization skipped")
+            logger.debug("Consciousness coordinator initialization failed: %s", e)
+        
         if self.meta_cognition:
             try:
                 start_result = self.meta_cognition.start()
