@@ -1,4 +1,4 @@
-.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: lint test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -328,6 +328,19 @@ longevity-4h:
 	@$(PYTHON) -m tools.longevity.run_longevity_soak --profile 4h --out artifacts/current/longevity_4h
 
 # ─── Closeout Rubric ─────────────────────────────────────────────────────
+
+closeout-audit:
+	@echo "📚 Running Aura closeout all-line source audit checkpoint..."
+	@OUT="$${AURA_CLOSEOUT_OUT:-artifacts/current/closeout_audit}"; \
+	DIRTY_FLAG=""; \
+	if [ "$${AURA_CLOSEOUT_ALLOW_DIRTY:-0}" = "1" ]; then DIRTY_FLAG="--allow-dirty"; fi; \
+	GATE_FLAG="--run-gates"; \
+	if [ "$${AURA_CLOSEOUT_RUN_GATES:-1}" = "0" ]; then GATE_FLAG=""; fi; \
+	$(PYTHON) tools/closeout/run_codebase_closeout_audit.py \
+	  --out "$$OUT" \
+	  $$DIRTY_FLAG \
+	  $$GATE_FLAG
+	@echo "✅ Closeout audit artifacts written to $${AURA_CLOSEOUT_OUT:-artifacts/current/closeout_audit}"
 
 closeout-rubric:
 	@echo ""
