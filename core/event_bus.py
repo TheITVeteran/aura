@@ -563,7 +563,12 @@ class AuraEventBus:
 
         acquired = self._lock.acquire(timeout=5.0)
         if not acquired:
-            logger.error("🚨 [EVENTBUS] DEADLOCK DETECTED in _publish_local(%s)! Dropping event.", topic)
+            self._record_error(
+                RuntimeError(f"event bus local publish lock timeout for topic {topic!r}"),
+                "EventBus local publish lock timeout for topic '%s': %s",
+                topic,
+                degraded=True,
+            )
             return
             
         try:
@@ -609,15 +614,19 @@ class AuraEventBus:
                     stale_subscribers.append((q, loop))
                     logger.debug("EventBus: Removing stale subscriber (loop mismatch) on topic '%s'", topic)
                 else:
-                    with self._stats_lock:
-                        self._error_count += 1
-                        self._last_error = e
-                    logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
+                    self._record_error(
+                        e,
+                        "EventBus delivery failure on topic '%s': %s",
+                        topic,
+                        degraded=True,
+                    )
             except _EVENT_BUS_RECOVERABLE_ERRORS as e:
-                with self._stats_lock:
-                    self._error_count += 1
-                    self._last_error = e
-                logger.error("EventBus delivery failure on topic '%s': %s", topic, e)
+                self._record_error(
+                    e,
+                    "EventBus delivery failure on topic '%s': %s",
+                    topic,
+                    degraded=True,
+                )
 
         # Clean up stale subscribers
         if stale_subscribers:

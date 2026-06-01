@@ -323,6 +323,64 @@ async def test_event_bus_required_redis_publish_failure_marks_degraded():
     assert "redis offline" in str(bus.get_status()["stats"]["last_error"])
 
 
+@pytest.mark.asyncio
+async def test_event_bus_local_lock_timeout_marks_degraded():
+    from core.event_bus import AuraEventBus
+
+    class NeverAcquires:
+        def acquire(self, timeout=None):
+            return False
+
+        def release(self):
+            self.release_called = True
+            raise AssertionError("release should not run when acquire failed")
+
+    bus = AuraEventBus()
+    bus._lock = NeverAcquires()
+
+    await bus._publish_local("runtime/test", {"ok": True})
+
+    status = bus.get_status()
+    assert bus.degraded is True
+    assert bus.is_alive() is False
+    assert status["stats"]["errors"] == 1
+    assert "local publish lock timeout" in str(status["stats"]["last_error"])
+
+
+@pytest.mark.asyncio
+async def test_event_bus_local_delivery_failure_marks_degraded():
+    from core.event_bus import AuraEventBus
+
+    class BadLoop:
+        def __init__(self):
+            self.calls = 0
+
+        def is_running(self):
+            return True
+
+        def is_closed(self):
+            return False
+
+        def call_soon(self, *args, **kwargs):
+            self.calls += 1
+            raise RuntimeError("delivery callback failed")
+
+        def call_soon_threadsafe(self, *args, **kwargs):
+            self.calls += 1
+            raise RuntimeError("delivery callback failed")
+
+    bus = AuraEventBus()
+    bus._subscribers["runtime/test"].add((asyncio.Queue(), BadLoop()))
+
+    await bus._publish_local("runtime/test", {"ok": True})
+
+    status = bus.get_status()
+    assert bus.degraded is True
+    assert bus.is_alive() is False
+    assert status["stats"]["errors"] == 1
+    assert "delivery callback failed" in str(status["stats"]["last_error"])
+
+
 def test_event_bus_threadsafe_publish_failure_is_recorded():
     from core.event_bus import AuraEventBus
 
