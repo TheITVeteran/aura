@@ -952,6 +952,23 @@ class ClosedCausalLoop:
                 stage="closed_loop_stop_task",
             )
 
+    async def _safe_run_thread_task(
+        self,
+        func: Any,
+        action: str,
+        stage: str,
+    ) -> None:
+        """Run a synchronous blocking task safely in a thread pool and route any errors to our fault reporter."""
+        try:
+            await asyncio.to_thread(func)
+        except Exception as exc:
+            _emit_closed_loop_fault(
+                exc,
+                action=action,
+                severity="warning",
+                stage=stage,
+            )
+
     def _maybe_schedule_phi_core_refresh(self, phi_core: Any) -> None:
         should_refresh_phi = (
             self._loop_state.cycle_count > 0
@@ -963,7 +980,11 @@ class ClosedCausalLoop:
         if should_refresh_phi and (self._phi_core_task is None or self._phi_core_task.done()):
             self._last_phi_core_schedule_at = time.time()
             self._phi_core_task = get_task_tracker().create_task(
-                asyncio.to_thread(phi_core.compute_phi),
+                self._safe_run_thread_task(
+                    phi_core.compute_phi,
+                    action="phi_core background compute",
+                    stage="phi_core_refresh",
+                ),
                 name="ClosedCausalLoop.phi_core_refresh",
             )
 
@@ -978,7 +999,11 @@ class ClosedCausalLoop:
         if should_refresh_hphi and (self._hphi_task is None or self._hphi_task.done()):
             self._last_hphi_schedule_at = time.time()
             self._hphi_task = get_task_tracker().create_task(
-                asyncio.to_thread(hphi.compute),
+                self._safe_run_thread_task(
+                    hphi.compute,
+                    action="hierarchical_phi background compute",
+                    stage="hphi_refresh",
+                ),
                 name="ClosedCausalLoop.hphi_refresh",
             )
 

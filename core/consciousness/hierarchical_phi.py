@@ -576,9 +576,21 @@ class HierarchicalPhi:
 
             # Destination set: union of observed-joint and factored-possible.
             dests: set = set(nexts.keys())
-            for sn_a in a_support.keys():
-                for sn_b in b_support.keys():
-                    dests.add((sn_a, sn_b))
+            # Cap the Cartesian product to avoid combinatorial explosion under high entropy.
+            # If the product of unique A and B marginal transitions is large,
+            # only include the most frequent A and B transitions.
+            if len(a_support) * len(b_support) <= 256:
+                for sn_a in a_support.keys():
+                    for sn_b in b_support.keys():
+                        dests.add((sn_a, sn_b))
+            else:
+                # High entropy fallback: restrict to top 16 most frequent transitions
+                # to guarantee a hard upper bound of 256 combinations.
+                sorted_a = sorted(a_support.keys(), key=lambda k: a_support[k], reverse=True)[:16]
+                sorted_b = sorted(b_support.keys(), key=lambda k: b_support[k], reverse=True)[:16]
+                for sn_a in sorted_a:
+                    for sn_b in sorted_b:
+                        dests.add((sn_a, sn_b))
             k_dest = max(1, len(dests))
 
             # p(source) contribution (sums to 1 across all trusted sources).
@@ -704,9 +716,9 @@ class HierarchicalPhi:
                     r = f.result(timeout=10.0)
                     if r is not None:
                         results.append(r)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                except Exception as exc:
                     record_degradation('hierarchical_phi', exc)
-                    logger.debug("HierarchicalPhi subsystem job failed: %s", exc)
+                    logger.warning("HierarchicalPhi subsystem job failed: %s", exc)
 
             primary_32 = next((r for r in results if r.name == "primary_32"), None)
             primary_16a = next((r for r in results if r.name == "primary_16_affective"), None)
