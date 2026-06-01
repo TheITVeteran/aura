@@ -202,15 +202,34 @@ class ComputerUseSkill(BaseSkill):
         return message or "AppleScript execution failed."
 
     def _run_applescript(self, script: str, *, timeout: int = 10) -> str:
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(self._normalize_script_error(result.stderr or result.stdout))
-        return (result.stdout or "").strip()
+        try:
+            from Foundation import NSAppleScript
+            
+            apple_script = NSAppleScript.alloc().initWithSource_(script)
+            success, error_info = apple_script.executeAndReturnError_(None)
+            if success:
+                return str(success.stringValue() or "").strip()
+            else:
+                msg = ""
+                err_num = ""
+                if error_info:
+                    msg = str(error_info.get("NSAppleScriptErrorMessage") or "")
+                    err_num = str(error_info.get("NSAppleScriptErrorNumber") or "")
+                
+                err_str = f"{msg} ({err_num})" if err_num else msg or "AppleScript native execution failed."
+                raise RuntimeError(self._normalize_script_error(err_str))
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            if isinstance(exc, RuntimeError):
+                raise exc
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(self._normalize_script_error(result.stderr or result.stdout))
+            return (result.stdout or "").strip()
 
     @staticmethod
     def _normalize_open_url_target(target: str) -> str:
