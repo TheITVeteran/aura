@@ -487,6 +487,48 @@ class PhenomenalIntegrator:
             logger.exception("pulse_from_orchestrator failed: %s", exc)
             return None
 
+    def _pulse_blocking(
+        self,
+        *,
+        orchestrator: Any,
+        event_label: str = "heartbeat",
+        person_key: Optional[str] = None,
+    ) -> Optional[ExperienceState]:
+        """Blocking wrapper for phenomenal pulse. Safe to call from thread pool.
+        
+        Does not await anything - pure synchronous execution for thread safety.
+        """
+        try:
+            # Collect observations from orchestrator
+            observations = self.collect_observations(orchestrator)
+            
+            # Run one step of phenomenal engine (blocking)
+            state = self.engine.step(
+                body=RuntimeBody(
+                    energy=observations.get("energy", 0.75),
+                    continuity=observations.get("continuity", 0.75),
+                    agency=observations.get("agency", 0.60),
+                    safety=observations.get("safety", 0.80),
+                    social_contact=observations.get("social_contact", 0.50),
+                    novelty=observations.get("novelty", 0.20),
+                    uncertainty=observations.get("uncertainty", 0.25),
+                    compute_pressure=observations.get("compute_pressure", 0.20),
+                    memory_pressure=observations.get("memory_pressure", 0.20),
+                    error_pressure=observations.get("error_pressure", 0.20),
+                ),
+                event=Event(
+                    label=event_label,
+                    source="blocking_pulse",
+                ),
+            )
+            
+            self.last_state = state
+            self.step_count += 1
+            return state
+        except Exception as exc:
+            logger.debug("Blocking phenomenal pulse failed: %s", exc)
+            return None
+
     async def _route_to_downstream(
         self, orchestrator: Any, state: ExperienceState
     ) -> None:

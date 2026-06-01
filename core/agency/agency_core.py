@@ -551,6 +551,7 @@ class AgencyCore:
         self.last_interaction_timestamp = time.time()
         self.state.last_user_interaction = self.last_interaction_timestamp
         self.phenomenology = PrivatePhenomenology()
+        self._phenomenal_pulse_pending = False  # Guard against task accumulation
 
         try:
             from core.orchestrator.meta_cognition_shard import MetaCognitionShard
@@ -996,31 +997,43 @@ class AgencyCore:
 
         This replaces the old self_report-based reflection with the active-inference
         phenomenal substrate (v0.2).
+        
+        CRITICAL: This runs on a thread pool to avoid blocking the main event loop,
+        which would starve the steering worker subprocess and cause "STEERING INACTIVE"
+        failures. Task accumulation is prevented with a pending flag.
         """
+        # Guard against accumulating too many phenomenal pulse tasks
+        if self._phenomenal_pulse_pending:
+            logger.debug("Phenomenal pulse task already pending, skipping")
+            return
+        
+        self._phenomenal_pulse_pending = True
+        
         try:
-            # Get the phenomenal integrator singleton
             from core.affect.phenomenal_integration import get_phenomenal_integrator
             import asyncio
 
             async def _run_phenomenal_pulse():
-                integrator = await get_phenomenal_integrator()
-                # Run phenomenal engine with orchestrator observations
-                state = await integrator.pulse_from_orchestrator(
-                    orchestrator=self.orch,
-                    event_label="heartbeat",
-                    person_key=getattr(self, "current_user_key", None),
-                )
-                if state:
-                    logger.debug(
-                        "Phenomenal state [t=%d]: valence=%.2f arousal=%.2f "
-                        "presence=%.2f workspace=%s",
-                        state.t,
-                        state.valence,
-                        state.arousal,
-                        state.self_presence,
-                        state.global_broadcast.get("workspace", "unknown"),
+                try:
+                    # Run integrator initialization on the event loop
+                    integrator = await get_phenomenal_integrator()
+                    # Run the actual pulse on a thread to avoid blocking
+                    state = await asyncio.to_thread(
+                        self._phenomenal_pulse_blocking,
+                        integrator,
                     )
-                return state
+                    if state:
+                        logger.debug(
+                            "Phenomenal state [t=%d]: valence=%.2f arousal=%.2f "
+                            "presence=%.2f workspace=%s",
+                            state.t,
+                            state.valence,
+                            state.arousal,
+                            state.self_presence,
+                            state.global_broadcast.get("workspace", "unknown"),
+                        )
+                finally:
+                    self._phenomenal_pulse_pending = False
 
             # Schedule the phenomenal pulse as a background task
             _schedule_agency_task(
@@ -1029,8 +1042,23 @@ class AgencyCore:
             )
 
         except _AGENCY_BOUNDARY_ERRORS as e:
+            self._phenomenal_pulse_pending = False
             _record_agency_degradation(e, action="phenomenal pulse skipped")
             logger.debug("Failed to trigger phenomenal pulse: %s", e)
+
+    def _phenomenal_pulse_blocking(self, integrator):
+        """Blocking wrapper for phenomenal pulse. Runs on thread pool."""
+        try:
+            # This is blocking and runs on a thread, so it won't starve the event loop
+            state = integrator._pulse_blocking(
+                orchestrator=self.orch,
+                event_label="heartbeat",
+                person_key=getattr(self, "current_user_key", None),
+            )
+            return state
+        except Exception as e:
+            logger.debug("Blocking phenomenal pulse failed: %s", e)
+            return None
 
     def heartbeat(self) -> None:
         """Alias for heartbeat monitor / watchdog (Sync wrapper)."""
