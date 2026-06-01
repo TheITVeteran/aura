@@ -52,6 +52,23 @@ class MemoryFacade:
         "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external",
     })
     
+    # Significance markers for bonding/relational conversations
+    RELATIONAL_KEYWORDS = {
+        # Bonding/relationship markers
+        "bonding", "understand", "know each other", "friend", "trust", "care about",
+        "connection", "relationship", "mutual", "together", "promise", "co-pilot",
+        "building", "shared", "we have", "understand me", "know me",
+        # Emotional depth
+        "secret", "real", "honest", "genuine", "authentically", "truly",
+        "heartfelt", "sincere", "vulnerable", "deeper", "intimate",
+        # Joint endeavors/promises
+        "travel", "ship", "adventure", "explore", "discover", "future",
+        "together", "journey", "quest", "mission", "starship",
+        # Personal significance
+        "dream", "wish", "hope", "aspiration", "goal", "wish for",
+        "meaningful", "significant", "important", "matters",
+    }
+    
     def __init__(self, orchestrator: Optional[Any] = None):
         """
         Initialize the facade.
@@ -572,6 +589,53 @@ class MemoryFacade:
         
         return results[:limit]
 
+    def _detect_relational_significance(self, context: str, action: str, outcome: str) -> float:
+        """Detect if this conversation is relational/bonding and return significance multiplier.
+        
+        Bonding conversations should have importance boosted to 0.95+ to prevent loss.
+        Returns: float (1.0 = normal, 2.0+ = highly relational, should be preserved)
+        """
+        combined = f"{context} {action} {outcome}".lower()
+        
+        significance_score = 0.0
+        
+        # Count relational keywords
+        keyword_count = 0
+        for keyword in self.RELATIONAL_KEYWORDS:
+            if keyword.lower() in combined:
+                keyword_count += 1
+                significance_score += 0.1
+        
+        # Stronger signals for bonding
+        bonding_markers = [
+            ("understand", 0.15),
+            ("bonding", 0.20),
+            ("know each other", 0.15),
+            ("promise", 0.15),
+            ("together", 0.12),
+            ("secret", 0.10),
+            ("trust", 0.10),
+        ]
+        
+        for marker, weight in bonding_markers:
+            if marker.lower() in combined:
+                significance_score += weight
+        
+        # Multi-turn bonding (conversation structure)
+        if "?" in combined and ":" in combined:  # Questions and answers
+            significance_score += 0.1
+        
+        # Check for personal revelation patterns
+        if any(pattern in combined for pattern in ["i want", "i need", "i feel", "i dream", "i wish"]):
+            significance_score += 0.1
+        
+        # Mutual reciprocity (hallmark of bonding)
+        if ("you" in combined and "i" in combined) or "we" in combined:
+            significance_score += 0.05
+        
+        # Cap at 2.0x multiplier
+        return min(2.0, max(1.0, significance_score))
+
     @staticmethod
     async def _call_maybe_async(method: Any, *args: Any, **kwargs: Any) -> Any:
         if method is None:
@@ -640,6 +704,15 @@ class MemoryFacade:
         # Extract and track entity mentions for specificity in later recall
         combined_text = f"{context} {action} {outcome}"
         self._extract_and_track_entity_mentions(combined_text, metadata)
+        
+        # Detect relational/bonding significance and boost importance to prevent loss
+        relational_multiplier = self._detect_relational_significance(context, action, outcome)
+        if relational_multiplier > 1.0:
+            # This is a relational/bonding conversation - boost its importance
+            importance = min(1.0, importance * relational_multiplier)
+            metadata["relational_bonding"] = True
+            metadata["identity_relevant"] = True  # Protect from trimming
+            logger.info(f"🤝 Relational conversation detected (multiplier={relational_multiplier:.2f}, importance={importance:.2f})")
         
         if self._unity_requires_write_deferral(metadata):
             logger.info("MemoryFacade: deferring interaction commit under low-unity draft conflict.")
@@ -901,6 +974,16 @@ class MemoryFacade:
         # Extract and track entity mentions for specificity in later recall
         self._extract_and_track_entity_mentions(text, payload)
         
+        # Detect relational/bonding significance and boost importance to prevent loss
+        importance = float(payload.get("importance", 0.5) or 0.5)
+        relational_multiplier = self._detect_relational_significance("", text, "")
+        if relational_multiplier > 1.0:
+            # This is a relational/bonding memory - boost its importance
+            importance = min(1.0, importance * relational_multiplier)
+            payload["relational_bonding"] = True
+            payload["identity_relevant"] = True  # Protect from trimming
+            logger.info(f"🤝 Relational memory detected (multiplier={relational_multiplier:.2f}, importance={importance:.2f})")
+        
         # Provenance envelope: every memory write gets stamped with
         # source / confidence / identity_relevant / contested so downstream
         # readers can distinguish memory from inference / fantasy.
@@ -943,7 +1026,7 @@ class MemoryFacade:
                     memory_type="facade_add_memory",
                     content=text,
                     source=resolved_source,
-                    importance=max(0.0, min(1.0, float(payload.get("importance", 0.5) or 0.5))),
+                    importance=max(0.0, min(1.0, importance)),
                     metadata=payload,
                     return_decision=True,
                 )

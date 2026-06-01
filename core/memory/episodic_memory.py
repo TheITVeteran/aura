@@ -122,6 +122,20 @@ class EpisodicMemory:
     EMOTIONAL_IMPORTANCE_BOOST = 0.8
     EMOTIONAL_THRESHOLD = 0.7 # Corrected from malformed input
     KEYWORD_SEARCH_SCAN_LIMIT = 600
+    
+    # Relational/bonding conversation markers (for automatic preservation)
+    RELATIONAL_KEYWORDS = {
+        "bonding", "understand", "know each other", "friend", "trust", "care about",
+        "connection", "relationship", "mutual", "together", "promise", "co-pilot",
+        "building", "shared", "we have", "understand me", "know me",
+        "secret", "real", "honest", "genuine", "authentically", "truly",
+        "heartfelt", "sincere", "vulnerable", "deeper", "intimate",
+        "travel", "ship", "adventure", "explore", "discover", "future",
+        "journey", "quest", "mission", "starship",
+        "dream", "wish", "hope", "aspiration", "goal", "wish for",
+        "meaningful", "significant", "important", "matters",
+    }
+    RELATIONAL_IMPORTANCE_BOOST = 0.85  # Prevent loss of bonding conversations
 
     def __init__(self, db_path: str = None, vector_memory=None):
 
@@ -131,9 +145,43 @@ class EpisodicMemory:
         self._last_record_time = 0.0
         self._init_db()
 
+    def _detect_relational_significance(self, context: str, action: str, outcome: str) -> bool:
+        """Detect if this conversation is relational/bonding and should be preserved.
+        
+        Returns: True if conversation contains relational markers (e.g., bonding, promises, dreams)
+        """
+        combined = f"{context} {action} {outcome}".lower()
+        
+        # Count relational keywords
+        keyword_count = 0
+        for keyword in self.RELATIONAL_KEYWORDS:
+            if keyword.lower() in combined:
+                keyword_count += 1
+        
+        # Threshold: at least 2 relational keywords indicates bonding conversation
+        if keyword_count >= 2:
+            logger.debug(f"🤝 Relational conversation detected ({keyword_count} markers)")
+            return True
+        
+        # Also detect strong bonding patterns
+        bonding_patterns = [
+            ("understand", "you", "me"),  # Mutual understanding
+            ("promise", "together"),      # Commitments
+            ("trust", "care"),            # Deep emotions
+            ("dream", "future", "together"),  # Shared aspirations
+        ]
+        
+        for pattern in bonding_patterns:
+            if all(p.lower() in combined for p in pattern):
+                logger.debug(f"🤝 Relational pattern detected: {pattern}")
+                return True
+        
+        return False
+
     # ---- Database -----------------------------------------------------------
 
     def _init_db(self):
+
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._get_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -386,6 +434,9 @@ class EpisodicMemory:
         # Emotionally extreme events are more memorable
         if abs(emotional_valence) > self.EMOTIONAL_THRESHOLD:
             importance = max(importance, self.EMOTIONAL_IMPORTANCE_BOOST)
+        # Relational/bonding conversations should be preserved to prevent memory loss
+        if self._detect_relational_significance(context, action, outcome):
+            importance = max(importance, self.RELATIONAL_IMPORTANCE_BOOST)
 
         # Capture current qualia snapshot for mood-congruent recall
         qualia_snapshot = {}
