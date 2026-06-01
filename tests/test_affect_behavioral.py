@@ -203,6 +203,24 @@ class TestExpandedAffectiveDrivers:
         assert affect_engine._raw_state["curiosity_metric"] == pytest.approx(80.0)
         assert affect_engine._raw_state["frustration_metric"] == pytest.approx(70.0)
 
+    @pytest.mark.asyncio
+    async def test_legacy_update_moves_explicit_driver_dimensions(self, affect_engine):
+        affect_engine.markers.emotions["curiosity"] = 0.1
+        affect_engine.markers.emotions["anticipation"] = 0.1
+        affect_engine.markers.emotions["interest"] = 0.1
+        affect_engine.markers.emotions["frustration"] = 0.1
+        affect_engine.markers.emotions["anger"] = 0.1
+        affect_engine.markers.emotions["upset"] = 0.1
+
+        await affect_engine.update(delta_curiosity=0.2, delta_frustration=0.3)
+
+        assert affect_engine.markers.emotions["curiosity"] == pytest.approx(0.3)
+        assert affect_engine.markers.emotions["anticipation"] == pytest.approx(0.3)
+        assert affect_engine.markers.emotions["interest"] == pytest.approx(0.2)
+        assert affect_engine.markers.emotions["frustration"] == pytest.approx(0.4)
+        assert affect_engine.markers.emotions["anger"] == pytest.approx(0.4)
+        assert affect_engine.markers.emotions["upset"] == pytest.approx(0.25)
+
     def test_despair_spiral_releases_new_distress_states(self, affect_engine):
         affect_engine.markers.emotions["sadness"] = 0.95
         affect_engine.markers.emotions["fear"] = 0.85

@@ -747,10 +747,28 @@ class AffectEngineV2:
 
         try:
             if delta_curiosity != 0:
-                self.markers.emotions["anticipation"] = np.clip(self.markers.emotions.get("anticipation", 0.5) + delta_curiosity, 0, 1)
+                normalized = float(delta_curiosity)
+                self.markers.emotions["curiosity"] = float(
+                    np.clip(self.markers.emotions.get("curiosity", 0.0) + normalized, 0, 1)
+                )
+                self.markers.emotions["anticipation"] = float(
+                    np.clip(self.markers.emotions.get("anticipation", 0.5) + normalized, 0, 1)
+                )
+                self.markers.emotions["interest"] = float(
+                    np.clip(self.markers.emotions.get("interest", 0.0) + (normalized * 0.5), 0, 1)
+                )
             if delta_frustration != 0:
-                # Frustration maps loosely to anger/fear
-                self.markers.emotions["anger"] = np.clip(self.markers.emotions.get("anger", 0.0) + delta_frustration, 0, 1)
+                normalized = float(delta_frustration)
+                self.markers.emotions["frustration"] = float(
+                    np.clip(self.markers.emotions.get("frustration", 0.0) + normalized, 0, 1)
+                )
+                # Frustration maps loosely to anger/fear/upset, but remains an explicit driver.
+                self.markers.emotions["anger"] = float(
+                    np.clip(self.markers.emotions.get("anger", 0.0) + normalized, 0, 1)
+                )
+                self.markers.emotions["upset"] = float(
+                    np.clip(self.markers.emotions.get("upset", 0.0) + (normalized * 0.5), 0, 1)
+                )
             
             # Handle PAD if passed in kwargs for legacy parity
             dv = kwargs.get("dv", 0.0)
