@@ -365,6 +365,39 @@ async def test_legacy_base_skill_uses_to_thread_for_sync_execute_and_preserves_e
 
 
 @pytest.mark.asyncio
+async def test_legacy_base_skill_structures_runtime_errors_but_surfaces_invariants():
+    from infrastructure.base_skill import BaseSkill as LegacyBaseSkill
+
+    class RuntimeFailureSkill(LegacyBaseSkill):
+        name = "runtime_failure"
+
+        async def execute(self, goal, context):
+            context["entered_runtime_failure"] = True
+            raise RuntimeError("dependency unavailable")
+
+    class InvariantFailureSkill(LegacyBaseSkill):
+        name = "invariant_failure"
+
+        async def execute(self, goal, context):
+            context["entered_invariant_failure"] = True
+            raise AssertionError("programmer invariant broke")
+
+    runtime_result = await RuntimeFailureSkill().safe_execute({})
+
+    assert runtime_result["ok"] is False
+    assert "RuntimeError: dependency unavailable" in runtime_result["error"]
+    with pytest.raises(AssertionError, match="programmer invariant broke"):
+        await InvariantFailureSkill().safe_execute({})
+
+
+def test_legacy_base_skill_has_no_broad_exception_boundary():
+    source = Path("infrastructure/base_skill.py").read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "pass" not in source
+
+
+@pytest.mark.asyncio
 async def test_filesystem_reality_shortcut_is_disabled_for_user_facing_requests():
     from core.orchestrator.mixins.incoming_logic import IncomingLogicMixin
 

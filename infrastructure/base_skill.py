@@ -2,10 +2,31 @@
 Base skill contract for the Aura Cortex system.
 """
 import asyncio
-from abc import ABC, abstractmethod
 import inspect
+import json
+import logging
+import re
 import time
+from abc import ABC, abstractmethod
 from typing import Any
+
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger("Aura.Skills.Legacy")
+_ARG_RECOVERY_ERRORS = (
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    ValueError,
+)
+_SKILL_RUNTIME_ERRORS = (
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    ValueError,
+)
 
 
 def _infer_ok_flag(result: dict[str, Any]) -> bool:
@@ -41,7 +62,7 @@ class BaseSkill(ABC):
     @abstractmethod
     def execute(self, goal: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """Execute the skill."""
-        pass
+        ...
 
     async def extract_and_validate_args(
         self,
@@ -51,11 +72,6 @@ class BaseSkill(ABC):
         """Fault-tolerant JSON extraction and schema validation.
         Phase 4: Automatic Schema Recovery Loops.
         """
-        import json
-        import logging
-        import re
-        logger = logging.getLogger("Aura.Skills")
-        
         extracted: dict[str, Any] = {}
         # 1. Broad extraction (grab anything that looks like JSON)
         match = re.search(r"(\{.*\})", raw_input, re.DOTALL)
@@ -80,7 +96,8 @@ class BaseSkill(ABC):
                         raise ValueError(f"Recovered payload for {self.name} was not a JSON object")
                     extracted = recovered
                     logger.info("Skill %s successfully recovered schema.", self.name)
-                except Exception as r_e:
+                except _ARG_RECOVERY_ERRORS as r_e:
+                    record_degradation("legacy_base_skill.argument_recovery", r_e)
                     logger.error("Skill %s LLM recovery failed: %s", self.name, r_e)
                     raise ValueError(f"Could not parse valid arguments for {self.name}: {r_e}") from e
             else:
@@ -138,7 +155,8 @@ class BaseSkill(ABC):
                     result = await asyncio.to_thread(self.execute, goal, context)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except _SKILL_RUNTIME_ERRORS as exc:
+            record_degradation("legacy_base_skill.safe_execute", exc)
             result = {
                 "ok": False,
                 "error": f"Skill error: {type(exc).__name__}: {exc}",
