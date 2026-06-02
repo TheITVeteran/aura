@@ -114,7 +114,8 @@ async def test_sovereign_network_discovery_falls_back_without_nmap(monkeypatch):
     skill = SovereignNetworkSkill()
 
     async def missing_nmap(*_args, **_kwargs):
-        raise FileNotFoundError("nmap")
+        command = "nmap"
+        raise FileNotFoundError(command)
 
     class FakeWriter:
         def close(self):
@@ -149,7 +150,8 @@ async def test_sovereign_network_discovery_batches_tcp_fallback(monkeypatch):
     peak = 0
 
     async def missing_nmap(*_args, **_kwargs):
-        raise FileNotFoundError("nmap")
+        command = "nmap"
+        raise FileNotFoundError(command)
 
     async def fake_open_connection(_host, _port):
         nonlocal active, peak

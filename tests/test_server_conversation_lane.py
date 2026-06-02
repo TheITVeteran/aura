@@ -505,7 +505,8 @@ async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_re
             return True
 
         async def process(self, *_args, **_kwargs):
-            raise AssertionError("desktop UI must not use KernelInterface after weak CognitiveEngine text")
+            message = "desktop UI must not use KernelInterface after weak CognitiveEngine text"
+            raise AssertionError(message)
 
     async def _fake_begin_exchange(*_args, **_kwargs):
         return "exchange-weak"
@@ -603,7 +604,8 @@ async def test_api_chat_desktop_surface_fails_closed_when_cognitive_engine_pool_
 
         async def process(self, *_args, **_kwargs):
             calls.append("kernel_process")
-            raise AssertionError("desktop UI must not use KernelInterface after CognitiveEngine pool failure")
+            message = "desktop UI must not use KernelInterface after CognitiveEngine pool failure"
+            raise AssertionError(message)
 
     async def _fake_begin_exchange(*_args, **_kwargs):
         return "exchange-pool"
@@ -694,14 +696,16 @@ async def test_api_chat_returns_hard_local_failure_without_kernel_fallback(monke
 
     class _FakeGate:
         async def ensure_foreground_ready(self, *_args, **_kwargs):
-            raise RuntimeError("local_runtime_unavailable:exit_124")
+            message = "local_runtime_unavailable:exit_124"
+            raise RuntimeError(message)
 
     class _FakeKernelInterface:
         def is_ready(self):
             return True
 
         async def process(self, *_args, **_kwargs):
-            raise AssertionError("Kernel should not run after a hard local runtime failure")
+            message = "Kernel should not run after a hard local runtime failure"
+            raise AssertionError(message)
 
     monkeypatch.setattr(server_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -1098,7 +1102,8 @@ async def test_api_chat_returns_structured_timeout_when_kernel_times_out(monkeyp
             return True
 
         async def process(self, *_args, **_kwargs):
-            raise TimeoutError("foreground timeout")
+            message = "foreground timeout"
+            raise TimeoutError(message)
 
     monkeypatch.setattr(server_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -1141,7 +1146,8 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
 
     class _ForbiddenGate:
         async def generate(self, *_args, **_kwargs):
-            raise AssertionError("benchmark API requests must not bypass KernelInterface")
+            message = "benchmark API requests must not bypass KernelInterface"
+            raise AssertionError(message)
 
         def is_alive(self):
             return True

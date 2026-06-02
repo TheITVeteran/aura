@@ -234,10 +234,24 @@ def vault_process_entry(db_path: str, pipe):
             loop.run_until_complete(actor.run(pipe))
             pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
             if pending:
-                logger.info("StateVaultActor cancelling %d pending loop task(s) before asyncgen shutdown.", len(pending))
+                logger.debug(
+                    "StateVaultActor cancelling %d pending loop task(s) before asyncgen shutdown.",
+                    len(pending),
+                )
                 for task in pending:
                     task.cancel()
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                results = loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                unexpected = [
+                    result
+                    for result in results
+                    if isinstance(result, BaseException)
+                    and not isinstance(result, asyncio.CancelledError)
+                ]
+                if unexpected:
+                    logger.warning(
+                        "StateVaultActor shutdown task cancellation produced %d unexpected error(s).",
+                        len(unexpected),
+                    )
             loop.run_until_complete(loop.shutdown_asyncgens())
         finally:
             asyncio.set_event_loop(None)

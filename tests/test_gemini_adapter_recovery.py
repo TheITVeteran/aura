@@ -24,7 +24,8 @@ async def test_gemini_stream_timeout_raises_provider_unavailable_for_router_fail
 
     class TimeoutStream:
         async def __aenter__(self):
-            raise httpx.TimeoutException("stream stalled")
+            message = "stream stalled"
+            raise httpx.TimeoutException(message)
 
         async def __aexit__(self, *_args):
             return False
@@ -63,7 +64,8 @@ async def test_gemini_call_returns_failed_result_when_error_handler_fails(monkey
     monkeypatch.setattr(adapter, "_get_client", lambda: ResponseClient())
 
     async def broken_error_handler(_response):
-        raise RuntimeError("handler broken")
+        message = "handler broken"
+        raise RuntimeError(message)
 
     monkeypatch.setattr(adapter, "_handle_error", broken_error_handler)
 

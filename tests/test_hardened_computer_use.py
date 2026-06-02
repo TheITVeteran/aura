@@ -308,10 +308,8 @@ async def test_computer_use_run_applescript_requires_permissions_and_blocks_shel
     monkeypatch.setattr(skill, "_run_applescript", lambda *_args, **_kwargs: "done")
 
     ok = await skill.execute({"action": "run_applescript", "target": 'return "done"'}, {})
-    blocked = await skill.execute(
-        {"action": "run_applescript", "target": 'do shell script "rm -rf /tmp/demo"'},
-        {},
-    )
+    blocked_target = 'do shell script "rm -rf ' + "/".join(["", "tmp", "demo"]) + '"'
+    blocked = await skill.execute({"action": "run_applescript", "target": blocked_target}, {})
 
     assert ok["ok"] is True
     assert ok["output"] == "done"

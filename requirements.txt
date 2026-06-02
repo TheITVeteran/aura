@@ -23,7 +23,8 @@ opencv-python-headless
 #piper-tts
 playwright>=1.42.0
 playwright-stealth>=2.0.3
-#TTS>=0.22.0
+coqui-tts[codec]==0.27.5
+torchaudio==2.11.0
 pyttsx3>=2.90
 cryptography
 tweepy

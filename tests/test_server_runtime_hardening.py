@@ -1377,6 +1377,66 @@ async def test_state_repository_proxy_commit_defers_and_replays_after_transport_
 
 
 @pytest.mark.asyncio
+async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
+    monkeypatch, tmp_path, caplog
+):
+    from core.runtime.errors import get_degradation_tracker
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
+    repo._current = AuraState()
+
+    class ClosingTransport:
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def request(self, *_args, **_kwargs):
+            raise BrokenPipeError("Connection is closed")
+
+    transport = ClosingTransport()
+    monkeypatch.setattr(repo, "_resolve_transport", lambda: transport)
+
+    request_shutdown("unit_test")
+    try:
+        with caplog.at_level("INFO", logger="core.state.state_repository"):
+            await repo.commit(repo._current.derive("shutdown", origin="test"), "shutdown")
+
+        assert repo.get_runtime_status()["pending_proxy_commit"] is True
+        assert "Vault pipe closed during shutdown" in caplog.text
+        assert tracker.recent(subsystem="state_repository_proxy_transport") == []
+    finally:
+        clear_shutdown_request()
+        tracker.reset()
+
+
+def test_state_repository_vault_transport_requires_usable_actor_bus():
+    bus = ActorBus()
+    original_transports = dict(getattr(bus, "_transports", {}))
+    original_running = getattr(bus, "_is_running", False)
+    try:
+        bus._transports = {
+            "state_vault": SimpleNamespace(
+                _is_running=True,
+                write_conn=SimpleNamespace(closed=False),
+                _pipe_broken=False,
+            )
+        }
+        bus._is_running = True
+        repo = StateRepository(is_vault_owner=False)
+        repo._transport = bus
+
+        assert repo._transport_has_vault() is True
+
+        bus._transports["state_vault"].write_conn.closed = True
+        assert repo._transport_has_vault() is False
+    finally:
+        bus._transports = original_transports
+        bus._is_running = original_running
+
+
+@pytest.mark.asyncio
 async def test_state_repository_proxy_commit_outbox_survives_repository_restart(tmp_path):
     db_path = str(tmp_path / "aura_state.db")
     first_repo = StateRepository(db_path=db_path, is_vault_owner=False)

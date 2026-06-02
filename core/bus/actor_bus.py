@@ -70,6 +70,21 @@ class ActorBus:
     def has_actor(self, name: str) -> bool:
         """Return whether a live transport is registered for the actor."""
         return name in self._transports
+
+    def is_actor_usable(self, name: str) -> bool:
+        """Return whether an actor transport is present, running, and writable."""
+        if not self._is_running:
+            return False
+        transport = self._transports.get(name)
+        if not transport or not getattr(transport, "_is_running", False):
+            return False
+        write_conn = getattr(transport, "write_conn", None)
+        if write_conn is not None and getattr(write_conn, "closed", False):
+            return False
+        if getattr(transport, "_pipe_broken", False):
+            return False
+        return True
+
     async def update_actor(self, name: str, connection: Any):
         """Hot-swap an actor's transport with a new connection (e.g. after a restart)."""
         old_transport = self._transports.get(name)

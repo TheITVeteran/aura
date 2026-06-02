@@ -19,7 +19,6 @@ files_to_patch = [
     "core/privacy_stealth.py",
     "core/device_discovery.py",
     "core/memory/episodic_memory.py",
-    "core/self_preservation_integration.py"
 ]
 
 # Resolve base_dir relative to this script

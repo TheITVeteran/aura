@@ -114,7 +114,13 @@ class StartupValidator:
             or ServiceContainer.get("backup_system", default=None)
         )
 
-        if legacy_runtime_active:
+        if found:
+            c.passed = False
+            c.message = (
+                "DANGER: unsafe legacy self-preservation files are present: "
+                + ", ".join(found)
+            )
+        elif legacy_runtime_active:
             c.passed = False
             c.message = (
                 "DANGER: legacy self-preservation runtime is active; "
@@ -122,13 +128,7 @@ class StartupValidator:
             )
         elif safe_backup_active:
             c.passed = True
-            if found:
-                c.message = (
-                    f"Safe backup path active; {len(found)} legacy self-preservation "
-                    "files remain on disk but are dormant."
-                )
-            else:
-                c.message = "Unsafe self-preservation path removed; safe backup active."
+            c.message = "Unsafe self-preservation path removed; safe backup active."
         else:
             c.passed = False
             c.message = (

@@ -177,11 +177,13 @@ def test_input_bus_normalizes_external_priority_values():
 async def test_phantom_browser_close_releases_references_after_close_failures():
     class BrokenClose:
         async def close(self):
-            raise RuntimeError("close failed")
+            message = "close failed"
+            raise RuntimeError(message)
 
     class BrokenStop:
         async def stop(self):
-            raise RuntimeError("stop failed")
+            message = "stop failed"
+            raise RuntimeError(message)
 
     browser = PhantomBrowser()
     browser.page = BrokenClose()

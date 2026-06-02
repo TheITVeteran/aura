@@ -94,18 +94,44 @@ def _stt_dependency_available() -> bool:
     except (ImportError, AttributeError, RuntimeError, ValueError):
         return False
 
-try:
-    from TTS.api import TTS
-except (ImportError, AttributeError, RuntimeError) as e:
-    TTS = None
-    e_str = str(e)
-    # [STABILITY] Silence redundant torchcodec/transformers warnings on macOS
-    if "torchcodec" in e_str or "isin_mps_friendly" in e_str:
-        logger.debug("TTS Import: Suppressing expected library quirk: %s", e_str)
-    elif "No module named 'TTS'" in e_str and pyttsx3 is not None:
-        logger.info("TTS backend unavailable; native pyttsx3 fallback will be used.")
-    else:
-        logger.warning("TTS Import Error: %s", e_str)
+TTS = None
+_tts_api_import_attempted = False
+_tts_api_import_error: str | None = None
+
+
+def _load_tts_api():
+    """Load Coqui TTS lazily after installing the transformers compatibility shim."""
+    global TTS, _tts_api_import_attempted, _tts_api_import_error
+    if TTS is not None:
+        return TTS
+    if _tts_api_import_attempted:
+        return None
+
+    _tts_api_import_attempted = True
+    try:
+        from core.utils.transformers_tts_compat import install_transformers_tts_compat
+
+        install_transformers_tts_compat()
+        from TTS.api import TTS as tts_cls
+
+        TTS = tts_cls
+        _tts_api_import_error = None
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+        TTS = None
+        _tts_api_import_error = str(e)
+        e_str = str(e)
+        if "No module named 'TTS'" in e_str and pyttsx3 is not None:
+            logger.info("TTS backend unavailable; native pyttsx3 fallback will be used.")
+        else:
+            logger.warning("TTS Import Error: %s", e_str)
+    return TTS
+
+
+def _tts_dependency_available() -> bool:
+    try:
+        return importlib.util.find_spec("TTS") is not None
+    except (ImportError, AttributeError, RuntimeError, ValueError):
+        return False
 
 # ── Constants ─────────────────────────────────────────────
 SAMPLE_RATE = 16000       # 16kHz for Whisper
@@ -507,7 +533,8 @@ class SovereignVoiceEngine:
             self._pulse_hypha("voice_engine", "cognition", success=False)
 
     def _init_tts(self):
-        if self.use_xtts and TTS:
+        tts_api = _load_tts_api() if self.use_xtts else None
+        if self.use_xtts and tts_api:
             try:
                 self._init_xtts()
                 return
@@ -571,7 +598,8 @@ class SovereignVoiceEngine:
     def _init_xtts(self):
         """Initialize the Sara v3 XTTS-v2 voice clone."""
         if TTS is None:
-            raise ImportError("TTS library not installed")
+            if _load_tts_api() is None:
+                raise ImportError(_tts_api_import_error or "TTS library not installed")
         
         logger.info("🎬 Initializing Sara v3 (XTTS-v2)...")
         # Initialize the model (downloads automatically to ~/.local/share/tts if not present)
@@ -1266,9 +1294,13 @@ class SovereignVoiceEngine:
             "server_capture": _sounddevice_available(),
             "capture_available": _sounddevice_available(),
             "stt_available": _stt_dependency_available(),
+            "tts_available": _tts_dependency_available() or pyttsx3 is not None or PiperVoice is not None,
             "stt_initialized": self._stt_initialized,
+            "tts_initialized": self._tts_initialized,
             "capture_backend": "sounddevice" if _sounddevice_available() else "unavailable",
             "stt_backend": "faster_whisper" if _stt_dependency_available() else "unavailable",
+            "tts_backend": tts_type,
+            "tts_import_error": _tts_api_import_error,
         }
 
 # ── Singleton ─────────────────────────────────────────────

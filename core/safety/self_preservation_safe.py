@@ -124,10 +124,5 @@ def integrate_safe_backup(orchestrator: Any) -> SafeBackupSystem:
     from core.container import ServiceContainer
     ServiceContainer.register_instance("backup_system", system)
 
-    logger.info(
-        "SafeBackupSystem integrated. "
-        "Note: self_preservation_integration.py should be deleted — "
-        "it contains SecurityBypassSystem, SelfReplicationSystem, and "
-        "should_override_ethics() which are incompatible with safe operation."
-    )
+    logger.info("SafeBackupSystem integrated; unsafe legacy self-preservation runtime is absent.")
     return system

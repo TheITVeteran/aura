@@ -100,6 +100,19 @@ def _record_proxy_transport_degradation(
     )
 
 
+def _shutdown_requested() -> bool:
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        return bool(is_shutdown_requested())
+    except _STATE_BOUNDARY_ERRORS:
+        return False
+
+
+def _is_shutdown_commit_payload(payload: dict[str, Any]) -> bool:
+    return str(payload.get("cause") or "").lower() == "shutdown" or _shutdown_requested()
+
+
 def _close_if_possible(awaitable: Any) -> None:
     try:
         close = awaitable.close
@@ -394,6 +407,9 @@ class StateRepository:
         transport = self._resolve_transport()
         if not transport:
             return False
+        is_actor_usable = getattr(transport, "is_actor_usable", None)
+        if callable(is_actor_usable):
+            return bool(is_actor_usable("state_vault"))
         has_actor = getattr(transport, "has_actor", None)
         if callable(has_actor):
             return bool(has_actor("state_vault"))
@@ -603,13 +619,19 @@ class StateRepository:
                     )
                 return True, transport, None
             except (BrokenPipeError, ConnectionError) as exc:
-                _record_proxy_transport_degradation(exc)
                 last_error = exc
-                logger.warning(
-                    "⚠️ [STATE] Vault pipe broken (attempt %d/2): %s — commit deferred for replay.",
-                    attempt + 1,
-                    type(exc).__name__,
-                )
+                if _is_shutdown_commit_payload(payload):
+                    logger.info(
+                        "🔌 [STATE] Vault pipe closed during shutdown (attempt %d/2); commit will be queued for boot replay.",
+                        attempt + 1,
+                    )
+                else:
+                    _record_proxy_transport_degradation(exc)
+                    logger.warning(
+                        "⚠️ [STATE] Vault pipe broken (attempt %d/2): %s — commit deferred for replay.",
+                        attempt + 1,
+                        type(exc).__name__,
+                    )
                 self._transport = None
                 transport = self._resolve_transport()
                 if attempt == 0:
@@ -739,7 +761,8 @@ class StateRepository:
             f"{type(error).__name__}: {error}" if error is not None else "unknown"
         )
         await self._persist_pending_proxy_commit(payload)
-        logger.warning(
+        log_method = logger.info if _is_shutdown_commit_payload(payload) else logger.warning
+        log_method(
             "⚠️ [STATE] Deferred proxy commit for replay (pending_count=%d, cause=%s, error=%s).",
             self._pending_proxy_commit_count,
             payload.get("cause"),
