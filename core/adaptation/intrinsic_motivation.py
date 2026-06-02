@@ -30,6 +30,8 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from core.memory.retention_policy import working_history_retention_policy
+
 logger = logging.getLogger("Aura.IntrinsicMotivation")
 
 
@@ -122,7 +124,9 @@ class CompetenceMotivation:
 
     def __init__(self) -> None:
         self._goals: Dict[str, CompetenceRecord] = {}
-        self._reward_history: Deque[IntrinsicReward] = deque(maxlen=500)
+        self._reward_history: Deque[IntrinsicReward] = deque(
+            maxlen=working_history_retention_policy("AURA_COMPETENCE_REWARD_HISTORY_MAX").max_items
+        )
 
     def record_attempt(self, goal_name: str, success: bool) -> IntrinsicReward:
         """Record a goal attempt and compute competence-based reward.
@@ -199,7 +203,9 @@ class NoveltyMotivation:
         self._state_archive: Deque[np.ndarray] = deque(
             maxlen=self._config.max_states
         )
-        self._reward_history: Deque[IntrinsicReward] = deque(maxlen=500)
+        self._reward_history: Deque[IntrinsicReward] = deque(
+            maxlen=working_history_retention_policy("AURA_NOVELTY_REWARD_HISTORY_MAX").max_items
+        )
         self._dim: Optional[int] = None
 
     def compute_novelty(self, state: np.ndarray) -> float:

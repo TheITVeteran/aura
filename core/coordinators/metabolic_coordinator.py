@@ -15,6 +15,7 @@ from collections import deque
 
 from core.config import config
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.background_policy import background_activity_reason
 from core.runtime.errors import record_degradation
 from core.runtime.impulse_governance import run_governed_impulse
@@ -34,7 +35,9 @@ _BOOT_WARMUP_CYCLES = 5
 _BCI_EVENT_POLL_SECONDS = 1.0
 _AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS = 120.0
 _RECOVERY_RESTART_PAUSE_SECONDS = 2.0
-_MAX_RECOVERY_DROPPED_MESSAGES = 500
+_MAX_RECOVERY_DROPPED_MESSAGES = working_history_retention_policy(
+    "AURA_METABOLIC_RECOVERY_DROPPED_MAX"
+).max_items
 
 
 def _record_metabolic_degradation(

@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from core.memory.retention_policy import working_history_retention_policy
+
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 
@@ -217,7 +219,9 @@ class ConstitutionalCore:
     def __init__(self, orchestrator: Any = None) -> None:
         self.orchestrator = orchestrator
         self.belief_authority = BeliefAuthority()
-        self._decision_history: deque[ConstitutionalDecision] = deque(maxlen=500)
+        self._decision_history: deque[ConstitutionalDecision] = deque(
+            maxlen=working_history_retention_policy("AURA_CONSTITUTION_DECISION_HISTORY_MAX").max_items
+        )
         self._lock = asyncio.Lock()
 
     def bind(self, orchestrator: Any) -> None:

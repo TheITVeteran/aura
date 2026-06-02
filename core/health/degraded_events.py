@@ -10,18 +10,19 @@ from contextlib import contextmanager
 from threading import Lock
 from typing import Any, Iterator
 
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.DegradedEvents")
 
 # ── Long-Run Stability Caps ────────────────────────────────────────────
-_MAX_SUMMARIES = 500
-_MAX_FORWARDED = 500
+_MAX_SUMMARIES = working_history_retention_policy("AURA_DEGRADED_EVENT_SUMMARY_MAX").max_items
+_MAX_FORWARDED = working_history_retention_policy("AURA_DEGRADED_EVENT_FORWARDED_MAX").max_items
 _MAX_CONTEXT_KEYS = 20
 _FAILURE_EVENT_HALF_LIFE_S = 150.0   # pressure halves every 2.5 minutes of no new failures
 _FAILURE_EVENT_MAX_AGE_S = 300.0     # events expire after 5 minutes — prevents lockdown spiral
 
-_EVENTS: deque[dict[str, Any]] = deque(maxlen=200)
+_EVENTS: deque[dict[str, Any]] = deque(maxlen=_MAX_SUMMARIES)
 _SUMMARIES: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 _LAST_FORWARDED: dict[tuple[str, str, str, str], float] = {}
 _LOCK = Lock()

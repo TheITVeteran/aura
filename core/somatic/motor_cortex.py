@@ -37,6 +37,7 @@ from enum import Enum, StrEnum
 from typing import Any
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
@@ -341,7 +342,7 @@ class MotorCortex:
     """
 
     _MAX_QUEUE_SIZE = 256
-    _MAX_RECEIPT_TRAIL = 500
+    _MAX_RECEIPT_TRAIL = working_history_retention_policy("AURA_MOTOR_RECEIPT_TRAIL_MAX").max_items
     _CYCLE_TARGET_S = 0.050  # 50ms target cycle time
     _HEALTH_INTERVAL_S = 5.0  # Health check every 5s
 

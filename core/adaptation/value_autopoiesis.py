@@ -28,9 +28,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 
 logger = logging.getLogger("Aura.ValueAutopoiesis")
 
@@ -42,7 +43,7 @@ _STATE_PATH = _DATA_DIR / "autopoiesis_state.json"
 _MAX_CYCLE_DELTA = 0.03       # Maximum change per dream cycle per value
 _DRIFT_ACCEPTANCE = 0.15      # Total drift from origin before identity check triggers
 _MIN_EVIDENCE = 3             # Minimum evidence count before adjusting a value
-_MAX_EVIDENCE_ENTRIES = 500   # Cap evidence buffer
+_MAX_EVIDENCE_ENTRIES = working_history_retention_policy("AURA_VALUE_EVIDENCE_MAX").max_items
 
 
 @dataclass

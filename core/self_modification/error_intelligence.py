@@ -84,7 +84,8 @@ class StructuredErrorLogger:
         
         # In-memory cache for fast access
         self.recent_errors: List[ErrorEvent] = []
-        self.max_recent = 1000
+        from core.memory.retention_policy import working_history_retention_policy
+        self.max_recent = working_history_retention_policy("AURA_ERROR_INTELLIGENCE_RECENT_MAX").max_items
         
         logger.info("StructuredErrorLogger initialized at %s", self.log_dir)
     

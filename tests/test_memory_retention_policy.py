@@ -106,6 +106,28 @@ def test_cognitive_history_caps_are_not_legacy_tiny() -> None:
     assert _MAX_JOURNAL_ENTRIES >= 1_000
 
 
+def test_runtime_evidence_history_caps_are_not_legacy_tiny(tmp_path) -> None:
+    from core.adaptation.value_autopoiesis import _MAX_EVIDENCE_ENTRIES
+    from core.adaptation.intrinsic_motivation import CompetenceMotivation, NoveltyMotivation
+    from core.consciousness.somatic_marker_gate import SomaticMarkerGate
+    from core.constitution import ConstitutionalCore
+    from core.health import degraded_events
+    from core.self_modification.error_intelligence import StructuredErrorLogger
+    from core.somatic.motor_cortex import MotorCortex
+    from core.state.aura_state import MAX_EVOLUTION_LOG
+
+    assert degraded_events._MAX_SUMMARIES >= 1_000
+    assert degraded_events._MAX_FORWARDED >= 1_000
+    assert ConstitutionalCore()._decision_history.maxlen >= 1_000
+    assert MotorCortex._MAX_RECEIPT_TRAIL >= 1_000
+    assert MAX_EVOLUTION_LOG >= 1_000
+    assert _MAX_EVIDENCE_ENTRIES >= 1_000
+    assert SomaticMarkerGate._MAX_PATTERNS >= 1_000
+    assert CompetenceMotivation()._reward_history.maxlen >= 1_000
+    assert NoveltyMotivation()._reward_history.maxlen >= 1_000
+    assert StructuredErrorLogger(log_dir=tmp_path / "errors").max_recent >= 1_000
+
+
 def test_behavioral_scar_cap_exceeds_legacy_floor() -> None:
     assert _MAX_SCARS >= 2_000
 

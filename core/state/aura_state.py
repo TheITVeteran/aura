@@ -5,9 +5,10 @@ import copy
 import asyncio
 import math
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Final
+from typing import TYPE_CHECKING, Any, Dict, Optional, Final
 from enum import Enum
 import hashlib
+from core.memory.retention_policy import working_history_retention_policy
 from core.motivation.constants import clone_motivation_budget_defaults
 
 if TYPE_CHECKING:
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 MAX_WORKING_MEMORY: Final[int] = 150   # [FRONTIER UPGRADE] Expanded capacity for M5 64GB node to prevent context loss
 MAX_PERCEPTS: Final[int] = 200        # More sensory history
-MAX_EVOLUTION_LOG: Final[int] = 1000  # Richer evolution tracking
+MAX_EVOLUTION_LOG: Final[int] = working_history_retention_policy("AURA_STATE_EVOLUTION_LOG_MAX").max_items
 
 _USER_INTENT_ORIGINS: Final[frozenset[str]] = frozenset({
     "user",
@@ -502,15 +503,11 @@ class CognitiveContext:
 
             content = str(msg.get("content", "") or "").strip()
             role = str(msg.get("role", "") or "")
-            metadata = msg.get("metadata") or {}
 
             # Remove empty/placeholder entries
             if not content or content == "…" or content == "...":
                 removable.add(i)
                 continue
-
-            # [FRONTIER UPGRADE] Tool truncation removed to guarantee perfect contextual recall of long web reads
-            entry_type = str(metadata.get("type", "") or "").lower()
 
             # Track reflections
             if "[STATE-REFLECTION]" in content:

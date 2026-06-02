@@ -37,6 +37,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.SomaticGate")
@@ -84,7 +85,7 @@ class SomaticMarkerGate:
         gate.record_outcome(source, valence)   — after action completes, record result
     """
 
-    _MAX_PATTERNS = 500        # stored outcome patterns
+    _MAX_PATTERNS = working_history_retention_policy("AURA_SOMATIC_MARKER_PATTERN_MAX").max_items
     _PATTERN_DIM = 1024        # executive tier neurons (16 columns × 64 neurons)
     _METABOLIC_COST_MAP = {    # estimated metabolic cost by action type
         "tool": 0.6,
