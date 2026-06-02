@@ -17,6 +17,54 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Closeout Proof Pass (2026-06-02)
+
+### Gaps Addressed
+
+- **Semantic closeout progress was not falsifiable**: `tools/closeout/semantic_review_ledger.py`
+  now records reviewed file spans with file hashes, line spans, span hashes,
+  reviewer, checkpoint id, findings, tests, and explicit claim boundaries.
+- **Mechanical line hashing could be mistaken for semantic review**:
+  `tools/closeout/run_codebase_closeout_audit.py` now writes
+  `SEMANTIC_REVIEW_STATUS.json` and embeds the current semantic coverage ratio,
+  stale review count, orphan review count, and full-review boolean in
+  `CLOSEOUT_CHECKPOINT.json` / `FINAL_VERDICT.txt`.
+- **Accidental all-repo review receipts were possible in principle**: the
+  semantic review recorder requires explicit paths, `--path-prefix`, or
+  `--all-tracked`.
+
+### Latest Files Changed
+
+- `tools/closeout/semantic_review_ledger.py`
+- `tools/closeout/run_codebase_closeout_audit.py`
+- `tests/test_closeout_audit.py`
+- `Makefile`
+- `docs/AURA_EXECUTION_TRACKER.md`
+- `docs/AURA_TEST_COMMANDS.md`
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_closeout_audit.py -q
+python -m py_compile tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py tests/test_closeout_audit.py
+python -m ruff check tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py tests/test_closeout_audit.py
+python tools/closeout/semantic_review_ledger.py status
+AURA_CLOSEOUT_ALLOW_DIRTY=1 make closeout-audit
+make closeout-semantic-status
+git diff --check
+```
+
+Latest focused result: **6 passed**. `make closeout-audit` passed with
+production-readiness, architecture-map, diff-check, lint, and governance-lint
+gates green. The generated checkpoint counted **3,503 tracked text files** and
+**2,271,394 tracked text lines**, and semantic review coverage truthfully
+reported **0.0** because no semantic review receipts have been recorded yet.
+This checkpoint supports
+`semantic_review_coverage_status` and
+`closeout_mechanical_source_audit_checkpoint`. It does **not** claim the full
+repo has already been semantically reviewed, all issues are fixed, or any
+24/72-hour live survival result has landed.
+
 ## Latest Final Hardening Pass (2026-05-05)
 
 ### Gaps Addressed

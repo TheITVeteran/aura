@@ -123,6 +123,35 @@ bash scripts/run_decisive_test.sh
 These are not the first milestone commands because they are too broad for a
 checkpointed runtime-fix pass.
 
+## Closeout Source Audit / Semantic Review Slice
+
+Use this slice when advancing the final closeout prompt. The first command
+proves the semantic review ledger and stale-review detection contract. The
+second command generates the full mechanical source ledger and imports current
+semantic review coverage into the closeout checkpoint bundle.
+
+```bash
+python -m pytest tests/test_closeout_audit.py -q
+make closeout-audit
+make closeout-semantic-status
+```
+
+To record a real semantic review checkpoint after actually reviewing a file or
+prefix, use explicit scope:
+
+```bash
+python tools/closeout/semantic_review_ledger.py record \
+  --checkpoint-id closeout-YYYYMMDD-N \
+  --reviewer codex \
+  --test "python -m pytest tests/test_closeout_audit.py -q" \
+  tools/closeout/semantic_review_ledger.py
+
+python tools/closeout/semantic_review_ledger.py record \
+  --checkpoint-id closeout-YYYYMMDD-N \
+  --path-prefix tools/closeout \
+  --note "reviewed closeout proof tooling and claim boundaries"
+```
+
 ## Native System 2 / IVS Validation Slice
 
 Use this focused slice for the governed native System 2 search substrate and

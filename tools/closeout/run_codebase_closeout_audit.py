@@ -391,6 +391,10 @@ def build_closeout_audit(
 
     text_files = [item for item in file_audits if item.text]
     code_files = [item for item in file_audits if item.code]
+    from tools.closeout.semantic_review_ledger import DEFAULT_LEDGER, summarize_semantic_reviews
+
+    semantic_review = summarize_semantic_reviews(ledger_path=DEFAULT_LEDGER, tracked_paths=files)
+    _write_json(out_dir / "SEMANTIC_REVIEW_STATUS.json", semantic_review)
     findings = {
         "schema": "aura.closeout.findings.v1",
         "todo_marker_total": sum(item.todo_markers for item in file_audits),
@@ -459,6 +463,7 @@ def build_closeout_audit(
         "line_ledger_sha256": _sha256_file(line_ledger),
         "file_ledger_sha256": _sha256_file(file_ledger),
         "line_ledger_entries": sum(item.line_count for item in text_files),
+        "semantic_review": semantic_review,
         "gate_passed": all(gate.passed for gate in gates),
         "gates": [asdict(gate) for gate in gates],
         "claim_supported": "closeout_mechanical_source_audit_checkpoint",
@@ -491,6 +496,8 @@ def build_closeout_audit(
                 "tracked_file_count": summary["tracked_file_count"],
                 "text_line_count": summary["text_line_count"],
                 "code_line_count": summary["code_line_count"],
+                "semantic_review_coverage_ratio": semantic_review["semantic_review_coverage_ratio"],
+                "full_semantic_review_current": semantic_review["full_semantic_review_current"],
                 "gate_passed": summary["gate_passed"],
             },
             indent=2,

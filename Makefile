@@ -1,4 +1,4 @@
-.PHONY: lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -346,6 +346,10 @@ closeout-audit:
 	  $$DIRTY_FLAG \
 	  $$GATE_FLAG
 	@echo "✅ Closeout audit artifacts written to $${AURA_CLOSEOUT_OUT:-artifacts/current/closeout_audit}"
+
+closeout-semantic-status:
+	@echo "🧾 Summarizing Aura semantic closeout review coverage..."
+	@$(PYTHON) tools/closeout/semantic_review_ledger.py status
 
 closeout-rubric:
 	@echo ""
