@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 from core.conversation.engine import MAX_CONVERSATIONS, ConversationEngine
@@ -76,3 +77,14 @@ def test_conversation_engine_bounds_conversation_cache():
     assert len(engine.conversations) == MAX_CONVERSATIONS
     assert "session-0" not in engine.conversations
     assert f"session-{MAX_CONVERSATIONS + 4}" in engine.conversations
+
+
+def test_conversation_engine_side_effect_hooks_are_typed_and_observable():
+    source = (
+        Path(__file__).resolve().parent.parent / "core" / "conversation" / "engine.py"
+    ).read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "except BaseException" not in source
+    assert "process_message.affect" in source
+    assert "process_message.relationship_affect" in source

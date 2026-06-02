@@ -123,6 +123,16 @@ def test_orchestrator_services_reports_missing_critical_service_once():
     assert len(events) == 1
 
 
+def test_orchestrator_services_uses_typed_service_boundaries():
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "orchestrator" / "services.py"
+    ).read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "except BaseException" not in source
+    assert "_SERVICE_RESOLUTION_ERRORS" in source
+
+
 def test_orchestrator_package_exports_async_agent_alias():
     import core.orchestrator as orchestrator_package
 

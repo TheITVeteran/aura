@@ -1,15 +1,25 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
+from core.exceptions import ContainerError
 from core.health.degraded_events import record_degraded_event
+from core.runtime.errors import record_degradation
 from core.runtime.service_access import optional_service, require_service
 
-from .orchestrator_types import SystemStatus
-
 logger = logging.getLogger(__name__)
+
+_SERVICE_RESOLUTION_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    ContainerError,
+)
 
 
 def _record_services_degradation(
@@ -48,11 +58,11 @@ class OrchestratorServicesMixin:
         except (ImportError, AttributeError, RuntimeError):
             return False
 
-    def _record_missing_service(self, name: str, alias: Optional[str], *, error: Optional[Exception] = None) -> None:
+    def _record_missing_service(self, name: str, alias: str | None, *, error: BaseException | None = None) -> None:
         notices = getattr(self, "_missing_service_notices", None)
         if notices is None:
             notices = set()
-            setattr(self, "_missing_service_notices", notices)
+            self._missing_service_notices = notices
         key = f"{name}:{alias or ''}"
         if key in notices:
             return
@@ -66,11 +76,11 @@ class OrchestratorServicesMixin:
                 classification="background_degraded",
                 context={"alias": alias or "", "error": type(error).__name__ if error else ""},
             )
-        except Exception as exc:
+        except _SERVICE_RESOLUTION_ERRORS as exc:
             _record_services_degradation(exc, action="continued processing missing service notice despite degraded-event logging error")
             logger.debug("Critical service degraded-event logging failed for %s: %s", name, exc)
 
-    def _get_service(self, name: str, alias: Optional[str] = None, *, critical: bool = False) -> Any:
+    def _get_service(self, name: str, alias: str | None = None, *, critical: bool = False) -> Any:
         """Standardized resolver for orchestrator dependencies.
         
         v50: Fail-soft stabilization.
@@ -80,11 +90,11 @@ class OrchestratorServicesMixin:
         if hasattr(self, override_attr):
             return getattr(self, override_attr)
 
-        service_error: Exception | None = None
+        service_error: BaseException | None = None
         if critical and self._runtime_live():
             try:
                 return require_service(name, alias)
-            except Exception as exc:
+            except _SERVICE_RESOLUTION_ERRORS as exc:
                 _record_services_degradation(exc, action="fell back to optional service resolution after critical service requirement lookup failed")
                 service_error = exc
                 logger.debug("Critical service lookup failed for '%s' (alias=%s): %s", name, alias, exc)
@@ -93,7 +103,7 @@ class OrchestratorServicesMixin:
             val = optional_service(name, alias, default=None)
             if val is not None:
                 return val
-        except Exception as e:
+        except _SERVICE_RESOLUTION_ERRORS as e:
             _record_services_degradation(e, action="continued service lookup by returning None after optional service resolution failed")
             service_error = service_error or e
             logger.debug("Service lookup failed for '%s' (alias=%s): %s", name, alias, e)
@@ -115,102 +125,102 @@ class OrchestratorServicesMixin:
     @property
     def cognitive_engine(self): return self._get_service("cognitive_engine", critical=True)
     @cognitive_engine.setter
-    def cognitive_engine(self, value): setattr(self, "_cognitive_engine_override", value)
+    def cognitive_engine(self, value): self._cognitive_engine_override = value
 
     @property
     def liquid_state(self): 
         """Resolved via 'liquid_state' or 'affect_engine' alias."""
         return self._get_service("liquid_state", "affect_engine", critical=True)
     @liquid_state.setter
-    def liquid_state(self, value): setattr(self, "_liquid_state_override", value)
+    def liquid_state(self, value): self._liquid_state_override = value
 
 
     @property
     def personality_engine(self): return self._get_service("personality_engine")
     @personality_engine.setter
-    def personality_engine(self, value): setattr(self, "_personality_engine_override", value)
+    def personality_engine(self, value): self._personality_engine_override = value
 
     @property
     def memory(self): return self._get_service("memory_facade", critical=True)
     @memory.setter
-    def memory(self, value): setattr(self, "_memory_facade_override", value)
+    def memory(self, value): self._memory_facade_override = value
 
     @property
     def capability_engine(self): 
         """Resolved via 'capability_engine' or 'skill_registry' alias."""
         return self._get_service("capability_engine", "skill_registry", critical=True)
     @capability_engine.setter
-    def capability_engine(self, value): setattr(self, "_capability_engine_override", value)
+    def capability_engine(self, value): self._capability_engine_override = value
 
     @property
     def strategic_planner(self): return self._get_service("strategic_planner")
     @strategic_planner.setter
-    def strategic_planner(self, value): setattr(self, "_strategic_planner_override", value)
+    def strategic_planner(self, value): self._strategic_planner_override = value
 
     @property
     def intent_router(self): return self._get_service("cognitive_router", "intent_router")
     @intent_router.setter
-    def intent_router(self, value): setattr(self, "_cognitive_router_override", value)
+    def intent_router(self, value): self._cognitive_router_override = value
 
     @property
     def identity(self): return self._get_service("self_model", "identity", critical=True)
     @identity.setter
-    def identity(self, value): setattr(self, "_self_model_override", value)
+    def identity(self, value): self._self_model_override = value
 
     @property
     def mycelium(self): return self._get_service("mycelium", "mycelial_network")
     @mycelium.setter
-    def mycelium(self, value): setattr(self, "_mycelium_override", value)
+    def mycelium(self, value): self._mycelium_override = value
 
     @property
     def metabolic_monitor(self): return self._get_service("metabolic_monitor")
     @metabolic_monitor.setter
-    def metabolic_monitor(self, value): setattr(self, "_metabolic_monitor_override", value)
+    def metabolic_monitor(self, value): self._metabolic_monitor_override = value
 
     @property
     def metabolic_coordinator(self): return self._get_service("metabolic_coordinator")
     @metabolic_coordinator.setter
-    def metabolic_coordinator(self, value): setattr(self, "_metabolic_coordinator_override", value)
+    def metabolic_coordinator(self, value): self._metabolic_coordinator_override = value
 
     @property
     def consciousness(self): return self._get_service("liquid_state", "conscious_substrate")
     @consciousness.setter
-    def consciousness(self, value): setattr(self, "_conscious_substrate_override", value)
+    def consciousness(self, value): self._conscious_substrate_override = value
 
     @property
     def curiosity(self): return self._get_service("curiosity_engine")
     @curiosity.setter
-    def curiosity(self, value): setattr(self, "_curiosity_engine_override", value)
+    def curiosity(self, value): self._curiosity_engine_override = value
 
     @property
     def motivation(self): return self._get_service("motivation_engine")
     @motivation.setter
-    def motivation(self, value): setattr(self, "_motivation_engine_override", value)
+    def motivation(self, value): self._motivation_engine_override = value
 
     @property
     def knowledge_graph(self): return self._get_service("knowledge_graph", critical=True)
     @knowledge_graph.setter
-    def knowledge_graph(self, value): setattr(self, "_knowledge_graph_override", value)
+    def knowledge_graph(self, value): self._knowledge_graph_override = value
 
     @property
     def goal_hierarchy(self): return self._get_service("goal_hierarchy", critical=True)
     @goal_hierarchy.setter
-    def goal_hierarchy(self, value): setattr(self, "_goal_hierarchy_override", value)
+    def goal_hierarchy(self, value): self._goal_hierarchy_override = value
     
     @property
     def alignment(self): return self._get_service("alignment", "alignment_engine")
     @alignment.setter
-    def alignment(self, value): setattr(self, "_alignment_engine_override", value)
+    def alignment(self, value): self._alignment_engine_override = value
 
     @property
     def watchdog(self): return self._get_service("watchdog")
     @watchdog.setter
-    def watchdog(self, value): setattr(self, "_watchdog_override", value)
+    def watchdog(self, value): self._watchdog_override = value
 
     @property
     def lnn(self): return self._get_service("lnn", "liquid_substrate")
     @lnn.setter
-    def lnn(self, value): setattr(self, "_lnn_override", value)
+    def lnn(self, value): self._lnn_override = value
     
     @property
     def sovereign_swarm(self):
@@ -218,57 +228,57 @@ class OrchestratorServicesMixin:
         core = self._get_service("agency_core")
         return getattr(core, "swarm", None) if core else None
     @sovereign_swarm.setter
-    def sovereign_swarm(self, value): setattr(self, "_agency_core_override", value)
+    def sovereign_swarm(self, value): self._agency_core_override = value
     
     @property
     def affect(self): return self._get_service("affect_engine")
     @affect.setter
-    def affect(self, value): setattr(self, "_affect_engine_override", value)
+    def affect(self, value): self._affect_engine_override = value
 
     @property
     def state_machine(self): return self._get_service("state_machine")
     @state_machine.setter
-    def state_machine(self, value): setattr(self, "_state_machine_override", value)
+    def state_machine(self, value): self._state_machine_override = value
     
     @property
     def project_store(self): return self._get_service("project_store")
     @project_store.setter
-    def project_store(self, value): setattr(self, "_project_store_override", value)
+    def project_store(self, value): self._project_store_override = value
 
     @property
     def self_modifier(self): return self._get_service("self_modification_engine")
     @self_modifier.setter
-    def self_modifier(self, value): setattr(self, "_self_modification_engine_override", value)
+    def self_modifier(self, value): self._self_modification_engine_override = value
 
     @property
     def virtual_body(self): return self._get_service("virtual_body")
     @virtual_body.setter
-    def virtual_body(self, value): setattr(self, "_virtual_body_override", value)
+    def virtual_body(self, value): self._virtual_body_override = value
 
     @property
     def meta_learning(self): return self._get_service("meta_learning")
     @meta_learning.setter
-    def meta_learning(self, value): setattr(self, "_meta_learning_override", value)
+    def meta_learning(self, value): self._meta_learning_override = value
 
     @property
     def drives(self): return self._get_service("drive_engine", "drives")
     @drives.setter
-    def drives(self, value): setattr(self, "_drive_engine_override", value)
+    def drives(self, value): self._drive_engine_override = value
 
     @property
     def hierarchical_memory(self): return self._get_service("hierarchical_memory_orchestrator")
     @hierarchical_memory.setter
-    def hierarchical_memory(self, value): setattr(self, "_hierarchical_memory_override", value)
+    def hierarchical_memory(self, value): self._hierarchical_memory_override = value
 
     @property
     def meta_cognition(self): return self._get_service("meta_cognition_shard")
     @meta_cognition.setter
-    def meta_cognition(self, value): setattr(self, "_meta_cognition_override", value)
+    def meta_cognition(self, value): self._meta_cognition_override = value
 
     @property
     def healing_swarm(self): return self._get_service("healing_swarm")
     @healing_swarm.setter
-    def healing_swarm(self, value): setattr(self, "_healing_swarm_override", value)
+    def healing_swarm(self, value): self._healing_swarm_override = value
     
     @property
     def output_gate(self):
@@ -277,10 +287,10 @@ class OrchestratorServicesMixin:
             return val
         from core.utils.output_gate import get_output_gate
         gate = get_output_gate(self)
-        setattr(self, "_output_gate_override", gate)
+        self._output_gate_override = gate
         return gate
     @output_gate.setter
-    def output_gate(self, value): setattr(self, "_output_gate_override", value)
+    def output_gate(self, value): self._output_gate_override = value
 
     # Dynamic Alias Mapping (v11.0 Clean Room)
     def __getattr__(self, name: str) -> Any:

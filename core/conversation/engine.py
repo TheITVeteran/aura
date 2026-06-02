@@ -416,7 +416,14 @@ class ConversationEngine:
                     stimulus = "interaction"
                 
                 await affect.react(stimulus, {"intensity": 0.6})
-        except Exception as affect_exc:
+        except _ENGINE_RECOVERABLE_ERRORS as affect_exc:
+            _emit_engine_fault(
+                affect_exc,
+                action="continued conversation after affect reaction hook failed",
+                severity="warning",
+                stage="process_message.affect",
+                extra={"conversation_id": context.conversation_id},
+            )
             logger.debug("Failed to trigger affective reaction: %s", affect_exc)
 
         # 3. Assemble Cognitive Payload
@@ -501,7 +508,14 @@ class ConversationEngine:
                             "emotions": snapshot.get("emotions", {})
                         }
                     )
-            except Exception as dossier_exc:
+            except _ENGINE_RECOVERABLE_ERRORS as dossier_exc:
+                _emit_engine_fault(
+                    dossier_exc,
+                    action="kept response delivered after relationship affect write failed",
+                    severity="warning",
+                    stage="process_message.relationship_affect",
+                    extra={"conversation_id": context.conversation_id},
+                )
                 logger.debug("Failed to record interaction affect in dossier: %s", dossier_exc)
 
             try:
