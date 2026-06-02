@@ -7,6 +7,7 @@ caught, executed, or explicitly labelled as unverified.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Dict, List
 
 import pytest
@@ -89,6 +90,41 @@ async def test_multiple_markers_all_processed():
     assert result.replaced == 2
     assert "[SKILL" not in result.grounded_text
     assert "[ACTION" not in result.grounded_text
+
+
+@pytest.mark.asyncio
+async def test_structured_desktop_task_marker_dispatches_json_plan():
+    engine = _StubCapabilityEngine(ok=True, summary="Desktop task completed 2/2 governed computer-use steps.")
+    plan = {
+        "objective": "Open Notes and write a receipt.",
+        "steps": [
+            {"action": "open_app", "target": "Notes"},
+            {"action": "write_text_file", "target": {"path": "Aura Proof/receipt.txt", "content": "done"}},
+        ],
+    }
+    text = f"[ACTION:desktop_task] {json.dumps(plan)}"
+
+    result = await ground_response(text, capability_engine=engine)
+
+    assert result.dispatched == 1
+    assert result.dispatched_ok == 1
+    assert engine.calls[0]["name"] == "desktop_task"
+    assert engine.calls[0]["params"]["objective"] == "Open Notes and write a receipt."
+    assert engine.calls[0]["params"]["steps"][1]["target"]["content"] == "done"
+    assert "Desktop task completed" in result.grounded_text
+
+
+@pytest.mark.asyncio
+async def test_structured_computer_use_marker_dispatches_json_payload():
+    engine = _StubCapabilityEngine(ok=True, summary="Clipboard set.")
+    text = '[ACTION:computer_use] {"action":"set_clipboard","target":"hello"}'
+
+    result = await ground_response(text, capability_engine=engine)
+
+    assert result.dispatched == 1
+    assert engine.calls[0]["name"] == "computer_use"
+    assert engine.calls[0]["params"] == {"action": "set_clipboard", "target": "hello"}
+    assert "Clipboard set." in result.grounded_text
 
 
 def test_unverified_action_claim_detector():

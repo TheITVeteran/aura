@@ -6851,3 +6851,16 @@ def test_server_log_queue_proof_mode_buffers_only_warnings(monkeypatch):
 
     assert server._QueueHandler._should_buffer_record(info_record) is False
     assert server._QueueHandler._should_buffer_record(warning_record) is True
+
+
+def test_websocket_log_queue_capacity_env_parser(monkeypatch):
+    from interface import websocket_manager
+
+    monkeypatch.setenv("AURA_UI_LOG_QUEUE_MAXLEN", "42")
+    assert websocket_manager._env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500) == 500
+
+    monkeypatch.setenv("AURA_UI_LOG_QUEUE_MAXLEN", "4096")
+    assert websocket_manager._env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500) == 4096
+
+    monkeypatch.setenv("AURA_UI_LOG_QUEUE_MAXLEN", "not-an-int")
+    assert websocket_manager._env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500) == 2000

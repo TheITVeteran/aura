@@ -525,6 +525,9 @@ def _collect_voice_summary() -> dict[str, Any]:
         "listening": False,
         "auto_listen": False,
         "server_capture": False,
+        "capture_available": False,
+        "stt_available": False,
+        "stt_initialized": False,
         "streaming_available": voice_available,
         "state": "ready" if voice_available else "unavailable",
     }
@@ -545,6 +548,11 @@ def _collect_voice_summary() -> dict[str, Any]:
                 if isinstance(voice_status, dict):
                     summary["auto_listen"] = bool(voice_status.get("auto_listen", False))
                     summary["server_capture"] = bool(voice_status.get("server_capture", False))
+                    summary["capture_available"] = bool(voice_status.get("capture_available", False))
+                    summary["stt_available"] = bool(voice_status.get("stt_available", False))
+                    summary["stt_initialized"] = bool(voice_status.get("stt_initialized", False))
+                    summary["capture_backend"] = voice_status.get("capture_backend")
+                    summary["stt_backend"] = voice_status.get("stt_backend")
                     summary["stt"] = voice_status.get("stt")
                     summary["tts"] = voice_status.get("tts")
             if not microphone_enabled and not speaking_enabled:

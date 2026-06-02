@@ -24,6 +24,7 @@ from __future__ import annotations
 
 
 import logging
+import json
 import re
 import sqlite3
 import time
@@ -60,6 +61,7 @@ _ACTION_CLAIM_PATTERNS: Tuple[re.Pattern[str], ...] = (
 
 DEFAULT_SKILL_PARAMS: Dict[str, Dict[str, Any]] = {
     "computer_use": {"action": "read_screen_text"},
+    "desktop_task": {"objective": "", "steps": []},
     "web_search": {"query": ""},
     "file_operation": {"action": "noop"},
     "os_manipulation": {"action": "noop"},
@@ -246,6 +248,9 @@ def _params_for_skill(
     if not tail:
         return defaults
     lower = tail.lower()
+    parsed = _parse_json_tail(tail)
+    if isinstance(parsed, dict):
+        return parsed
     if skill_name == "computer_use":
         if any(k in lower for k in ("terminal", "shell", "bash", "zsh")):
             defaults.setdefault("action", "read_screen_text")
@@ -255,6 +260,20 @@ def _params_for_skill(
         elif "open" in lower:
             defaults["action"] = "open_app"
             defaults["target"] = tail.split("open", 1)[-1].strip(": ")
+    if skill_name == "desktop_task":
+        objective = str(context.get("objective") or context.get("message") or tail or "desktop task")
+        defaults["objective"] = objective
+        if isinstance(parsed, list):
+            defaults["steps"] = parsed
+        elif tail:
+            defaults["steps"] = [
+                {
+                    "action": "read_screen_text",
+                    "target": "",
+                    "reason": "Inspect current desktop before planning further actions.",
+                    "expect": "Current foreground UI text is returned.",
+                }
+            ]
     if skill_name == "web_search":
         query = tail.strip().strip(":").strip()
         if query:
@@ -286,6 +305,20 @@ def _params_for_skill(
 
             defaults["action"] = action_key
     return defaults
+
+
+def _parse_json_tail(tail: str) -> Any | None:
+    text = str(tail or "").strip()
+    if not text:
+        return None
+    if ":" in text and not text.startswith(("{", "[")):
+        text = text.split(":", 1)[-1].strip()
+    if not text.startswith(("{", "[")):
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
 
 
 def _unverified_text(skill_name: str, tail: str) -> str:

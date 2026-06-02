@@ -18,6 +18,7 @@ TTS uses pyttsx3 (macOS native NSSpeechSynthesizer under the hood).
 
 from core.runtime.errors import record_degradation
 import base64
+import importlib.util
 
 from core.utils.exceptions import capture_and_log
 from core.utils.concurrency import RobustLock
@@ -79,6 +80,19 @@ def _get_whisper_model_class():
         record_degradation('voice_engine', exc)
         logger.error("❌ faster-whisper import failed — STT unavailable: %s", exc)
     return _WhisperModel
+
+
+def _sounddevice_available() -> bool:
+    return sd is not None
+
+
+def _stt_dependency_available() -> bool:
+    if _WhisperModel is not None:
+        return True
+    try:
+        return importlib.util.find_spec("faster_whisper") is not None
+    except (ImportError, AttributeError, RuntimeError, ValueError):
+        return False
 
 try:
     from TTS.api import TTS
@@ -487,7 +501,7 @@ class SovereignVoiceEngine:
             self._stt_initialized = True
             self._pulse_hypha("voice_engine", "cognition", success=True)
             logger.info("✅ Whisper STT online (model=%s, device=%s)", self.whisper_model_name, actual_device)
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to init STT: %s", e)
             self._pulse_hypha("voice_engine", "cognition", success=False)
@@ -641,7 +655,7 @@ class SovereignVoiceEngine:
             )
             return success
 
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to start mic capture: %s", e, exc_info=True)
             self._pulse_hypha("voice_engine", "cognition", success=False)
@@ -1249,7 +1263,12 @@ class SovereignVoiceEngine:
             "speaking": self.speaking_enabled,
             "auto_listen": self.auto_listen_enabled,
             "listening": self._mic_listening,
-            "server_capture": True,
+            "server_capture": _sounddevice_available(),
+            "capture_available": _sounddevice_available(),
+            "stt_available": _stt_dependency_available(),
+            "stt_initialized": self._stt_initialized,
+            "capture_backend": "sounddevice" if _sounddevice_available() else "unavailable",
+            "stt_backend": "faster_whisper" if _stt_dependency_available() else "unavailable",
         }
 
 # ── Singleton ─────────────────────────────────────────────

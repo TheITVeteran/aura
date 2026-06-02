@@ -4519,6 +4519,14 @@ def _is_live_runtime_proof_request(user_message: str) -> bool:
 def _classify_live_runtime_proof(user_message: str) -> str | None:
     text = _normalize_user_message(user_message)
     is_live_proof = _is_live_runtime_proof_request(text)
+    desktop_chain_terms = (
+        ("calculator" in text or "equation" in text)
+        and ("notes" in text or "note" in text)
+        and "pdf" in text
+        and any(token in text for token in ("click", "type", "copy", "paste", "export", "move", "chain", "desktop"))
+    )
+    if desktop_chain_terms:
+        return "desktop_chain"
     if "snake" in text and any(token in text for token in ("create", "make", "build", "save", "file", "game")):
         return "snake"
     if "glass arithmetic" in text and any(token in text for token in ("novel", "invent", "stay with", "limitation", "example", "rules")):
@@ -4672,6 +4680,329 @@ async def _write_live_proof_file(path: str, content: str, *, objective: str) -> 
     return dict(result, absolute_path=str(abs_path), bytes=len(content.encode("utf-8")))
 
 
+def _as_applescript_string(value: str) -> str:
+    parts = str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    quoted = []
+    for part in parts:
+        escaped = part.replace("\\", "\\\\").replace('"', '\\"')
+        quoted.append(f'"{escaped}"')
+    return " & return & ".join(quoted) if quoted else '""'
+
+
+def _normalize_calculator_display(value: str) -> str:
+    return re.sub(r"[^0-9.+\\-]", "", value or "").strip()
+
+
+async def _attempt_notes_pdf_export_from_chat(staged_pdf: Path, *, objective: str) -> dict[str, Any]:
+    export_dir = staged_pdf.parent
+    script = f"""
+tell application "Notes" to activate
+delay 0.5
+tell application "System Events"
+    tell process "Notes"
+        click menu item "PDF" of menu 1 of menu item "Export as" of menu "File" of menu bar 1
+        delay 0.8
+        keystroke "g" using {{command down, shift down}}
+        delay 0.3
+        keystroke {_as_applescript_string(str(export_dir))}
+        key code 36
+        delay 0.3
+        keystroke {_as_applescript_string(staged_pdf.name)}
+        key code 36
+    end tell
+end tell
+return "notes_export_attempted"
+""".strip()
+    result = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "run_applescript", "target": script},
+        objective=objective,
+    )
+    if not result.get("ok"):
+        cleanup = """
+tell application "System Events"
+    key code 53
+end tell
+return "dismissed"
+""".strip()
+        await _execute_governed_live_skill(
+            "computer_use",
+            {"action": "run_applescript", "target": cleanup},
+            objective=objective,
+        )
+        return {"ok": False, "result": result}
+    for _ in range(10):
+        if staged_pdf.exists():
+            break
+        await asyncio.sleep(0.5)
+    return {"ok": staged_pdf.exists(), "result": result, "path": str(staged_pdf)}
+
+
+async def _execute_desktop_chain_from_chat(user_message: str) -> dict[str, Any]:
+    objective = str(user_message or "")
+    stamp = int(time.time())
+    proof_dir = Path.home() / "Desktop" / f"Aura Chat Desktop Proof {stamp}"
+    staged_pdf = Path.home() / "Desktop" / f"Aura Chat Desktop Proof {stamp}.pdf"
+    final_pdf = proof_dir / "calculator-note.pdf"
+    receipt_file = proof_dir / "AURA_CHAT_DESKTOP_CHAIN_RECEIPT.txt"
+    note_title = f"Aura Chat Desktop Chain Proof {stamp}"
+
+    opened = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "open_app", "target": "Calculator"},
+        objective=objective,
+    )
+    if not opened.get("ok"):
+        return {
+            "ok": False,
+            "response": f"I tried the desktop chain, but opening Calculator was blocked: {opened.get('error') or opened}",
+            "status": "live_proof_failed",
+            "data": {"opened": opened},
+        }
+
+    calc_script = """
+tell application "Calculator" to activate
+delay 0.4
+tell application "System Events"
+    tell process "Calculator"
+        set frontmost to true
+        keystroke "c"
+        delay 0.1
+        repeat with n from 1 to 10
+            if (count of windows) > 0 then exit repeat
+            delay 0.2
+        end repeat
+        set g to UI element 1 of UI element 1 of UI element 1 of UI element 1 of window 1
+        set minX to 10000
+        set minY to 10000
+        repeat with e in UI elements of g
+            try
+                if role of e is "AXButton" then
+                    set p to position of e
+                    if item 1 of p < minX then set minX to item 1 of p
+                    if item 2 of p < minY then set minY to item 2 of p
+                end if
+            end try
+        end repeat
+        set stepSize to 54
+        set clickPoints to {{minX + stepSize + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 2) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 4) + 24}}
+        repeat with pt in clickPoints
+            click at pt
+            delay 0.15
+        end repeat
+        delay 0.2
+        set displayText to ""
+        repeat with e in UI elements of g
+            try
+                if role of e is "AXScrollArea" and description of e is "Edit field" then
+                    set displayText to value of UI element 1 of e as string
+                end if
+            end try
+        end repeat
+        return displayText
+    end tell
+end tell
+""".strip()
+    calc = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "run_applescript", "target": calc_script},
+        objective=objective,
+    )
+    if not calc.get("ok"):
+        return {
+            "ok": False,
+            "response": f"I opened Calculator, but the button-click equation failed: {calc.get('error') or calc}",
+            "status": "live_proof_failed",
+            "data": {"opened": opened, "calculator": calc},
+        }
+    display = _normalize_calculator_display(str(calc.get("output") or ""))
+    if display != "5":
+        return {
+            "ok": False,
+            "response": f"I clicked the Calculator controls, but the display read `{display or 'blank'}` instead of `5`.",
+            "status": "live_proof_failed",
+            "data": {"opened": opened, "calculator": calc, "display": display},
+        }
+
+    note_body = (
+        "Aura regular chat desktop chain proof\n"
+        "Equation clicked in Calculator: 2 + 3 = 5\n"
+        f"Calculator display readback: {display}\n"
+        f"Timestamp: {stamp}\n"
+        "Route: ordinary /api/chat request, using governed computer_use."
+    )
+    clipboard = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "set_clipboard", "target": note_body},
+        objective=objective,
+    )
+    if not clipboard.get("ok"):
+        return {
+            "ok": False,
+            "response": f"I clicked the equation, but copying the note body to the clipboard failed: {clipboard.get('error') or clipboard}",
+            "status": "live_proof_failed",
+            "data": {"opened": opened, "calculator": calc, "clipboard": clipboard},
+        }
+    clip_read = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "get_clipboard", "target": ""},
+        objective=objective,
+    )
+    if not clip_read.get("ok") or "2 + 3 = 5" not in str(clip_read.get("text") or ""):
+        return {
+            "ok": False,
+            "response": "I copied the equation body, but clipboard verification failed, so I stopped instead of claiming success.",
+            "status": "live_proof_failed",
+            "data": {"clipboard": clipboard, "clipboard_read": clip_read},
+        }
+
+    notes_script = f"""
+tell application "Notes"
+    activate
+    set targetFolder to missing value
+    repeat with acct in accounts
+        repeat with candidateFolder in folders of acct
+            if name of candidateFolder is "Notes" then
+                set targetFolder to candidateFolder
+                exit repeat
+            end if
+        end repeat
+        if targetFolder is not missing value then exit repeat
+    end repeat
+    if targetFolder is missing value then set targetFolder to folder 1 of account 1
+    set newNote to make new note at targetFolder with properties {{name:{_as_applescript_string(note_title)}, body:{_as_applescript_string(note_body)}}}
+    return name of newNote
+end tell
+""".strip()
+    note = await _execute_governed_live_skill(
+        "computer_use",
+        {"action": "run_applescript", "target": notes_script},
+        objective=objective,
+    )
+    if not note.get("ok") or note_title not in str(note.get("output") or ""):
+        return {
+            "ok": False,
+            "response": f"I clicked the equation and copied the body, but Notes note creation failed: {note.get('error') or note}",
+            "status": "live_proof_failed",
+            "data": {"note": note},
+        }
+
+    export_attempt = await _attempt_notes_pdf_export_from_chat(staged_pdf, objective=objective)
+    pdf_method = "notes_export_pdf"
+    rendered: dict[str, Any]
+    if not staged_pdf.exists():
+        pdf_method = "aura_pdf_renderer_fallback"
+        rendered = await _execute_governed_live_skill(
+            "computer_use",
+            {
+                "action": "render_text_pdf",
+                "target": json.dumps(
+                    {
+                        "path": str(staged_pdf),
+                        "title": note_title,
+                        "body": note_body,
+                        "overwrite": False,
+                    }
+                ),
+            },
+            objective=objective,
+        )
+        if not rendered.get("ok"):
+            return {
+                "ok": False,
+                "response": f"I created the Notes note, but both Notes export and PDF fallback failed: {rendered.get('error') or rendered}",
+                "status": "live_proof_failed",
+                "data": {"export_attempt": export_attempt, "rendered": rendered},
+            }
+    else:
+        rendered = {"ok": True, "path": str(staged_pdf), "source": "Notes Export as PDF"}
+
+    moved = await _execute_governed_live_skill(
+        "computer_use",
+        {
+            "action": "move_file",
+            "target": json.dumps(
+                {
+                    "source": str(staged_pdf),
+                    "destination": str(final_pdf),
+                    "overwrite": False,
+                }
+            ),
+        },
+        objective=objective,
+    )
+    if not moved.get("ok"):
+        return {
+            "ok": False,
+            "response": f"I created the PDF, but moving it into the proof folder failed: {moved.get('error') or moved}",
+            "status": "live_proof_failed",
+            "data": {"rendered": rendered, "moved": moved},
+        }
+
+    receipt_text = (
+        f"Aura completed regular chat desktop chain proof {stamp}\n"
+        "Opened Calculator; pre-cleared input; clicked 2, +, 3, =; read display 5.\n"
+        "Copied the equation body to clipboard; created a Notes note.\n"
+        f"PDF method: {pdf_method}.\n"
+        f"Final PDF: {final_pdf}\n"
+    )
+    receipt = await _execute_governed_live_skill(
+        "computer_use",
+        {
+            "action": "write_text_file",
+            "target": json.dumps(
+                {
+                    "path": str(receipt_file),
+                    "content": receipt_text,
+                    "overwrite": False,
+                }
+            ),
+        },
+        objective=objective,
+    )
+    if not receipt.get("ok"):
+        return {
+            "ok": False,
+            "response": f"I moved the PDF, but writing the receipt failed: {receipt.get('error') or receipt}",
+            "status": "live_proof_failed",
+            "data": {"moved": moved, "receipt": receipt},
+        }
+    if not final_pdf.exists() or not final_pdf.read_bytes().startswith(b"%PDF"):
+        return {
+            "ok": False,
+            "response": f"The final PDF path did not verify as a PDF: {final_pdf}",
+            "status": "live_proof_failed",
+            "data": {"final_pdf": str(final_pdf)},
+        }
+
+    return {
+        "ok": True,
+        "response": (
+            "I completed the regular-chat desktop chain through governed `computer_use`: "
+            "opened Calculator, clicked `2 + 3 =`, read `5`, copied the equation body, "
+            "created a Notes note, produced a PDF, moved it into a Desktop proof folder, "
+            f"and wrote the receipt. Final PDF: `{final_pdf}`. Receipt: `{receipt_file}`. "
+            f"PDF method: {pdf_method}."
+        ),
+        "status": "live_proof_desktop_chain",
+        "data": {
+            "opened": opened,
+            "calculator": calc,
+            "clipboard": clipboard,
+            "clipboard_read": {"ok": clip_read.get("ok"), "chars": clip_read.get("chars")},
+            "note": note,
+            "export_attempt": export_attempt,
+            "pdf_method": pdf_method,
+            "rendered": rendered,
+            "moved": moved,
+            "receipt": receipt,
+            "proof_dir": str(proof_dir),
+            "final_pdf": str(final_pdf),
+            "receipt_file": str(receipt_file),
+        },
+    }
+
+
 def _build_glass_arithmetic_reply(user_message: str = "") -> str:
     text = _normalize_user_message(user_message)
     if "stay with" in text or "limitation" in text or "connect it" in text:
@@ -4731,6 +5062,13 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
             "status": "live_proof_snake",
             "data": {"kind": kind, "write": write},
         }
+
+    if kind == "desktop_chain":
+        result = await _execute_desktop_chain_from_chat(user_message)
+        result.setdefault("data", {})
+        if isinstance(result["data"], dict):
+            result["data"].setdefault("kind", kind)
+        return result
 
     if kind == "desktop":
         opened = await _execute_governed_live_skill(

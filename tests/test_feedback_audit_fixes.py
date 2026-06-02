@@ -15,7 +15,8 @@ from core.skills.train_self import TrainSelfSkill as CoreTrainSelfSkill
 from skills.train_self import TrainSelfSkill as LegacyTrainSelfSkill
 
 
-def test_error_intelligence_demotes_omni_log_error_warning(caplog, tmp_path):
+@pytest.mark.parametrize("skill_name", ["omni_log_error", "omni_log_critical"])
+def test_error_intelligence_demotes_omni_log_warning(caplog, tmp_path, skill_name):
     from core.self_modification.error_intelligence import StructuredErrorLogger
 
     logger = StructuredErrorLogger(str(tmp_path))
@@ -24,9 +25,9 @@ def test_error_intelligence_demotes_omni_log_error_warning(caplog, tmp_path):
     try:
         raise RuntimeError("telemetry loop failure")
     except RuntimeError as exc:
-        asyncio.run(logger.log_error(exc, {}, skill_name="omni_log_error"))
+        asyncio.run(logger.log_error(exc, {}, skill_name=skill_name))
 
-    assert "Error logged: RuntimeError in omni_log_error" not in caplog.text
+    assert f"Error logged: RuntimeError in {skill_name}" not in caplog.text
 
 
 @pytest.mark.parametrize("skill_kind", ["core", "legacy"])

@@ -27,6 +27,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "cognitive_trainer",
     "computer_use",
     "curiosity",
+    "desktop_task",
     "delegate_shard",
     "deploy_ghost_probe",
     "dream_sleep",
@@ -131,7 +132,11 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "coding_skill": {"objective": "", "params": {"task": ""}},
         "cognitive_trainer": {"dataset_name": "unsupported", "limit": 1, "dry_run": True},
         "computer_use": {"action": "click", "x": 1, "y": 1},
-        "curiosity": {"topic": ""},
+        "curiosity": {"action": "get_suggestion"},
+        "desktop_task": {
+            "objective": "Contract probe for desktop task validation.",
+            "steps": [{"action": "wait", "target": "0"}],
+        },
         "delegate_shard": {"objective": "review this"},
         "deploy_ghost_probe": {"resource": "sample.txt"},
         "email_adapter": {"mode": "check"},
@@ -260,7 +265,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 64
+    assert len(skill_registry) == 65
 
 
 @pytest.mark.asyncio
@@ -322,7 +327,7 @@ async def test_self_evolution_generates_fallback_proposal_without_brain(
             "objective": "Refactor export priority planning.",
             "files": [str(target)],
         },
-        {"proprioception": {"memory_percent": 42.0}},
+        {"brain": None, "proprioception": {"memory_percent": 42.0}},
     )
 
     assert result["ok"] is True
@@ -640,6 +645,10 @@ async def test_capability_engine_promotes_executive_constraints_into_skill_conte
             begin_tool_execution=_begin_tool_execution,
             finish_tool_execution=_finish_tool_execution,
         ),
+    )
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: SimpleNamespace(verify_tool_access=lambda *_args, **_kwargs: True),
     )
     monkeypatch.setattr("core.container.ServiceContainer.has", staticmethod(lambda _name: False))
 

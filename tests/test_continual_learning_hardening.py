@@ -246,6 +246,13 @@ def test_shackled_edi_allows_only_scoped_safe_or_governed_actions(tmp_path: Path
         governed=True,
         user_authorized=True,
     )[0]
+    assert edi.can_do(
+        "computer_use",
+        risk_level="medium",
+        effect_scope="desktop_file_io",
+        governed=True,
+        user_authorized=True,
+    )[0]
     assert not edi.can_do(
         "file_operation",
         risk_level="medium",
@@ -326,6 +333,16 @@ def test_capability_engine_edi_scopes_live_user_file_and_desktop_actions():
         desktop_meta,
         {"action": "open_app", "target": "Calculator"},
     ) == "foreground_desktop_control"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_applescript", "target": 'return "ok"'},
+    ) == "foreground_desktop_control"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "render_text_pdf", "target": "{}"},
+    ) == "desktop_file_io"
     assert engine._effect_scope_for_execution(
         "computer_use",
         desktop_meta,

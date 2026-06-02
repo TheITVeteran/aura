@@ -852,6 +852,7 @@ class CapabilityEngine(AuraBaseModule):
             "evolution_status",
             # OS & computer control
             "computer_use",
+            "desktop_task",
             "os_manipulation",
             # Agency & autonomy
             "curiosity",
@@ -951,6 +952,14 @@ class CapabilityEngine(AuraBaseModule):
                 r"open .* on my computer",
                 r"take (?:a )?screenshot",
                 r"(?:move|position) (?:the )?(?:cursor|mouse)",
+            ],
+            "desktop_task": [
+                r"use (?:my )?computer",
+                r"do (?:this|that) on (?:my )?(?:computer|desktop|screen)",
+                r"complete .* on (?:my )?(?:computer|desktop|screen)",
+                r"(?:multi[- ]?step|chained|chain) .* (?:desktop|computer|app|screen)",
+                r"(?:open|click|type|copy|paste|export|move).*(?:open|click|type|copy|paste|export|move)",
+                r"(?:calculator|notes|finder|preview|browser).*(?:pdf|clipboard|file|folder|note)",
             ],
             "os_manipulation": [
                 r"open (?:finder|explorer|terminal|file manager)",
@@ -1430,7 +1439,11 @@ class CapabilityEngine(AuraBaseModule):
             (("terminal", "shell", "command", "cli"), ("sovereign_terminal", "computer_use")),
             (
                 ("click", "type", "screen", "desktop", "mouse", "keyboard"),
-                ("computer_use", "os_manipulation"),
+                ("desktop_task", "computer_use", "os_manipulation"),
+            ),
+            (
+                ("clipboard", "copy", "paste", "export", "pdf", "notes app", "calculator"),
+                ("desktop_task", "computer_use"),
             ),
             (
                 ("file", "directory", "folder", "read file", "write file", "repo", "code"),
@@ -1823,7 +1836,7 @@ class CapabilityEngine(AuraBaseModule):
         return "managed_async"
 
     def _risk_class_for(self, skill_name: str, meta: SkillMetadata) -> str:
-        if skill_name in _CRITICAL_ACTION_SKILLS or skill_name in {"computer_use"}:
+        if skill_name in _CRITICAL_ACTION_SKILLS or skill_name in {"computer_use", "desktop_task"}:
             return "critical"
         if meta.metabolic_cost >= 3:
             return "high"
@@ -1842,6 +1855,8 @@ class CapabilityEngine(AuraBaseModule):
             return "pure_compute"
         if skill_name in _SANDBOXED_COMPUTE_EFFECT_SKILLS:
             return "sandboxed_compute"
+        if skill_name == "desktop_task":
+            return "foreground_desktop_control"
         if skill_name in _EXTERNAL_IO_EFFECT_SKILLS:
             return "external_io"
         if skill_name in _STATEFUL_EFFECT_SKILLS:
@@ -1882,10 +1897,12 @@ class CapabilityEngine(AuraBaseModule):
     @staticmethod
     def _computer_use_effect_scope(params: dict[str, Any]) -> str | None:
         action = str((params or {}).get("action") or "").strip().lower()
-        if action in {"read_menu_clock", "read_screen_text"}:
+        if action in {"get_clipboard", "read_menu_clock", "read_screen_text", "wait"}:
             return "read_only"
-        if action in {"click", "hotkey", "open_app", "open_url", "scroll", "type"}:
+        if action in {"click", "hotkey", "open_app", "open_url", "run_applescript", "scroll", "set_clipboard", "type"}:
             return "foreground_desktop_control"
+        if action in {"move_file", "render_text_pdf", "write_text_file"}:
+            return "desktop_file_io"
         if action == "run_command":
             try:
                 argv = shlex.split(str((params or {}).get("target") or ""))

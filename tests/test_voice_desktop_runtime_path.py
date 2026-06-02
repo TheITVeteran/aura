@@ -96,6 +96,40 @@ async def test_microphone_privacy_enable_fails_closed_when_listener_will_not_sta
     assert result["error"] == "microphone_start_failed"
 
 
+@pytest.mark.asyncio
+async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatch) -> None:
+    from interface.routes import privacy
+
+    class Voice:
+        microphone_enabled = False
+        speaking_enabled = False
+        _mic_listening = False
+
+        async def start_listening(self) -> bool:
+            raise OSError("input device unavailable")
+
+        def stop_listening(self) -> None:
+            self._mic_listening = False
+
+    voice = Voice()
+    original = privacy.get_voice_engine_fn()
+    privacy.set_voice_engine_fn(lambda: voice)
+    try:
+        result = await privacy.api_privacy_microphone(
+            privacy.PrivacyPayload(enabled=True),
+            None,
+        )
+    finally:
+        privacy.set_voice_engine_fn(original)
+
+    assert result["ok"] is False
+    assert result["enabled"] is False
+    assert result["microphone_enabled"] is False
+    assert result["speaking_enabled"] is False
+    assert result["listening"] is False
+    assert result["error"].startswith("OSError:")
+
+
 def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
     from interface.routes import privacy
     from interface.routes import system
@@ -113,6 +147,11 @@ def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
             return {
                 "auto_listen": True,
                 "server_capture": True,
+                "capture_available": True,
+                "stt_available": True,
+                "stt_initialized": True,
+                "capture_backend": "sounddevice",
+                "stt_backend": "faster_whisper",
                 "stt": "Whisper (Direct)",
                 "tts": "pyttsx3 (Native)",
             }
@@ -130,4 +169,36 @@ def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
     assert summary["listening"] is True
     assert summary["auto_listen"] is True
     assert summary["server_capture"] is True
+    assert summary["capture_available"] is True
+    assert summary["stt_available"] is True
+    assert summary["stt_initialized"] is True
+    assert summary["capture_backend"] == "sounddevice"
+    assert summary["stt_backend"] == "faster_whisper"
     assert summary["state"] == "listening"
+
+
+def test_voice_engine_status_reports_missing_capture_backend(monkeypatch, tmp_path) -> None:
+    import core.senses.voice_engine as voice_module
+
+    monkeypatch.setattr(voice_module, "sd", None)
+    engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+
+    status = engine.get_status()
+
+    assert status["server_capture"] is False
+    assert status["capture_available"] is False
+    assert status["capture_backend"] == "unavailable"
+
+
+def test_sensory_capabilities_require_capture_and_stt() -> None:
+    from core.senses.sensory_registry import SensoryCapabilityFlags
+
+    assert SensoryCapabilityFlags.from_boot_status(
+        {"sounddevice": True, "faster_whisper": True}
+    ).hearing_enabled is True
+    assert SensoryCapabilityFlags.from_boot_status(
+        {"sounddevice": True, "faster_whisper": False}
+    ).hearing_enabled is False
+    assert SensoryCapabilityFlags.from_boot_status(
+        {"sounddevice": False, "faster_whisper": True}
+    ).hearing_enabled is False

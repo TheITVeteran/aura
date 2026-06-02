@@ -141,7 +141,7 @@ async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_req
                 if inspect.isawaitable(start_result):
                     start_result = await start_result
                 listening_started = bool(start_result)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 record_degradation(
                     "privacy",
                     exc,

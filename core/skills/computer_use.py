@@ -1,6 +1,9 @@
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -61,7 +64,11 @@ def _record_computer_use_degradation(
 class ComputerUseParams(BaseModel):
     action: str = Field(
         ...,
-        description="click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|run_command",
+        description=(
+            "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
+            "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
+            "render_text_pdf|move_file"
+        ),
     )
     target: str = Field(
         "", description="Element description, text to type, key combo, command, app name, or URL"
@@ -78,6 +85,21 @@ class ComputerUseSkill(BaseSkill):
     input_model = ComputerUseParams
     metabolic_cost = 2
     PERMISSION_CHECK_TIMEOUT_S = 3.0
+    MAX_APPLESCRIPT_CHARS = 4000
+    APPLESCRIPT_DENYLIST = tuple(
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in (
+            r"\bdo\s+shell\s+script\b",
+            r"\bsudo\b",
+            r"\brm\s+-",
+            r"\bchmod\b",
+            r"\bchown\b",
+            r"\bempty\s+trash\b",
+            r"\bmove\b.+\btrash\b",
+            r"\bdelete\b.+\b(file|folder|note|message|account)\b",
+            r"\berase\b",
+        )
+    )
 
     # SK-01: Restricted command set for autonomous use
     ALLOWED_COMMANDS = frozenset(
@@ -303,6 +325,189 @@ class ComputerUseSkill(BaseSkill):
             }
         return None
 
+    def _validate_user_applescript(self, script: str) -> str:
+        text = str(script or "").strip()
+        if not text:
+            raise ValueError("No AppleScript provided.")
+        if len(text) > self.MAX_APPLESCRIPT_CHARS:
+            raise ValueError(
+                f"AppleScript is too large for bounded desktop execution "
+                f"({len(text)} > {self.MAX_APPLESCRIPT_CHARS})."
+            )
+        for pattern in self.APPLESCRIPT_DENYLIST:
+            if pattern.search(text):
+                raise ValueError("AppleScript contains a blocked desktop operation.")
+        return text
+
+    def _set_clipboard(self, text: str) -> dict[str, Any]:
+        result = subprocess.run(
+            ["pbcopy"],
+            input=str(text or ""),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": (result.stderr or result.stdout or "pbcopy failed").strip()}
+        return {"ok": True, "action": "set_clipboard", "chars": len(str(text or ""))}
+
+    @staticmethod
+    def _get_clipboard() -> dict[str, Any]:
+        result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return {"ok": False, "error": (result.stderr or result.stdout or "pbpaste failed").strip()}
+        text = result.stdout or ""
+        return {"ok": True, "action": "get_clipboard", "text": text, "chars": len(text)}
+
+    def _allowed_desktop_roots(self) -> list[Path]:
+        return [
+            Path.home() / "Desktop",
+            Path.home() / "Documents",
+            Path.cwd() / "artifacts" / "live_runtime",
+        ]
+
+    def _resolve_allowed_desktop_path(self, raw_path: Any, *, must_exist: bool = False) -> Path:
+        if not raw_path:
+            raise ValueError("Path is required.")
+        path = Path(str(raw_path)).expanduser()
+        if not path.is_absolute():
+            path = Path.home() / "Desktop" / path
+        resolved = path.resolve(strict=must_exist)
+        for root in self._allowed_desktop_roots():
+            allowed = root.expanduser().resolve(strict=False)
+            try:
+                if os.path.commonpath([str(allowed), str(resolved)]) == str(allowed):
+                    return resolved
+            except (OSError, ValueError):
+                continue
+        raise ValueError("Path is outside Aura's allowed desktop/document artifact roots.")
+
+    @staticmethod
+    def _target_json(target: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(str(target or "{}"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Target must be a JSON object: {exc.msg}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Target must be a JSON object.")
+        return payload
+
+    def _write_text_file(self, target: str) -> dict[str, Any]:
+        payload = self._target_json(target)
+        path = self._resolve_allowed_desktop_path(payload.get("path"))
+        content = str(payload.get("content") or "")
+        overwrite = bool(payload.get("overwrite", False))
+        if path.exists() and not overwrite:
+            return {"ok": False, "error": f"Refusing to overwrite existing file: {path}"}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return {
+            "ok": True,
+            "action": "write_text_file",
+            "path": str(path),
+            "bytes": path.stat().st_size,
+        }
+
+    def _move_file(self, target: str) -> dict[str, Any]:
+        payload = self._target_json(target)
+        source = self._resolve_allowed_desktop_path(payload.get("source"), must_exist=True)
+        destination = self._resolve_allowed_desktop_path(payload.get("destination"))
+        overwrite = bool(payload.get("overwrite", False))
+        if destination.exists() and not overwrite:
+            return {"ok": False, "error": f"Refusing to overwrite existing destination: {destination}"}
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        moved_to = shutil.move(str(source), str(destination))
+        final_path = Path(moved_to).resolve(strict=True)
+        return {
+            "ok": True,
+            "action": "move_file",
+            "source": str(source),
+            "destination": str(final_path),
+            "bytes": final_path.stat().st_size,
+        }
+
+    def _render_text_pdf(self, target: str) -> dict[str, Any]:
+        payload = self._target_json(target)
+        path = self._resolve_allowed_desktop_path(payload.get("path"))
+        title = str(payload.get("title") or "Aura Desktop Proof")[:160]
+        body = str(payload.get("body") or "")
+        overwrite = bool(payload.get("overwrite", False))
+        if not body.strip():
+            return {"ok": False, "error": "PDF body is empty."}
+        if path.exists() and not overwrite:
+            return {"ok": False, "error": f"Refusing to overwrite existing PDF: {path}"}
+        if path.suffix.lower() != ".pdf":
+            return {"ok": False, "error": "PDF path must end with .pdf."}
+
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError as exc:
+            return {"ok": False, "error": f"Pillow is required for PDF rendering: {exc}"}
+
+        width, height = 612, 792
+        margin = 54
+        line_height = 18
+        title_height = 28
+        max_chars = 9000
+        safe_body = body[:max_chars]
+
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 13)
+            title_font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 17)
+        except (OSError, ValueError):
+            font = ImageFont.load_default()
+            title_font = font
+
+        def wrap_line(draw: ImageDraw.ImageDraw, line: str) -> list[str]:
+            if not line:
+                return [""]
+            words = line.split(" ")
+            lines: list[str] = []
+            current = ""
+            max_width = width - (2 * margin)
+            for word in words:
+                candidate = word if not current else f"{current} {word}"
+                if draw.textlength(candidate, font=font) <= max_width:
+                    current = candidate
+                    continue
+                if current:
+                    lines.append(current)
+                current = word
+            if current:
+                lines.append(current)
+            return lines or [line]
+
+        pages: list[Image.Image] = []
+
+        def new_page() -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
+            page = Image.new("RGB", (width, height), "white")
+            draw = ImageDraw.Draw(page)
+            draw.text((margin, margin), title, fill=(0, 0, 0), font=title_font)
+            return page, draw, margin + title_height + 14
+
+        page, draw, y = new_page()
+        for paragraph in safe_body.splitlines():
+            for line in wrap_line(draw, paragraph):
+                if y + line_height > height - margin:
+                    pages.append(page)
+                    page, draw, y = new_page()
+                draw.text((margin, y), line, fill=(0, 0, 0), font=font)
+                y += line_height
+            y += 6
+        pages.append(page)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        first, rest = pages[0], pages[1:]
+        first.save(path, "PDF", resolution=72.0, save_all=bool(rest), append_images=rest)
+        return {
+            "ok": True,
+            "action": "render_text_pdf",
+            "path": str(path),
+            "bytes": path.stat().st_size,
+            "pages": len(pages),
+            "chars": len(safe_body),
+        }
+
     def _safe_directory_walk(self, start_dir: str, max_depth: int = 4, max_files: int = 250) -> str:
         """A robust, safe python implementation of directory tree walking.
         Limits depth, total output, and skips heavy/sensitive directories like .git, cache, venv.
@@ -423,7 +628,7 @@ end tell
         if isinstance(params, dict):
             params = ComputerUseParams(**params)
 
-        action = params.action
+        action = str(params.action or "").strip().lower()
         pyautogui = None
         pyautogui_error = None
         if action in {"click", "type", "hotkey", "scroll"}:
@@ -723,6 +928,43 @@ end tell
                 clicks = int(params.target or "3")
                 await asyncio.to_thread(pyautogui.scroll, clicks, x=params.x, y=params.y)
                 return {"ok": True, "scrolled": clicks}
+
+            elif action == "set_clipboard":
+                return await asyncio.to_thread(self._set_clipboard, params.target)
+
+            elif action == "get_clipboard":
+                return await asyncio.to_thread(self._get_clipboard)
+
+            elif action == "wait":
+                delay_s = max(0.0, min(10.0, float(params.target or 1.0)))
+                await asyncio.sleep(delay_s)
+                return {"ok": True, "action": "wait", "seconds": delay_s}
+
+            elif action == "run_applescript":
+                blocked = await self._require_permissions(
+                    "running bounded AppleScript against the foreground desktop",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
+                script = self._validate_user_applescript(params.target)
+                output = await asyncio.to_thread(self._run_applescript, script, timeout=12)
+                return {
+                    "ok": True,
+                    "action": "run_applescript",
+                    "output": output,
+                    "chars": len(output),
+                }
+
+            elif action == "write_text_file":
+                return await asyncio.to_thread(self._write_text_file, params.target)
+
+            elif action == "render_text_pdf":
+                return await asyncio.to_thread(self._render_text_pdf, params.target)
+
+            elif action == "move_file":
+                return await asyncio.to_thread(self._move_file, params.target)
 
             elif action == "run_command":
                 try:

@@ -17,8 +17,10 @@ class SensoryCapabilityFlags:
         """
         Maps module availability to capability flags.
         """
+        capture_available = status.get("sounddevice", False)
+        stt_available = status.get("faster_whisper", False) or status.get("speech_recognition", False)
         return cls(
-            hearing_enabled = status.get("speech_recognition", False) or status.get("sounddevice", False),
+            hearing_enabled = bool(capture_available and stt_available),
             speech_enabled  = (
                 status.get("pyttsx3", False)
                 or status.get("tts", False)

@@ -48,6 +48,14 @@ _WEBSOCKET_DELIVERY_ERRORS = (
 _WEBSOCKET_HEARTBEAT_ERRORS = (asyncio.TimeoutError,) + _WEBSOCKET_DELIVERY_ERRORS
 
 
+def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        value = int(str(os.environ.get(name, "")).strip() or default)
+    except (TypeError, ValueError, OverflowError):
+        value = default
+    return max(minimum, value)
+
+
 def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
     """Return a heartbeat that cannot be mistaken for transport-only health."""
     try:
@@ -409,4 +417,6 @@ class WebSocketManager:
 
 broadcast_bus = MessageBroadcastBus(maxsize=1000)
 ws_manager = WebSocketManager()
-log_queue: collections.deque = collections.deque(maxlen=500)
+log_queue: collections.deque = collections.deque(
+    maxlen=_env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500)
+)

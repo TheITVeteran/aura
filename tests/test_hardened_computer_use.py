@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 from types import SimpleNamespace
 
@@ -271,6 +272,91 @@ def test_computer_use_applescript_runner_uses_bounded_subprocess_by_default(monk
     assert skill._run_applescript('return "menu clock"', timeout=6) == "menu clock"
     assert run_call["args"][0] == "osascript"
     assert run_call["timeout"] == 6
+
+
+@pytest.mark.asyncio
+async def test_computer_use_clipboard_actions_use_system_clipboard(monkeypatch):
+    skill = ComputerUseSkill()
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if args[0] == "pbpaste":
+            return SimpleNamespace(returncode=0, stdout="copied text", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("core.skills.computer_use.subprocess.run", fake_run)
+
+    set_result = await skill.execute({"action": "set_clipboard", "target": "copied text"}, {})
+    get_result = await skill.execute({"action": "get_clipboard", "target": ""}, {})
+
+    assert set_result == {"ok": True, "action": "set_clipboard", "chars": 11}
+    assert get_result["ok"] is True
+    assert get_result["text"] == "copied text"
+    assert calls[0][0] == ["pbcopy"]
+    assert calls[1][0] == ["pbpaste"]
+
+
+@pytest.mark.asyncio
+async def test_computer_use_run_applescript_requires_permissions_and_blocks_shell(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def allow_permissions(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", allow_permissions)
+    monkeypatch.setattr(skill, "_run_applescript", lambda *_args, **_kwargs: "done")
+
+    ok = await skill.execute({"action": "run_applescript", "target": 'return "done"'}, {})
+    blocked = await skill.execute(
+        {"action": "run_applescript", "target": 'do shell script "rm -rf /tmp/demo"'},
+        {},
+    )
+
+    assert ok["ok"] is True
+    assert ok["output"] == "done"
+    assert blocked["ok"] is False
+    assert "blocked desktop operation" in blocked["error"]
+
+
+@pytest.mark.asyncio
+async def test_computer_use_desktop_file_pdf_and_move_receipts(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+    monkeypatch.setattr(skill, "_allowed_desktop_roots", lambda: [tmp_path])
+
+    source_pdf = tmp_path / "note.pdf"
+    moved_pdf = tmp_path / "proof" / "moved-note.pdf"
+    receipt_file = tmp_path / "proof" / "receipt.txt"
+
+    pdf_payload = {
+        "path": str(source_pdf),
+        "title": "Aura Desktop Proof",
+        "body": "Equation: 2 + 3 = 5\nCreated by Aura's governed desktop skill.",
+    }
+    move_payload = {"source": str(source_pdf), "destination": str(moved_pdf)}
+    text_payload = {"path": str(receipt_file), "content": "moved PDF into proof folder"}
+
+    rendered = await skill.execute(
+        {"action": "render_text_pdf", "target": json.dumps(pdf_payload)},
+        {},
+    )
+    moved = await skill.execute(
+        {"action": "move_file", "target": json.dumps(move_payload)},
+        {},
+    )
+    written = await skill.execute(
+        {"action": "write_text_file", "target": json.dumps(text_payload)},
+        {},
+    )
+
+    assert rendered["ok"] is True
+    assert rendered["bytes"] > 100
+    assert not source_pdf.exists()
+    assert moved["ok"] is True
+    assert moved_pdf.exists()
+    assert moved_pdf.read_bytes().startswith(b"%PDF")
+    assert written["ok"] is True
+    assert receipt_file.read_text() == "moved PDF into proof folder"
 
 
 @pytest.mark.asyncio

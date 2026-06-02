@@ -136,7 +136,7 @@ class StructuredErrorLogger:
         # Persist to disk (Async)
         await self._append_to_log(self.error_log_path, event.to_dict())
         
-        if str(skill_name or "").strip().lower() == "omni_log_error":
+        if str(skill_name or "").strip().lower().startswith("omni_log_"):
             logger.debug(
                 "Error logged from logging telemetry path: %s in %s",
                 event.error_type,

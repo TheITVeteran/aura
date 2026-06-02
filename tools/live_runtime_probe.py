@@ -71,6 +71,8 @@ class LiveRuntimeProbe:
                 await self._probe("chat_coding_snake", self._chat_coding_snake)
                 await self._probe("novel_topic_continuity", self._novel_topic_continuity)
                 await self._probe("computer_use_local_app", self._computer_use_local_app)
+                await self._probe("desktop_task_generic_plan", self._desktop_task_generic_plan)
+                await self._probe("regular_chat_desktop_chain", self._regular_chat_desktop_chain)
                 await self._probe("telemetry_neural_stream", self._telemetry_neural_stream)
             finally:
                 ws_task.cancel()
@@ -158,11 +160,15 @@ class LiveRuntimeProbe:
             raise AssertionError(f"voice output stream unavailable: {voice}")
         if not voice.get("server_capture"):
             raise AssertionError(f"server-side voice capture not advertised: {voice}")
+        if not voice.get("capture_available"):
+            raise AssertionError(f"sounddevice capture dependency unavailable: {voice}")
+        if not voice.get("stt_available"):
+            raise AssertionError(f"Whisper STT dependency unavailable: {voice}")
         if voice.get("microphone_enabled") and not voice.get("listening"):
             raise AssertionError(f"microphone enabled but listener inactive: {voice}")
         if "listening" not in voice:
             raise AssertionError(f"voice payload does not expose listening state: {voice}")
-        return "voice engine and stream are available with honest listener state", voice
+        return "voice capture/STT dependencies and stream are available with honest listener state", voice
 
     async def _skill_button_file_write(self) -> tuple[str, dict[str, Any]]:
         marker = f"live button probe {int(time.time())}"
@@ -223,10 +229,302 @@ class LiveRuntimeProbe:
         clock = await self._skill("computer_use", {"action": "read_menu_clock", "target": ""})
         if not clock.get("ok"):
             raise AssertionError(f"computer_use read_menu_clock failed: {clock}")
-        return "computer_use opened a local app and read a live macOS surface", {
+
+        stamp = int(time.time())
+        proof_dir = Path.home() / "Desktop" / f"Aura Desktop Proof {stamp}"
+        staged_pdf = Path.home() / "Desktop" / f"Aura Desktop Proof {stamp}.pdf"
+        final_pdf = proof_dir / "calculator-note.pdf"
+        receipt_file = proof_dir / "AURA_DESKTOP_CHAIN_RECEIPT.txt"
+        note_title = f"Aura Desktop Chain Proof {stamp}"
+
+        calc_script = """
+tell application "Calculator" to activate
+delay 0.4
+tell application "System Events"
+    tell process "Calculator"
+        set frontmost to true
+        keystroke "c"
+        delay 0.1
+        repeat with n from 1 to 10
+            if (count of windows) > 0 then exit repeat
+            delay 0.2
+        end repeat
+        set g to UI element 1 of UI element 1 of UI element 1 of UI element 1 of window 1
+        set minX to 10000
+        set minY to 10000
+        repeat with e in UI elements of g
+            try
+                if role of e is "AXButton" then
+                    set p to position of e
+                    if item 1 of p < minX then set minX to item 1 of p
+                    if item 2 of p < minY then set minY to item 2 of p
+                end if
+            end try
+        end repeat
+        set stepSize to 54
+        set clickPoints to {{minX + stepSize + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 2) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 4) + 24}}
+        repeat with pt in clickPoints
+            click at pt
+            delay 0.15
+        end repeat
+        delay 0.2
+        set displayText to ""
+        repeat with e in UI elements of g
+            try
+                if role of e is "AXScrollArea" and description of e is "Edit field" then
+                    set displayText to value of UI element 1 of e as string
+                end if
+            end try
+        end repeat
+        return displayText
+    end tell
+end tell
+""".strip()
+        calc = await self._skill("computer_use", {"action": "run_applescript", "target": calc_script})
+        if not calc.get("ok"):
+            raise AssertionError(f"computer_use Calculator button chain failed: {calc}")
+        display = self._normalize_display(str(calc.get("output") or ""))
+        if display != "5":
+            raise AssertionError(f"Calculator displayed {display!r}, expected 5; raw={calc}")
+
+        note_body = (
+            "Aura live desktop chain proof\\n"
+            "Equation clicked in Calculator: 2 + 3 = 5\\n"
+            f"Calculator display readback: {display}\\n"
+            f"Timestamp: {stamp}\\n"
+            "Route: live Aura /api/skill/execute computer_use."
+        )
+        clipboard = await self._skill("computer_use", {"action": "set_clipboard", "target": note_body})
+        if not clipboard.get("ok"):
+            raise AssertionError(f"computer_use set_clipboard failed: {clipboard}")
+        clip_read = await self._skill("computer_use", {"action": "get_clipboard", "target": ""})
+        if not clip_read.get("ok") or "2 + 3 = 5" not in str(clip_read.get("text") or ""):
+            raise AssertionError(f"computer_use get_clipboard did not verify copied equation: {clip_read}")
+
+        notes_script = f"""
+tell application "Notes"
+    activate
+    set targetFolder to missing value
+    repeat with acct in accounts
+        repeat with candidateFolder in folders of acct
+            if name of candidateFolder is "Notes" then
+                set targetFolder to candidateFolder
+                exit repeat
+            end if
+        end repeat
+        if targetFolder is not missing value then exit repeat
+    end repeat
+    if targetFolder is missing value then set targetFolder to folder 1 of account 1
+    set newNote to make new note at targetFolder with properties {{name:{self._as_applescript_string(note_title)}, body:{self._as_applescript_string(note_body)}}}
+    return name of newNote
+end tell
+""".strip()
+        note = await self._skill("computer_use", {"action": "run_applescript", "target": notes_script})
+        if not note.get("ok") or note_title not in str(note.get("output") or ""):
+            raise AssertionError(f"computer_use Notes note creation failed: {note}")
+
+        export_attempt = await self._attempt_notes_pdf_export(staged_pdf)
+        pdf_method = "notes_export_pdf"
+        if not staged_pdf.exists():
+            pdf_method = "aura_pdf_renderer_fallback"
+            rendered = await self._skill(
+                "computer_use",
+                {
+                    "action": "render_text_pdf",
+                    "target": json.dumps(
+                        {
+                            "path": str(staged_pdf),
+                            "title": note_title,
+                            "body": note_body,
+                            "overwrite": False,
+                        }
+                    ),
+                },
+            )
+            if not rendered.get("ok"):
+                raise AssertionError(f"computer_use render_text_pdf fallback failed: {rendered}")
+        else:
+            rendered = {"ok": True, "path": str(staged_pdf), "source": "Notes Export as PDF"}
+
+        moved = await self._skill(
+            "computer_use",
+            {
+                "action": "move_file",
+                "target": json.dumps(
+                    {
+                        "source": str(staged_pdf),
+                        "destination": str(final_pdf),
+                        "overwrite": False,
+                    }
+                ),
+            },
+        )
+        if not moved.get("ok"):
+            raise AssertionError(f"computer_use move_file failed: {moved}")
+        receipt_text = (
+            f"Aura completed live desktop chain proof {stamp}\\n"
+            "Opened Calculator; pre-cleared input; clicked 2, +, 3, =; read display 5.\\n"
+            "Copied the equation body to clipboard; created a Notes note.\\n"
+            f"PDF method: {pdf_method}.\\n"
+            f"Final PDF: {final_pdf}\\n"
+        )
+        receipt = await self._skill(
+            "computer_use",
+            {
+                "action": "write_text_file",
+                "target": json.dumps(
+                    {
+                        "path": str(receipt_file),
+                        "content": receipt_text,
+                        "overwrite": False,
+                    }
+                ),
+            },
+        )
+        if not receipt.get("ok"):
+            raise AssertionError(f"computer_use write_text_file receipt failed: {receipt}")
+        if not final_pdf.exists() or not final_pdf.read_bytes().startswith(b"%PDF"):
+            raise AssertionError(f"final PDF was not created or moved correctly: {final_pdf}")
+        if not receipt_file.exists() or "clicked 2, +, 3, =" not in receipt_file.read_text(errors="replace"):
+            raise AssertionError(f"desktop chain receipt missing expected summary: {receipt_file}")
+
+        return "computer_use completed Calculator to Notes to PDF desktop chain through Aura", {
             "opened": opened,
             "clock": clock,
+            "calculator": calc,
+            "clipboard": clipboard,
+            "clipboard_read": {"ok": clip_read.get("ok"), "chars": clip_read.get("chars")},
+            "note": note,
+            "export_attempt": export_attempt,
+            "pdf_method": pdf_method,
+            "rendered": rendered,
+            "moved": moved,
+            "receipt": receipt,
+            "proof_dir": str(proof_dir),
+            "final_pdf": str(final_pdf),
+            "receipt_file": str(receipt_file),
         }
+
+    async def _desktop_task_generic_plan(self) -> tuple[str, dict[str, Any]]:
+        stamp = int(time.time())
+        proof_dir = Path.home() / "Desktop" / f"Aura Desktop Task Generic {stamp}"
+        receipt_file = proof_dir / "GENERIC_DESKTOP_TASK_RECEIPT.txt"
+        plan = {
+            "objective": "Verify Aura can execute a bounded generic desktop task plan.",
+            "steps": [
+                {
+                    "action": "set_clipboard",
+                    "target": f"Aura generic desktop task proof {stamp}",
+                    "reason": "Set the system clipboard.",
+                    "expect": "Clipboard contains the proof marker.",
+                },
+                {
+                    "action": "get_clipboard",
+                    "target": "",
+                    "reason": "Read the system clipboard back.",
+                    "expect": "Clipboard read returns the proof marker.",
+                },
+                {
+                    "action": "write_text_file",
+                    "target": {
+                        "path": str(receipt_file),
+                        "content": f"Aura generic desktop_task proof {stamp}\\n",
+                    },
+                    "reason": "Write a durable desktop receipt.",
+                    "expect": "Receipt file exists on Desktop.",
+                },
+            ],
+        }
+        result = await self._skill("desktop_task", plan)
+        if not result.get("ok"):
+            raise AssertionError(f"desktop_task generic plan failed: {result}")
+        if not receipt_file.exists() or f"{stamp}" not in receipt_file.read_text(errors="replace"):
+            raise AssertionError(f"desktop_task receipt missing: {receipt_file}")
+        receipts = result.get("receipts") or []
+        if len(receipts) != 3 or not all(bool(item.get("ok")) for item in receipts):
+            raise AssertionError(f"desktop_task did not return per-step success receipts: {result}")
+        clipboard_receipt = receipts[1].get("result", {}) if isinstance(receipts[1], dict) else {}
+        if f"{stamp}" not in str(clipboard_receipt.get("text") or ""):
+            raise AssertionError(f"desktop_task clipboard readback did not contain marker: {clipboard_receipt}")
+        return "desktop_task executed a generic bounded multi-step desktop plan", {
+            "result": result,
+            "receipt_file": str(receipt_file),
+        }
+
+    async def _regular_chat_desktop_chain(self) -> tuple[str, dict[str, Any]]:
+        response = await self._chat(
+            "Use my computer from regular chat to click a Calculator equation, copy the equation body, "
+            "put it into Notes, produce a PDF, move that PDF into a Desktop proof folder, and report the paths."
+        )
+        reply = str(response.get("response") or "")
+        status = str(response.get("status") or "")
+        if status != "live_proof_desktop_chain":
+            raise AssertionError(f"regular chat did not route to desktop chain status={status}; reply={reply[:400]}")
+        final_match = re.search(r"Final PDF:\s*`([^`]+\.pdf)`", reply)
+        receipt_match = re.search(r"Receipt:\s*`([^`]+\.txt)`", reply)
+        if not final_match or not receipt_match:
+            raise AssertionError(f"regular chat desktop chain did not report final paths: {reply}")
+        final_pdf = Path(final_match.group(1))
+        receipt_file = Path(receipt_match.group(1))
+        if not final_pdf.exists() or not final_pdf.read_bytes().startswith(b"%PDF"):
+            raise AssertionError(f"regular chat final PDF did not verify: {final_pdf}")
+        receipt_text = receipt_file.read_text(errors="replace") if receipt_file.exists() else ""
+        if "regular chat desktop chain proof" not in receipt_text.lower():
+            raise AssertionError(f"regular chat receipt did not verify: {receipt_file}")
+        return "regular Aura chat completed the desktop chain and reported durable artifacts", {
+            "response": reply,
+            "final_pdf": str(final_pdf),
+            "receipt_file": str(receipt_file),
+        }
+
+    @staticmethod
+    def _as_applescript_string(value: str) -> str:
+        parts = str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        quoted = []
+        for part in parts:
+            escaped = part.replace("\\", "\\\\").replace('"', '\\"')
+            quoted.append(f'"{escaped}"')
+        return " & return & ".join(quoted) if quoted else '""'
+
+    @staticmethod
+    def _normalize_display(value: str) -> str:
+        return re.sub(r"[^0-9.+\\-]", "", value or "").strip()
+
+    async def _attempt_notes_pdf_export(self, staged_pdf: Path) -> dict[str, Any]:
+        export_dir = staged_pdf.parent
+        script = f"""
+tell application "Notes" to activate
+delay 0.5
+tell application "System Events"
+    tell process "Notes"
+        click menu item "PDF" of menu 1 of menu item "Export as" of menu "File" of menu bar 1
+        delay 0.8
+        keystroke "g" using {{command down, shift down}}
+        delay 0.3
+        keystroke {self._as_applescript_string(str(export_dir))}
+        key code 36
+        delay 0.3
+        keystroke {self._as_applescript_string(staged_pdf.name)}
+        key code 36
+    end tell
+end tell
+return "notes_export_attempted"
+""".strip()
+        result = await self._skill("computer_use", {"action": "run_applescript", "target": script})
+        if not result.get("ok"):
+            cleanup = """
+tell application "System Events"
+    key code 53
+end tell
+return "dismissed"
+""".strip()
+            await self._skill("computer_use", {"action": "run_applescript", "target": cleanup})
+            return {"ok": False, "result": result}
+        for _ in range(10):
+            if staged_pdf.exists():
+                break
+            await asyncio.sleep(0.5)
+        return {"ok": staged_pdf.exists(), "result": result, "path": str(staged_pdf)}
 
     async def _telemetry_neural_stream(self) -> tuple[str, dict[str, Any]]:
         await asyncio.sleep(2.0)

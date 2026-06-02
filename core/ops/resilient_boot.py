@@ -200,7 +200,8 @@ class ResilientBoot:
             "mss": "mss",
             "astor": "astor",
             "aiosqlite": "aiosqlite",
-            "sounddevice": "speech_recognition", # Alias for mapping
+            "sounddevice": "sounddevice",
+            "faster_whisper": "faster-whisper STT",
             "pyttsx3": "pyttsx3",
             "TTS": "TTS",
         }

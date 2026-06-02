@@ -57,9 +57,8 @@ class SelfEvolutionSkill(BaseSkill):
 
     def _resolve_brain(self, context: Optional[Dict[str, Any]]) -> Any:
         ctx = context or {}
-        brain = ctx.get("brain")
-        if brain:
-            return brain
+        if "brain" in ctx:
+            return ctx.get("brain")
 
         try:
             from core.container import ServiceContainer
