@@ -17,22 +17,29 @@ Public API:
 """
 
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
-import math
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any
 
-from core.autonomy.curated_media_loader import ContentItem, load_corpus
-from core.autonomy.content_progress_tracker import ProgressLog, load as load_progress
 from core.autonomy import research_triggers
+from core.autonomy.content_progress_tracker import ProgressLog
+from core.autonomy.content_progress_tracker import load as load_progress
+from core.autonomy.curated_media_loader import ContentItem, load_corpus
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.CuriosityScheduler")
+_CURIOSITY_SUBSTRATE_ERRORS = (
+    AttributeError,
+    LookupError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+_CURIOSITY_TRIGGER_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 # Selection strategies
 STRATEGY_PRIORITIZED = "prioritized"       # always pick highest-scored
@@ -107,11 +114,11 @@ class SchedulingDecision:
     item: ContentItem
     top_priority_level: int          # 1–6, the most-preferred fetch path
     score: float
-    score_breakdown: Dict[str, float] = field(default_factory=dict)
+    score_breakdown: dict[str, float] = field(default_factory=dict)
     reason: str = ""
-    triggered_by: Optional[str] = None  # research-trigger source intent ID, if any
+    triggered_by: str | None = None  # research-trigger source intent ID, if any
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "title": self.item.title,
             "category": self.item.category,
@@ -127,13 +134,13 @@ class SchedulingDecision:
 class CuriosityScheduler:
     def __init__(
         self,
-        corpus_loader: Callable[[], List[ContentItem]] = load_corpus,
+        corpus_loader: Callable[[], list[ContentItem]] = load_corpus,
         progress_loader: Callable[[], ProgressLog] = load_progress,
-        substrate_reader: Optional[Callable[[], Dict[str, Any]]] = None,
-        trigger_drainer: Callable[[], List[Any]] = research_triggers.drain_pending_triggers,
-        affinities: Optional[Dict[str, CategoryAffinity]] = None,
+        substrate_reader: Callable[[], dict[str, Any]] | None = None,
+        trigger_drainer: Callable[[], list[Any]] = research_triggers.drain_pending_triggers,
+        affinities: dict[str, CategoryAffinity] | None = None,
         strategy: str = STRATEGY_EPSILON_GREEDY,
-        rng_seed: Optional[int] = None,
+        rng_seed: int | None = None,
         epsilon: float = 0.15,
     ) -> None:
         self._corpus_loader = corpus_loader
@@ -147,7 +154,7 @@ class CuriosityScheduler:
 
     # ── Main entry ────────────────────────────────────────────────────────
 
-    def pick_next(self) -> Optional[SchedulingDecision]:
+    def pick_next(self) -> SchedulingDecision | None:
         try:
             corpus = self._corpus_loader() or []
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -167,7 +174,7 @@ class CuriosityScheduler:
         substrate = self._safe_substrate_read()
         triggers = self._safe_drain_triggers()
 
-        candidates: List[SchedulingDecision] = []
+        candidates: list[SchedulingDecision] = []
         for item in corpus:
             decision = self._score_candidate(item, progress, substrate, triggers)
             if decision is not None:
@@ -184,8 +191,9 @@ class CuriosityScheduler:
         if decision.triggered_by:
             try:
                 research_triggers.mark_consumed(decision.triggered_by)
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+            except _CURIOSITY_TRIGGER_ERRORS as exc:
+                record_degradation("curiosity_scheduler", exc)
+                logger.debug("failed to mark research trigger consumed: %s", exc)
         logger.info(
             "scheduler: item=%r outcome=%s score=%.3f reason=%r",
             decision.item.title, outcome, decision.score, decision.reason,
@@ -197,10 +205,10 @@ class CuriosityScheduler:
         self,
         item: ContentItem,
         progress: ProgressLog,
-        substrate: Dict[str, Any],
-        triggers: List[Any],
-    ) -> Optional[SchedulingDecision]:
-        breakdown: Dict[str, float] = {}
+        substrate: dict[str, Any],
+        triggers: list[Any],
+    ) -> SchedulingDecision | None:
+        breakdown: dict[str, float] = {}
         existing = progress.find(item.title)
 
         # 1. Substrate match
@@ -247,7 +255,7 @@ class CuriosityScheduler:
             triggered_by=trig_match.get("source_intent_id"),
         )
 
-    def _score_substrate_match(self, item: ContentItem, substrate: Dict[str, Any]) -> float:
+    def _score_substrate_match(self, item: ContentItem, substrate: dict[str, Any]) -> float:
         affinity = self._affinities.get(item.category)
         if not affinity:
             return 0.4  # neutral
@@ -286,7 +294,7 @@ class CuriosityScheduler:
             return 0.5 + 0.4 * (days_since / PROCRASTINATION_ALERT_DAYS)
         return 0.2
 
-    def _score_recency_penalty(self, existing: Optional[Any]) -> float:
+    def _score_recency_penalty(self, existing: Any | None) -> float:
         if existing is None:
             return 1.0
         # If completed recently, penalize hard. If abandoned, mild.
@@ -305,8 +313,8 @@ class CuriosityScheduler:
     def _score_trigger_alignment(
         self,
         item: ContentItem,
-        triggers: List[Any],
-    ) -> Dict[str, Any]:
+        triggers: list[Any],
+    ) -> dict[str, Any]:
         if not triggers:
             return {"score": 0.0}
         text_blob = f"{item.title} {item.description}".lower()
@@ -324,7 +332,7 @@ class CuriosityScheduler:
                 best = (score, getattr(t, "source_intent_id", None))
         return {"score": best[0], "source_intent_id": best[1]}
 
-    def _score_in_progress(self, existing: Optional[Any]) -> float:
+    def _score_in_progress(self, existing: Any | None) -> float:
         if existing is None:
             return 0.0
         if existing.completed_at:
@@ -336,9 +344,9 @@ class CuriosityScheduler:
     def _infer_top_priority(
         self,
         item: ContentItem,
-        substrate: Dict[str, Any],
-        breakdown: Dict[str, float],
-        trig_match: Dict[str, Any],
+        substrate: dict[str, Any],
+        breakdown: dict[str, float],
+        trig_match: dict[str, Any],
     ) -> int:
         # Triggers want fast ground truth
         if trig_match.get("score", 0.0) > 0.5:
@@ -357,7 +365,7 @@ class CuriosityScheduler:
 
     # ── Selection strategies ─────────────────────────────────────────────
 
-    def _select(self, candidates: List[SchedulingDecision]) -> SchedulingDecision:
+    def _select(self, candidates: list[SchedulingDecision]) -> SchedulingDecision:
         candidates.sort(key=lambda c: c.score, reverse=True)
         if self._strategy == STRATEGY_PRIORITIZED:
             return candidates[0]
@@ -369,13 +377,13 @@ class CuriosityScheduler:
             return self._weighted_pick(candidates)
         return candidates[0]
 
-    def _weighted_pick(self, candidates: List[SchedulingDecision]) -> SchedulingDecision:
+    def _weighted_pick(self, candidates: list[SchedulingDecision]) -> SchedulingDecision:
         scores = [max(0.0001, c.score) for c in candidates]
         total = sum(scores)
         norm = [s / total for s in scores]
         u = self._rng.random()
         acc = 0.0
-        for c, p in zip(candidates, norm):
+        for c, p in zip(candidates, norm, strict=False):
             acc += p
             if u <= acc:
                 return c
@@ -383,7 +391,7 @@ class CuriosityScheduler:
 
     # ── Defensive readers ────────────────────────────────────────────────
 
-    def _safe_substrate_read(self) -> Dict[str, Any]:
+    def _safe_substrate_read(self) -> dict[str, Any]:
         if self._substrate_reader is None:
             return {"valence": 0.0, "arousal": 0.5, "curiosity": 0.5, "energy": 0.5}
         try:
@@ -394,15 +402,15 @@ class CuriosityScheduler:
                 "curiosity": float(state.get("curiosity", 0.5)),
                 "energy": float(state.get("energy", 0.5)),
             }
-        except Exception as e:
+        except _CURIOSITY_SUBSTRATE_ERRORS as e:
             record_degradation('curiosity_scheduler', e)
             logger.debug("substrate read failed; defaulting: %s", e)
             return {"valence": 0.0, "arousal": 0.5, "curiosity": 0.5, "energy": 0.5}
 
-    def _safe_drain_triggers(self) -> List[Any]:
+    def _safe_drain_triggers(self) -> list[Any]:
         try:
             return list(self._trigger_drainer() or [])
-        except Exception as e:
+        except _CURIOSITY_TRIGGER_ERRORS as e:
             record_degradation('curiosity_scheduler', e)
             logger.debug("trigger drain failed: %s", e)
             return []

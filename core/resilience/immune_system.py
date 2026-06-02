@@ -8,12 +8,10 @@ This module preserves the older resilience-oriented API that exposes:
 """
 from __future__ import annotations
 
-
 import asyncio
 import logging
 import re
 import time
-from typing import Dict
 
 logger = logging.getLogger("Aura.Resilience.ImmuneSystem")
 _NEUTRALIZED = "[PATHOGEN_NEUTRALIZED_BY_IMMUNE_SYSTEM]"
@@ -42,36 +40,51 @@ class ProcessTCell:
     def __init__(self, *, max_lifespan_seconds: float = 60.0, patrol_interval: float = 0.5):
         self.max_lifespan_seconds = max(0.1, float(max_lifespan_seconds))
         self.patrol_interval = max(0.1, float(patrol_interval))
-        self._first_seen: Dict[int, float] = {}
+        self._first_seen: dict[int, float] = {}
         self._protected_names = {"immune_watchdog"}
         self._default_name = re.compile(r"^Task-\d+$")
 
-    async def patrol_bloodstream(self) -> None:
+    async def patrol_bloodstream(
+        self,
+        *,
+        stop_event: asyncio.Event | None = None,
+        max_cycles: int | None = None,
+    ) -> None:
         current = asyncio.current_task()
+        cycles = 0
         try:
-            while True:
-                now = time.monotonic()
-                for task in asyncio.all_tasks():
-                    if task is current or task.done():
-                        continue
-
-                    name = task.get_name() or ""
-                    if name in self._protected_names:
-                        continue
-                    if not name or self._default_name.match(name):
-                        continue
-
-                    task_id = id(task)
-                    seen_at = self._first_seen.setdefault(task_id, now)
-                    if now - seen_at < self.max_lifespan_seconds:
-                        continue
-
-                    logger.warning("T-Cell cancelling stale task '%s'.", name or task_id)
-                    task.cancel()
-
+            while stop_event is None or not stop_event.is_set():
+                self.patrol_once(current_task=current)
+                cycles += 1
+                if max_cycles is not None and cycles >= max_cycles:
+                    return
                 await asyncio.sleep(self.patrol_interval)
         except asyncio.CancelledError:
             raise
+
+    def patrol_once(self, *, current_task: asyncio.Task | None = None) -> int:
+        """Scan once and cancel stale named tasks; returns cancellation count."""
+        now = time.monotonic()
+        cancelled = 0
+        for task in asyncio.all_tasks():
+            if task is current_task or task.done():
+                continue
+
+            name = task.get_name() or ""
+            if name in self._protected_names:
+                continue
+            if not name or self._default_name.match(name):
+                continue
+
+            task_id = id(task)
+            seen_at = self._first_seen.setdefault(task_id, now)
+            if now - seen_at < self.max_lifespan_seconds:
+                continue
+
+            logger.warning("T-Cell cancelling stale task '%s'.", name or task_id)
+            task.cancel()
+            cancelled += 1
+        return cancelled
 
 
 phagocyte = SemanticPhagocyte()
