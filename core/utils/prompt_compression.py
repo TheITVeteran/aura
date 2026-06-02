@@ -49,7 +49,7 @@ _SHORTHAND_MAP = [
     (r"Pending initiatives:", "PENDING:"),
     (r"Previous session objective:", "PREV_OBJ:"),
     (r"User context:", "USR:"),
-    (r"Phenomenology:", "PHENOM:"),
+    (r"Phenomenology:", "STATE_SIGNAL:"),
     (r"Speaking tone:", "TONE:"),
     # Redundant phrases
     (r"Use recalled context directly when the user asks what you remember, what they said before, or how continuity persists\.", "Use when asked about memory/continuity."),

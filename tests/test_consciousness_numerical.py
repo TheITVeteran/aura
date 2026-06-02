@@ -13,7 +13,6 @@ This test file covers the numerical correctness of:
 """
 
 import pytest
-import numpy as np
 import sys
 import os
 
@@ -269,6 +268,14 @@ class TestPromptCompression:
         )
         compressed = compress_system_prompt(original)
         assert len(compressed) < len(original)
+
+    def test_prompt_compression_does_not_emit_phenom_artifact(self):
+        from core.utils.prompt_compression import compress_system_prompt
+
+        compressed = compress_system_prompt("Phenomenology: state-grounded attention is active.")
+
+        assert "PHENOM:" not in compressed
+        assert "STATE_SIGNAL:" in compressed
 
     def test_history_compression_respects_budget(self):
         from core.utils.prompt_compression import compress_history_block
