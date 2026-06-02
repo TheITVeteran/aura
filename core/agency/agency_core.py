@@ -31,11 +31,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.adaptation.abstraction_engine import AbstractionEngine
+from core.agency.agency_bus import AgencyBus
 from core.agency.canvas_manager import CanvasManager
 from core.agency.private_phenomenology import PrivatePhenomenology
 from core.agency.self_play import ContinuousSelfPlay
 from core.agency.tool_orchestrator import ToolOrchestrator
-from core.agency.agency_bus import AgencyBus
 from core.consciousness.unified_audit import get_audit_suite
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -118,6 +118,7 @@ class SovereignSwarm:
         self.orch = orchestrator
         self.active_shards: dict[str, asyncio.Task] = {}
         self._inference_semaphore = asyncio.Semaphore(2)
+        self._registry_shards_update_pending = False
 
     async def spawn_shard(self, goal: str, context: str = "", **kwargs) -> bool:
         """Spawn a new cognitive shard to pursue a goal asynchronously.
@@ -138,10 +139,12 @@ class SovereignSwarm:
                     finally:
                         self._registry_shards_update_pending = False
                 
-                _schedule_agency_task(
+                registry_task = _schedule_agency_task(
                     _run_shards_update(),
                     name="agency.registry.active_shards",
                 )
+                if registry_task is None:
+                    self._registry_shards_update_pending = False
         except _AGENCY_BOUNDARY_ERRORS as e:
             self._registry_shards_update_pending = False
             _record_agency_degradation(e, action="active shard count registry update skipped")
@@ -681,7 +684,7 @@ class AgencyCore:
         # Initialize unified consciousness - THE core integration point
         try:
             from core.consciousness.coordinator import get_consciousness_coordinator
-            coordinator = await get_consciousness_coordinator()
+            await get_consciousness_coordinator()
             logger.info("🧠 Unified consciousness initialized and wired through agency core")
         except Exception as e:
             _record_agency_degradation(e, action="consciousness coordinator initialization skipped")
@@ -1066,7 +1069,6 @@ class AgencyCore:
         
         try:
             from core.affect.phenomenal_integration import get_phenomenal_integrator
-            import asyncio
 
             async def _run_phenomenal_pulse():
                 try:

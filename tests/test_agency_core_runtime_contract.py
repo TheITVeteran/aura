@@ -95,6 +95,29 @@ async def test_swarm_spawn_does_not_keep_untracked_shards(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_swarm_registry_guard_exists_and_resets_when_update_unscheduled(monkeypatch):
+    degradations = []
+    monkeypatch.setattr(agency_module, "get_task_tracker", lambda: FailingTracker())
+    monkeypatch.setattr(
+        agency_module,
+        "_record_agency_degradation",
+        lambda error, **_kwargs: degradations.append(error),
+    )
+    monkeypatch.setattr("core.runtime.background_policy.background_activity_reason", lambda *args, **kwargs: "")
+
+    swarm = SovereignSwarm(SimpleNamespace(cognitive_engine=object()))
+    spawned = await swarm.spawn_shard("inspect shutdown recovery", "live proof regression")
+
+    assert spawned is False
+    assert swarm._registry_shards_update_pending is False
+    assert not [
+        error
+        for error in degradations
+        if isinstance(error, AttributeError) and "_registry_shards_update_pending" in str(error)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pulse_commits_visible_side_effects_only_after_bus_approval(monkeypatch):
     monkeypatch.setattr("core.organism.viability.get_viability", lambda: Viability())
     monkeypatch.setattr("core.runtime.background_policy.background_activity_reason", lambda *args, **kwargs: "")

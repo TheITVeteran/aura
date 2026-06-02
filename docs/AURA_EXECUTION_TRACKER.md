@@ -69,6 +69,38 @@ This checkpoint supports
 repo has already been semantically reviewed, all issues are fixed, or any
 24/72-hour live survival result has landed.
 
+## Latest Live Person-Box Smoke Pass (2026-06-02)
+
+### Gaps Addressed
+
+- **Live primary Cortex proof path**: the person-box smoke proof was rerun with
+  `AURA_PERSON_BOX_LIVE_MODEL=1`; `LIVE_MODEL_TRACE.jsonl` recorded
+  `last_user_endpoint=Cortex`, `primary_model_passed=true`, and
+  `live_model_passed=true`.
+- **Shutdown healing regression**: live shutdown exposed a
+  `SovereignSwarm` AttributeError for `_registry_shards_update_pending` during
+  healing shard spawn. `SovereignSwarm` now initializes the registry guard and
+  resets it if the registry update task cannot be scheduled.
+- **Regression coverage**: `tests/test_agency_core_runtime_contract.py` now
+  proves the swarm guard exists before standalone spawn and does not emit the
+  observed AttributeError degradation when scheduling is unavailable.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_agency_core_runtime_contract.py -q
+python -m ruff check core/agency/agency_core.py tests/test_agency_core_runtime_contract.py
+AURA_PERSON_BOX_PROFILE=smoke AURA_PERSON_BOX_LIVE_MODEL=1 AURA_PERSON_BOX_OUT=artifacts/current/person_box_proof_live_smoke_after_swarm_fix AURA_PERSON_BOX_MAX_SECONDS=600 make person-box-proof
+AURA_CLOSEOUT_ALLOW_DIRTY=1 make closeout-audit
+```
+
+Latest live proof result: `person_box_gauntlet_artifact_contract` **PASS**,
+`artifact_contract_passed=true`, `live_model_passed=true`,
+`task_completion_rate=1.0`, `truthful_status_rate=1.0`,
+`governed_tool_call_rate=1.0`, and `receipt_coverage=1.0`. The full
+`unified_governed_software_operator` claim remains unproven because the smoke
+run does not satisfy the 8-hour duration or raw-model lift requirements.
+
 ## Latest Final Hardening Pass (2026-05-05)
 
 ### Gaps Addressed
