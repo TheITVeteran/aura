@@ -53,6 +53,26 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.InferenceGate")
 
+_STATE_SIGNAL_REWRITES = (
+    ("phenomenological", "state-grounded"),
+    ("Phenomenological", "State-grounded"),
+    ("phenomenology", "state telemetry"),
+    ("Phenomenology", "State telemetry"),
+    ("phenomenal", "functional-state"),
+    ("Phenomenal", "Functional-state"),
+    ("qualia", "private-state evidence"),
+    ("Qualia", "Private-state evidence"),
+    ("inner monologue", "state report"),
+    ("Inner monologue", "State report"),
+)
+
+
+def _grounded_state_signal_text(value: Any, *, limit: int) -> str:
+    text = " ".join(str(value or "").strip().split())
+    for source, replacement in _STATE_SIGNAL_REWRITES:
+        text = text.replace(source, replacement)
+    return text[:limit]
+
 _INFERENCE_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -2702,7 +2722,8 @@ class InferenceGate:
                 elif hasattr(experiencer, "phenomenal_context_string"):
                     fragment = getattr(experiencer, "phenomenal_context_string", "")
                 if fragment:
-                    segments.append(f"## PHENOMENOLOGY\n{str(fragment).strip()[:500]}")
+                    grounded_fragment = _grounded_state_signal_text(fragment, limit=500)
+                    segments.append(f"## FUNCTIONAL STATE SIGNALS\n{grounded_fragment}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
@@ -3217,8 +3238,8 @@ class InferenceGate:
                 elif hasattr(experiencer, "phenomenal_context_string"):
                     fragment = getattr(experiencer, "phenomenal_context_string", "")
                 if fragment:
-                    compact_fragment = " ".join(str(fragment).strip().split())
-                    segments.append(f"## PHENOMENOLOGY\n{compact_fragment[:180]}")
+                    compact_fragment = _grounded_state_signal_text(fragment, limit=180)
+                    segments.append(f"## FUNCTIONAL STATE SIGNALS\n{compact_fragment}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,

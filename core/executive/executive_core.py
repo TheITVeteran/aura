@@ -27,15 +27,21 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.executive.executive_ledger import ExecutiveLedger
 from core.goals.goal_text import first_actionable_goal_text, is_actionable_goal_text, is_intrinsic_goal_text
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.service_access import resolve_canonical_self, resolve_canonical_self_engine, resolve_state_repository
 from core.state.aura_state import _is_speculative_autonomy_label, _normalize_goal_text
 
 logger = logging.getLogger("Aura.Executive")
+
+
+_DECISION_HISTORY_LIMIT = working_history_retention_policy(
+    "AURA_EXECUTIVE_DECISION_HISTORY_MAX"
+).max_items
 
 
 def _coerce_intent_source(source: str) -> IntentSource:
@@ -212,7 +218,7 @@ class ExecutiveCore:
 
     def __init__(self) -> None:
         self._active_intents: Dict[str, Intent] = {}
-        self._decision_history: deque[DecisionRecord] = deque(maxlen=500)
+        self._decision_history: deque[DecisionRecord] = deque(maxlen=_DECISION_HISTORY_LIMIT)
         self._approval_count: int = 0
         self._rejection_count: int = 0
         self._lock = asyncio.Lock()

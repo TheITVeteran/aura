@@ -13,6 +13,7 @@ USER_FACING_PROMPT_FILES = (
 
 FORBIDDEN_LIVE_PROMPT_FRAGMENTS = (
     "PHENOM:",
+    "## PHENOMENOLOGY",
     "Phenomenology:",
     "Inner monologue right now:",
     "phenomenological reality",

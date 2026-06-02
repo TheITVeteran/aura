@@ -33,6 +33,10 @@ def render_markdown(summary: ForecastRunSummary) -> str:
         f"- Compatibility conversation cache: `{summary.registry['conversation_cache_max_messages']}` messages / "
         f"`{summary.registry['conversation_cache_max_sessions']}` sessions",
         f"- Behavioral scar cap: `{summary.registry['behavioral_scar_max_records']}` records",
+        f"- Executive decision history cap: `{summary.registry['executive_decision_history_max']}` decisions "
+        f"(`{summary.registry['executive_decision_history_basis']}`)",
+        f"- Cognitive thought history cap: `{summary.registry['cognitive_thought_history_max']}` thoughts "
+        f"(`{summary.registry['cognitive_thought_history_basis']}`)",
         f"- Vector prune interval: `{summary.registry['vector_prune_interval_s']}s`",
         f"- BlackHoleVault cap: `{summary.registry['black_hole_max_memories']}` memories "
         f"(`{summary.registry['black_hole_retention_basis']}`, "

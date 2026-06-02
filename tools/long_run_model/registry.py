@@ -17,7 +17,11 @@ from core.evolution import liquid_time_engine
 from core.long_term_memory_engine import LongTermMemoryEngine
 from core.memory import conversation_persistence as memory_conversation_persistence
 from core.memory.episodic_memory import EpisodicMemory
-from core.memory.retention_policy import black_hole_retention_policy, hybrid_memory_retention_policy
+from core.memory.retention_policy import (
+    black_hole_retention_policy,
+    hybrid_memory_retention_policy,
+    working_history_retention_policy,
+)
 from core.memory.scar_formation import _MAX_SCARS
 from core.phases import phi_consciousness
 from core.resilience.lock_watchdog import get_lock_watchdog
@@ -103,6 +107,10 @@ class RuntimeRegistry:
     conversation_cache_max_messages: int
     conversation_cache_max_sessions: int
     behavioral_scar_max_records: int
+    executive_decision_history_max: int
+    executive_decision_history_basis: str
+    cognitive_thought_history_max: int
+    cognitive_thought_history_basis: str
     pending_initiative_cap: int
     active_goal_cap: int
     vector_prune_interval_s: float
@@ -193,6 +201,14 @@ def build_registry() -> RuntimeRegistry:
     memory_governor = MemoryGovernor(SimpleNamespace(memory_manager=None))
     black_hole_policy = black_hole_retention_policy(ram_gb=64.0)
     hybrid_memory_policy = hybrid_memory_retention_policy(ram_gb=64.0)
+    executive_history_policy = working_history_retention_policy(
+        "AURA_EXECUTIVE_DECISION_HISTORY_MAX",
+        ram_gb=64.0,
+    )
+    cognitive_history_policy = working_history_retention_policy(
+        "AURA_COGNITIVE_THOUGHT_HISTORY_MAX",
+        ram_gb=64.0,
+    )
     backup_manager = BackupManager()
     ltm_engine = LongTermMemoryEngine()
     repo = StateRepository(db_path=":memory:")
@@ -437,6 +453,10 @@ def build_registry() -> RuntimeRegistry:
         conversation_cache_max_messages=int(memory_conversation_persistence.MAX_HISTORY_IN_MEMORY),
         conversation_cache_max_sessions=int(memory_conversation_persistence.MAX_SESSIONS_ON_DISK),
         behavioral_scar_max_records=int(_MAX_SCARS),
+        executive_decision_history_max=int(executive_history_policy.max_items),
+        executive_decision_history_basis=str(executive_history_policy.basis),
+        cognitive_thought_history_max=int(cognitive_history_policy.max_items),
+        cognitive_thought_history_basis=str(cognitive_history_policy.basis),
         pending_initiative_cap=10,
         active_goal_cap=10,
         vector_prune_interval_s=float(memory_governor.vector_prune_interval_s),

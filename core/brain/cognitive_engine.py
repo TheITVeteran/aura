@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
 from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
@@ -22,6 +23,10 @@ from .reasoning_strategies import ReasoningStrategies, StrategyType
 from .types import ThinkingMode, Thought
 
 logger = logging.getLogger(__name__)
+
+_THOUGHT_HISTORY_LIMIT = working_history_retention_policy(
+    "AURA_COGNITIVE_THOUGHT_HISTORY_MAX"
+).max_items
 
 _BACKGROUND_REFLECTIVE_MODES = frozenset(
     {
@@ -77,9 +82,7 @@ class CognitiveEngine:
 
     def __init__(self, backend: Any = None):
         self.backend = backend
-        self.thoughts: deque = deque(
-            maxlen=500
-        )  # QUAL-04: bounded to prevent memory leak (BUG-017)
+        self.thoughts: deque = deque(maxlen=_THOUGHT_HISTORY_LIMIT)
         self._phases = []
         self._augmentors = []
         self.state_repository = None

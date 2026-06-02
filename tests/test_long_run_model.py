@@ -40,6 +40,10 @@ def test_build_registry_extracts_runtime_hardening_contracts():
     assert registry.conversation_cache_max_messages >= 500
     assert registry.conversation_cache_max_sessions >= 200
     assert registry.behavioral_scar_max_records >= 2_000
+    assert registry.executive_decision_history_max >= 5_000
+    assert registry.executive_decision_history_basis
+    assert registry.cognitive_thought_history_max >= 5_000
+    assert registry.cognitive_thought_history_basis
     assert registry.vector_soft_prune_threshold_days == 14
     assert registry.cognitive_ledger_prune_days == 7
     assert registry.source_signature["critical_supervision_audit"]["all_resolved"] is True
@@ -126,6 +130,8 @@ def test_write_report_bundle_emits_markdown_and_json(tmp_path):
     assert "Hybrid memory cap" in markdown
     assert "Unified transcript cap" in markdown
     assert "Behavioral scar cap" in markdown
+    assert "Executive decision history cap" in markdown
+    assert "Cognitive thought history cap" in markdown
     assert summary_json["checkpoints"][0]["horizon"] == "24h"
     assert isinstance(risk_json, list)
     assert isinstance(remediation_json, list)

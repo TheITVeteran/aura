@@ -188,6 +188,45 @@ def hybrid_memory_retention_policy(*, ram_gb: float | None = None) -> MemoryRete
     )
 
 
+def working_history_retention_policy(
+    env_name: str,
+    *,
+    ram_gb: float | None = None,
+) -> MemoryRetentionPolicy:
+    """Return a bounded in-process trace/history retention policy.
+
+    These buffers are not durable memory, but they carry continuity evidence
+    during long autonomous runs.  The old fixed 500-entry defaults were small
+    enough to erase useful receipts on healthy machines, while still needing a
+    hard cap to avoid unbounded RAM growth.
+    """
+    if env_name in os.environ:
+        max_items = _env_int(env_name, 5_000, low=100, high=100_000)
+        basis = f"env:{env_name}"
+    else:
+        ram = physical_ram_gb() if ram_gb is None else float(ram_gb)
+        if ram >= 48.0:
+            max_items = 10_000
+            basis = "ram>=48gb"
+        elif ram >= 32.0:
+            max_items = 7_500
+            basis = "ram>=32gb"
+        elif ram >= 16.0:
+            max_items = 5_000
+            basis = "ram>=16gb"
+        elif ram >= 8.0:
+            max_items = 2_500
+            basis = "ram>=8gb"
+        else:
+            max_items = 1_000
+            basis = "ram<8gb"
+    return MemoryRetentionPolicy(
+        max_items=max_items,
+        prune_keep_fraction=0.95,
+        basis=basis,
+    )
+
+
 def sovereign_pruner_target_retention() -> float:
     return _env_float(
         "AURA_SOVEREIGN_PRUNER_TARGET_RETENTION",
