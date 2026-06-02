@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -44,6 +45,21 @@ async def test_state_repair_reports_deferred_consumer_restart(monkeypatch, tmp_p
 
     assert result["actions"] == ["consumer_restart_deferred", "reconnected_db"]
     assert result["status"]["local_consumer_alive"] is False
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_proxy_commit_deferral_logs_as_lifecycle_event(tmp_path, caplog):
+    repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=False)
+    payload = {"state": {"version": 1}, "cause": "shutdown", "trace_id": "shutdown-test"}
+
+    with caplog.at_level(logging.INFO, logger=state_module.logger.name):
+        await repo._defer_proxy_commit(payload, BrokenPipeError("pipe closed"))
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Graceful-shutdown state commit stored for boot replay" in msg for msg in messages)
+    assert not any("Deferred proxy commit for replay" in msg for msg in messages)
 
     await repo.close()
 

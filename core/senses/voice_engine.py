@@ -133,6 +133,10 @@ def _tts_dependency_available() -> bool:
     except (ImportError, AttributeError, RuntimeError, ValueError):
         return False
 
+
+def _piper_dependency_available() -> bool:
+    return PiperVoice is not None
+
 # ── Constants ─────────────────────────────────────────────
 SAMPLE_RATE = 16000       # 16kHz for Whisper
 CHANNELS = 1              # Mono
@@ -1282,6 +1286,9 @@ class SovereignVoiceEngine:
         if self._xtts_engine: tts_type = "Sara v3 (XTTS-v2)"
         elif self._piper_voice: tts_type = f"Piper ({self.piper_voice_name})"
         elif self.tts_engine: tts_type = "pyttsx3 (Native)"
+        coqui_tts_available = _tts_dependency_available()
+        piper_tts_available = _piper_dependency_available()
+        pyttsx3_available = pyttsx3 is not None
         
         return {
             "state": self.state.name,
@@ -1294,7 +1301,10 @@ class SovereignVoiceEngine:
             "server_capture": _sounddevice_available(),
             "capture_available": _sounddevice_available(),
             "stt_available": _stt_dependency_available(),
-            "tts_available": _tts_dependency_available() or pyttsx3 is not None or PiperVoice is not None,
+            "tts_available": coqui_tts_available or piper_tts_available or pyttsx3_available,
+            "coqui_tts_available": coqui_tts_available,
+            "piper_tts_available": piper_tts_available,
+            "pyttsx3_available": pyttsx3_available,
             "stt_initialized": self._stt_initialized,
             "tts_initialized": self._tts_initialized,
             "capture_backend": "sounddevice" if _sounddevice_available() else "unavailable",

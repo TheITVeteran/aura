@@ -1857,7 +1857,9 @@ onnxruntime==1.25.0 \
     --hash=sha256:d32eff37efac78c676f1a3b3102863de5e55fbabc18348ec2c1439c18f3e90fa \
     --hash=sha256:de8548d8fe8fd58ca841178051d535d6f378efae14a4b4eb336617d80540fb41 \
     --hash=sha256:fcb074b3c62ffa315e222ad246e46125b046b9b531c719852deda7c89b72ebb7
-    # via faster-whisper
+    # via
+    #   faster-whisper
+    #   piper-tts
 opencv-python-headless==4.13.0.92 \
     --hash=sha256:0525a3d2c0b46c611e2130b5fdebc94cf404845d8fa64d2f3a3b679572a5bd22 \
     --hash=sha256:0bd48544f77c68b2941392fcdf9bcd2b9cdf00e98cb8c29b2455d194763cf99e \
@@ -1881,6 +1883,10 @@ packaging==26.2 \
     #   pooch
     #   tensorboard
     #   transformers
+pathvalidate==3.3.1 \
+    --hash=sha256:5263baab691f8e1af96092fa5137ee17df5bdfbd6cff1fcac4d6ef4bc2e1735f \
+    --hash=sha256:b18c07212bfead624345bb8e1d6141cdcf15a39736994ea0b94035ad2b1ba177
+    # via piper-tts
 pillow==12.2.0 \
     --hash=sha256:00a2865911330191c0b818c59103b58a5e697cae67042366970a6b6f1b20b7f9 \
     --hash=sha256:01afa7cf67f74f09523699b4e88c73fb55c13346d212a59a2db1f86b0a63e8c5 \
@@ -1977,6 +1983,14 @@ pillow==12.2.0 \
     #   -r requirements.txt
     #   matplotlib
     #   tensorboard
+piper-tts==1.4.2 \
+    --hash=sha256:138e6adf26a8e796f53866770ea30b666b65432a5e94857c2d9a8c473a8a1f90 \
+    --hash=sha256:6736329f1ef58c39272215849dffdacae601201480b08a0c892938fa4d7c8c67 \
+    --hash=sha256:9c4a3a11f5889ea9d0df4414dce2bd9bee5ce7d9cf604c8fd5e307441d4c031f \
+    --hash=sha256:b17184a664bd9431ce95c138f4bfb3025e1280cf26075a703dbfdcab989b8ee3 \
+    --hash=sha256:d996f9139c44a0bedb6a9ed45805c429a827c56ef9213933859349801fa7f4e1 \
+    --hash=sha256:dbe7e5391d7657f8a5f2b7ce7cdbafc5bbc559de2af15e5299ce298323eade51
+    # via -r requirements.txt
 platformdirs==4.10.0 \
     --hash=sha256:31e761a6a0ca04faf7353ea759bdba55652be214725111e5aac52dfa29d4bef7 \
     --hash=sha256:fb516cdb12eb0d857d0cd85a7c57cea4d060bee4578d6cf5a14dfdf8cbf8784a

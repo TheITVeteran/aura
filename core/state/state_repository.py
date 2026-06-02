@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
+from core.memory.retention_policy import state_log_retention_policy
 from core.runtime.background_policy import is_user_facing_origin
 from core.runtime.effect_boundary import effect_sink
 from core.runtime.errors import record_degradation
-from core.memory.retention_policy import state_log_retention_policy
 from core.utils.task_tracker import get_task_tracker
 
 from ..bus.shared_mem_bus import SharedMemoryTransport
@@ -685,11 +685,20 @@ class StateRepository:
                 self._pending_proxy_commit_count,
                 int(row[2] or 1),
             )
-            logger.warning(
-                "⚠️ [STATE] Loaded deferred proxy commit from durable outbox (attempts=%d, cause=%s).",
-                self._pending_proxy_commit_count,
-                payload.get("cause"),
-            )
+            if _is_shutdown_commit_payload(payload):
+                logger.info(
+                    "🔁 [STATE] Loaded graceful-shutdown state commit for boot replay "
+                    "(attempts=%d, cause=%s).",
+                    self._pending_proxy_commit_count,
+                    payload.get("cause"),
+                )
+            else:
+                logger.warning(
+                    "⚠️ [STATE] Loaded deferred proxy commit from durable outbox "
+                    "(attempts=%d, cause=%s).",
+                    self._pending_proxy_commit_count,
+                    payload.get("cause"),
+                )
         except _STATE_BOUNDARY_ERRORS as exc:
             _record_state_degradation(
                 exc,
@@ -761,13 +770,25 @@ class StateRepository:
             f"{type(error).__name__}: {error}" if error is not None else "unknown"
         )
         await self._persist_pending_proxy_commit(payload)
-        log_method = logger.info if _is_shutdown_commit_payload(payload) else logger.warning
-        log_method(
-            "⚠️ [STATE] Deferred proxy commit for replay (pending_count=%d, cause=%s, error=%s).",
-            self._pending_proxy_commit_count,
-            payload.get("cause"),
-            self._last_proxy_commit_error,
-        )
+        if _is_shutdown_commit_payload(payload):
+            logger.info(
+                "🔌 [STATE] Graceful-shutdown state commit stored for boot replay "
+                "(pending_count=%d, cause=%s).",
+                self._pending_proxy_commit_count,
+                payload.get("cause"),
+            )
+            logger.debug(
+                "Graceful-shutdown state replay source: %s",
+                self._last_proxy_commit_error,
+            )
+        else:
+            logger.warning(
+                "⚠️ [STATE] Deferred proxy commit for replay "
+                "(pending_count=%d, cause=%s, error=%s).",
+                self._pending_proxy_commit_count,
+                payload.get("cause"),
+                self._last_proxy_commit_error,
+            )
 
     async def _enqueue_owner_commit(self, payload: dict[str, Any]) -> None:
         """
