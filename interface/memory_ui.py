@@ -8,27 +8,50 @@ from core.container import ServiceContainer
 
 router = APIRouter()
 logger = logging.getLogger("Aura.UI.Memory")
+_MEMORY_UI_RECOVERABLE_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_memory_ui_degradation(reason: str, exc: BaseException, degradations: list[str]) -> None:
+    degradations.append(reason)
+    record_degradation('memory_ui', exc)
+    logger.warning("%s: %s", reason, exc)
 
 # 1. API endpoint to return vault stats
 @router.get("/api/memory")
 async def get_vault_stats():
+    degradations: list[str] = []
+
     # Use DI to get BlackHoleVault via MemoryFacade
     facade = ServiceContainer.get("memory_facade", default=None)
     if facade and hasattr(facade, "setup"):
-        facade.setup()
+        try:
+            facade.setup()
+        except _MEMORY_UI_RECOVERABLE_ERRORS as e:
+            _record_memory_ui_degradation("Memory facade setup failed", e, degradations)
 
     vault = getattr(facade, "vector", None) or getattr(facade, "vault", None)
     if not facade or not vault:
         return {"status": "offline", "error": "BlackHoleVault not found"}
 
-    memories = list(getattr(vault, "memories", []) or [])
+    try:
+        memories = list(getattr(vault, "memories", []) or [])
+    except _MEMORY_UI_RECOVERABLE_ERRORS as e:
+        _record_memory_ui_degradation("Memory vault read failed", e, degradations)
+        memories = []
     
     # 1. Mass/Density (Bekenstein)
     try:
         total_bytes = len(json.dumps(memories, default=str).encode()) if memories else 0
-    except Exception as e:
-        record_degradation('memory_ui', e)
-        logger.warning("Failed to calculate Vault mass: %s", e)
+    except (OverflowError, TypeError, ValueError) as e:
+        _record_memory_ui_degradation("Failed to calculate Vault mass", e, degradations)
         total_bytes = 0
     total_bits = total_bytes * 8
     # Constant radius of 10cm for now
@@ -55,10 +78,9 @@ async def get_vault_stats():
                 horcrux_status = "CRITICAL"
             elif shard_count < 5:
                 horcrux_status = "UNSTABLE"
-        except Exception as e:
-            record_degradation('memory_ui', e)
+        except _MEMORY_UI_RECOVERABLE_ERRORS as e:
+            _record_memory_ui_degradation("Horcrux shard check failed", e, degradations)
             horcrux_status = "UNKNOWN"
-            logger.warning("Horcrux shard check failed: %s", e)
 
     # 4. Recent Spaghettified Strings (with Episodic Fallback)
     recent = []
@@ -78,9 +100,8 @@ async def get_vault_stats():
                         "access_count": 1 if e.importance > 0.5 else 0
                     } for e in recent_episodes
                 ]
-        except Exception as e:
-            record_degradation('memory_ui', e)
-            logger.warning("Episodic fallback failed: %s", e)
+        except _MEMORY_UI_RECOVERABLE_ERRORS as e:
+            _record_memory_ui_degradation("Episodic fallback failed", e, degradations)
 
     for m in sorted(source_memories, key=lambda x: x.get("created", 0), reverse=True)[:10]:
         text = m.get("text", "")
@@ -101,7 +122,9 @@ async def get_vault_stats():
         })
     
     return {
-        "status": "online",
+        "status": "degraded" if degradations else "online",
+        "degraded": bool(degradations),
+        "degradation_reasons": degradations,
         "horcrux": horcrux_status,
         "shards_active": shard_count,
         "total_nodes": len(memories) if memories else len(source_memories),

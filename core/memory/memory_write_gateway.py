@@ -36,6 +36,14 @@ from core.runtime.receipts import (
 )
 
 logger = logging.getLogger("Aura.MemoryWriteGateway")
+_GOVERNANCE_DECISION_ERRORS = (
+    AttributeError,
+    LookupError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 SCHEMA_VERSIONS = {
@@ -139,7 +147,7 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
             )
             if asyncio.iscoroutine(decision):
                 decision = await decision
-        except Exception as exc:
+        except _GOVERNANCE_DECISION_ERRORS as exc:
             record_degradation('memory_write_gateway', exc)
             logger.warning(
                 "MemoryWriteGateway governance call failed; denying write (fail-closed): %s",

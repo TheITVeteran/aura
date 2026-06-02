@@ -8,9 +8,23 @@ import logging
 import time
 
 from core.container import ServiceContainer
+from core.exceptions import ContainerError
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Server.Helpers")
+_USER_SPOKE_HOOK_ERRORS = (
+    ImportError,
+    AttributeError,
+    ContainerError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_user_spoke_hook_failure(hook: str, exc: BaseException) -> None:
+    record_degradation('helpers', exc)
+    logger.debug("User-spoke hook '%s' skipped: %s", hook, exc)
 
 
 def _notify_user_spoke(message: str = ""):
@@ -26,34 +40,46 @@ def _notify_user_spoke(message: str = ""):
         from core.runtime.foreground_guard import notify_user_spoke
 
         notify_user_spoke(message)
-    except Exception as _e:
-        record_degradation('helpers', _e)
-        logger.debug("Foreground guard user-spoke update skipped: %s", _e)
+    except _USER_SPOKE_HOOK_ERRORS as _e:
+        _record_user_spoke_hook_failure("foreground_guard", _e)
 
     try:
         orch = ServiceContainer.get("orchestrator", default=None)
-        if orch:
-            # Phase-30 ProactivePresence — tracks _last_user_interaction_time
-            # and detects away signals from message content.
-            pp = getattr(orch, "proactive_presence", None)
-            if pp:
-                if message and hasattr(pp, "mark_user_spoke_with_message"):
-                    pp.mark_user_spoke_with_message(message)
-                elif hasattr(pp, "mark_user_spoke"):
-                    pp.mark_user_spoke()
+    except _USER_SPOKE_HOOK_ERRORS as _e:
+        _record_user_spoke_hook_failure("orchestrator_lookup", _e)
+        return
 
-            # Older ProactiveCommunicationManager — resets unanswered backoff
-            pc = getattr(orch, "proactive_comm", None)
-            if pc and hasattr(pc, "record_user_interaction"):
-                pc.record_user_interaction()
+    if not orch:
+        return
 
-            # ProactiveInitiativeEngine (initiative_engine) if attached
-            pie = getattr(orch, "proactive_initiative_engine", None)
-            if pie and hasattr(pie, "register_user_interaction"):
-                pie.register_user_interaction()
+    # Phase-30 ProactivePresence tracks interaction time and away signals.
+    pp = getattr(orch, "proactive_presence", None)
+    if pp:
+        try:
+            if message and hasattr(pp, "mark_user_spoke_with_message"):
+                pp.mark_user_spoke_with_message(message)
+            elif hasattr(pp, "mark_user_spoke"):
+                pp.mark_user_spoke()
+        except _USER_SPOKE_HOOK_ERRORS as _e:
+            _record_user_spoke_hook_failure("proactive_presence", _e)
 
-            # Direct timestamp used by some background loops
-            orch._last_user_interaction_time = time.time()
-    except Exception as _e:
-        record_degradation('helpers', _e)
-        logger.debug("Proactive user-spoke hooks skipped: %s", _e)
+    # Older ProactiveCommunicationManager resets unanswered backoff.
+    pc = getattr(orch, "proactive_comm", None)
+    if pc and hasattr(pc, "record_user_interaction"):
+        try:
+            pc.record_user_interaction()
+        except _USER_SPOKE_HOOK_ERRORS as _e:
+            _record_user_spoke_hook_failure("proactive_comm", _e)
+
+    # ProactiveInitiativeEngine if attached.
+    pie = getattr(orch, "proactive_initiative_engine", None)
+    if pie and hasattr(pie, "register_user_interaction"):
+        try:
+            pie.register_user_interaction()
+        except _USER_SPOKE_HOOK_ERRORS as _e:
+            _record_user_spoke_hook_failure("proactive_initiative_engine", _e)
+
+    try:
+        orch._last_user_interaction_time = time.time()
+    except _USER_SPOKE_HOOK_ERRORS as _e:
+        _record_user_spoke_hook_failure("last_user_interaction_time", _e)

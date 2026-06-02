@@ -16,7 +16,7 @@ import os
 import secrets
 import threading
 import time
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from typing import Any, Dict, List, Optional
 
 from fastapi import Header, HTTPException, Request
@@ -126,6 +126,32 @@ def _verify_token(request: Request, x_api_token: Optional[str] = Header(default=
 # ── Cookie management ────────────────────────────────────────
 
 _CHEAT_CODE_COOKIE_SECRET: Optional[bytes] = None
+_COOKIE_SECRET_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+_COOKIE_READ_RECOVERABLE_ERRORS = (AttributeError, CookieError, KeyError, TypeError, ValueError)
+_OWNER_SESSION_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+_CHEAT_CODE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 def _get_cheat_code_cookie_secret() -> bytes:
@@ -136,7 +162,7 @@ def _get_cheat_code_cookie_secret() -> bytes:
             from core.zenith_secrets import get_secret
 
             secret_value = get_secret("AURA_CHEAT_CODE_COOKIE_SECRET")
-        except Exception as exc:
+        except _COOKIE_SECRET_RECOVERABLE_ERRORS as exc:
             record_degradation('auth', exc)
             secret_value = None
         secret_value = secret_value or config.api_token or secrets.token_urlsafe(32)
@@ -192,7 +218,7 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
     if cookies is not None:
         try:
             token = cookies.get(CHEAT_CODE_COOKIE_NAME)
-        except Exception as exc:
+        except _COOKIE_READ_RECOVERABLE_ERRORS as exc:
             record_degradation('auth', exc)
             token = None
     if not token:
@@ -202,7 +228,7 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
             parsed = SimpleCookie()
             try:
                 parsed.load(cookie_header)
-            except Exception as exc:
+            except _COOKIE_READ_RECOVERABLE_ERRORS as exc:
                 record_degradation('auth', exc)
                 parsed = SimpleCookie()
             morsel = parsed.get(CHEAT_CODE_COOKIE_NAME)
@@ -221,7 +247,7 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
             announce=False,
         )
         return True
-    except Exception as exc:
+    except _OWNER_SESSION_RECOVERABLE_ERRORS as exc:
         record_degradation('auth', exc)
         logger.debug("Owner session cookie restore failed: %s", exc)
         return False
@@ -234,7 +260,7 @@ def _activate_cheat_code_for_request(code: Optional[str], *, silent: bool, sourc
         from core.security.cheat_codes import activate_cheat_code
 
         return activate_cheat_code(code, silent=silent, source=source)
-    except Exception as exc:
+    except _CHEAT_CODE_RECOVERABLE_ERRORS as exc:
         record_degradation('auth', exc)
         logger.debug("Cheat code activation failed: %s", exc)
         return {

@@ -1,9 +1,13 @@
-import networkx as nx
 import asyncio
 import logging
 from typing import List, Optional
 
+import networkx as nx
+
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.Mycelial")
+_MYCELIAL_GRAPH_ERRORS = (nx.NetworkXException, RuntimeError, TypeError, ValueError)
 
 class MycelialNetwork:
     """
@@ -27,15 +31,15 @@ class MycelialNetwork:
                 
                 logger.info("🕸️ Mycelial edge added: %s -> %s", memory_node, skill_node)
                 return True
-            except Exception as e:
-                from core.runtime.errors import record_degradation
+            except _MYCELIAL_GRAPH_ERRORS as e:
                 record_degradation("mycelial_network", e)
                 logger.error("Failed to add edge to mycelial graph: %s", e)
                 # Defensive rollback if edge was created
                 try:
                     if self.G.has_edge(memory_node, skill_node):
                         self.G.remove_edge(memory_node, skill_node)
-                except Exception as rollback_err:
+                except _MYCELIAL_GRAPH_ERRORS as rollback_err:
+                    record_degradation("mycelial_network", rollback_err)
                     logger.debug("Rollback edge removal failed: %s", rollback_err)
                 return False
 
@@ -49,8 +53,7 @@ class MycelialNetwork:
                 return nx.shortest_path(self.G, start_memory, goal_skill)
             except nx.NetworkXNoPath:
                 return []
-            except Exception as e:
-                from core.runtime.errors import record_degradation
+            except _MYCELIAL_GRAPH_ERRORS as e:
                 record_degradation("mycelial_network", e)
                 logger.error("Failed to compute shortest path in mycelial network: %s", e)
                 return []

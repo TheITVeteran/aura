@@ -17,6 +17,7 @@ from core.config import config
 logger = logging.getLogger("Aura.Audit")
 
 _DB_PATH = config.paths.data_dir / "audit.db"
+_AUDIT_RETRY_ERRORS = (sqlite3.DatabaseError, OSError, TypeError, ValueError)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -80,8 +81,9 @@ class AuditLog:
                     db_file.unlink(missing_ok=True)
                     db_file.with_suffix(".db-wal").unlink(missing_ok=True)
                     db_file.with_suffix(".db-shm").unlink(missing_ok=True)
-                except OSError:
-                    pass
+                except OSError as cleanup_err:
+                    record_degradation('audit', cleanup_err)
+                    logger.error("Failed to remove corrupted audit database files: %s", cleanup_err)
         # Re-initialize
         self._init()
 
@@ -141,7 +143,7 @@ class AuditLog:
                         ),
                     )
                     con.commit()
-                except Exception as retry_err:
+                except _AUDIT_RETRY_ERRORS as retry_err:
                     record_degradation('audit', retry_err)
                     logger.error("Failed to record audit entry after healing: %s", retry_err)
             else:
