@@ -95,6 +95,17 @@ def test_legacy_atomic_and_dedup_memory_caps_are_not_legacy_tiny() -> None:
     assert SemanticDedupGate.MAX_RECENT_WRITES >= 1_000
 
 
+def test_cognitive_history_caps_are_not_legacy_tiny() -> None:
+    from core.cognition.paraconsistent_logic import _MAX_BELIEFS, _MAX_PARADOXES
+    from core.cognition.precognitive_model import _MAX_PATTERN_HISTORY
+    from core.creativity.aesthetic_engine import _MAX_JOURNAL_ENTRIES
+
+    assert _MAX_BELIEFS >= 1_000
+    assert _MAX_PARADOXES >= 1_000
+    assert _MAX_PATTERN_HISTORY >= 1_000
+    assert _MAX_JOURNAL_ENTRIES >= 1_000
+
+
 def test_behavioral_scar_cap_exceeds_legacy_floor() -> None:
     assert _MAX_SCARS >= 2_000
 

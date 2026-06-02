@@ -34,15 +34,15 @@ from core.runtime.atomic_writer import atomic_write_text
 import json
 import logging
 import math
-import os
 import time
 import threading
 from collections import defaultdict, deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 
 logger = logging.getLogger("Aura.Precognitive")
 
@@ -52,7 +52,7 @@ logger = logging.getLogger("Aura.Precognitive")
 # ---------------------------------------------------------------------------
 
 _CONFIDENCE_THRESHOLD = 0.7    # Auto-prefetch above this confidence
-_MAX_PATTERN_HISTORY = 500     # Max entries per pattern category
+_MAX_PATTERN_HISTORY = working_history_retention_policy("AURA_PRECOGNITIVE_PATTERN_HISTORY_MAX").max_items
 _MAX_PREDICTIONS_LOG = 100     # Recent prediction log size
 _SAVE_INTERVAL_S = 300.0       # Persist patterns every 5 minutes
 _TOPIC_DECAY_HALF_LIFE = 3600  # Topic relevance halves every hour
@@ -686,7 +686,7 @@ class PrecognitiveEngine:
         if topic.startswith("technical:"):
             tech = topic.split(":", 1)[1]
             suggestions.append(f"memory:search:{tech}")
-            suggestions.append(f"context:recent_code_changes")
+            suggestions.append("context:recent_code_changes")
 
         elif topic == "greeting":
             suggestions.append("memory:recent_session_summary")
@@ -739,13 +739,13 @@ class PrecognitiveEngine:
 
         if topic_hit and prediction.confidence > 0.5:
             logger.debug(
-                "Precognitive HIT: predicted=%s actual=%s conf=%.0f%%",
-                prediction.predicted_next_topic, actual_topic, prediction.confidence * 100,
+                "Precognitive HIT: predicted=%s actual=%s conf=%.0f%% urgency_error=%.2f",
+                prediction.predicted_next_topic, actual_topic, prediction.confidence * 100, urgency_error,
             )
         elif prediction.confidence > 0.5:
             logger.debug(
-                "Precognitive MISS: predicted=%s actual=%s conf=%.0f%%",
-                prediction.predicted_next_topic, actual_topic, prediction.confidence * 100,
+                "Precognitive MISS: predicted=%s actual=%s conf=%.0f%% urgency_error=%.2f",
+                prediction.predicted_next_topic, actual_topic, prediction.confidence * 100, urgency_error,
             )
 
     # ------------------------------------------------------------------
