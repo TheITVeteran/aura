@@ -25,3 +25,11 @@ def test_self_object_readers_degrade_to_safe_identity_facets(monkeypatch):
 
     assert recorded
     assert all(module == "self_object" for module, _ in recorded)
+
+
+def test_self_object_uses_narrow_reader_exceptions():
+    source = self_object.__file__
+    with open(source, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "except Exception" not in text
+    assert "except BaseException" not in text

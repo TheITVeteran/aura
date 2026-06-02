@@ -26,6 +26,14 @@ from datetime import datetime
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.UnifiedSelf")
+_UNIFIED_SELF_RECOVERABLE_ERRORS = (
+    AttributeError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class SelfState(Enum):
@@ -141,7 +149,7 @@ class UnifiedSelf:
             logger.info(f"🧠 Unified Self initialized: {self._state.name}")
             logger.info(f"   Identity continuity: {self._state.continuity:.0%}")
             logger.info(f"   Purpose: {self._state.purpose_narrative}")
-        except Exception as e:
+        except _UNIFIED_SELF_RECOVERABLE_ERRORS as e:
             record_degradation("unified_self", e)
     
     def _load_from_disk(self):
@@ -164,7 +172,7 @@ class UnifiedSelf:
                     self._state.identity_commitments = data.get("identity_commitments", self._state.identity_commitments)
                     self._state.interaction_count = data.get("interaction_count", 0)
                     logger.debug(f"✓ Loaded unified self from disk (interaction_count={self._state.interaction_count})")
-        except Exception as e:
+        except _UNIFIED_SELF_RECOVERABLE_ERRORS as e:
             record_degradation("unified_self", e)
             logger.debug("Failed to load unified self: %s", e)
     
@@ -174,7 +182,7 @@ class UnifiedSelf:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._storage_path, 'w') as f:
                 json.dump(self._state.to_dict(), f, indent=2)
-        except Exception as e:
+        except _UNIFIED_SELF_RECOVERABLE_ERRORS as e:
             record_degradation("unified_self", e)
     
     # ── Core Identity Interface ──────────────────────────────────────

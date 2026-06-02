@@ -43,9 +43,10 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SelfObject")
+_SELF_OBJECT_READER_ERRORS = (ImportError, AttributeError, LookupError, RuntimeError, TypeError, ValueError)
 
 
-def _record_reader_degradation(reader: str, exc: Exception) -> None:
+def _record_reader_degradation(reader: str, exc: BaseException) -> None:
     record_degradation("self_object", exc)
     logger.debug("SelfObject %s reader failed: %s", reader, exc)
 
@@ -330,7 +331,7 @@ class SelfObject:
                 d = engine.snapshot()
                 if isinstance(d, dict):
                     return {k: float(v) for k, v in d.items() if isinstance(v, (int, float))}
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("drives", exc)
         return {}
 
@@ -342,7 +343,7 @@ class SelfObject:
                 d = eng.snapshot()
                 if isinstance(d, dict):
                     return {k: float(v) for k, v in d.items() if isinstance(v, (int, float))}
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("affect", exc)
         return {}
 
@@ -351,7 +352,7 @@ class SelfObject:
         try:
             from core.organism.viability import get_viability
             return get_viability().state.value
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("viability", exc)
             return "unknown"
 
@@ -362,7 +363,7 @@ class SelfObject:
             if engine and hasattr(engine, "active"):
                 lst = engine.active() or []
                 return [g if isinstance(g, dict) else {"name": str(g)} for g in lst[:8]]
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("active_goals", exc)
         return []
 
@@ -371,7 +372,7 @@ class SelfObject:
         try:
             from core.agency.agency_orchestrator import get_receipt_log
             recent = get_receipt_log().recent(limit=64)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("last_actions", exc)
             return None, None, None
         last_failed = None
@@ -397,7 +398,7 @@ class SelfObject:
                 1 for t in store._tokens.values()  # type: ignore[attr-defined]
                 if not t.is_consumed() and not t.revoked and not t.is_expired()
             )
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("capability_tokens", exc)
             return 0
 
@@ -407,7 +408,7 @@ class SelfObject:
             bg = sc.get("belief_graph", default=None)
             if bg and hasattr(bg, "recent_revisions"):
                 return list(bg.recent_revisions(limit=8) or [])
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("belief_revisions", exc)
         return []
 
@@ -417,7 +418,7 @@ class SelfObject:
             mem = sc.get("memory_facade", default=None)
             if mem and hasattr(mem, "recent_consolidations"):
                 return list(mem.recent_consolidations(limit=8) or [])
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("memory_consolidations", exc)
         return []
 
@@ -427,7 +428,7 @@ class SelfObject:
             sm = sc.get("self_modification_engine", default=None)
             if sm and hasattr(sm, "recent_proposals"):
                 return list(sm.recent_proposals(limit=8) or [])
-        except Exception as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("self_modifications", exc)
         return []
 
@@ -438,7 +439,7 @@ class SelfObject:
             kgm = ServiceContainer.get("knowledge_gap_monitor", default=None)
             if kgm and hasattr(kgm, "open_questions"):
                 return list(kgm.open_questions(limit=8) or [])
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("open_belief_questions", exc)
         return []
 
@@ -449,7 +450,7 @@ class SelfObject:
             mem = ServiceContainer.get("memory_facade", default=None)
             if mem and hasattr(mem, "stale_memories"):
                 return list(mem.stale_memories(limit=5) or [])
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except _SELF_OBJECT_READER_ERRORS as exc:
             _record_reader_degradation("stale_memories", exc)
         return []
 
