@@ -626,7 +626,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                 try:
                     text = skill._read_menu_clock_macos()
                     return {"ready": True, "text": text[:240]}
-                except Exception as exc:
+                except _SYSTEM_RECOVERABLE_ERRORS as exc:
                     record_degradation('system', exc)
                     return {"ready": False, "error": str(exc)[:240]}
 

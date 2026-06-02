@@ -6592,6 +6592,41 @@ async def test_model_runtime_actor_pause_blocks_generate():
         await actor.generate(GenerateRequest(prompt="x"))
 
 
+@pytest.mark.asyncio
+async def test_model_runtime_actor_does_not_count_cancellation_as_backend_failure():
+    from core.runtime.model_runtime_actor import (
+        GenerateRequest,
+        ModelRuntimeActor,
+    )
+
+    async def _backend(req):
+        raise asyncio.CancelledError()
+
+    actor = ModelRuntimeActor(backend=_backend)
+    with pytest.raises(asyncio.CancelledError):
+        await actor.generate(GenerateRequest(prompt="cancel"))
+    assert actor.calls == 1
+    assert actor.failures == 0
+
+
+@pytest.mark.asyncio
+async def test_model_runtime_actor_counts_typed_backend_failure():
+    from core.runtime.errors import ModelUnavailable
+    from core.runtime.model_runtime_actor import (
+        GenerateRequest,
+        ModelRuntimeActor,
+    )
+
+    async def _backend(req):
+        raise ModelUnavailable("offline")
+
+    actor = ModelRuntimeActor(backend=_backend)
+    with pytest.raises(ModelUnavailable, match="offline"):
+        await actor.generate(GenerateRequest(prompt="fail"))
+    assert actor.calls == 1
+    assert actor.failures == 1
+
+
 def test_identity_ledger_commitments_and_drift(tmp_path):
     from core.identity.identity_ledger import IdentityLedger
 

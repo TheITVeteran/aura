@@ -5794,7 +5794,8 @@ async def api_chat(
                             
                             coordinator = await get_consciousness_coordinator()
                             await coordinator.on_chat_turn(_semantic_user_message, final_text)
-                        except Exception as _consci_exc:
+                        except _CHAT_RECOVERABLE_ERRORS as _consci_exc:
+                            record_degradation('chat.consciousness_update', _consci_exc)
                             logger.debug("Consciousness update skipped: %s", _consci_exc)
                     
                     except _CHAT_RECOVERABLE_ERRORS as _turn_log_exc:

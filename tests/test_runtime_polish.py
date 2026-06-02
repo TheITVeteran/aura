@@ -43,12 +43,15 @@ def test_phenomenal_error_envelopes_use_truthful_http_status():
 def test_global_error_and_introspection_paths_do_not_hide_failures():
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
     chat = (PROJECT_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    system = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
     synthesis = (PROJECT_ROOT / "core" / "initiative_synthesis.py").read_text(encoding="utf-8")
 
     assert "always 200 so the chat never appears broken" not in server
     assert "status_code=200,  # always 200" not in server
     assert "Suppressed Exception" not in server
     assert "fail-open: introspection" not in chat
+    assert "except Exception as _consci_exc" not in chat
+    assert "except Exception as exc" not in system
     assert "Grounded introspection authority gate unavailable" in chat
     assert "approved = True  # fail-open" not in synthesis
 

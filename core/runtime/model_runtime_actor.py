@@ -15,7 +15,27 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from core.runtime.errors import (
+    DependencyUnavailable,
+    ModelUnavailable,
+    ResourceExhaustion,
+    TimeoutBudgetExceeded,
+)
+
 logger = logging.getLogger("Aura.ModelRuntimeActor")
+
+_MODEL_BACKEND_FAILURES = (
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    TypeError,
+    LookupError,
+    DependencyUnavailable,
+    ModelUnavailable,
+    ResourceExhaustion,
+    TimeoutBudgetExceeded,
+)
 
 
 @dataclass
@@ -74,7 +94,7 @@ class ModelRuntimeActor:
             start = time.monotonic()
             try:
                 result = await self._backend(request)
-            except BaseException:
+            except _MODEL_BACKEND_FAILURES:
                 self.failures += 1
                 raise
             duration = time.monotonic() - start
