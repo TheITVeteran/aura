@@ -24,6 +24,7 @@ PERSON_BOX_RECEIPT_DOMAINS = {
     "file_io",
     "governance",
     "live_model",
+    "longevity",
     "memory",
     "model",
     "packaging",

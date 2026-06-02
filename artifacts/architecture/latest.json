@@ -146,11 +146,11 @@
       "lines": 586
     },
     "creativity": {
-      "bytes": 33218,
+      "bytes": 33361,
       "deps_in": 1,
-      "deps_out": 2,
+      "deps_out": 3,
       "files": 2,
-      "lines": 800
+      "lines": 801
     },
     "data": {
       "bytes": 19319,
@@ -753,25 +753,25 @@
         "context": "record_degradation('value_autopoiesis', exc)",
         "file": "core/adaptation/value_autopoiesis.py",
         "limp_on": true,
-        "line": 481
+        "line": 482
       },
       {
         "context": "record_degradation('value_autopoiesis', exc)",
         "file": "core/adaptation/value_autopoiesis.py",
         "limp_on": true,
-        "line": 517
+        "line": 518
       },
       {
         "context": "record_degradation('value_autopoiesis', exc)",
         "file": "core/adaptation/value_autopoiesis.py",
         "limp_on": true,
-        "line": 533
+        "line": 534
       },
       {
         "context": "record_degradation('value_autopoiesis', exc)",
         "file": "core/adaptation/value_autopoiesis.py",
         "limp_on": true,
-        "line": 543
+        "line": 544
       },
       {
         "context": "record_degradation('affective_circumplex', exc)",
@@ -1887,43 +1887,43 @@
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": true,
-        "line": 320
+        "line": 321
       },
       {
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": false,
-        "line": 490
+        "line": 491
       },
       {
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": true,
-        "line": 515
+        "line": 516
       },
       {
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": false,
-        "line": 535
+        "line": 536
       },
       {
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": false,
-        "line": 549
+        "line": 550
       },
       {
         "context": "record_degradation(\"self_modification\", exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": false,
-        "line": 575
+        "line": 576
       },
       {
         "context": "record_degradation('self_modification', exc)",
         "file": "core/autonomy/self_modification.py",
         "limp_on": true,
-        "line": 589
+        "line": 590
       },
       {
         "context": "record_degradation('sleep_trigger', e)",
@@ -2211,91 +2211,91 @@
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 63
+        "line": 68
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 214
+        "line": 217
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 228
+        "line": 231
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 252
+        "line": 255
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 320
+        "line": 323
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 520
+        "line": 523
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 604
+        "line": 607
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 625
+        "line": 628
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 692
+        "line": 695
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 868
+        "line": 871
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 916
+        "line": 919
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 988
+        "line": 991
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 1013
+        "line": 1016
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 1032
+        "line": 1035
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/cognitive_engine.py",
         "limp_on": true,
-        "line": 1177
+        "line": 1180
       },
       {
         "context": "record_degradation('cognitive_manager', e)",
@@ -2457,157 +2457,157 @@
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 76
+        "line": 96
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 1056
+        "line": 1076
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 1077
+        "line": 1097
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 1140
+        "line": 1160
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 1157
+        "line": 1177
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 3844
+        "line": 3865
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4003
+        "line": 4024
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4070
+        "line": 4091
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4145
+        "line": 4166
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4174
+        "line": 4195
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4279
+        "line": 4300
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4299
+        "line": 4320
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4327
+        "line": 4348
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4356
+        "line": 4377
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4405
+        "line": 4426
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4435
+        "line": 4456
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4625
+        "line": 4646
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4661
+        "line": 4682
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4835
+        "line": 4856
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 4944
+        "line": 4965
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5138
+        "line": 5159
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5193
+        "line": 5214
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5240
+        "line": 5261
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5323
+        "line": 5344
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5350
+        "line": 5371
       },
       {
         "context": "record_degradation(",
         "file": "core/brain/inference_gate.py",
         "limp_on": true,
-        "line": 5363
+        "line": 5384
       },
       {
         "context": "record_degradation(",
@@ -2931,7 +2931,7 @@
         "context": "record_degradation(",
         "file": "core/brain/llm/mlx_worker.py",
         "limp_on": true,
-        "line": 1417
+        "line": 1424
       },
       {
         "context": "record_degradation(",
@@ -3561,37 +3561,37 @@
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": false,
-        "line": 490
+        "line": 492
       },
       {
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": true,
-        "line": 502
+        "line": 504
       },
       {
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": true,
-        "line": 779
+        "line": 781
       },
       {
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": true,
-        "line": 797
+        "line": 799
       },
       {
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": true,
-        "line": 804
+        "line": 806
       },
       {
         "context": "record_degradation('paraconsistent_logic', e)",
         "file": "core/cognition/paraconsistent_logic.py",
         "limp_on": true,
-        "line": 810
+        "line": 812
       },
       {
         "context": "record_degradation(\"pre_linguistic\", exc)",
@@ -5211,13 +5211,13 @@
         "context": "record_degradation('metacognition', e)",
         "file": "core/consciousness/metacognition.py",
         "limp_on": true,
-        "line": 173
+        "line": 176
       },
       {
         "context": "record_degradation('metacognition', e)",
         "file": "core/consciousness/metacognition.py",
         "limp_on": true,
-        "line": 413
+        "line": 418
       },
       {
         "context": "record_degradation(\"mhaf_phi_estimator\", exc)",
@@ -5691,19 +5691,19 @@
         "context": "record_degradation(\"somatic_marker_gate\", exc)",
         "file": "core/consciousness/somatic_marker_gate.py",
         "limp_on": true,
-        "line": 211
+        "line": 212
       },
       {
         "context": "record_degradation('somatic_marker_gate', e)",
         "file": "core/consciousness/somatic_marker_gate.py",
         "limp_on": true,
-        "line": 326
+        "line": 327
       },
       {
         "context": "record_degradation(\"somatic_marker_gate\", exc)",
         "file": "core/consciousness/somatic_marker_gate.py",
         "limp_on": true,
-        "line": 387
+        "line": 388
       },
       {
         "context": "record_degradation(\"stdp_learning\", exc)",
@@ -5985,97 +5985,97 @@
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 154
+        "line": 156
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 323
+        "line": 327
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 422
+        "line": 426
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 513
+        "line": 517
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 529
+        "line": 533
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 793
+        "line": 797
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 915
+        "line": 919
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1021
+        "line": 1025
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1189
+        "line": 1193
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1305
+        "line": 1309
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1395
+        "line": 1399
       },
       {
         "context": "record_degradation(\"constitution\", exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1445
+        "line": 1449
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1455
+        "line": 1459
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1465
+        "line": 1469
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1475
+        "line": 1479
       },
       {
         "context": "record_degradation('constitution', exc)",
         "file": "core/constitution.py",
         "limp_on": true,
-        "line": 1497
+        "line": 1501
       },
       {
         "context": "record_degradation(",
@@ -6567,7 +6567,7 @@
         "context": "record_degradation(_METABOLIC_SUBSYSTEM, error, severity=severity, action=action)",
         "file": "core/coordinators/metabolic_coordinator.py",
         "limp_on": true,
-        "line": 46
+        "line": 49
       },
       {
         "context": "record_degradation(",
@@ -6585,55 +6585,55 @@
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 242
+        "line": 243
       },
       {
         "context": "record_degradation(\"aesthetic_engine\", e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 253
+        "line": 254
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 274
+        "line": 275
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 286
+        "line": 287
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 300
+        "line": 301
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 313
+        "line": 314
       },
       {
         "context": "record_degradation(\"aesthetic_engine\", e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 322
+        "line": 323
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 756
+        "line": 757
       },
       {
         "context": "record_degradation('aesthetic_engine', e)",
         "file": "core/creativity/aesthetic_engine.py",
         "limp_on": true,
-        "line": 768
+        "line": 769
       },
       {
         "context": "record_degradation(",
@@ -7407,85 +7407,85 @@
         "context": "record_degradation('executive_core', exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 845
+        "line": 851
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 860
+        "line": 866
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 871
+        "line": 877
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 882
+        "line": 888
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 892
+        "line": 898
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 915
+        "line": 921
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 941
+        "line": 947
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 967
+        "line": 973
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 983
+        "line": 989
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 1099
+        "line": 1105
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 1125
+        "line": 1131
       },
       {
         "context": "record_degradation('executive_core', _exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 1136
+        "line": 1142
       },
       {
         "context": "record_degradation('executive_core', exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 1201
+        "line": 1207
       },
       {
         "context": "record_degradation('executive_core', exc)",
         "file": "core/executive/executive_core.py",
         "limp_on": true,
-        "line": 1219
+        "line": 1225
       },
       {
         "context": "record_degradation(\"external_chat\", exc)",
@@ -7545,13 +7545,13 @@
         "context": "record_degradation('global_workspace', e)",
         "file": "core/global_workspace.py",
         "limp_on": true,
-        "line": 115
+        "line": 119
       },
       {
         "context": "record_degradation('global_workspace', e)",
         "file": "core/global_workspace.py",
         "limp_on": true,
-        "line": 141
+        "line": 145
       },
       {
         "context": "record_degradation('goal_drift_detector', e)",
@@ -7605,85 +7605,85 @@
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 602
+        "line": 603
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 625
+        "line": 626
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 671
+        "line": 672
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 708
+        "line": 709
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 751
+        "line": 752
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 759
+        "line": 760
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 800
+        "line": 801
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 835
+        "line": 836
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 878
+        "line": 879
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 900
+        "line": 901
       },
       {
         "context": "record_degradation('will', e)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 910
+        "line": 911
       },
       {
         "context": "record_degradation(",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 1092
+        "line": 1093
       },
       {
         "context": "record_degradation(\"will\", exc)",
         "file": "core/governance/will.py",
         "limp_on": true,
-        "line": 1266
+        "line": 1267
       },
       {
         "context": "record_degradation('will', exc)",
         "file": "core/governance/will.py",
         "limp_on": false,
-        "line": 1283
+        "line": 1284
       },
       {
         "context": "record_degradation('will_receipt_log', exc)",
@@ -7815,7 +7815,7 @@
         "context": "record_degradation(",
         "file": "core/health/degraded_events.py",
         "limp_on": true,
-        "line": 38
+        "line": 39
       },
       {
         "context": "record_degradation(\"system_health\", exc)",
@@ -8247,7 +8247,7 @@
         "context": "return record_degradation(",
         "file": "core/learning/live_learner.py",
         "limp_on": true,
-        "line": 41
+        "line": 42
       },
       {
         "context": "record_degradation(\"proof_obligations\", exc)",
@@ -8481,67 +8481,67 @@
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 127
+        "line": 125
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 167
+        "line": 165
       },
       {
         "context": "record_degradation('atomic_storage', rollback_error)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 177
+        "line": 175
       },
       {
         "context": "record_degradation('atomic_storage', exc)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 185
+        "line": 183
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 220
+        "line": 218
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 254
+        "line": 252
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 285
+        "line": 283
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 330
+        "line": 328
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 362
+        "line": 360
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": true,
-        "line": 404
+        "line": 402
       },
       {
         "context": "record_degradation('atomic_storage', e)",
         "file": "core/memory/atomic_storage.py",
         "limp_on": false,
-        "line": 438
+        "line": 436
       },
       {
         "context": "record_degradation('attention', e)",
@@ -12285,55 +12285,49 @@
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 194
+        "line": 208
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 221
+        "line": 235
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 228
+        "line": 242
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 311
+        "line": 325
       },
       {
         "context": "record_degradation(",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 380
+        "line": 394
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 395
+        "line": 409
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 408
+        "line": 422
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 534
-      },
-      {
-        "context": "record_degradation('runtime_hygiene', exc)",
-        "file": "core/runtime/runtime_hygiene.py",
-        "limp_on": true,
-        "line": 544
+        "line": 547
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
@@ -12345,49 +12339,61 @@
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 615
+        "line": 570
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 722
+        "line": 628
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 749
+        "line": 735
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 766
+        "line": 762
       },
       {
         "context": "record_degradation('runtime_hygiene', exc)",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 788
+        "line": 779
+      },
+      {
+        "context": "record_degradation('runtime_hygiene', exc)",
+        "file": "core/runtime/runtime_hygiene.py",
+        "limp_on": true,
+        "line": 801
       },
       {
         "context": "record_degradation(",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 800
+        "line": 813
       },
       {
         "context": "record_degradation(",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 827
+        "line": 837
       },
       {
-        "context": "record_degradation('runtime_hygiene', result)",
+        "context": "record_degradation(",
         "file": "core/runtime/runtime_hygiene.py",
         "limp_on": true,
-        "line": 836
+        "line": 865
+      },
+      {
+        "context": "record_degradation(",
+        "file": "core/runtime/runtime_hygiene.py",
+        "limp_on": true,
+        "line": 880
       },
       {
         "context": "record_degradation('self_healing', e)",
@@ -13143,19 +13149,19 @@
         "context": "record_degradation('error_intelligence', e)",
         "file": "core/self_modification/error_intelligence.py",
         "limp_on": true,
-        "line": 193
+        "line": 194
       },
       {
         "context": "record_degradation('error_intelligence', e)",
         "file": "core/self_modification/error_intelligence.py",
         "limp_on": true,
-        "line": 210
+        "line": 211
       },
       {
         "context": "record_degradation('error_intelligence', e)",
         "file": "core/self_modification/error_intelligence.py",
         "limp_on": true,
-        "line": 483
+        "line": 484
       },
       {
         "context": "record_degradation('evaluation_harness', e)",
@@ -15387,7 +15393,7 @@
         "context": "record_degradation(",
         "file": "core/somatic/motor_cortex.py",
         "limp_on": true,
-        "line": 54
+        "line": 55
       },
       {
         "context": "record_degradation('soul', e)",
@@ -15567,13 +15573,13 @@
         "context": "record_degradation(_STATE_SUBSYSTEM, error, severity=severity, action=action)",
         "file": "core/state/state_repository.py",
         "limp_on": true,
-        "line": 74
+        "line": 76
       },
       {
         "context": "record_degradation(",
         "file": "core/state/state_repository.py",
         "limp_on": true,
-        "line": 91
+        "line": 93
       },
       {
         "context": "record_degradation('vault', e)",
@@ -15693,7 +15699,7 @@
         "context": "record_degradation('synthesis', e)",
         "file": "core/synthesis.py",
         "limp_on": true,
-        "line": 680
+        "line": 681
       },
       {
         "context": "record_degradation('system_monitor', e)",
@@ -15927,25 +15933,25 @@
         "context": "record_degradation('unified_action_log', _exc)",
         "file": "core/unified_action_log.py",
         "limp_on": true,
-        "line": 36
+        "line": 37
       },
       {
         "context": "record_degradation(\"unified_action_log\", exc)",
         "file": "core/unified_action_log.py",
         "limp_on": true,
-        "line": 45
+        "line": 46
       },
       {
         "context": "record_degradation(\"unified_action_log\", exc)",
         "file": "core/unified_action_log.py",
         "limp_on": true,
-        "line": 57
+        "line": 58
       },
       {
         "context": "record_degradation('unified_action_log', _exc)",
         "file": "core/unified_action_log.py",
         "limp_on": true,
-        "line": 105
+        "line": 106
       },
       {
         "context": "record_degradation(\"unity_mind_moment\", exc)",
@@ -16837,7 +16843,7 @@
       }
     ],
     "fail_closed_count": 200,
-    "log_and_limp_count": 2545,
+    "log_and_limp_count": 2546,
     "top_limp_files": [
       {
         "count": 27,
@@ -16876,12 +16882,12 @@
         "file": "core/consciousness/liquid_substrate.py"
       },
       {
-        "count": 18,
-        "file": "core/agency/autonomous_task_engine.py"
+        "count": 19,
+        "file": "core/runtime/runtime_hygiene.py"
       },
       {
         "count": 18,
-        "file": "core/runtime/runtime_hygiene.py"
+        "file": "core/agency/autonomous_task_engine.py"
       },
       {
         "count": 17,
@@ -16940,7 +16946,7 @@
         "file": "core/resilience/cognitive_ledger.py"
       }
     ],
-    "total_calls": 2745
+    "total_calls": 2746
   },
   "dependency_edges": [
     {
@@ -17002,6 +17008,10 @@
     {
       "source": "adaptation",
       "target": "learning"
+    },
+    {
+      "source": "adaptation",
+      "target": "memory"
     },
     {
       "source": "adaptation",
@@ -17233,6 +17243,10 @@
     },
     {
       "source": "autonomy",
+      "target": "memory"
+    },
+    {
+      "source": "autonomy",
       "target": "observability"
     },
     {
@@ -17378,6 +17392,10 @@
     {
       "source": "bus",
       "target": "utils"
+    },
+    {
+      "source": "cognition",
+      "target": "memory"
     },
     {
       "source": "cognition",
@@ -17897,6 +17915,10 @@
     },
     {
       "source": "creativity",
+      "target": "memory"
+    },
+    {
+      "source": "creativity",
       "target": "runtime"
     },
     {
@@ -18073,6 +18095,10 @@
     },
     {
       "source": "executive",
+      "target": "memory"
+    },
+    {
+      "source": "executive",
       "target": "runtime"
     },
     {
@@ -18098,6 +18124,10 @@
     {
       "source": "governance",
       "target": "consciousness"
+    },
+    {
+      "source": "governance",
+      "target": "memory"
     },
     {
       "source": "governance",
@@ -18130,6 +18160,10 @@
     {
       "source": "health",
       "target": "brain"
+    },
+    {
+      "source": "health",
+      "target": "memory"
     },
     {
       "source": "health",
@@ -18282,6 +18316,10 @@
     {
       "source": "learning",
       "target": "introspection"
+    },
+    {
+      "source": "learning",
+      "target": "memory"
     },
     {
       "source": "learning",
@@ -19325,6 +19363,10 @@
     },
     {
       "source": "self_modification",
+      "target": "memory"
+    },
+    {
+      "source": "self_modification",
       "target": "resilience"
     },
     {
@@ -19529,6 +19571,10 @@
     },
     {
       "source": "somatic",
+      "target": "memory"
+    },
+    {
+      "source": "somatic",
       "target": "runtime"
     },
     {
@@ -19582,6 +19628,10 @@
     {
       "source": "state",
       "target": "governance"
+    },
+    {
+      "source": "state",
+      "target": "memory"
     },
     {
       "source": "state",
@@ -19744,7 +19794,7 @@
       "target": "runtime"
     }
   ],
-  "generated_at_unix": 1780391643.657212,
+  "generated_at_unix": 1780424454.138825,
   "inputs": {
     "core_python_files": 1630,
     "skills_python_files": 38,
@@ -19756,7 +19806,7 @@
       "venv"
     ]
   },
-  "mermaid": "```mermaid\ngraph TD\n    runtime[\"runtime<br/>93 files, 20822 lines\"]\n    utils[\"utils<br/>41 files, 5146 lines\"]\n    brain[\"brain<br/>115 files, 43320 lines\"]\n    consciousness[\"consciousness<br/>128 files, 59522 lines\"]\n    resilience[\"resilience<br/>53 files, 11166 lines\"]\n    health[\"health<br/>3 files, 838 lines\"]\n    memory[\"memory<br/>76 files, 18651 lines\"]\n    agency[\"agency<br/>28 files, 14321 lines\"]\n    adaptation[\"adaptation<br/>26 files, 11869 lines\"]\n    affect[\"affect<br/>6 files, 2924 lines\"]\n    constitution[\"constitution<br/>1 files, 25 lines\"]\n    self_modification[\"self_modification<br/>29 files, 10469 lines\"]\n    senses[\"senses<br/>23 files, 5012 lines\"]\n    state[\"state<br/>6 files, 3408 lines\"]\n    observability[\"observability<br/>3 files, 575 lines\"]\n    governance[\"governance<br/>8 files, 2434 lines\"]\n    identity[\"identity<br/>11 files, 2136 lines\"]\n    orchestrator[\"orchestrator<br/>42 files, 18825 lines\"]\n    security[\"security<br/>17 files, 4623 lines\"]\n    world_model[\"world_model<br/>9 files, 2541 lines\"]\n    executive[\"executive<br/>4 files, 2317 lines\"]\n    tasks[\"tasks<br/>3 files, 333 lines\"]\n    autonomy[\"autonomy<br/>22 files, 7672 lines\"]\n    phases[\"phases<br/>29 files, 17257 lines\"]\n    actuators[\"actuators<br/>9 files, 2132 lines\"]\n    conversation[\"conversation<br/>8 files, 4163 lines\"]\n    learning[\"learning<br/>20 files, 6934 lines\"]\n    reasoning[\"reasoning<br/>7 files, 3893 lines\"]\n    skills[\"skills<br/>76 files, 15570 lines\"]\n    autonomic[\"autonomic<br/>4 files, 882 lines\"]\n    coordinators[\"coordinators<br/>9 files, 4224 lines\"]\n    managers[\"managers<br/>6 files, 932 lines\"]\n    meta[\"meta<br/>7 files, 1256 lines\"]\n    ops[\"ops<br/>11 files, 2322 lines\"]\n    organism[\"organism<br/>1 files, 458 lines\"]\n    self[\"self<br/>6 files, 1681 lines\"]\n    supervisor[\"supervisor<br/>3 files, 495 lines\"]\n    unity[\"unity<br/>11 files, 2409 lines\"]\n    agi[\"agi<br/>6 files, 1520 lines\"]\n    cognitive[\"cognitive<br/>11 files, 8097 lines\"]\n    collective[\"collective<br/>6 files, 1963 lines\"]\n    embodiment[\"embodiment<br/>15 files, 2627 lines\"]\n    ethics[\"ethics<br/>1 files, 309 lines\"]\n    evaluation[\"evaluation<br/>10 files, 1765 lines\"]\n    kernel[\"kernel<br/>10 files, 5468 lines\"]\n    motivation[\"motivation<br/>7 files, 1194 lines\"]\n    promotion[\"promotion<br/>6 files, 944 lines\"]\n    resource[\"resource<br/>2 files, 426 lines\"]\n    voice[\"voice<br/>7 files, 2776 lines\"]\n    world[\"world<br/>1 files, 297 lines\"]\n    being[\"being<br/>11 files, 1304 lines\"]\n    cognition[\"cognition<br/>9 files, 3456 lines\"]\n    conversational[\"conversational<br/>4 files, 2237 lines\"]\n    data[\"data<br/>2 files, 514 lines\"]\n    db[\"db<br/>4 files, 583 lines\"]\n    goals[\"goals<br/>7 files, 3047 lines\"]\n    morphogenesis[\"morphogenesis<br/>12 files, 2854 lines\"]\n    pneuma[\"pneuma<br/>7 files, 1224 lines\"]\n    search[\"search<br/>2 files, 1715 lines\"]\n    somatic[\"somatic<br/>5 files, 2375 lines\"]\n    verification[\"verification<br/>4 files, 350 lines\"]\n    advanced_cognition[\"advanced_cognition<br/>13 files, 2905 lines\"]\n    architect[\"architect<br/>25 files, 5706 lines\"]\n    bus[\"bus<br/>4 files, 1748 lines\"]\n    coherence[\"coherence<br/>2 files, 397 lines\"]\n    discovery[\"discovery<br/>4 files, 579 lines\"]\n    environment[\"environment<br/>82 files, 8308 lines\"]\n    environments[\"environments<br/>7 files, 748 lines\"]\n    evolution[\"evolution<br/>6 files, 1855 lines\"]\n    introspection[\"introspection<br/>3 files, 738 lines\"]\n    lattice[\"lattice<br/>5 files, 704 lines\"]\n    maintenance[\"maintenance<br/>2 files, 261 lines\"]\n    perception[\"perception<br/>15 files, 3260 lines\"]\n    persistence[\"persistence<br/>2 files, 617 lines\"]\n    predictive[\"predictive<br/>2 files, 186 lines\"]\n    sandbox[\"sandbox<br/>4 files, 575 lines\"]\n    self_improvement[\"self_improvement<br/>12 files, 2285 lines\"]\n    sensors[\"sensors<br/>1 files, 151 lines\"]\n    services[\"services<br/>2 files, 31 lines\"]\n    simulation[\"simulation<br/>3 files, 393 lines\"]\n    social[\"social<br/>11 files, 3823 lines\"]\n    soma[\"soma<br/>3 files, 502 lines\"]\n    sovereign[\"sovereign<br/>4 files, 541 lines\"]\n    startup[\"startup<br/>2 files, 326 lines\"]\n    workspace[\"workspace<br/>3 files, 1069 lines\"]\n    consent[\"consent<br/>2 files, 167 lines\"]\n    context[\"context<br/>4 files, 1199 lines\"]\n    creativity[\"creativity<br/>2 files, 800 lines\"]\n    curriculum[\"curriculum<br/>7 files, 657 lines\"]\n    cybernetics[\"cybernetics<br/>6 files, 1091 lines\"]\n    grounding[\"grounding<br/>7 files, 1092 lines\"]\n    guardians[\"guardians<br/>5 files, 623 lines\"]\n    llm[\"llm<br/>2 files, 19 lines\"]\n    media[\"media<br/>2 files, 273 lines\"]\n    middleware[\"middleware<br/>2 files, 254 lines\"]\n    networking[\"networking<br/>1 files, 327 lines\"]\n    phenomenal_substrate[\"phenomenal_substrate<br/>10 files, 705 lines\"]\n    plasticity[\"plasticity<br/>4 files, 342 lines\"]\n    research_core[\"research_core<br/>5 files, 580 lines\"]\n    safety[\"safety<br/>3 files, 628 lines\"]\n    skill_management[\"skill_management<br/>1 files, 350 lines\"]\n    sovereignty[\"sovereignty<br/>3 files, 873 lines\"]\n    transparency[\"transparency<br/>2 files, 313 lines\"]\n    unknowns[\"unknowns<br/>4 files, 325 lines\"]\n    adapters[\"adapters<br/>3 files, 392 lines\"]\n    audits[\"audits<br/>2 files, 222 lines\"]\n    control[\"control<br/>2 files, 586 lines\"]\n    core_root[\"core_root<br/>182 files, 55585 lines\"]\n    distributed[\"distributed<br/>3 files, 140 lines\"]\n    initializers[\"initializers<br/>2 files, 140 lines\"]\n    intent[\"intent<br/>1 files, 68 lines\"]\n    knowledge[\"knowledge<br/>6 files, 142 lines\"]\n    latent[\"latent<br/>1 files, 56 lines\"]\n    multimodal[\"multimodal<br/>2 files, 176 lines\"]\n    neuroweb[\"neuroweb<br/>5 files, 368 lines\"]\n    ontology[\"ontology<br/>2 files, 169 lines\"]\n    pipeline[\"pipeline<br/>3 files, 217 lines\"]\n    planning[\"planning<br/>1 files, 137 lines\"]\n    play[\"play<br/>1 files, 228 lines\"]\n    providers[\"providers<br/>6 files, 1208 lines\"]\n    reproducibility[\"reproducibility<br/>2 files, 497 lines\"]\n    session[\"session<br/>2 files, 225 lines\"]\n    systems[\"systems<br/>3 files, 256 lines\"]\n    telemetry[\"telemetry<br/>2 files, 191 lines\"]\n    temporal[\"temporal<br/>3 files, 1502 lines\"]\n    tools[\"tools<br/>2 files, 457 lines\"]\n    values[\"values<br/>2 files, 289 lines\"]\n    runtime --> actuators\n    runtime --> adaptation\n    runtime --> agency\n    runtime --> architect\n    runtime --> autonomy\n    runtime --> consciousness\n    runtime --> constitution\n    runtime --> conversation\n    runtime --> evaluation\n    runtime --> governance\n    runtime --> health\n    runtime --> identity\n    runtime --> memory\n    runtime --> observability\n    runtime --> persistence\n    runtime --> phases\n    runtime --> research_core\n    runtime --> resilience\n    runtime --> self\n    runtime --> self_modification\n    runtime --> social\n    runtime --> state\n    runtime --> supervisor\n    runtime --> utils\n    runtime --> workspace\n    utils --> consciousness\n    utils --> health\n    utils --> identity\n    utils --> managers\n    utils --> memory\n    utils --> observability\n    utils --> resilience\n    utils --> runtime\n    utils --> tasks\n    brain --> adaptation\n    brain --> affect\n    brain --> agency\n    brain --> agi\n    brain --> being\n    brain --> cognitive\n    brain --> consciousness\n    brain --> constitution\n    brain --> conversation\n    brain --> health\n    brain --> identity\n    brain --> memory\n    brain --> morphogenesis\n    brain --> observability\n    brain --> ops\n    brain --> organism\n    brain --> phases\n    brain --> pneuma\n    brain --> reasoning\n    brain --> resilience\n    brain --> runtime\n    brain --> search\n    brain --> security\n    brain --> self\n    brain --> senses\n    brain --> state\n    brain --> utils\n    brain --> voice\n    consciousness --> actuators\n    consciousness --> adaptation\n    consciousness --> affect\n    consciousness --> agency\n    consciousness --> being\n    consciousness --> brain\n    consciousness --> constitution\n    consciousness --> coordinators\n    consciousness --> evaluation\n    consciousness --> goals\n    consciousness --> health\n    consciousness --> memory\n    consciousness --> meta\n    consciousness --> observability\n    consciousness --> orchestrator\n    consciousness --> pneuma\n    consciousness --> predictive\n    consciousness --> reasoning\n    consciousness --> resilience\n    consciousness --> runtime\n    consciousness --> senses\n    consciousness --> sensors\n    consciousness --> state\n    consciousness --> unity\n    consciousness --> utils\n    consciousness --> world\n    consciousness --> world_model\n    resilience --> agency\n    resilience --> brain\n    resilience --> consciousness\n    resilience --> conversation\n    resilience --> coordinators\n    resilience --> health\n    resilience --> memory\n    resilience --> runtime\n    resilience --> tasks\n    resilience --> utils\n    health --> brain\n    health --> runtime\n    health --> state\n    memory --> actuators\n    memory --> brain\n    memory --> constitution\n    memory --> db\n    memory --> governance\n    memory --> health\n    memory --> phases\n    memory --> resilience\n    memory --> runtime\n    memory --> utils\n    agency --> adaptation\n    agency --> affect\n    agency --> agi\n    agency --> brain\n    agency --> consciousness\n    agency --> constitution\n    agency --> governance\n    agency --> health\n    agency --> identity\n    agency --> orchestrator\n    agency --> organism\n    agency --> resilience\n    agency --> runtime\n    agency --> tasks\n    agency --> utils\n    adaptation --> actuators\n    adaptation --> affect\n    adaptation --> brain\n    adaptation --> cognitive\n    adaptation --> health\n    adaptation --> learning\n    adaptation --> resilience\n    adaptation --> runtime\n    adaptation --> sensors\n    adaptation --> utils\n    adaptation --> world\n    affect --> adaptation\n    affect --> autonomic\n    affect --> brain\n    affect --> consciousness\n    affect --> health\n    affect --> memory\n    affect --> phenomenal_substrate\n    affect --> runtime\n    affect --> senses\n    affect --> utils\n    self_modification --> ethics\n    self_modification --> governance\n    self_modification --> resilience\n    self_modification --> runtime\n    self_modification --> skills\n    self_modification --> utils\n    senses --> affect\n    senses --> brain\n    senses --> consciousness\n    senses --> constitution\n    senses --> health\n    senses --> networking\n    senses --> orchestrator\n    senses --> resilience\n    senses --> runtime\n    senses --> security\n    senses --> supervisor\n    senses --> utils\n    state --> constitution\n    state --> governance\n    state --> motivation\n    state --> runtime\n    state --> unity\n    state --> utils\n    observability --> runtime\n    governance --> actuators\n    governance --> consciousness\n    governance --> runtime\n    identity --> agency\n    identity --> brain\n    identity --> governance\n    identity --> organism\n    identity --> runtime\n    identity --> utils\n    orchestrator --> adaptation\n    orchestrator --> affect\n    orchestrator --> agency\n    orchestrator --> agi\n    orchestrator --> autonomic\n    orchestrator --> autonomy\n    orchestrator --> brain\n    orchestrator --> bus\n    orchestrator --> cognitive\n    orchestrator --> collective\n    orchestrator --> consciousness\n    orchestrator --> constitution\n    orchestrator --> conversation\n    orchestrator --> coordinators\n    orchestrator --> data\n    orchestrator --> db\n    orchestrator --> embodiment\n    orchestrator --> environment\n    orchestrator --> evolution\n    orchestrator --> executive\n    orchestrator --> guardians\n    orchestrator --> health\n    orchestrator --> identity\n    orchestrator --> kernel\n    orchestrator --> learning\n    orchestrator --> maintenance\n    orchestrator --> managers\n    orchestrator --> memory\n    orchestrator --> meta\n    orchestrator --> morphogenesis\n    orchestrator --> motivation\n    orchestrator --> observability\n    orchestrator --> ops\n    orchestrator --> phases\n    orchestrator --> pneuma\n    orchestrator --> resilience\n    orchestrator --> runtime\n    orchestrator --> safety\n    orchestrator --> security\n    orchestrator --> self\n    orchestrator --> self_improvement\n    orchestrator --> self_modification\n    orchestrator --> senses\n    orchestrator --> simulation\n    orchestrator --> skill_management\n    orchestrator --> soma\n    orchestrator --> sovereignty\n    orchestrator --> startup\n    orchestrator --> state\n    orchestrator --> supervisor\n    orchestrator --> tasks\n    orchestrator --> utils\n    orchestrator --> verification\n    orchestrator --> voice\n    orchestrator --> world_model\n    security --> affect\n    security --> agency\n    security --> consciousness\n    security --> identity\n    security --> memory\n    security --> runtime\n    security --> utils\n    world_model --> brain\n    world_model --> constitution\n    world_model --> health\n    world_model --> resilience\n    world_model --> runtime\n    executive --> agency\n    executive --> autonomy\n    executive --> consciousness\n    executive --> constitution\n    executive --> goals\n    executive --> health\n    executive --> runtime\n    executive --> state\n    tasks --> runtime\n    autonomy --> affect\n    autonomy --> agency\n    autonomy --> consciousness\n    autonomy --> executive\n    autonomy --> observability\n    autonomy --> resource\n    autonomy --> runtime\n    autonomy --> state\n    autonomy --> utils\n    phases --> adaptation\n    phases --> agency\n    phases --> autonomy\n    phases --> brain\n    phases --> cognition\n    phases --> coherence\n    phases --> consciousness\n    phases --> conversation\n    phases --> conversational\n    phases --> embodiment\n    phases --> evaluation\n    phases --> health\n    phases --> identity\n    phases --> kernel\n    phases --> learning\n    phases --> memory\n    phases --> reasoning\n    phases --> runtime\n    phases --> self_modification\n    phases --> skills\n    phases --> somatic\n    phases --> state\n    phases --> unity\n    phases --> utils\n    phases --> voice\n    actuators --> affect\n    actuators --> brain\n    actuators --> executive\n    actuators --> memory\n    actuators --> runtime\n    actuators --> sandbox\n    actuators --> search\n    actuators --> skills\n    actuators --> world\n    conversation --> brain\n    conversation --> consciousness\n    conversation --> memory\n    conversation --> runtime\n    conversation --> social\n    conversation --> utils\n    learning --> brain\n    learning --> consciousness\n    learning --> introspection\n    learning --> promotion\n    learning --> reasoning\n    learning --> runtime\n    learning --> self_modification\n    learning --> skills\n    learning --> tasks\n    learning --> utils\n    reasoning --> runtime\n    skills --> actuators\n    skills --> advanced_cognition\n    skills --> affect\n    skills --> brain\n    skills --> consent\n    skills --> embodiment\n    skills --> executive\n    skills --> learning\n    skills --> memory\n    skills --> runtime\n    skills --> sandbox\n    skills --> search\n    skills --> security\n    skills --> self_modification\n    skills --> senses\n    skills --> sovereign\n    skills --> utils\n    autonomic --> orchestrator\n    autonomic --> runtime\n    autonomic --> utils\n    coordinators --> autonomy\n    coordinators --> brain\n    coordinators --> evolution\n    coordinators --> health\n    coordinators --> maintenance\n    coordinators --> memory\n    coordinators --> meta\n    coordinators --> morphogenesis\n    coordinators --> observability\n    coordinators --> ops\n    coordinators --> orchestrator\n    coordinators --> persistence\n    coordinators --> resilience\n    coordinators --> resource\n    coordinators --> runtime\n    coordinators --> security\n    coordinators --> somatic\n    coordinators --> tasks\n    coordinators --> utils\n    coordinators --> world_model\n    managers --> autonomic\n    managers --> brain\n    managers --> collective\n    managers --> constitution\n    managers --> data\n    managers --> health\n    managers --> memory\n    managers --> ops\n    managers --> orchestrator\n    managers --> resilience\n    managers --> runtime\n    managers --> security\n    managers --> self_modification\n    managers --> senses\n    managers --> utils\n    meta --> adaptation\n    meta --> runtime\n    meta --> utils\n    ops --> brain\n    ops --> kernel\n    ops --> managers\n    ops --> observability\n    ops --> resilience\n    ops --> resource\n    ops --> runtime\n    ops --> senses\n    ops --> state\n    ops --> supervisor\n    ops --> utils\n    organism --> runtime\n    organism --> utils\n    self --> affect\n    self --> bus\n    self --> consciousness\n    self --> memory\n    self --> runtime\n    self --> security\n    self --> senses\n    self --> state\n    self --> utils\n    supervisor --> runtime\n    unity --> consciousness\n    unity --> runtime\n    agi --> adaptation\n    agi --> brain\n    agi --> constitution\n    agi --> embodiment\n    agi --> executive\n    agi --> grounding\n    agi --> health\n    agi --> runtime\n    agi --> utils\n    agi --> world_model\n    cognitive --> brain\n    cognitive --> health\n    cognitive --> phases\n    cognitive --> runtime\n    cognitive --> utils\n    collective --> adaptation\n    collective --> agency\n    collective --> brain\n    collective --> runtime\n    collective --> utils\n    embodiment --> agency\n    embodiment --> consciousness\n    embodiment --> environments\n    embodiment --> ethics\n    embodiment --> governance\n    embodiment --> organism\n    embodiment --> runtime\n    embodiment --> utils\n    ethics --> runtime\n    evaluation --> learning\n    evaluation --> promotion\n    evaluation --> runtime\n    kernel --> agency\n    kernel --> brain\n    kernel --> cognition\n    kernel --> consciousness\n    kernel --> cybernetics\n    kernel --> executive\n    kernel --> health\n    kernel --> orchestrator\n    kernel --> phases\n    kernel --> resilience\n    kernel --> runtime\n    kernel --> security\n    kernel --> self_modification\n    kernel --> senses\n    kernel --> somatic\n    kernel --> state\n    kernel --> utils\n    motivation --> brain\n    motivation --> consciousness\n    motivation --> constitution\n    motivation --> health\n    motivation --> runtime\n    motivation --> utils\n    promotion --> runtime\n    resource --> observability\n    resource --> resilience\n    resource --> runtime\n    voice --> brain\n    voice --> conversational\n    voice --> resilience\n    voice --> runtime\n    voice --> senses\n    voice --> utils\n    being --> runtime\n    cognition --> runtime\n    cognition --> world_model\n    conversational --> memory\n    conversational --> runtime\n    data --> runtime\n    db --> runtime\n    goals --> agency\n    goals --> runtime\n    goals --> state\n    morphogenesis --> adaptation\n    morphogenesis --> memory\n    morphogenesis --> resilience\n    morphogenesis --> runtime\n    morphogenesis --> self_modification\n    morphogenesis --> utils\n    pneuma --> affect\n    pneuma --> runtime\n    pneuma --> utils\n    search --> runtime\n    somatic --> runtime\n    somatic --> utils\n    verification --> discovery\n    verification --> middleware\n    advanced_cognition --> reasoning\n    advanced_cognition --> runtime\n    architect --> adaptation\n    architect --> brain\n    architect --> consciousness\n    architect --> runtime\n    architect --> self_modification\n    architect --> world_model\n    bus --> resilience\n    bus --> runtime\n    bus --> utils\n    coherence --> agency\n    coherence --> consciousness\n    coherence --> runtime\n    coherence --> self\n    coherence --> unity\n    discovery --> runtime\n    discovery --> self_modification\n    environment --> advanced_cognition\n    environment --> brain\n    environment --> consciousness\n    environment --> environments\n    environment --> executive\n    environment --> memory\n    environment --> perception\n    environment --> runtime\n    environments --> environment\n    environments --> perception\n    environments --> runtime\n    evolution --> agi\n    evolution --> autonomy\n    evolution --> brain\n    evolution --> runtime\n    evolution --> utils\n    introspection --> runtime\n    maintenance --> resilience\n    maintenance --> runtime\n    perception --> brain\n    persistence --> observability\n    persistence --> resilience\n    persistence --> runtime\n    predictive --> brain\n    predictive --> runtime\n    predictive --> utils\n    sandbox --> runtime\n    self_improvement --> brain\n    self_improvement --> runtime\n    self_improvement --> self_modification\n    sensors --> world\n    services --> autonomic\n    simulation --> brain\n    simulation --> consciousness\n    simulation --> runtime\n    simulation --> world_model\n    social --> agency\n    social --> ethics\n    social --> governance\n    social --> runtime\n    social --> utils\n    soma --> resilience\n    soma --> runtime\n    soma --> utils\n    sovereign --> runtime\n    startup --> brain\n    startup --> runtime\n    startup --> senses\n    workspace --> runtime\n    context --> runtime\n    creativity --> runtime\n    curriculum --> runtime\n    cybernetics --> cognitive\n    cybernetics --> kernel\n    cybernetics --> runtime\n    cybernetics --> utils\n    grounding --> plasticity\n    grounding --> runtime\n    guardians --> brain\n    guardians --> runtime\n    guardians --> tasks\n    guardians --> utils\n    llm --> brain\n    middleware --> runtime\n    networking --> runtime\n    networking --> utils\n    plasticity --> runtime\n    research_core --> curriculum\n    research_core --> discovery\n    research_core --> lattice\n    research_core --> promotion\n    research_core --> runtime\n    research_core --> unknowns\n    research_core --> verification\n    safety --> runtime\n    skill_management --> resilience\n    skill_management --> runtime\n    skill_management --> self_modification\n    sovereignty --> ethics\n    sovereignty --> governance\n    sovereignty --> identity\n    sovereignty --> organism\n    sovereignty --> runtime\n    sovereignty --> utils\n    unknowns --> lattice\n    unknowns --> promotion\n    unknowns --> verification\n    audits --> brain\n    audits --> runtime\n    control --> runtime\n    control --> utils\n    core_root --> adaptation\n    core_root --> affect\n    core_root --> agency\n    core_root --> architect\n    core_root --> autonomic\n    core_root --> autonomy\n    core_root --> being\n    core_root --> brain\n    core_root --> coherence\n    core_root --> collective\n    core_root --> consciousness\n    core_root --> constitution\n    core_root --> context\n    core_root --> conversation\n    core_root --> conversational\n    core_root --> coordinators\n    core_root --> data\n    core_root --> evaluation\n    core_root --> executive\n    core_root --> goals\n    core_root --> governance\n    core_root --> health\n    core_root --> identity\n    core_root --> llm\n    core_root --> managers\n    core_root --> media\n    core_root --> memory\n    core_root --> meta\n    core_root --> motivation\n    core_root --> observability\n    core_root --> orchestrator\n    core_root --> phases\n    core_root --> predictive\n    core_root --> resilience\n    core_root --> resource\n    core_root --> runtime\n    core_root --> security\n    core_root --> self\n    core_root --> self_improvement\n    core_root --> self_modification\n    core_root --> senses\n    core_root --> simulation\n    core_root --> skills\n    core_root --> soma\n    core_root --> sovereign\n    core_root --> startup\n    core_root --> state\n    core_root --> supervisor\n    core_root --> tasks\n    core_root --> transparency\n    core_root --> utils\n    core_root --> voice\n    core_root --> workspace\n    core_root --> world_model\n    initializers --> adaptation\n    initializers --> consciousness\n    initializers --> introspection\n    initializers --> memory\n    initializers --> meta\n    initializers --> runtime\n    initializers --> senses\n    initializers --> utils\n    intent --> runtime\n    neuroweb --> brain\n    neuroweb --> consciousness\n    neuroweb --> runtime\n    pipeline --> runtime\n    planning --> runtime\n    play --> consciousness\n    play --> runtime\n    providers --> affect\n    providers --> brain\n    providers --> cognition\n    providers --> collective\n    providers --> consciousness\n    providers --> coordinators\n    providers --> creativity\n    providers --> db\n    providers --> learning\n    providers --> managers\n    providers --> memory\n    providers --> motivation\n    providers --> ops\n    providers --> orchestrator\n    providers --> reasoning\n    providers --> resilience\n    providers --> runtime\n    providers --> self_modification\n    providers --> senses\n    providers --> services\n    providers --> unity\n    providers --> utils\n    providers --> world_model\n    reproducibility --> runtime\n    session --> runtime\n    systems --> runtime\n    systems --> services\n    temporal --> runtime\n    temporal --> utils\n    tools --> runtime\n    tools --> skills\n```",
+  "mermaid": "```mermaid\ngraph TD\n    runtime[\"runtime<br/>93 files, 20872 lines\"]\n    utils[\"utils<br/>41 files, 5146 lines\"]\n    brain[\"brain<br/>115 files, 43351 lines\"]\n    memory[\"memory<br/>76 files, 18781 lines\"]\n    consciousness[\"consciousness<br/>128 files, 59530 lines\"]\n    resilience[\"resilience<br/>53 files, 11168 lines\"]\n    health[\"health<br/>3 files, 839 lines\"]\n    agency[\"agency<br/>28 files, 14321 lines\"]\n    adaptation[\"adaptation<br/>26 files, 11876 lines\"]\n    affect[\"affect<br/>6 files, 2924 lines\"]\n    constitution[\"constitution<br/>1 files, 25 lines\"]\n    self_modification[\"self_modification<br/>29 files, 10470 lines\"]\n    senses[\"senses<br/>23 files, 5012 lines\"]\n    state[\"state<br/>6 files, 3408 lines\"]\n    observability[\"observability<br/>3 files, 575 lines\"]\n    governance[\"governance<br/>8 files, 2435 lines\"]\n    identity[\"identity<br/>11 files, 2136 lines\"]\n    orchestrator[\"orchestrator<br/>42 files, 18825 lines\"]\n    security[\"security<br/>17 files, 4623 lines\"]\n    world_model[\"world_model<br/>9 files, 2541 lines\"]\n    executive[\"executive<br/>4 files, 2323 lines\"]\n    tasks[\"tasks<br/>3 files, 333 lines\"]\n    autonomy[\"autonomy<br/>22 files, 7673 lines\"]\n    phases[\"phases<br/>29 files, 17257 lines\"]\n    actuators[\"actuators<br/>9 files, 2132 lines\"]\n    conversation[\"conversation<br/>8 files, 4164 lines\"]\n    learning[\"learning<br/>20 files, 6936 lines\"]\n    reasoning[\"reasoning<br/>7 files, 3893 lines\"]\n    skills[\"skills<br/>76 files, 15570 lines\"]\n    autonomic[\"autonomic<br/>4 files, 882 lines\"]\n    coordinators[\"coordinators<br/>9 files, 4227 lines\"]\n    managers[\"managers<br/>6 files, 932 lines\"]\n    meta[\"meta<br/>7 files, 1256 lines\"]\n    ops[\"ops<br/>11 files, 2322 lines\"]\n    organism[\"organism<br/>1 files, 458 lines\"]\n    self[\"self<br/>6 files, 1681 lines\"]\n    supervisor[\"supervisor<br/>3 files, 495 lines\"]\n    unity[\"unity<br/>11 files, 2409 lines\"]\n    agi[\"agi<br/>6 files, 1520 lines\"]\n    cognitive[\"cognitive<br/>11 files, 8097 lines\"]\n    collective[\"collective<br/>6 files, 1963 lines\"]\n    embodiment[\"embodiment<br/>15 files, 2627 lines\"]\n    ethics[\"ethics<br/>1 files, 309 lines\"]\n    evaluation[\"evaluation<br/>10 files, 1765 lines\"]\n    kernel[\"kernel<br/>10 files, 5468 lines\"]\n    motivation[\"motivation<br/>7 files, 1194 lines\"]\n    promotion[\"promotion<br/>6 files, 944 lines\"]\n    resource[\"resource<br/>2 files, 426 lines\"]\n    voice[\"voice<br/>7 files, 2776 lines\"]\n    world[\"world<br/>1 files, 297 lines\"]\n    being[\"being<br/>11 files, 1304 lines\"]\n    cognition[\"cognition<br/>9 files, 3458 lines\"]\n    conversational[\"conversational<br/>4 files, 2237 lines\"]\n    data[\"data<br/>2 files, 514 lines\"]\n    db[\"db<br/>4 files, 583 lines\"]\n    goals[\"goals<br/>7 files, 3047 lines\"]\n    morphogenesis[\"morphogenesis<br/>12 files, 2854 lines\"]\n    pneuma[\"pneuma<br/>7 files, 1224 lines\"]\n    search[\"search<br/>2 files, 1715 lines\"]\n    somatic[\"somatic<br/>5 files, 2376 lines\"]\n    verification[\"verification<br/>4 files, 350 lines\"]\n    advanced_cognition[\"advanced_cognition<br/>13 files, 2905 lines\"]\n    architect[\"architect<br/>25 files, 5706 lines\"]\n    bus[\"bus<br/>4 files, 1748 lines\"]\n    coherence[\"coherence<br/>2 files, 397 lines\"]\n    discovery[\"discovery<br/>4 files, 579 lines\"]\n    environment[\"environment<br/>82 files, 8308 lines\"]\n    environments[\"environments<br/>7 files, 748 lines\"]\n    evolution[\"evolution<br/>6 files, 1855 lines\"]\n    introspection[\"introspection<br/>3 files, 738 lines\"]\n    lattice[\"lattice<br/>5 files, 704 lines\"]\n    maintenance[\"maintenance<br/>2 files, 261 lines\"]\n    perception[\"perception<br/>15 files, 3260 lines\"]\n    persistence[\"persistence<br/>2 files, 617 lines\"]\n    predictive[\"predictive<br/>2 files, 186 lines\"]\n    sandbox[\"sandbox<br/>4 files, 575 lines\"]\n    self_improvement[\"self_improvement<br/>12 files, 2285 lines\"]\n    sensors[\"sensors<br/>1 files, 151 lines\"]\n    services[\"services<br/>2 files, 31 lines\"]\n    simulation[\"simulation<br/>3 files, 393 lines\"]\n    social[\"social<br/>11 files, 3823 lines\"]\n    soma[\"soma<br/>3 files, 502 lines\"]\n    sovereign[\"sovereign<br/>4 files, 541 lines\"]\n    startup[\"startup<br/>2 files, 326 lines\"]\n    workspace[\"workspace<br/>3 files, 1069 lines\"]\n    consent[\"consent<br/>2 files, 167 lines\"]\n    context[\"context<br/>4 files, 1199 lines\"]\n    creativity[\"creativity<br/>2 files, 801 lines\"]\n    curriculum[\"curriculum<br/>7 files, 657 lines\"]\n    cybernetics[\"cybernetics<br/>6 files, 1091 lines\"]\n    grounding[\"grounding<br/>7 files, 1092 lines\"]\n    guardians[\"guardians<br/>5 files, 623 lines\"]\n    llm[\"llm<br/>2 files, 19 lines\"]\n    media[\"media<br/>2 files, 273 lines\"]\n    middleware[\"middleware<br/>2 files, 254 lines\"]\n    networking[\"networking<br/>1 files, 327 lines\"]\n    phenomenal_substrate[\"phenomenal_substrate<br/>10 files, 705 lines\"]\n    plasticity[\"plasticity<br/>4 files, 342 lines\"]\n    research_core[\"research_core<br/>5 files, 580 lines\"]\n    safety[\"safety<br/>3 files, 628 lines\"]\n    skill_management[\"skill_management<br/>1 files, 350 lines\"]\n    sovereignty[\"sovereignty<br/>3 files, 873 lines\"]\n    transparency[\"transparency<br/>2 files, 313 lines\"]\n    unknowns[\"unknowns<br/>4 files, 325 lines\"]\n    adapters[\"adapters<br/>3 files, 392 lines\"]\n    audits[\"audits<br/>2 files, 222 lines\"]\n    control[\"control<br/>2 files, 586 lines\"]\n    core_root[\"core_root<br/>182 files, 55595 lines\"]\n    distributed[\"distributed<br/>3 files, 140 lines\"]\n    initializers[\"initializers<br/>2 files, 140 lines\"]\n    intent[\"intent<br/>1 files, 68 lines\"]\n    knowledge[\"knowledge<br/>6 files, 142 lines\"]\n    latent[\"latent<br/>1 files, 56 lines\"]\n    multimodal[\"multimodal<br/>2 files, 176 lines\"]\n    neuroweb[\"neuroweb<br/>5 files, 368 lines\"]\n    ontology[\"ontology<br/>2 files, 169 lines\"]\n    pipeline[\"pipeline<br/>3 files, 217 lines\"]\n    planning[\"planning<br/>1 files, 137 lines\"]\n    play[\"play<br/>1 files, 228 lines\"]\n    providers[\"providers<br/>6 files, 1208 lines\"]\n    reproducibility[\"reproducibility<br/>2 files, 497 lines\"]\n    session[\"session<br/>2 files, 225 lines\"]\n    systems[\"systems<br/>3 files, 256 lines\"]\n    telemetry[\"telemetry<br/>2 files, 191 lines\"]\n    temporal[\"temporal<br/>3 files, 1502 lines\"]\n    tools[\"tools<br/>2 files, 457 lines\"]\n    values[\"values<br/>2 files, 289 lines\"]\n    runtime --> actuators\n    runtime --> adaptation\n    runtime --> agency\n    runtime --> architect\n    runtime --> autonomy\n    runtime --> consciousness\n    runtime --> constitution\n    runtime --> conversation\n    runtime --> evaluation\n    runtime --> governance\n    runtime --> health\n    runtime --> identity\n    runtime --> memory\n    runtime --> observability\n    runtime --> persistence\n    runtime --> phases\n    runtime --> research_core\n    runtime --> resilience\n    runtime --> self\n    runtime --> self_modification\n    runtime --> social\n    runtime --> state\n    runtime --> supervisor\n    runtime --> utils\n    runtime --> workspace\n    utils --> consciousness\n    utils --> health\n    utils --> identity\n    utils --> managers\n    utils --> memory\n    utils --> observability\n    utils --> resilience\n    utils --> runtime\n    utils --> tasks\n    brain --> adaptation\n    brain --> affect\n    brain --> agency\n    brain --> agi\n    brain --> being\n    brain --> cognitive\n    brain --> consciousness\n    brain --> constitution\n    brain --> conversation\n    brain --> health\n    brain --> identity\n    brain --> memory\n    brain --> morphogenesis\n    brain --> observability\n    brain --> ops\n    brain --> organism\n    brain --> phases\n    brain --> pneuma\n    brain --> reasoning\n    brain --> resilience\n    brain --> runtime\n    brain --> search\n    brain --> security\n    brain --> self\n    brain --> senses\n    brain --> state\n    brain --> utils\n    brain --> voice\n    memory --> actuators\n    memory --> brain\n    memory --> constitution\n    memory --> db\n    memory --> governance\n    memory --> health\n    memory --> phases\n    memory --> resilience\n    memory --> runtime\n    memory --> utils\n    consciousness --> actuators\n    consciousness --> adaptation\n    consciousness --> affect\n    consciousness --> agency\n    consciousness --> being\n    consciousness --> brain\n    consciousness --> constitution\n    consciousness --> coordinators\n    consciousness --> evaluation\n    consciousness --> goals\n    consciousness --> health\n    consciousness --> memory\n    consciousness --> meta\n    consciousness --> observability\n    consciousness --> orchestrator\n    consciousness --> pneuma\n    consciousness --> predictive\n    consciousness --> reasoning\n    consciousness --> resilience\n    consciousness --> runtime\n    consciousness --> senses\n    consciousness --> sensors\n    consciousness --> state\n    consciousness --> unity\n    consciousness --> utils\n    consciousness --> world\n    consciousness --> world_model\n    resilience --> agency\n    resilience --> brain\n    resilience --> consciousness\n    resilience --> conversation\n    resilience --> coordinators\n    resilience --> health\n    resilience --> memory\n    resilience --> runtime\n    resilience --> tasks\n    resilience --> utils\n    health --> brain\n    health --> memory\n    health --> runtime\n    health --> state\n    agency --> adaptation\n    agency --> affect\n    agency --> agi\n    agency --> brain\n    agency --> consciousness\n    agency --> constitution\n    agency --> governance\n    agency --> health\n    agency --> identity\n    agency --> orchestrator\n    agency --> organism\n    agency --> resilience\n    agency --> runtime\n    agency --> tasks\n    agency --> utils\n    adaptation --> actuators\n    adaptation --> affect\n    adaptation --> brain\n    adaptation --> cognitive\n    adaptation --> health\n    adaptation --> learning\n    adaptation --> memory\n    adaptation --> resilience\n    adaptation --> runtime\n    adaptation --> sensors\n    adaptation --> utils\n    adaptation --> world\n    affect --> adaptation\n    affect --> autonomic\n    affect --> brain\n    affect --> consciousness\n    affect --> health\n    affect --> memory\n    affect --> phenomenal_substrate\n    affect --> runtime\n    affect --> senses\n    affect --> utils\n    self_modification --> ethics\n    self_modification --> governance\n    self_modification --> memory\n    self_modification --> resilience\n    self_modification --> runtime\n    self_modification --> skills\n    self_modification --> utils\n    senses --> affect\n    senses --> brain\n    senses --> consciousness\n    senses --> constitution\n    senses --> health\n    senses --> networking\n    senses --> orchestrator\n    senses --> resilience\n    senses --> runtime\n    senses --> security\n    senses --> supervisor\n    senses --> utils\n    state --> constitution\n    state --> governance\n    state --> memory\n    state --> motivation\n    state --> runtime\n    state --> unity\n    state --> utils\n    observability --> runtime\n    governance --> actuators\n    governance --> consciousness\n    governance --> memory\n    governance --> runtime\n    identity --> agency\n    identity --> brain\n    identity --> governance\n    identity --> organism\n    identity --> runtime\n    identity --> utils\n    orchestrator --> adaptation\n    orchestrator --> affect\n    orchestrator --> agency\n    orchestrator --> agi\n    orchestrator --> autonomic\n    orchestrator --> autonomy\n    orchestrator --> brain\n    orchestrator --> bus\n    orchestrator --> cognitive\n    orchestrator --> collective\n    orchestrator --> consciousness\n    orchestrator --> constitution\n    orchestrator --> conversation\n    orchestrator --> coordinators\n    orchestrator --> data\n    orchestrator --> db\n    orchestrator --> embodiment\n    orchestrator --> environment\n    orchestrator --> evolution\n    orchestrator --> executive\n    orchestrator --> guardians\n    orchestrator --> health\n    orchestrator --> identity\n    orchestrator --> kernel\n    orchestrator --> learning\n    orchestrator --> maintenance\n    orchestrator --> managers\n    orchestrator --> memory\n    orchestrator --> meta\n    orchestrator --> morphogenesis\n    orchestrator --> motivation\n    orchestrator --> observability\n    orchestrator --> ops\n    orchestrator --> phases\n    orchestrator --> pneuma\n    orchestrator --> resilience\n    orchestrator --> runtime\n    orchestrator --> safety\n    orchestrator --> security\n    orchestrator --> self\n    orchestrator --> self_improvement\n    orchestrator --> self_modification\n    orchestrator --> senses\n    orchestrator --> simulation\n    orchestrator --> skill_management\n    orchestrator --> soma\n    orchestrator --> sovereignty\n    orchestrator --> startup\n    orchestrator --> state\n    orchestrator --> supervisor\n    orchestrator --> tasks\n    orchestrator --> utils\n    orchestrator --> verification\n    orchestrator --> voice\n    orchestrator --> world_model\n    security --> affect\n    security --> agency\n    security --> consciousness\n    security --> identity\n    security --> memory\n    security --> runtime\n    security --> utils\n    world_model --> brain\n    world_model --> constitution\n    world_model --> health\n    world_model --> resilience\n    world_model --> runtime\n    executive --> agency\n    executive --> autonomy\n    executive --> consciousness\n    executive --> constitution\n    executive --> goals\n    executive --> health\n    executive --> memory\n    executive --> runtime\n    executive --> state\n    tasks --> runtime\n    autonomy --> affect\n    autonomy --> agency\n    autonomy --> consciousness\n    autonomy --> executive\n    autonomy --> memory\n    autonomy --> observability\n    autonomy --> resource\n    autonomy --> runtime\n    autonomy --> state\n    autonomy --> utils\n    phases --> adaptation\n    phases --> agency\n    phases --> autonomy\n    phases --> brain\n    phases --> cognition\n    phases --> coherence\n    phases --> consciousness\n    phases --> conversation\n    phases --> conversational\n    phases --> embodiment\n    phases --> evaluation\n    phases --> health\n    phases --> identity\n    phases --> kernel\n    phases --> learning\n    phases --> memory\n    phases --> reasoning\n    phases --> runtime\n    phases --> self_modification\n    phases --> skills\n    phases --> somatic\n    phases --> state\n    phases --> unity\n    phases --> utils\n    phases --> voice\n    actuators --> affect\n    actuators --> brain\n    actuators --> executive\n    actuators --> memory\n    actuators --> runtime\n    actuators --> sandbox\n    actuators --> search\n    actuators --> skills\n    actuators --> world\n    conversation --> brain\n    conversation --> consciousness\n    conversation --> memory\n    conversation --> runtime\n    conversation --> social\n    conversation --> utils\n    learning --> brain\n    learning --> consciousness\n    learning --> introspection\n    learning --> memory\n    learning --> promotion\n    learning --> reasoning\n    learning --> runtime\n    learning --> self_modification\n    learning --> skills\n    learning --> tasks\n    learning --> utils\n    reasoning --> runtime\n    skills --> actuators\n    skills --> advanced_cognition\n    skills --> affect\n    skills --> brain\n    skills --> consent\n    skills --> embodiment\n    skills --> executive\n    skills --> learning\n    skills --> memory\n    skills --> runtime\n    skills --> sandbox\n    skills --> search\n    skills --> security\n    skills --> self_modification\n    skills --> senses\n    skills --> sovereign\n    skills --> utils\n    autonomic --> orchestrator\n    autonomic --> runtime\n    autonomic --> utils\n    coordinators --> autonomy\n    coordinators --> brain\n    coordinators --> evolution\n    coordinators --> health\n    coordinators --> maintenance\n    coordinators --> memory\n    coordinators --> meta\n    coordinators --> morphogenesis\n    coordinators --> observability\n    coordinators --> ops\n    coordinators --> orchestrator\n    coordinators --> persistence\n    coordinators --> resilience\n    coordinators --> resource\n    coordinators --> runtime\n    coordinators --> security\n    coordinators --> somatic\n    coordinators --> tasks\n    coordinators --> utils\n    coordinators --> world_model\n    managers --> autonomic\n    managers --> brain\n    managers --> collective\n    managers --> constitution\n    managers --> data\n    managers --> health\n    managers --> memory\n    managers --> ops\n    managers --> orchestrator\n    managers --> resilience\n    managers --> runtime\n    managers --> security\n    managers --> self_modification\n    managers --> senses\n    managers --> utils\n    meta --> adaptation\n    meta --> runtime\n    meta --> utils\n    ops --> brain\n    ops --> kernel\n    ops --> managers\n    ops --> observability\n    ops --> resilience\n    ops --> resource\n    ops --> runtime\n    ops --> senses\n    ops --> state\n    ops --> supervisor\n    ops --> utils\n    organism --> runtime\n    organism --> utils\n    self --> affect\n    self --> bus\n    self --> consciousness\n    self --> memory\n    self --> runtime\n    self --> security\n    self --> senses\n    self --> state\n    self --> utils\n    supervisor --> runtime\n    unity --> consciousness\n    unity --> runtime\n    agi --> adaptation\n    agi --> brain\n    agi --> constitution\n    agi --> embodiment\n    agi --> executive\n    agi --> grounding\n    agi --> health\n    agi --> runtime\n    agi --> utils\n    agi --> world_model\n    cognitive --> brain\n    cognitive --> health\n    cognitive --> phases\n    cognitive --> runtime\n    cognitive --> utils\n    collective --> adaptation\n    collective --> agency\n    collective --> brain\n    collective --> runtime\n    collective --> utils\n    embodiment --> agency\n    embodiment --> consciousness\n    embodiment --> environments\n    embodiment --> ethics\n    embodiment --> governance\n    embodiment --> organism\n    embodiment --> runtime\n    embodiment --> utils\n    ethics --> runtime\n    evaluation --> learning\n    evaluation --> promotion\n    evaluation --> runtime\n    kernel --> agency\n    kernel --> brain\n    kernel --> cognition\n    kernel --> consciousness\n    kernel --> cybernetics\n    kernel --> executive\n    kernel --> health\n    kernel --> orchestrator\n    kernel --> phases\n    kernel --> resilience\n    kernel --> runtime\n    kernel --> security\n    kernel --> self_modification\n    kernel --> senses\n    kernel --> somatic\n    kernel --> state\n    kernel --> utils\n    motivation --> brain\n    motivation --> consciousness\n    motivation --> constitution\n    motivation --> health\n    motivation --> runtime\n    motivation --> utils\n    promotion --> runtime\n    resource --> observability\n    resource --> resilience\n    resource --> runtime\n    voice --> brain\n    voice --> conversational\n    voice --> resilience\n    voice --> runtime\n    voice --> senses\n    voice --> utils\n    being --> runtime\n    cognition --> memory\n    cognition --> runtime\n    cognition --> world_model\n    conversational --> memory\n    conversational --> runtime\n    data --> runtime\n    db --> runtime\n    goals --> agency\n    goals --> runtime\n    goals --> state\n    morphogenesis --> adaptation\n    morphogenesis --> memory\n    morphogenesis --> resilience\n    morphogenesis --> runtime\n    morphogenesis --> self_modification\n    morphogenesis --> utils\n    pneuma --> affect\n    pneuma --> runtime\n    pneuma --> utils\n    search --> runtime\n    somatic --> memory\n    somatic --> runtime\n    somatic --> utils\n    verification --> discovery\n    verification --> middleware\n    advanced_cognition --> reasoning\n    advanced_cognition --> runtime\n    architect --> adaptation\n    architect --> brain\n    architect --> consciousness\n    architect --> runtime\n    architect --> self_modification\n    architect --> world_model\n    bus --> resilience\n    bus --> runtime\n    bus --> utils\n    coherence --> agency\n    coherence --> consciousness\n    coherence --> runtime\n    coherence --> self\n    coherence --> unity\n    discovery --> runtime\n    discovery --> self_modification\n    environment --> advanced_cognition\n    environment --> brain\n    environment --> consciousness\n    environment --> environments\n    environment --> executive\n    environment --> memory\n    environment --> perception\n    environment --> runtime\n    environments --> environment\n    environments --> perception\n    environments --> runtime\n    evolution --> agi\n    evolution --> autonomy\n    evolution --> brain\n    evolution --> runtime\n    evolution --> utils\n    introspection --> runtime\n    maintenance --> resilience\n    maintenance --> runtime\n    perception --> brain\n    persistence --> observability\n    persistence --> resilience\n    persistence --> runtime\n    predictive --> brain\n    predictive --> runtime\n    predictive --> utils\n    sandbox --> runtime\n    self_improvement --> brain\n    self_improvement --> runtime\n    self_improvement --> self_modification\n    sensors --> world\n    services --> autonomic\n    simulation --> brain\n    simulation --> consciousness\n    simulation --> runtime\n    simulation --> world_model\n    social --> agency\n    social --> ethics\n    social --> governance\n    social --> runtime\n    social --> utils\n    soma --> resilience\n    soma --> runtime\n    soma --> utils\n    sovereign --> runtime\n    startup --> brain\n    startup --> runtime\n    startup --> senses\n    workspace --> runtime\n    context --> runtime\n    creativity --> memory\n    creativity --> runtime\n    curriculum --> runtime\n    cybernetics --> cognitive\n    cybernetics --> kernel\n    cybernetics --> runtime\n    cybernetics --> utils\n    grounding --> plasticity\n    grounding --> runtime\n    guardians --> brain\n    guardians --> runtime\n    guardians --> tasks\n    guardians --> utils\n    llm --> brain\n    middleware --> runtime\n    networking --> runtime\n    networking --> utils\n    plasticity --> runtime\n    research_core --> curriculum\n    research_core --> discovery\n    research_core --> lattice\n    research_core --> promotion\n    research_core --> runtime\n    research_core --> unknowns\n    research_core --> verification\n    safety --> runtime\n    skill_management --> resilience\n    skill_management --> runtime\n    skill_management --> self_modification\n    sovereignty --> ethics\n    sovereignty --> governance\n    sovereignty --> identity\n    sovereignty --> organism\n    sovereignty --> runtime\n    sovereignty --> utils\n    unknowns --> lattice\n    unknowns --> promotion\n    unknowns --> verification\n    audits --> brain\n    audits --> runtime\n    control --> runtime\n    control --> utils\n    core_root --> adaptation\n    core_root --> affect\n    core_root --> agency\n    core_root --> architect\n    core_root --> autonomic\n    core_root --> autonomy\n    core_root --> being\n    core_root --> brain\n    core_root --> coherence\n    core_root --> collective\n    core_root --> consciousness\n    core_root --> constitution\n    core_root --> context\n    core_root --> conversation\n    core_root --> conversational\n    core_root --> coordinators\n    core_root --> data\n    core_root --> evaluation\n    core_root --> executive\n    core_root --> goals\n    core_root --> governance\n    core_root --> health\n    core_root --> identity\n    core_root --> llm\n    core_root --> managers\n    core_root --> media\n    core_root --> memory\n    core_root --> meta\n    core_root --> motivation\n    core_root --> observability\n    core_root --> orchestrator\n    core_root --> phases\n    core_root --> predictive\n    core_root --> resilience\n    core_root --> resource\n    core_root --> runtime\n    core_root --> security\n    core_root --> self\n    core_root --> self_improvement\n    core_root --> self_modification\n    core_root --> senses\n    core_root --> simulation\n    core_root --> skills\n    core_root --> soma\n    core_root --> sovereign\n    core_root --> startup\n    core_root --> state\n    core_root --> supervisor\n    core_root --> tasks\n    core_root --> transparency\n    core_root --> utils\n    core_root --> voice\n    core_root --> workspace\n    core_root --> world_model\n    initializers --> adaptation\n    initializers --> consciousness\n    initializers --> introspection\n    initializers --> memory\n    initializers --> meta\n    initializers --> runtime\n    initializers --> senses\n    initializers --> utils\n    intent --> runtime\n    neuroweb --> brain\n    neuroweb --> consciousness\n    neuroweb --> runtime\n    pipeline --> runtime\n    planning --> runtime\n    play --> consciousness\n    play --> runtime\n    providers --> affect\n    providers --> brain\n    providers --> cognition\n    providers --> collective\n    providers --> consciousness\n    providers --> coordinators\n    providers --> creativity\n    providers --> db\n    providers --> learning\n    providers --> managers\n    providers --> memory\n    providers --> motivation\n    providers --> ops\n    providers --> orchestrator\n    providers --> reasoning\n    providers --> resilience\n    providers --> runtime\n    providers --> self_modification\n    providers --> senses\n    providers --> services\n    providers --> unity\n    providers --> utils\n    providers --> world_model\n    reproducibility --> runtime\n    session --> runtime\n    systems --> runtime\n    systems --> services\n    temporal --> runtime\n    temporal --> utils\n    tools --> runtime\n    tools --> skills\n```",
   "non_runtime_candidates": [
     "core/architect/proof_obligations.py",
     "core/autonomy/autonomous_research_orchestrator.py",
@@ -20184,7 +20234,7 @@
         {
           "call": "subprocess.check_output",
           "file": "core/brain/llm/mlx_worker.py",
-          "line": 974,
+          "line": 981,
           "owner_path": false,
           "source": "sdk_path = subprocess.check_output([\"xcrun\", \"--show-sdk-path\"], timeout=2.0).decode().strip()",
           "subsystem": "brain",
@@ -20499,7 +20549,7 @@
         {
           "call": "self.learned_patterns.add",
           "file": "core/memory/learning/learning_system.py",
-          "line": 92,
+          "line": 94,
           "owner_path": false,
           "source": "self.learned_patterns[\"good_sources\"].add(urllib.parse.urlparse(url).netloc)",
           "subsystem": "memory",
@@ -20508,7 +20558,7 @@
         {
           "call": "urllib.parse.urlparse",
           "file": "core/memory/learning/learning_system.py",
-          "line": 92,
+          "line": 94,
           "owner_path": false,
           "source": "self.learned_patterns[\"good_sources\"].add(urllib.parse.urlparse(url).netloc)",
           "subsystem": "memory",
@@ -20911,7 +20961,7 @@
         {
           "call": "router.think",
           "file": "core/brain/cognitive_engine.py",
-          "line": 776,
+          "line": 779,
           "owner_path": true,
           "source": "content = await router.think(",
           "subsystem": "brain",
@@ -20920,7 +20970,7 @@
         {
           "call": "router.think",
           "file": "core/brain/cognitive_engine.py",
-          "line": 1141,
+          "line": 1144,
           "owner_path": true,
           "source": "return await router.think(p, **kw)",
           "subsystem": "brain",
@@ -20929,7 +20979,7 @@
         {
           "call": "router.think",
           "file": "core/brain/cognitive_engine.py",
-          "line": 1191,
+          "line": 1194,
           "owner_path": true,
           "source": "return await router.think(prompt, **kwargs)",
           "subsystem": "brain",
@@ -21064,7 +21114,7 @@
         {
           "call": "router.think",
           "file": "core/brain/inference_gate.py",
-          "line": 2195,
+          "line": 2215,
           "owner_path": true,
           "source": "router.think(cloud_prompt, system_prompt=cloud_system_prompt),",
           "subsystem": "brain",
@@ -21073,7 +21123,7 @@
         {
           "call": "router.think",
           "file": "core/brain/inference_gate.py",
-          "line": 5341,
+          "line": 5362,
           "owner_path": true,
           "source": "router.think(cloud_prompt, system_prompt=cloud_system_prompt),",
           "subsystem": "brain",
@@ -21424,7 +21474,7 @@
         {
           "call": "self.brain.think",
           "file": "core/consciousness/metacognition.py",
-          "line": 140,
+          "line": 143,
           "owner_path": false,
           "source": "thought = await self.brain.think(",
           "subsystem": "consciousness",
@@ -21433,7 +21483,7 @@
         {
           "call": "self.brain.think",
           "file": "core/consciousness/metacognition.py",
-          "line": 261,
+          "line": 266,
           "owner_path": false,
           "source": "thought = await self.brain.think(prompt, mode=ThinkingMode.REFLECTIVE)",
           "subsystem": "consciousness",
@@ -21442,7 +21492,7 @@
         {
           "call": "self.brain.think",
           "file": "core/consciousness/metacognition.py",
-          "line": 278,
+          "line": 283,
           "owner_path": false,
           "source": "cascade_thought = await self.brain.think(cascade_prompt, mode=ThinkingMode.FAST)",
           "subsystem": "consciousness",
@@ -21451,7 +21501,7 @@
         {
           "call": "self.brain.think",
           "file": "core/consciousness/metacognition.py",
-          "line": 410,
+          "line": 415,
           "owner_path": false,
           "source": "thought = await self.brain.think(prompt, mode=ThinkingMode.REFLECTIVE)",
           "subsystem": "consciousness",
@@ -21721,7 +21771,7 @@
         {
           "call": "orch.cognitive_engine.think",
           "file": "core/coordinators/metabolic_coordinator.py",
-          "line": 1154,
+          "line": 1157,
           "owner_path": false,
           "source": "summary_thought = await orch.cognitive_engine.think(",
           "subsystem": "coordinators",
@@ -22556,7 +22606,7 @@
         {
           "call": "state.cognition.working_memory.append",
           "file": "core/brain/cognitive_engine.py",
-          "line": 573,
+          "line": 576,
           "owner_path": false,
           "source": "state.cognition.working_memory.append(",
           "subsystem": "brain",
@@ -22790,7 +22840,7 @@
         {
           "call": "gateway.authorize_memory_write",
           "file": "core/constitution.py",
-          "line": 691,
+          "line": 695,
           "owner_path": false,
           "source": "authority_decision = await gateway.authorize_memory_write(",
           "subsystem": "core_root",
@@ -22799,7 +22849,7 @@
         {
           "call": "gateway.authorize_memory_write_sync",
           "file": "core/constitution.py",
-          "line": 785,
+          "line": 789,
           "owner_path": false,
           "source": "authority_decision = gateway.authorize_memory_write_sync(",
           "subsystem": "core_root",
@@ -23042,7 +23092,7 @@
         {
           "call": "reasons.append",
           "file": "core/governance/will.py",
-          "line": 1122,
+          "line": 1123,
           "owner_path": false,
           "source": "reasons.append(\"causal_closure_memory_defer: memory write needs integrated present\")",
           "subsystem": "governance",
@@ -23051,7 +23101,7 @@
         {
           "call": "constraints.append",
           "file": "core/governance/will.py",
-          "line": 1140,
+          "line": 1141,
           "owner_path": false,
           "source": "constraints.append(f\"memory_commit_mode:{memory_commit_mode}\")",
           "subsystem": "governance",
@@ -23060,7 +23110,7 @@
         {
           "call": "reasons.append",
           "file": "core/governance/will.py",
-          "line": 1142,
+          "line": 1143,
           "owner_path": false,
           "source": "reasons.append(\"unity_memory_defer: conflicting drafts too unstable for a clean memory write\")",
           "subsystem": "governance",
@@ -23415,7 +23465,7 @@
         {
           "call": "_state_proxy_commit_timeout_seconds",
           "file": "core/state/state_repository.py",
-          "line": 589,
+          "line": 592,
           "owner_path": true,
           "source": "timeout=_state_proxy_commit_timeout_seconds(),",
           "subsystem": "state",
@@ -23424,7 +23474,7 @@
         {
           "call": "self._process_commit",
           "file": "core/state/state_repository.py",
-          "line": 879,
+          "line": 882,
           "owner_path": true,
           "source": "await self._process_commit(state, cause)",
           "subsystem": "state",
@@ -23433,7 +23483,7 @@
         {
           "call": "self._commit_to_db",
           "file": "core/state/state_repository.py",
-          "line": 1043,
+          "line": 1046,
           "owner_path": true,
           "source": "await self._commit_to_db(new_state, serialized_data)",
           "subsystem": "state",
@@ -23442,7 +23492,7 @@
         {
           "call": "self._commit_to_db",
           "file": "core/state/state_repository.py",
-          "line": 1051,
+          "line": 1054,
           "owner_path": true,
           "source": "await self._commit_to_db(new_state, serialized_data)",
           "subsystem": "state",
@@ -23451,7 +23501,7 @@
         {
           "call": "self._commit_to_db",
           "file": "core/state/state_repository.py",
-          "line": 1470,
+          "line": 1473,
           "owner_path": true,
           "source": "await self._commit_to_db(stabilized_state, serialized)",
           "subsystem": "state",
@@ -23541,7 +23591,7 @@
         {
           "call": "self._save_state",
           "file": "core/adaptation/value_autopoiesis.py",
-          "line": 140,
+          "line": 141,
           "owner_path": false,
           "source": "self._save_state()",
           "subsystem": "adaptation",
@@ -23550,7 +23600,7 @@
         {
           "call": "self._save_state",
           "file": "core/adaptation/value_autopoiesis.py",
-          "line": 232,
+          "line": 233,
           "owner_path": false,
           "source": "self._save_state()",
           "subsystem": "adaptation",
@@ -23559,7 +23609,7 @@
         {
           "call": "self._save_state",
           "file": "core/adaptation/value_autopoiesis.py",
-          "line": 289,
+          "line": 290,
           "owner_path": false,
           "source": "self._save_state()",
           "subsystem": "adaptation",
@@ -23568,7 +23618,7 @@
         {
           "call": "os.replace",
           "file": "core/adaptation/value_autopoiesis.py",
-          "line": 510,
+          "line": 511,
           "owner_path": false,
           "source": "os.replace(tmp_path, _STATE_PATH)",
           "subsystem": "adaptation",
@@ -23874,7 +23924,7 @@
         {
           "call": "self.state_repository.commit",
           "file": "core/brain/cognitive_engine.py",
-          "line": 653,
+          "line": 656,
           "owner_path": false,
           "source": "await self.state_repository.commit(state, \"cognitive_cycle\")",
           "subsystem": "brain",
@@ -23946,7 +23996,7 @@
         {
           "call": "self._mlx_client._set_lane_state",
           "file": "core/brain/inference_gate.py",
-          "line": 1013,
+          "line": 1033,
           "owner_path": false,
           "source": "self._mlx_client._set_lane_state(\"cold\")",
           "subsystem": "brain",
@@ -23955,7 +24005,7 @@
         {
           "call": "client_registry.update",
           "file": "core/brain/inference_gate.py",
-          "line": 1767,
+          "line": 1787,
           "owner_path": false,
           "source": "client_registry.update(dict(_SERVER_CLIENTS))",
           "subsystem": "brain",
@@ -23964,7 +24014,7 @@
         {
           "call": "client_registry.update",
           "file": "core/brain/inference_gate.py",
-          "line": 1777,
+          "line": 1797,
           "owner_path": false,
           "source": "client_registry.update(dict(_CLIENTS))",
           "subsystem": "brain",
@@ -24808,7 +24858,7 @@
         {
           "call": "subprocess.check_output",
           "file": "core/brain/llm/mlx_worker.py",
-          "line": 974,
+          "line": 981,
           "owner_path": false,
           "source": "sdk_path = subprocess.check_output([\"xcrun\", \"--show-sdk-path\"], timeout=2.0).decode().strip()",
           "subsystem": "brain",
@@ -25015,7 +25065,7 @@
         {
           "call": "orch.execute_tool",
           "file": "core/coordinators/metabolic_coordinator.py",
-          "line": 482,
+          "line": 485,
           "owner_path": false,
           "source": "orch.execute_tool(",
           "subsystem": "coordinators",
@@ -25024,7 +25074,7 @@
         {
           "call": "orch.execute_tool",
           "file": "core/coordinators/metabolic_coordinator.py",
-          "line": 628,
+          "line": 631,
           "owner_path": false,
           "source": "reflect_task = orch.execute_tool(\"swarm_debate\", {",
           "subsystem": "coordinators",
@@ -25536,7 +25586,7 @@
         {
           "call": "will.decide",
           "file": "core/autonomy/self_modification.py",
-          "line": 303,
+          "line": 304,
           "owner_path": false,
           "source": "decision = will.decide(",
           "subsystem": "autonomy",
@@ -26000,7 +26050,7 @@
       },
       {
         "file": "core/state/state_repository.py",
-        "line": 385,
+        "line": 388,
         "service": "actor_bus"
       },
       {
@@ -26130,12 +26180,12 @@
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 664,
+        "line": 667,
         "service": "affect_engine"
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 233,
+        "line": 234,
         "service": "affect_engine"
       },
       {
@@ -26160,12 +26210,12 @@
       },
       {
         "file": "core/global_workspace.py",
-        "line": 95,
+        "line": 99,
         "service": "affect_engine"
       },
       {
         "file": "core/governance/will.py",
-        "line": 609,
+        "line": 610,
         "service": "affect_engine"
       },
       {
@@ -26230,7 +26280,7 @@
       },
       {
         "file": "core/somatic/motor_cortex.py",
-        "line": 732,
+        "line": 733,
         "service": "affect_engine"
       },
       {
@@ -26275,7 +26325,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 612,
+        "line": 613,
         "service": "affect_facade"
       },
       {
@@ -26285,7 +26335,7 @@
       },
       {
         "file": "core/somatic/motor_cortex.py",
-        "line": 734,
+        "line": 735,
         "service": "affect_facade"
       },
       {
@@ -26305,17 +26355,17 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2832,
+        "line": 2853,
         "service": "affective_circumplex"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5419,
+        "line": 5440,
         "service": "affective_circumplex"
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 247,
+        "line": 248,
         "service": "affective_circumplex"
       },
       {
@@ -26465,12 +26515,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2167,
+        "line": 2187,
         "service": "api_adapter"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5307,
+        "line": 5328,
         "service": "api_adapter"
       },
       {
@@ -26500,17 +26550,17 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2761,
+        "line": 2782,
         "service": "architecture_index"
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 1170,
+        "line": 1173,
         "service": "archive_engine"
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 1207,
+        "line": 1210,
         "service": "archive_engine"
       },
       {
@@ -26520,7 +26570,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3076,
+        "line": 3097,
         "service": "attention_schema"
       },
       {
@@ -26885,12 +26935,12 @@
       },
       {
         "file": "core/executive/executive_core.py",
-        "line": 856,
+        "line": 862,
         "service": "binding_engine"
       },
       {
         "file": "core/executive/executive_core.py",
-        "line": 867,
+        "line": 873,
         "service": "binding_engine"
       },
       {
@@ -26975,7 +27025,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 588,
+        "line": 589,
         "service": "canonical_self"
       },
       {
@@ -27000,7 +27050,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 593,
+        "line": 594,
         "service": "canonical_self_engine"
       },
       {
@@ -27215,7 +27265,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 1934,
+        "line": 1954,
         "service": "closed_causal_loop"
       },
       {
@@ -27610,7 +27660,7 @@
       },
       {
         "file": "core/learning/live_learner.py",
-        "line": 341,
+        "line": 342,
         "service": "config"
       },
       {
@@ -27675,7 +27725,7 @@
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 291,
+        "line": 292,
         "service": "conscious_substrate"
       },
       {
@@ -27730,7 +27780,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 1486,
+        "line": 1490,
         "service": "constitutional_core"
       },
       {
@@ -27805,7 +27855,7 @@
       },
       {
         "file": "core/somatic/motor_cortex.py",
-        "line": 188,
+        "line": 189,
         "service": "continuous_vision"
       },
       {
@@ -27870,12 +27920,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3090,
+        "line": 3111,
         "service": "credit_assignment"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5455,
+        "line": 5476,
         "service": "credit_assignment"
       },
       {
@@ -27935,7 +27985,7 @@
       },
       {
         "file": "core/cognition/paraconsistent_logic.py",
-        "line": 495,
+        "line": 497,
         "service": "curiosity_engine"
       },
       {
@@ -27975,7 +28025,7 @@
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 956,
+        "line": 959,
         "service": "dead_letter_queue"
       },
       {
@@ -28040,7 +28090,7 @@
       },
       {
         "file": "core/brain/cognitive_engine.py",
-        "line": 469,
+        "line": 472,
         "service": "drift_monitor"
       },
       {
@@ -28060,7 +28110,7 @@
       },
       {
         "file": "core/autonomy/self_modification.py",
-        "line": 540,
+        "line": 541,
         "service": "drive_engine"
       },
       {
@@ -28105,7 +28155,7 @@
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 305,
+        "line": 306,
         "service": "drive_engine"
       },
       {
@@ -28200,7 +28250,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 734,
+        "line": 735,
         "service": "dual_memory"
       },
       {
@@ -28365,12 +28415,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3118,
+        "line": 3139,
         "service": "epistemic_state"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5502,
+        "line": 5523,
         "service": "epistemic_state"
       },
       {
@@ -28540,12 +28590,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3062,
+        "line": 3083,
         "service": "free_energy_engine"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4416,
+        "line": 4437,
         "service": "free_energy_engine"
       },
       {
@@ -28600,7 +28650,7 @@
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 279,
+        "line": 280,
         "service": "free_energy_engine"
       },
       {
@@ -28780,12 +28830,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2921,
+        "line": 2942,
         "service": "goal_engine"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3230,
+        "line": 3251,
         "service": "goal_engine"
       },
       {
@@ -28815,7 +28865,7 @@
       },
       {
         "file": "core/executive/executive_core.py",
-        "line": 971,
+        "line": 977,
         "service": "goal_engine"
       },
       {
@@ -29010,17 +29060,17 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3048,
+        "line": 3069,
         "service": "homeostasis"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4340,
+        "line": 4361,
         "service": "homeostasis"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5475,
+        "line": 5496,
         "service": "homeostasis"
       },
       {
@@ -29135,7 +29185,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4313,
+        "line": 4334,
         "service": "homeostatic_coupling"
       },
       {
@@ -29245,7 +29295,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 755,
+        "line": 756,
         "service": "identity_chronicle"
       },
       {
@@ -29585,7 +29635,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 1473,
+        "line": 1477,
         "service": "intention_loop"
       },
       {
@@ -29815,12 +29865,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2840,
+        "line": 2861,
         "service": "liquid_state"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5422,
+        "line": 5443,
         "service": "liquid_state"
       },
       {
@@ -29945,7 +29995,7 @@
       },
       {
         "file": "core/consciousness/metacognition.py",
-        "line": 346,
+        "line": 351,
         "service": "liquid_substrate"
       },
       {
@@ -30070,12 +30120,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2190,
+        "line": 2210,
         "service": "llm_router"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5337,
+        "line": 5358,
         "service": "llm_router"
       },
       {
@@ -30375,7 +30425,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 732,
+        "line": 733,
         "service": "memory_facade"
       },
       {
@@ -30455,7 +30505,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2598,
+        "line": 2618,
         "service": "memory_monitor"
       },
       {
@@ -30595,7 +30645,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 882,
+        "line": 883,
         "service": "mind_moment"
       },
       {
@@ -30615,7 +30665,7 @@
       },
       {
         "file": "core/learning/live_learner.py",
-        "line": 975,
+        "line": 977,
         "service": "mlx_client"
       },
       {
@@ -30630,7 +30680,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4370,
+        "line": 4391,
         "service": "morphogenetic_runtime"
       },
       {
@@ -31070,7 +31120,7 @@
       },
       {
         "file": "core/cognition/paraconsistent_logic.py",
-        "line": 484,
+        "line": 486,
         "service": "neurochemical_system"
       },
       {
@@ -31100,7 +31150,7 @@
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 258,
+        "line": 259,
         "service": "neurochemical_system"
       },
       {
@@ -31140,12 +31190,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2715,
+        "line": 2736,
         "service": "opinion_engine"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3245,
+        "line": 3266,
         "service": "opinion_engine"
       },
       {
@@ -31235,27 +31285,27 @@
       },
       {
         "file": "core/brain/cognitive_engine.py",
-        "line": 470,
+        "line": 473,
         "service": "orchestrator"
       },
       {
         "file": "core/brain/cognitive_engine.py",
-        "line": 545,
+        "line": 548,
         "service": "orchestrator"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 1070,
+        "line": 1090,
         "service": "orchestrator"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 1617,
+        "line": 1637,
         "service": "orchestrator"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 1635,
+        "line": 1655,
         "service": "orchestrator"
       },
       {
@@ -31320,7 +31370,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 1433,
+        "line": 1437,
         "service": "orchestrator"
       },
       {
@@ -31335,7 +31385,7 @@
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 207,
+        "line": 210,
         "service": "orchestrator"
       },
       {
@@ -31385,7 +31435,7 @@
       },
       {
         "file": "core/health/degraded_events.py",
-        "line": 337,
+        "line": 338,
         "service": "orchestrator"
       },
       {
@@ -31575,12 +31625,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2670,
+        "line": 2690,
         "service": "personality_engine"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3177,
+        "line": 3198,
         "service": "personality_engine"
       },
       {
@@ -31665,12 +31715,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2697,
+        "line": 2717,
         "service": "phenomenological_experiencer"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3212,
+        "line": 3233,
         "service": "phenomenological_experiencer"
       },
       {
@@ -31695,12 +31745,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 1954,
+        "line": 1974,
         "service": "phi_core"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4197,
+        "line": 4218,
         "service": "phi_core"
       },
       {
@@ -31795,7 +31845,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3147,
+        "line": 3168,
         "service": "predictive_engine"
       },
       {
@@ -31890,12 +31940,12 @@
       },
       {
         "file": "core/creativity/aesthetic_engine.py",
-        "line": 318,
+        "line": 319,
         "service": "qualia_synthesizer"
       },
       {
         "file": "core/governance/will.py",
-        "line": 777,
+        "line": 778,
         "service": "qualia_synthesizer"
       },
       {
@@ -32065,7 +32115,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 4159,
+        "line": 4180,
         "service": "resource_stakes"
       },
       {
@@ -32115,7 +32165,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 685,
+        "line": 686,
         "service": "scar_formation"
       },
       {
@@ -32145,7 +32195,7 @@
       },
       {
         "file": "core/somatic/motor_cortex.py",
-        "line": 190,
+        "line": 191,
         "service": "screen_vision"
       },
       {
@@ -32165,7 +32215,7 @@
       },
       {
         "file": "core/executive/executive_core.py",
-        "line": 912,
+        "line": 918,
         "service": "self_model"
       },
       {
@@ -32230,7 +32280,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2627,
+        "line": 2647,
         "service": "self_report_engine"
       },
       {
@@ -32410,12 +32460,12 @@
       },
       {
         "file": "core/brain/cognitive_engine.py",
-        "line": 437,
+        "line": 440,
         "service": "spine"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2729,
+        "line": 2750,
         "service": "spine"
       },
       {
@@ -32460,7 +32510,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 141,
+        "line": 143,
         "service": "state_authority"
       },
       {
@@ -32515,17 +32565,17 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2467,
+        "line": 2487,
         "service": "state_repository"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2596,
+        "line": 2616,
         "service": "state_repository"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3276,
+        "line": 3297,
         "service": "state_repository"
       },
       {
@@ -32545,12 +32595,12 @@
       },
       {
         "file": "core/consciousness/somatic_marker_gate.py",
-        "line": 380,
+        "line": 381,
         "service": "state_repository"
       },
       {
         "file": "core/constitution.py",
-        "line": 1434,
+        "line": 1438,
         "service": "state_repository"
       },
       {
@@ -32665,7 +32715,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 638,
+        "line": 639,
         "service": "substrate_authority"
       },
       {
@@ -32725,17 +32775,17 @@
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 1041,
+        "line": 1044,
         "service": "subsystem_audit"
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 1066,
+        "line": 1069,
         "service": "subsystem_audit"
       },
       {
         "file": "core/coordinators/metabolic_coordinator.py",
-        "line": 1178,
+        "line": 1181,
         "service": "subsystem_audit"
       },
       {
@@ -32805,7 +32855,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3133,
+        "line": 3154,
         "service": "temporal_binding"
       },
       {
@@ -32830,12 +32880,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3104,
+        "line": 3125,
         "service": "theory_of_mind"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 5487,
+        "line": 5508,
         "service": "theory_of_mind"
       },
       {
@@ -32955,7 +33005,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 786,
+        "line": 787,
         "service": "unified_field"
       },
       {
@@ -32990,12 +33040,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2641,
+        "line": 2661,
         "service": "unity_fragmentation_report"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3194,
+        "line": 3215,
         "service": "unity_fragmentation_report"
       },
       {
@@ -33005,7 +33055,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 904,
+        "line": 905,
         "service": "unity_fragmentation_report"
       },
       {
@@ -33025,7 +33075,7 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2642,
+        "line": 2662,
         "service": "unity_repair_plan"
       },
       {
@@ -33040,12 +33090,12 @@
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 2640,
+        "line": 2660,
         "service": "unity_state"
       },
       {
         "file": "core/brain/inference_gate.py",
-        "line": 3193,
+        "line": 3214,
         "service": "unity_state"
       },
       {
@@ -33055,7 +33105,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 856,
+        "line": 857,
         "service": "unity_state"
       },
       {
@@ -33190,7 +33240,7 @@
       },
       {
         "file": "core/brain/cognitive_engine.py",
-        "line": 1067,
+        "line": 1070,
         "service": "vision_buffer"
       },
       {
@@ -34439,7 +34489,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 1495,
+        "line": 1499,
         "service": "belief_authority",
         "type": "register"
       },
@@ -34679,7 +34729,7 @@
       },
       {
         "file": "core/constitution.py",
-        "line": 1494,
+        "line": 1498,
         "service": "constitutional_core",
         "type": "register"
       },
@@ -34919,7 +34969,7 @@
       },
       {
         "file": "core/executive/executive_core.py",
-        "line": 1217,
+        "line": 1223,
         "service": "executive_core",
         "type": "register"
       },
@@ -35423,7 +35473,7 @@
       },
       {
         "file": "core/somatic/motor_cortex.py",
-        "line": 494,
+        "line": 495,
         "service": "motor_cortex",
         "type": "register"
       },
@@ -36185,7 +36235,7 @@
       },
       {
         "file": "core/governance/will.py",
-        "line": 281,
+        "line": 282,
         "service": "unified_will",
         "type": "register"
       },
@@ -36556,8 +36606,8 @@
     "governance",
     "unity",
     "somatic",
-    "ops",
     "executive",
+    "ops",
     "self_improvement",
     "conversational",
     "identity",
@@ -36680,7 +36730,7 @@
       ]
     },
     "adaptation": {
-      "bytes": 475074,
+      "bytes": 475453,
       "dependencies": [
         "actuators",
         "affect",
@@ -36692,6 +36742,7 @@
         "event_bus",
         "health",
         "learning",
+        "memory",
         "resilience",
         "runtime",
         "schemas",
@@ -36702,9 +36753,9 @@
         "world"
       ],
       "deps_in": 14,
-      "deps_out": 18,
+      "deps_out": 19,
       "files": 26,
-      "lines": 11869,
+      "lines": 11876,
       "source_files": [
         "core/adaptation/__init__.py",
         "core/adaptation/abstraction_engine.py",
@@ -36982,7 +37033,7 @@
       ]
     },
     "autonomy": {
-      "bytes": 314671,
+      "bytes": 314896,
       "dependencies": [
         "affect",
         "agency",
@@ -36993,6 +37044,7 @@
         "event_bus",
         "executive",
         "executors",
+        "memory",
         "observability",
         "resource",
         "runtime",
@@ -37002,9 +37054,9 @@
         "will"
       ],
       "deps_in": 7,
-      "deps_out": 16,
+      "deps_out": 17,
       "files": 22,
-      "lines": 7672,
+      "lines": 7673,
       "source_files": [
         "core/autonomy/__init__.py",
         "core/autonomy/autonomous_research_orchestrator.py",
@@ -37056,7 +37108,7 @@
       ]
     },
     "brain": {
-      "bytes": 1873854,
+      "bytes": 1875083,
       "dependencies": [
         "adaptation",
         "affect",
@@ -37103,7 +37155,7 @@
       "deps_in": 39,
       "deps_out": 41,
       "files": 115,
-      "lines": 43320,
+      "lines": 43351,
       "source_files": [
         "core/brain/__init__.py",
         "core/brain/abstract_thought_layer.py",
@@ -37244,20 +37296,21 @@
       ]
     },
     "cognition": {
-      "bytes": 139831,
+      "bytes": 140216,
       "dependencies": [
         "config",
         "container",
         "event_bus",
+        "memory",
         "runtime",
         "thought_stream",
         "world_model",
         "world_state"
       ],
       "deps_in": 3,
-      "deps_out": 7,
+      "deps_out": 8,
       "files": 9,
-      "lines": 3456,
+      "lines": 3458,
       "source_files": [
         "core/cognition/__init__.py",
         "core/cognition/belief_revision.py",
@@ -37346,7 +37399,7 @@
       ]
     },
     "consciousness": {
-      "bytes": 2507338,
+      "bytes": 2507865,
       "dependencies": [
         "actuators",
         "adaptation",
@@ -37390,7 +37443,7 @@
       "deps_in": 29,
       "deps_out": 38,
       "files": 128,
-      "lines": 59522,
+      "lines": 59530,
       "source_files": [
         "core/consciousness/__init__.py",
         "core/consciousness/absorbed_voices.py",
@@ -37579,7 +37632,7 @@
       ]
     },
     "conversation": {
-      "bytes": 154111,
+      "bytes": 154182,
       "dependencies": [
         "brain",
         "config",
@@ -37596,7 +37649,7 @@
       "deps_in": 6,
       "deps_out": 11,
       "files": 8,
-      "lines": 4163,
+      "lines": 4164,
       "source_files": [
         "core/conversation/__init__.py",
         "core/conversation/chat_preflight.py",
@@ -37628,7 +37681,7 @@
       ]
     },
     "coordinators": {
-      "bytes": 198441,
+      "bytes": 198599,
       "dependencies": [
         "autonomy",
         "brain",
@@ -37670,7 +37723,7 @@
       "deps_in": 5,
       "deps_out": 36,
       "files": 9,
-      "lines": 4224,
+      "lines": 4227,
       "source_files": [
         "core/coordinators/__init__.py",
         "core/coordinators/cognitive_coordinator.py",
@@ -37684,7 +37737,7 @@
       ]
     },
     "core_root": {
-      "bytes": 2260598,
+      "bytes": 2261192,
       "dependencies": [
         "adaptation",
         "affect",
@@ -37791,7 +37844,7 @@
       "deps_in": 0,
       "deps_out": 101,
       "files": 182,
-      "lines": 55585,
+      "lines": 55595,
       "source_files": [
         "core/__init__.py",
         "core/agency_bus.py",
@@ -37978,15 +38031,16 @@
       ]
     },
     "creativity": {
-      "bytes": 33218,
+      "bytes": 33361,
       "dependencies": [
         "container",
+        "memory",
         "runtime"
       ],
       "deps_in": 1,
-      "deps_out": 2,
+      "deps_out": 3,
       "files": 2,
-      "lines": 800,
+      "lines": 801,
       "source_files": [
         "core/creativity/__init__.py",
         "core/creativity/aesthetic_engine.py"
@@ -38321,7 +38375,7 @@
       ]
     },
     "executive": {
-      "bytes": 97890,
+      "bytes": 98090,
       "dependencies": [
         "agency",
         "autonomy",
@@ -38332,15 +38386,16 @@
         "continuity",
         "goals",
         "health",
+        "memory",
         "privacy_stealth",
         "runtime",
         "state",
         "will"
       ],
       "deps_in": 8,
-      "deps_out": 13,
+      "deps_out": 14,
       "files": 4,
-      "lines": 2317,
+      "lines": 2323,
       "source_files": [
         "core/executive/__init__.py",
         "core/executive/authority_gateway.py",
@@ -38373,21 +38428,22 @@
       ]
     },
     "governance": {
-      "bytes": 98838,
+      "bytes": 98982,
       "dependencies": [
         "actuators",
         "consciousness",
         "container",
         "event_bus",
+        "memory",
         "runtime",
         "runtime_tools",
         "will",
         "world_state"
       ],
       "deps_in": 10,
-      "deps_out": 8,
+      "deps_out": 9,
       "files": 8,
-      "lines": 2434,
+      "lines": 2435,
       "source_files": [
         "core/governance/__init__.py",
         "core/governance/closure_auditor.py",
@@ -38444,19 +38500,20 @@
       ]
     },
     "health": {
-      "bytes": 31377,
+      "bytes": 31612,
       "dependencies": [
         "brain",
         "container",
+        "memory",
         "runtime",
         "state",
         "terminal_monitor",
         "version"
       ],
       "deps_in": 21,
-      "deps_out": 6,
+      "deps_out": 7,
       "files": 3,
-      "lines": 838,
+      "lines": 839,
       "source_files": [
         "core/health/boot_status.py",
         "core/health/degraded_events.py",
@@ -38629,13 +38686,14 @@
       ]
     },
     "learning": {
-      "bytes": 274949,
+      "bytes": 275133,
       "dependencies": [
         "brain",
         "config",
         "consciousness",
         "container",
         "introspection",
+        "memory",
         "promotion",
         "reasoning",
         "runtime",
@@ -38647,9 +38705,9 @@
         "will"
       ],
       "deps_in": 6,
-      "deps_out": 14,
+      "deps_out": 15,
       "files": 20,
-      "lines": 6934,
+      "lines": 6936,
       "source_files": [
         "core/learning/architecture_search.py",
         "core/learning/autonomous_rsi.py",
@@ -38759,7 +38817,7 @@
       ]
     },
     "memory": {
-      "bytes": 753761,
+      "bytes": 758053,
       "dependencies": [
         "actuators",
         "base_module",
@@ -38779,10 +38837,10 @@
         "utils",
         "zenith_secrets"
       ],
-      "deps_in": 21,
+      "deps_in": 32,
       "deps_out": 17,
       "files": 76,
-      "lines": 18651,
+      "lines": 18781,
       "source_files": [
         "core/memory/__init__.py",
         "core/memory/adversarial_memory.py",
@@ -39650,7 +39708,7 @@
       ]
     },
     "resilience": {
-      "bytes": 450526,
+      "bytes": 450669,
       "dependencies": [
         "agency",
         "brain",
@@ -39672,7 +39730,7 @@
       "deps_in": 25,
       "deps_out": 16,
       "files": 53,
-      "lines": 11166,
+      "lines": 11168,
       "source_files": [
         "core/resilience/__init__.py",
         "core/resilience/antibody.py",
@@ -39746,7 +39804,7 @@
       ]
     },
     "runtime": {
-      "bytes": 734175,
+      "bytes": 736189,
       "dependencies": [
         "actuators",
         "adaptation",
@@ -39791,7 +39849,7 @@
       "deps_in": 105,
       "deps_out": 39,
       "files": 93,
-      "lines": 20822,
+      "lines": 20872,
       "source_files": [
         "core/runtime/__init__.py",
         "core/runtime/ablation_policy.py",
@@ -40035,12 +40093,13 @@
       ]
     },
     "self_modification": {
-      "bytes": 414230,
+      "bytes": 414388,
       "dependencies": [
         "config",
         "container",
         "ethics",
         "governance",
+        "memory",
         "resilience",
         "runtime",
         "skills",
@@ -40050,9 +40109,9 @@
         "will"
       ],
       "deps_in": 14,
-      "deps_out": 11,
+      "deps_out": 12,
       "files": 29,
-      "lines": 10469,
+      "lines": 10470,
       "source_files": [
         "core/self_modification/__init__.py",
         "core/self_modification/ast_analyzer.py",
@@ -40377,20 +40436,21 @@
       ]
     },
     "somatic": {
-      "bytes": 89958,
+      "bytes": 90103,
       "dependencies": [
         "base_module",
         "container",
         "event_bus",
+        "memory",
         "neural_feed",
         "runtime",
         "utils",
         "world_state"
       ],
       "deps_in": 3,
-      "deps_out": 7,
+      "deps_out": 8,
       "files": 5,
-      "lines": 2375,
+      "lines": 2376,
       "source_files": [
         "core/somatic/__init__.py",
         "core/somatic/action_feedback.py",
@@ -40458,19 +40518,20 @@
       ]
     },
     "state": {
-      "bytes": 144522,
+      "bytes": 144589,
       "dependencies": [
         "constitution",
         "container",
         "governance",
         "governance_context",
+        "memory",
         "motivation",
         "runtime",
         "unity",
         "utils"
       ],
       "deps_in": 13,
-      "deps_out": 8,
+      "deps_out": 9,
       "files": 6,
       "lines": 3408,
       "source_files": [
@@ -40630,7 +40691,7 @@
       ]
     },
     "utils": {
-      "bytes": 200422,
+      "bytes": 200428,
       "dependencies": [
         "config",
         "consciousness",
@@ -40812,9 +40873,9 @@
     }
   },
   "totals": {
-    "python_bytes": 19319470,
+    "python_bytes": 19330769,
     "python_files": 1630,
-    "python_lines": 472179,
+    "python_lines": 472437,
     "subsystems": 127
   }
 }

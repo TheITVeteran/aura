@@ -79,6 +79,11 @@ def test_receipt_coverage_accepts_person_box_harness_receipts(tmp_path, monkeypa
             _person_box_receipt(domain="ablation"),
             _person_box_receipt(domain="self_improvement"),
             _person_box_receipt(domain="packaging"),
+            _person_box_receipt(
+                action="duration_checkpoint",
+                domain="longevity",
+                task_id="full_duration_soak",
+            ),
         ],
     )
 
@@ -87,7 +92,7 @@ def test_receipt_coverage_accepts_person_box_harness_receipts(tmp_path, monkeypa
     report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
     assert report["invalid_receipts"] == 0
     assert report["total_receipts"] == 1
-    assert report["person_box_harness_receipts"] == 7
+    assert report["person_box_harness_receipts"] == 8
     assert report["passed"] is True
 
 

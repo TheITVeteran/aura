@@ -7,14 +7,14 @@
   },
   "llm_with_tools": {
     "status": "RUN",
-    "pass_rate": 0.2,
+    "pass_rate": 0.3,
     "total_tasks": 10,
-    "passed": 2
+    "passed": 3
   },
   "react_agent": {
     "status": "RUN",
-    "pass_rate": 0.2,
+    "pass_rate": 0.4,
     "total_tasks": 10,
-    "passed": 2
+    "passed": 4
   }
 }
