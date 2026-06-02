@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import shlex
 import shutil
 import subprocess
@@ -76,6 +77,7 @@ class ComputerUseSkill(BaseSkill):
     )
     input_model = ComputerUseParams
     metabolic_cost = 2
+    PERMISSION_CHECK_TIMEOUT_S = 3.0
 
     # SK-01: Restricted command set for autonomous use
     ALLOWED_COMMANDS = frozenset(
@@ -161,7 +163,31 @@ class ComputerUseSkill(BaseSkill):
             if permission_type is None:
                 continue
             try:
-                check = await guard.check_permission(permission_type, force=True)
+                check = await asyncio.wait_for(
+                    guard.check_permission(permission_type, force=True),
+                    timeout=self.PERMISSION_CHECK_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError as exc:
+                _record_computer_use_degradation(
+                    exc,
+                    action="returned bounded permission timeout instead of hanging desktop capability",
+                    stage="permissions.timeout",
+                    severity="warning",
+                    extra={"capability": capability, "permission": permission_name.lower()},
+                )
+                guidance = ""
+                try:
+                    guidance = guard.get_guidance(permission_type)
+                except _COMPUTER_USE_RECOVERABLE_ERRORS:
+                    guidance = "Retry after the runtime security services are healthy."
+                return {
+                    "ok": False,
+                    "status": "timeout",
+                    "error": f"{permission_name.replace('_', ' ').title()} permission check timed out for {capability}.",
+                    "permission": permission_name.lower(),
+                    "guidance": guidance,
+                    "detail": f"Exceeded {self.PERMISSION_CHECK_TIMEOUT_S:.1f}s permission preflight budget.",
+                }
             except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
                 _record_computer_use_degradation(
                     exc,
@@ -202,34 +228,42 @@ class ComputerUseSkill(BaseSkill):
         return message or "AppleScript execution failed."
 
     def _run_applescript(self, script: str, *, timeout: int = 10) -> str:
-        try:
-            from Foundation import NSAppleScript
-            
-            apple_script = NSAppleScript.alloc().initWithSource_(script)
-            success, error_info = apple_script.executeAndReturnError_(None)
-            if success:
-                return str(success.stringValue() or "").strip()
-            else:
+        timeout_s = max(1, int(timeout or 10))
+        if os.environ.get("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT") == "1":
+            try:
+                from Foundation import NSAppleScript
+
+                apple_script = NSAppleScript.alloc().initWithSource_(script)
+                success, error_info = apple_script.executeAndReturnError_(None)
+                if success:
+                    return str(success.stringValue() or "").strip()
                 msg = ""
                 err_num = ""
                 if error_info:
                     msg = str(error_info.get("NSAppleScriptErrorMessage") or "")
                     err_num = str(error_info.get("NSAppleScriptErrorNumber") or "")
-                
-                err_str = f"{msg} ({err_num})" if err_num else msg or "AppleScript native execution failed."
+
+                err_str = (
+                    f"{msg} ({err_num})"
+                    if err_num
+                    else msg or "AppleScript native execution failed."
+                )
                 raise RuntimeError(self._normalize_script_error(err_str))
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            if isinstance(exc, RuntimeError):
-                raise exc
+            except (ImportError, AttributeError):
+                pass
+
+        try:
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=timeout_s,
             )
-            if result.returncode != 0:
-                raise RuntimeError(self._normalize_script_error(result.stderr or result.stdout))
-            return (result.stdout or "").strip()
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"AppleScript timed out after {timeout_s}s.") from exc
+        if result.returncode != 0:
+            raise RuntimeError(self._normalize_script_error(result.stderr or result.stdout))
+        return (result.stdout or "").strip()
 
     @staticmethod
     def _normalize_open_url_target(target: str) -> str:

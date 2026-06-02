@@ -11,7 +11,6 @@ from core.runtime.errors import record_degradation
 import asyncio
 import os
 import logging
-import time
 from typing import Optional
 
 try:
@@ -118,7 +117,7 @@ class ContinuousPerceptionEngine:
 
         # Register callback ONCE (Issue 12)
         if getattr(ears, "_engine", None) and hasattr(ears._engine, "on_transcript"):
-            ears._engine.on_transcript(_on_ambient_listen)
+            ears._engine.on_transcript(_on_ambient_listen, key="continuous_perception")
             logger.info("📡 Continuous audio listener registered.")
 
         while self.running:

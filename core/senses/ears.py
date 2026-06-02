@@ -7,11 +7,9 @@ Now unified to wrap around SovereignVoiceEngine v5.0 for reliability.
 from core.runtime.errors import record_degradation
 import asyncio
 import logging
-from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
-from .voice_engine import VoiceState, get_voice_engine
-from .sensory_registry import SensoryCapabilityFlags, get_capabilities
+from .sensory_registry import get_capabilities
 
 logger = logging.getLogger("Aura.Senses.Ears")
 
@@ -71,7 +69,7 @@ class SovereignEars:
             if asyncio.iscoroutine(res) or asyncio.isfuture(res) or hasattr(res, "__await__"):
                 await res
             
-        engine.on_transcript(_async_callback)
+        engine.on_transcript(_async_callback, key="sovereign_ears")
         await engine.start_listening()
         logger.info("👂 Ears listening (Guarded by Isolated Senses)")
 

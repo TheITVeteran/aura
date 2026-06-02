@@ -1529,6 +1529,13 @@ def test_desktop_safe_boot_still_schedules_deferred_cortex_prewarm(monkeypatch):
     monkeypatch.delenv("AURA_DEFERRED_CORTEX_PREWARM", raising=False)
     monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
 
+    assert InferenceGate._boot_should_schedule_deferred_prewarm() is True
+
+
+def test_desktop_safe_boot_respects_deferred_cortex_prewarm_opt_out(monkeypatch):
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "0")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 
 

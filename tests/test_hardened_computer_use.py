@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -207,6 +208,94 @@ async def test_computer_use_missing_permission_guard_fails_closed(monkeypatch):
     assert any(
         "permission guard was not registered" in record.action
         for record in tracker.recent(subsystem="computer_use")
+    )
+    tracker.reset()
+
+
+@pytest.mark.asyncio
+async def test_computer_use_clock_falls_back_when_permission_probe_times_out(monkeypatch):
+    from core.container import ServiceContainer
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    skill = ComputerUseSkill()
+    skill.PERMISSION_CHECK_TIMEOUT_S = 0.01
+
+    class SlowPermissionGuard:
+        async def check_permission(self, *_args, **_kwargs):
+            await asyncio.sleep(0.1)
+            return {"granted": True, "status": "active", "guidance": ""}
+
+        def get_guidance(self, *_args, **_kwargs):
+            return "permission guidance"
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: SlowPermissionGuard()
+        if name == "permission_guard"
+        else default,
+    )
+
+    result = await skill.execute({"action": "read_menu_clock", "target": ""}, context={})
+
+    assert result["ok"] is True
+    assert result["status"] == "limited"
+    assert result["source"] == "system_clock_permission_fallback"
+    assert result["permission_result"]["status"] == "timeout"
+    assert any(
+        "bounded permission timeout" in record.action
+        for record in tracker.recent(subsystem="computer_use")
+    )
+    tracker.reset()
+
+
+def test_computer_use_applescript_runner_uses_bounded_subprocess_by_default(monkeypatch):
+    skill = ComputerUseSkill()
+    run_call = {}
+
+    def fake_run(args, capture_output, text, timeout):
+        run_call.update(
+            {
+                "args": args,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
+        return SimpleNamespace(returncode=0, stdout="menu clock", stderr="")
+
+    monkeypatch.delenv("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT", raising=False)
+    monkeypatch.setattr("core.skills.computer_use.subprocess.run", fake_run)
+
+    assert skill._run_applescript('return "menu clock"', timeout=6) == "menu clock"
+    assert run_call["args"][0] == "osascript"
+    assert run_call["timeout"] == 6
+
+
+@pytest.mark.asyncio
+async def test_computer_use_clock_falls_back_when_applescript_times_out(monkeypatch):
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    skill = ComputerUseSkill()
+
+    async def allow_permissions(*_args, **_kwargs):
+        return None
+
+    def fake_run(*_args, timeout, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["osascript"], timeout=timeout)
+
+    monkeypatch.setattr(skill, "_require_permissions", allow_permissions)
+    monkeypatch.setattr("core.skills.computer_use.subprocess.run", fake_run)
+
+    result = await skill.execute({"action": "read_menu_clock", "target": ""}, context={})
+
+    assert result["ok"] is True
+    assert result["status"] == "limited"
+    assert result["source"] == "system_clock_fallback"
+    assert "AppleScript timed out" in result["error"]
+    assert any(
+        "clock fallback" in record.action for record in tracker.recent(subsystem="computer_use")
     )
     tracker.reset()
 

@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.orchestrator.handlers.shutdown import orchestrator_shutdown
+from core.orchestrator.handlers.shutdown import _gracefully_stop_actor_via_bus, orchestrator_shutdown
+from core.runtime.errors import get_degradation_tracker
 from core.orchestrator.mixins.boot.boot_cognitive import BootCognitiveMixin
 from core.orchestrator.mixins.boot.boot_resilience import BootResilienceMixin
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
@@ -396,3 +397,86 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     service_shutdown.assert_awaited_once()
     event_bus_shutdown.assert_awaited_once()
     assert supervisor.stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_graceful_state_vault_stop_continues_when_bus_already_closed():
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    class _ClosedBus:
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def request(self, *_args, **_kwargs):
+            raise BrokenPipeError("Connection is closed")
+
+    orch = SimpleNamespace(_actor_bus=_ClosedBus(), _supervisor_tree=None)
+
+    await _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01)
+
+    assert any(
+        "actor bus was already closed for state_vault" in record.action
+        for record in tracker.recent(subsystem="shutdown")
+    )
+    tracker.reset()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_shutdown_continues_when_final_state_commit_is_cancelled(
+    monkeypatch, caplog
+):
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    class _State:
+        def derive(self, _cause):
+            return self
+
+    async def cancelled_commit(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    service_shutdown = AsyncMock()
+    event_bus_shutdown = AsyncMock()
+
+    monkeypatch.setattr(
+        "core.resilience.snapshot_manager.SnapshotManager",
+        lambda _orch: SimpleNamespace(freeze=lambda: None),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.shutdown",
+        service_shutdown,
+    )
+    monkeypatch.setattr(
+        "core.event_bus.get_event_bus",
+        lambda: SimpleNamespace(shutdown=event_bus_shutdown),
+    )
+    monkeypatch.setattr(
+        "core.utils.task_tracker.get_task_tracker",
+        lambda: SimpleNamespace(shutdown=lambda timeout=3.0: None),
+    )
+
+    orch = SimpleNamespace(
+        status=SimpleNamespace(running=True, is_processing=True),
+        state_repo=SimpleNamespace(
+            get_current=AsyncMock(return_value=_State()),
+            commit=cancelled_commit,
+            close=AsyncMock(),
+            _transport_has_vault=lambda: True,
+            is_vault_owner=False,
+        ),
+        _actor_bus=None,
+        _supervisor_tree=None,
+        _publish_status=lambda _payload: None,
+        _save_state=lambda _cause: None,
+        _stop_event=None,
+        kernel_interface=None,
+    )
+
+    with caplog.at_level("DEBUG", logger="Aura.Core.Orchestrator.Shutdown"):
+        await orchestrator_shutdown(orch)
+
+    assert "Shutdown state commit cancelled during process teardown" in caplog.text
+    service_shutdown.assert_awaited_once()
+    event_bus_shutdown.assert_awaited_once()
+    tracker.reset()

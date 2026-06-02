@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -1853,6 +1854,96 @@ class CapabilityEngine(AuraBaseModule):
         return self._declared_effect_scope(skill_name, meta.instance or meta.skill_class) or meta.effect_scope
 
     @staticmethod
+    def _is_path_within_workspace(path: Any) -> bool:
+        raw = str(path or "").strip()
+        if not raw:
+            return False
+        try:
+            root = Path.cwd().resolve()
+            target = Path(raw)
+            if not target.is_absolute():
+                target = root / target
+            resolved = target.resolve()
+            return os.path.commonpath([str(root), str(resolved)]) == str(root)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _workspace_file_io_scope(cls, params: dict[str, Any]) -> str | None:
+        action = str((params or {}).get("action") or "").strip().lower()
+        if action not in {"append", "copy", "exists", "list", "patch", "read", "write"}:
+            return None
+        if not cls._is_path_within_workspace((params or {}).get("path")):
+            return None
+        if action == "copy" and not cls._is_path_within_workspace((params or {}).get("destination")):
+            return None
+        return "workspace_file_io"
+
+    @staticmethod
+    def _computer_use_effect_scope(params: dict[str, Any]) -> str | None:
+        action = str((params or {}).get("action") or "").strip().lower()
+        if action in {"read_menu_clock", "read_screen_text"}:
+            return "read_only"
+        if action in {"click", "hotkey", "open_app", "open_url", "scroll", "type"}:
+            return "foreground_desktop_control"
+        if action == "run_command":
+            try:
+                argv = shlex.split(str((params or {}).get("target") or ""))
+            except ValueError:
+                return None
+            if argv and argv[0] in {
+                "cat",
+                "echo",
+                "find",
+                "git",
+                "grep",
+                "ls",
+                "mkdir",
+                "pip",
+                "pwd",
+                "python3",
+                "touch",
+                "tree",
+            }:
+                return "sandboxed_compute"
+        return None
+
+    def _effect_scope_for_execution(
+        self,
+        skill_name: str,
+        meta: SkillMetadata,
+        params: dict[str, Any],
+        ctx: dict[str, Any] | None = None,
+    ) -> str:
+        base_scope = self._effect_scope_for(skill_name, meta)
+        if skill_name == "file_operation":
+            return self._workspace_file_io_scope(params) or base_scope
+        if skill_name == "computer_use":
+            return self._computer_use_effect_scope(params) or base_scope
+        return base_scope
+
+    @staticmethod
+    def _context_governed_execution(ctx: dict[str, Any], skill_name: str) -> bool:
+        token_id = str((ctx or {}).get("capability_token_id") or "").strip()
+        if not token_id:
+            return False
+        if bool((ctx or {}).get("_capability_token_verified")):
+            return True
+        try:
+            from core.executive.authority_gateway import get_authority_gateway
+
+            if get_authority_gateway().verify_tool_access(skill_name, token_id):
+                ctx["_capability_token_verified"] = True
+                return True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="treated unverified capability token as ungoverned for EDI check",
+                severity="warning",
+            )
+        return False
+
+    @staticmethod
     def _context_user_authorized(ctx: dict[str, Any], exec_source: str) -> bool:
         if bool(
             ctx.get("user_requested_action")
@@ -2620,23 +2711,24 @@ class CapabilityEngine(AuraBaseModule):
                     ctx = self._apply_executive_constraints(ctx)
 
                 capability_token_id = getattr(tool_handle, "capability_token_id", None)
-                if constitutional_runtime_live:
-                    if not capability_token_id:
-                        return {
-                            "ok": False,
-                            "error": "Capability token missing",
-                            "status": "blocked_by_missing_capability_token",
-                        }
-                    if not get_authority_gateway().verify_tool_access(
+                if capability_token_id:
+                    if get_authority_gateway().verify_tool_access(
                         skill_name, capability_token_id
                     ):
+                        ctx["capability_token_id"] = capability_token_id
+                        ctx["_capability_token_verified"] = True
+                    else:
                         return {
                             "ok": False,
                             "error": "Capability token denied tool execution",
                             "status": "blocked_by_capability_token",
                         }
-                    if capability_token_id:
-                        ctx["capability_token_id"] = capability_token_id
+                elif constitutional_runtime_live:
+                    return {
+                        "ok": False,
+                        "error": "Capability token missing",
+                        "status": "blocked_by_missing_capability_token",
+                    }
             except (ImportError, AttributeError, RuntimeError) as e:
                 severity = "degraded" if constitutional_runtime_live else "warning"
                 _record_capability_degradation(
@@ -2777,9 +2869,9 @@ class CapabilityEngine(AuraBaseModule):
             # 2. EDI Autonomy & Security Check (Phase 23.4)
             edi = resolve_edi(default=None)
             if edi and hasattr(edi, "can_do"):
-                effect_scope = self._effect_scope_for(skill_name, meta)
+                effect_scope = self._effect_scope_for_execution(skill_name, meta, params, ctx)
                 risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
-                governed_execution = bool((ctx or {}).get("capability_token_id"))
+                governed_execution = self._context_governed_execution(ctx, skill_name)
                 user_authorized = self._context_user_authorized(ctx, exec_source)
 
                 allowed, reason = edi.can_do(

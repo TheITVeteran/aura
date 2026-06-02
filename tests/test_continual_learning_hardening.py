@@ -232,6 +232,27 @@ def test_shackled_edi_allows_only_scoped_safe_or_governed_actions(tmp_path: Path
         governed=True,
         user_authorized=True,
     )[0]
+    assert edi.can_do(
+        "file_operation",
+        risk_level="medium",
+        effect_scope="workspace_file_io",
+        governed=True,
+        user_authorized=True,
+    )[0]
+    assert edi.can_do(
+        "computer_use",
+        risk_level="high",
+        effect_scope="foreground_desktop_control",
+        governed=True,
+        user_authorized=True,
+    )[0]
+    assert not edi.can_do(
+        "file_operation",
+        risk_level="medium",
+        effect_scope="workspace_file_io",
+        governed=False,
+        user_authorized=True,
+    )[0]
     assert not edi.can_do(
         "run_code",
         risk_level="critical",
@@ -266,6 +287,64 @@ def test_capability_engine_classifies_learned_and_sandbox_execution_risk():
     ) == "low"
     assert engine._edi_risk_for("run_code", run_code, {"stateful": False}, "sandboxed_compute") == "high"
     assert engine._edi_risk_for("run_code", run_code, {"stateful": True}, "sandboxed_compute") == "critical"
+
+
+def test_capability_engine_edi_scopes_live_user_file_and_desktop_actions():
+    from core.capability_engine import CapabilityEngine, SkillMetadata
+
+    engine = CapabilityEngine.__new__(CapabilityEngine)
+    file_meta = SkillMetadata(
+        name="file_operation",
+        description="workspace file operation",
+        metabolic_cost=1,
+        effect_scope="state_mutation",
+    )
+    desktop_meta = SkillMetadata(
+        name="computer_use",
+        description="desktop control",
+        metabolic_cost=2,
+        effect_scope="unknown",
+    )
+
+    assert engine._effect_scope_for_execution(
+        "file_operation",
+        file_meta,
+        {"action": "write", "path": "artifacts/live_runtime/button_probe.txt"},
+    ) == "workspace_file_io"
+    assert engine._effect_scope_for_execution(
+        "file_operation",
+        file_meta,
+        {"action": "delete", "path": "artifacts/live_runtime/button_probe.txt"},
+    ) == "state_mutation"
+    assert engine._effect_scope_for_execution(
+        "file_operation",
+        file_meta,
+        {"action": "write", "path": "../outside.txt"},
+    ) == "state_mutation"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "open_app", "target": "Calculator"},
+    ) == "foreground_desktop_control"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_command", "target": "pwd"},
+    ) == "sandboxed_compute"
+
+
+def test_capability_engine_edi_governance_requires_verified_capability_token():
+    from core.capability_engine import CapabilityEngine
+
+    assert CapabilityEngine._context_governed_execution({}, "file_operation") is False
+    assert CapabilityEngine._context_governed_execution(
+        {"capability_token_id": "unverified-token"},
+        "file_operation",
+    ) is False
+    assert CapabilityEngine._context_governed_execution(
+        {"capability_token_id": "verified-token", "_capability_token_verified": True},
+        "file_operation",
+    ) is True
 
 
 def test_continual_learning_validator_rejects_refused_skill_registration(tmp_path: Path):

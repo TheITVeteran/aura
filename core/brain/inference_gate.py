@@ -454,14 +454,16 @@ class InferenceGate:
 
     @staticmethod
     def _boot_should_schedule_deferred_prewarm() -> bool:
-        if InferenceGate._desktop_safe_boot_enabled():
-            logger.info("🛡️ Desktop safe boot active — skipping deferred 32B prewarm during launch.")
-            return False
         setting = str(os.environ.get("AURA_DEFERRED_CORTEX_PREWARM", "auto")).strip().lower()
         if setting in {"1", "true", "yes", "on"}:
             return True
         if setting in {"0", "false", "no", "off"}:
             return False
+        if InferenceGate._desktop_safe_boot_enabled():
+            logger.info(
+                "🛡️ Desktop safe boot active — scheduling memory-gated deferred 32B prewarm."
+            )
+            return True
         return True
 
     @staticmethod

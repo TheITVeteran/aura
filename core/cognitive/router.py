@@ -9,7 +9,7 @@ import logging
 import re
 from enum import Enum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Optional, Union, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
@@ -134,5 +134,11 @@ class IntentRouter:
         return await capability_engine.execute(
             str(skill_name or "").strip(),
             dict(params or {}),
-            context={"origin": "api", "route": "intent_router.route_execution"},
+            context={
+                "origin": "api",
+                "route": "intent_router.route_execution",
+                "foreground_request": True,
+                "user_explicitly_authorized": True,
+                "user_requested_action": True,
+            },
         )

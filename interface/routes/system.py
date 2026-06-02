@@ -522,6 +522,9 @@ def _collect_voice_summary() -> dict[str, Any]:
         "available": voice_available,
         "microphone_enabled": voice_available,
         "speaking_enabled": voice_available,
+        "listening": False,
+        "auto_listen": False,
+        "server_capture": False,
         "streaming_available": voice_available,
         "state": "ready" if voice_available else "unavailable",
     }
@@ -530,8 +533,20 @@ def _collect_voice_summary() -> dict[str, Any]:
         if voice is not None:
             microphone_enabled = bool(getattr(voice, "microphone_enabled", True))
             speaking_enabled = bool(getattr(voice, "speaking_enabled", True))
+            listening = bool(
+                getattr(voice, "_mic_listening", False)
+                or getattr(voice, "is_listening", False)
+            )
             summary["microphone_enabled"] = microphone_enabled
             summary["speaking_enabled"] = speaking_enabled
+            summary["listening"] = listening
+            if hasattr(voice, "get_status"):
+                voice_status = voice.get_status() or {}
+                if isinstance(voice_status, dict):
+                    summary["auto_listen"] = bool(voice_status.get("auto_listen", False))
+                    summary["server_capture"] = bool(voice_status.get("server_capture", False))
+                    summary["stt"] = voice_status.get("stt")
+                    summary["tts"] = voice_status.get("tts")
             if not microphone_enabled and not speaking_enabled:
                 summary["state"] = "muted"
             else:
@@ -1464,6 +1479,10 @@ async def api_health(request: Request):
             "camera_reason": browser_camera_privacy.get("reason"),
             "continuous_camera_enabled": getattr(smc_mod, "camera_enabled", False),
             "microphone_enabled": getattr(voice_mod, "microphone_enabled", True),
+            "microphone_listening": bool(
+                getattr(voice_mod, "_mic_listening", False)
+                or getattr(voice_mod, "is_listening", False)
+            ),
             "speaking_enabled": getattr(voice_mod, "speaking_enabled", True),
         }
 

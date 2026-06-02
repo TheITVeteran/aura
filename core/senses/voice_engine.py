@@ -21,6 +21,7 @@ import base64
 
 from core.utils.exceptions import capture_and_log
 from core.utils.concurrency import RobustLock
+import inspect
 import subprocess
 import threading
 import time
@@ -55,7 +56,6 @@ except ImportError:
 import io
 import wave
 import urllib.request
-import logging
 import os
 
 logger = logging.getLogger("Aura.VoiceEngine")
@@ -197,6 +197,8 @@ class SovereignVoiceEngine:
 
         # ── Callbacks ─────────────────────────────────────
         self._on_transcript: Optional[Callable[[str], Awaitable[None]]] = None
+        self._transcript_callbacks: dict[str, Callable[[str], Awaitable[None]]] = {}
+        self._anonymous_transcript_callbacks: List[Callable[[str], Awaitable[None]]] = []
         self._on_tts_audio: Optional[Callable[[bytes], Awaitable[None]]] = None
         self._on_state_change: Optional[Callable[[VoiceState], Awaitable[None]]] = None
         self._on_vad_change: Optional[Callable[[bool], None]] = None # Pulse when VAD detection changes
@@ -868,7 +870,12 @@ class SovereignVoiceEngine:
         """Route transcript to the orchestrator via callback + EventBus."""
         # Path 1: Direct callback (if registered by SovereignEars)
         loop = self.loop
-        if self._on_transcript and loop and loop.is_running():
+        has_direct_callback = bool(
+            self._on_transcript
+            or self._transcript_callbacks
+            or self._anonymous_transcript_callbacks
+        )
+        if has_direct_callback and loop and loop.is_running():
             try:
                 loop.call_soon_threadsafe(
                     lambda t=text: loop.create_task(
@@ -899,12 +906,8 @@ class SovereignVoiceEngine:
         """Async handler for direct callback path."""
         await self._set_state(VoiceState.PROCESSING)
         try:
-            if self._on_transcript is not None and callable(self._on_transcript):
-                logger.debug("Routing transcript to brain: %s", text[:50])
-                res = self._on_transcript(text)
-                if asyncio.iscoroutine(res) or asyncio.isfuture(res) or hasattr(res, "__await__"):
-                    await res
-                logger.debug("Transcript successfully routed.")
+            await self._run_transcript_callbacks(text)
+            logger.debug("Transcript successfully routed.")
         except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Direct transcript callback failed: %s", e, exc_info=True)
@@ -914,52 +917,6 @@ class SovereignVoiceEngine:
     # ══════════════════════════════════════════════════════
     # TTS (Text-to-Speech)
     # ══════════════════════════════════════════════════════
-
-    async def speak(self, text: str):
-        """Standard entry point for speech."""
-        await self.synthesize_speech(text)
-
-    async def synthesize_speech(self, text: str):
-        """Speak text aloud using the best available engine."""
-        if not text or not text.strip():
-            return
-        # TTS mute guard — respect speaking_enabled flag (set by UI voice toggle)
-        if not getattr(self, "speaking_enabled", True):
-            logger.debug("🔇 TTS suppressed: speaking_enabled=False")
-            return
-
-        if not await self.tts_async_lock.acquire_robust(timeout=10.0):
-            logger.warning("⚠️ Failed to acquire TTS lock within 10s. Skipping synthesis.")
-            return
-
-        try:
-            # Fallback initialization check
-            if not self._xtts_engine and not self._piper_voice and getattr(self, "tts_engine", None) is None:
-                await self.ensure_tts_async()
-            
-            await self._set_state(VoiceState.SPEAKING)
-            self._pulse_hypha("cognition", "voice_engine")
-            
-            try:
-                if self._xtts_engine:
-                    await self._synthesize_xtts(text)
-                elif self._piper_voice:
-                    await self._synthesize_piper(text)
-                elif self.tts_engine:
-                    await self._synthesize_pyttsx3(text)
-                
-                self._pulse_hypha("cognition", "voice_engine", success=True)
-                logger.debug("🗣️ Speech complete: %s", text[:60])
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('voice_engine', e)
-                logger.error("❌ TTS Synthesis failed: %s", e)
-                self._pulse_hypha("cognition", "voice_engine", success=False)
-            finally:
-                self.is_speaking = False
-                await self._set_state(VoiceState.IDLE)
-        finally:
-            if self.tts_async_lock.locked():
-                self.tts_async_lock.release()
 
     async def _play_locally(self, audio_data: bytes):
         """Play PCM/WAV audio data locally on macOS using afplay."""
@@ -1059,9 +1016,15 @@ class SovereignVoiceEngine:
 
     async def synthesize_speech(self, text: str):
         """Single-string wrapper for TTS synthesis (used by local_voice_cortex)."""
+        if not text or not text.strip():
+            return ""
+        if not getattr(self, "speaking_enabled", True):
+            logger.debug("🔇 TTS suppressed: speaking_enabled=False")
+            return ""
+
         async def _iter():
             yield text
-        await self.speak_stream(_iter())
+        return await self.speak_stream(_iter())
 
     async def speak(self, text: str):
         """Alias for synthesize_speech."""
@@ -1069,6 +1032,10 @@ class SovereignVoiceEngine:
 
     async def speak_stream(self, text_iterator) -> str:
         """Plays TTS audio and returns exactly what was successfully spoken."""
+        if not getattr(self, "speaking_enabled", True):
+            logger.debug("🔇 TTS stream suppressed: speaking_enabled=False")
+            return ""
+
         if not await self.tts_async_lock.acquire_robust(timeout=5.0):
              return "Lock timeout"
 
@@ -1127,9 +1094,6 @@ class SovereignVoiceEngine:
 
     async def _synthesize_piper(self, text: str):
         """High-fidelity synthesis via Piper."""
-        # Generate audio with prosody modulation
-        prosody = self._get_affective_prosody()
-        
         def _get_audio():
             buf = io.BytesIO()
             with wave.open(buf, 'wb') as wf:
@@ -1224,9 +1188,46 @@ class SovereignVoiceEngine:
         if q in self._sse_queues:
             self._sse_queues.remove(q)
 
-    def on_transcript(self, callback: Callable[[str], Awaitable[None]]):
-        """Register a callback for transcription results."""
-        self._on_transcript = callback
+    async def _run_transcript_callbacks(self, text: str) -> None:
+        callbacks: list[Callable[[str], Awaitable[None]]] = [
+            self._transcript_callbacks[key]
+            for key in list(self._transcript_callbacks.keys())
+        ]
+        callbacks.extend(self._anonymous_transcript_callbacks)
+
+        if not callbacks and self._on_transcript is not None:
+            callbacks.append(self._on_transcript)
+
+        for callback in callbacks:
+            try:
+                logger.debug("Routing transcript through callback %s: %s", callback, text[:50])
+                res = callback(text)
+                if inspect.isawaitable(res):
+                    await res
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "voice_engine",
+                    exc,
+                    action="continued transcript fanout after one voice callback failed",
+                )
+                logger.error("Transcript callback failed: %s", exc, exc_info=True)
+
+    def on_transcript(
+        self,
+        callback: Callable[[str], Awaitable[None]],
+        *,
+        key: str | None = None,
+        replace: bool = False,
+    ):
+        """Register a transcript callback without stealing existing listeners."""
+        if replace:
+            self._transcript_callbacks.clear()
+            self._anonymous_transcript_callbacks.clear()
+        if key:
+            self._transcript_callbacks[key] = callback
+        elif callback not in self._anonymous_transcript_callbacks:
+            self._anonymous_transcript_callbacks.append(callback)
+        self._on_transcript = self._run_transcript_callbacks
 
     async def _set_state(self, new_state: VoiceState):
         if self.state != new_state:

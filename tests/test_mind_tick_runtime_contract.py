@@ -1,7 +1,12 @@
+import asyncio
+import sqlite3
+
 import pytest
 
 import core.mind_tick as mind_module
 from core.mind_tick import MindTick, _schedule_mind_task
+from core.runtime.errors import get_degradation_tracker
+from core.state.state_repository import StateRepository
 
 
 class ClosingAwaitable:
@@ -55,3 +60,53 @@ async def test_mind_tick_start_rolls_back_when_loop_cannot_be_scheduled(monkeypa
 
     assert tick._running is False
     assert tick._task is None
+
+
+@pytest.mark.asyncio
+async def test_mind_tick_stop_drains_closed_db_task_failure():
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+
+    async def failed_loop():
+        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+    tick._task = asyncio.create_task(failed_loop())
+    await asyncio.sleep(0)
+
+    await tick.stop()
+
+    assert tick._running is False
+    assert any(
+        "background loop failed while draining" in record.action
+        for record in tracker.recent(subsystem="mind_tick")
+    )
+    tracker.reset()
+
+
+@pytest.mark.asyncio
+async def test_state_repository_clear_pending_proxy_commit_handles_closed_db(monkeypatch):
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    repo = StateRepository(is_vault_owner=False)
+
+    class ClosedDB:
+        async def execute(self, *_args, **_kwargs):
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+        async def commit(self):
+            raise AssertionError("commit should not run after closed execute")
+
+    async def closed_db():
+        return ClosedDB()
+
+    monkeypatch.setattr(repo, "_ensure_db", closed_db)
+
+    await repo._clear_pending_proxy_commit()
+
+    assert any(
+        "outbox clear failed" in record.action
+        for record in tracker.recent(subsystem="state_repository")
+    )
+    tracker.reset()

@@ -579,7 +579,11 @@ class ProgressiveAutonomySystem:
     ) -> tuple[bool, str]:
         """Determine if an action is permitted based on current Trust/Autonomy tier."""
         safe_read_scopes = {"read_only", "pure_compute", "status"}
-        governed_user_scopes = safe_read_scopes | {"sandboxed_compute"}
+        governed_user_scopes = safe_read_scopes | {
+            "foreground_desktop_control",
+            "sandboxed_compute",
+            "workspace_file_io",
+        }
         normalized_risk = str(risk_level or "low").lower()
         normalized_scope = str(effect_scope or "unknown").lower()
 

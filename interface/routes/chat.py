@@ -4562,10 +4562,13 @@ async def _execute_governed_live_skill(
         "route": "chat.live_runtime_proof",
         "objective": objective[:500],
         "message": objective[:500],
+        "foreground_request": True,
+        "user_explicitly_authorized": True,
+        "user_requested_action": True,
     }
     engine = ServiceContainer.get("capability_engine", default=None)
 
-    async def _execute_capability() -> dict[str, Any]:
+    async def _execute_capability(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
         if not engine or not hasattr(engine, "execute"):
             return {
                 "ok": False,
@@ -4573,7 +4576,7 @@ async def _execute_governed_live_skill(
                 "error": "No governed capability executor is registered.",
                 "status": "capability_engine_unavailable",
             }
-        result = await engine.execute(skill_name, dict(params), context=context)
+        result = await engine.execute(skill_name, dict(params), context=execution_context or context)
         if isinstance(result, dict):
             return result
         return {"ok": bool(result), "result": result}
@@ -4602,7 +4605,10 @@ async def _execute_governed_live_skill(
             }
 
         async def _execute(_proposal, _state_snapshot, _capability_token) -> dict[str, Any]:
-            return await _execute_capability()
+            execution_context = dict(context)
+            if _capability_token:
+                execution_context["agency_capability_token_id"] = str(_capability_token)
+            return await _execute_capability(execution_context)
 
         async def _assess(_proposal, _state_snapshot, exec_result) -> dict[str, Any]:
             ok = bool((exec_result or {}).get("ok"))

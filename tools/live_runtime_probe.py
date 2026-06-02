@@ -66,6 +66,7 @@ class LiveRuntimeProbe:
             ws_task = asyncio.create_task(self._collect_ws_events(), name="live-probe-ws")
             try:
                 await self._probe("health", self._health)
+                await self._probe("voice_runtime_ready", self._voice_runtime_ready)
                 await self._probe("skill_button_file_write", self._skill_button_file_write)
                 await self._probe("chat_coding_snake", self._chat_coding_snake)
                 await self._probe("novel_topic_continuity", self._novel_topic_continuity)
@@ -145,6 +146,23 @@ class LiveRuntimeProbe:
         if "conversation" not in bootstrap:
             raise AssertionError("ui bootstrap missing conversation payload")
         return "health, boot, and UI bootstrap responded", {"boot": boot, "health": health}
+
+    async def _voice_runtime_ready(self) -> tuple[str, dict[str, Any]]:
+        bootstrap = await self._get("/api/ui/bootstrap")
+        voice = bootstrap.get("voice")
+        if not isinstance(voice, dict):
+            raise AssertionError("ui bootstrap missing voice payload")
+        if not voice.get("available"):
+            raise AssertionError(f"voice engine unavailable: {voice}")
+        if not voice.get("streaming_available"):
+            raise AssertionError(f"voice output stream unavailable: {voice}")
+        if not voice.get("server_capture"):
+            raise AssertionError(f"server-side voice capture not advertised: {voice}")
+        if voice.get("microphone_enabled") and not voice.get("listening"):
+            raise AssertionError(f"microphone enabled but listener inactive: {voice}")
+        if "listening" not in voice:
+            raise AssertionError(f"voice payload does not expose listening state: {voice}")
+        return "voice engine and stream are available with honest listener state", voice
 
     async def _skill_button_file_write(self) -> tuple[str, dict[str, Any]]:
         marker = f"live button probe {int(time.time())}"

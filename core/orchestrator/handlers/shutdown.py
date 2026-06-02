@@ -52,6 +52,13 @@ async def _gracefully_stop_actor_via_bus(
             ),
             timeout=stop_budget_s,
         )
+    except (BrokenPipeError, ConnectionError, OSError) as exc:
+        _record_shutdown_degradation(
+            exc,
+            action=f"continued shutdown after actor bus was already closed for {actor_name}",
+        )
+        logger.debug("Actor bus already closed while stopping %s: %s", actor_name, exc)
+        return
     except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
         _record_shutdown_degradation(
             exc,
@@ -165,7 +172,14 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
             logger.info("💾 UPSO: Shutdown state committed.")
         else:
             logger.info("💾 UPSO: Skipping shutdown state commit; state transport unavailable.")
-    except (RuntimeError, AttributeError, TypeError) as exc:
+    except asyncio.CancelledError as exc:
+        _record_shutdown_degradation(
+            exc,
+            action="continued shutdown after UPSO shutdown state commit was cancelled",
+            severity="warning",
+        )
+        logger.debug("UPSO: Shutdown state commit cancelled during process teardown: %s", exc)
+    except (RuntimeError, AttributeError, TypeError, OSError) as exc:
         _record_shutdown_degradation(
             exc,
             action="continued shutdown after UPSO shutdown state commit failed",

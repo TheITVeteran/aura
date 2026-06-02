@@ -762,6 +762,9 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
     class FakeCapabilityEngine:
         async def execute(self, skill_name, params, context=None):
             assert skill_name == "file_operation"
+            assert context["origin"] == "user"
+            assert context["user_requested_action"] is True
+            assert context["agency_capability_token_id"] == "cap-token-test"
             target = tmp_path / params["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(params["content"])
@@ -897,7 +900,13 @@ async def test_intent_router_route_execution_drives_capability_engine():
         (
             "file_operation",
             {"action": "exists", "path": "README.md"},
-            {"origin": "api", "route": "intent_router.route_execution"},
+            {
+                "origin": "api",
+                "route": "intent_router.route_execution",
+                "foreground_request": True,
+                "user_explicitly_authorized": True,
+                "user_requested_action": True,
+            },
         )
     ]
 
@@ -927,7 +936,13 @@ def test_legacy_interface_router_delegates_to_canonical_capability_path():
         (
             "forge_skill",
             {"name": "diagnostic_skill"},
-            {"origin": "api", "route": "intent_router.route_execution"},
+            {
+                "origin": "api",
+                "route": "intent_router.route_execution",
+                "foreground_request": True,
+                "user_explicitly_authorized": True,
+                "user_requested_action": True,
+            },
         )
     ]
 

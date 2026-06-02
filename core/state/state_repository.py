@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import os
+import sqlite3
 import time
 from enum import Enum
 from pathlib import Path
@@ -41,6 +42,7 @@ _STATE_BOUNDARY_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
+    sqlite3.Error,
     asyncio.InvalidStateError,
 )
 _REBASEABLE_ISOLATION_CAUSES = frozenset(

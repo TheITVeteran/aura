@@ -8,9 +8,9 @@ from core.runtime.errors import record_degradation
 
 
 import asyncio
+import inspect
 import json
 import logging
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -126,21 +126,51 @@ async def api_privacy_camera(payload: PrivacyPayload, _: None = Depends(_require
 
 @router.post("/privacy/microphone")
 async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_require_internal)):
-    """Toggle voice I/O without forcing the always-listening path."""
+    """Toggle voice I/O and make enablement operational, not just declarative."""
     enabled = payload.enabled
     voice = _voice_engine_fn() if _voice_engine_fn else None
     if voice:
         voice.microphone_enabled = enabled
         if hasattr(voice, "speaking_enabled"):
             voice.speaking_enabled = enabled
-        if not enabled and hasattr(voice, "stop_listening"):
+        listening_started = False
+        start_error: str | None = None
+        if enabled and hasattr(voice, "start_listening"):
+            try:
+                start_result = voice.start_listening()
+                if inspect.isawaitable(start_result):
+                    start_result = await start_result
+                listening_started = bool(start_result)
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "privacy",
+                    exc,
+                    action="rejected microphone enablement after listener startup failed",
+                )
+                start_error = f"{type(exc).__name__}: {exc}"
+                listening_started = False
+            if not listening_started:
+                voice.microphone_enabled = False
+                if hasattr(voice, "speaking_enabled"):
+                    voice.speaking_enabled = False
+        elif enabled:
+            start_error = "microphone_listener_unavailable"
+            voice.microphone_enabled = False
+            if hasattr(voice, "speaking_enabled"):
+                voice.speaking_enabled = False
+        elif not enabled and hasattr(voice, "stop_listening"):
             voice.stop_listening()
         logger.info("\U0001f512 Privacy: Voice I/O %s", 'enabled' if enabled else 'disabled')
+        listening = bool(getattr(voice, "_mic_listening", False))
+        ok = bool((not enabled) or listening_started or listening)
         return {
-            "ok": True,
-            "enabled": enabled,
+            "ok": ok,
+            "enabled": bool(getattr(voice, "microphone_enabled", enabled)),
             "microphone_enabled": getattr(voice, "microphone_enabled", enabled),
             "speaking_enabled": getattr(voice, "speaking_enabled", enabled),
+            "listening": listening,
+            "listening_started": listening_started,
+            "error": start_error or (None if ok else "microphone_start_failed"),
         }
     return JSONResponse({"error": "VoiceEngine unavailable"}, status_code=503)
 

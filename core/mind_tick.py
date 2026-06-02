@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ _MIND_SUBSYSTEM = "mind_tick"
 _MIND_BOUNDARY_ERRORS = (
     AttributeError, ImportError, LookupError, OSError,
     RuntimeError, TimeoutError, TypeError, ValueError,
+    sqlite3.Error,
     asyncio.InvalidStateError,
 )
 
@@ -295,6 +297,13 @@ class MindTick:
                 await self._task
             except asyncio.CancelledError:
                 logger.debug("MindTick: Shutdown requested.")
+            except _MIND_BOUNDARY_ERRORS as exc:
+                _record_mind_degradation(
+                    exc,
+                    action="continued shutdown after MindTick background loop failed while draining",
+                    severity="warning",
+                )
+                logger.debug("MindTick: Background loop ended during shutdown: %s", exc)
         logger.info("🛑 MindTick: Cognitive rhythm stopped.")
 
     async def _run_loop(self):
@@ -926,6 +935,9 @@ class MindTick:
                 # 7. If state changed, commit it
                 if current_state and state and current_state.state_id != state.state_id:
                     from .state.state_repository import StateVersionConflictError
+                    if not self._running or is_shutdown_requested():
+                        logger.debug("💓 MindTick: Skipping final commit during shutdown.")
+                        break
                     try:
                         await self.orchestrator.state_repo.commit(current_state, "mind_tick")
                         
@@ -1075,6 +1087,8 @@ class MindTick:
                             elapsed, interval,
                         )
                 sleep_time = max(1.0, interval - elapsed)
+                if not self._running or is_shutdown_requested():
+                    break
                 await asyncio.sleep(sleep_time)
 
     def _get_actual_from_state(self, state: AuraState) -> str | None:
