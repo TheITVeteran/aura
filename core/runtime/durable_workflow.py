@@ -33,6 +33,16 @@ from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 
 logger = logging.getLogger("Aura.DurableWorkflow")
 
+_WORKFLOW_STEP_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class WorkflowStatus(str, Enum):
     PENDING = "pending"
@@ -138,7 +148,7 @@ class DurableWorkflowEngine:
                 checkpoint.completed_steps.append(step.step_id)
                 checkpoint.updated_at = time.time()
                 self.store.save(checkpoint)
-            except BaseException as exc:
+            except _WORKFLOW_STEP_ERRORS as exc:
                 checkpoint.failed_step = step.step_id
                 checkpoint.failure_reason = repr(exc)
                 checkpoint.status = WorkflowStatus.FAILED
@@ -149,7 +159,7 @@ class DurableWorkflowEngine:
                         rb = step.rollback(checkpoint.outputs)
                         if asyncio.iscoroutine(rb):
                             await rb
-                    except BaseException as rb_exc:
+                    except _WORKFLOW_STEP_ERRORS as rb_exc:
                         logger.error(
                             "Workflow %s rollback for %s failed: %s",
                             workflow_id, step.step_id, rb_exc,

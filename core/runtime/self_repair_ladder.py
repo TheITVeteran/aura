@@ -34,6 +34,16 @@ from core.self_modification.mutation_safety import (
 
 logger = logging.getLogger("Aura.SelfRepairLadder")
 
+_PROBE_FAILURES = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 RUNG_SYNTAX = "syntax"
 RUNG_AST_SAFETY = "ast_safety"
@@ -212,7 +222,7 @@ async def _run_probe(rung: str, probe: Optional[Probe]) -> RungResult:
             result = await result
         ok = bool(result)
         return RungResult(rung, ok, reason=None if ok else "probe returned False")
-    except BaseException as exc:
+    except _PROBE_FAILURES as exc:
         logger.debug("Probe validation failed for rung %s: %s", rung, exc)
         return RungResult(rung, False, reason=f"probe raised: {exc!r}")
 

@@ -15,6 +15,11 @@ import string
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+_DEFAULT_ALLOWED_PARSE_ERRORS = (
+    RuntimeError,
+    ValueError,
+)
+
 
 def random_string(rng: random.Random, *, max_len: int = 64) -> str:
     n = rng.randint(0, max_len)
@@ -75,7 +80,8 @@ def fuzz_target(
         candidate = fn(rng)
         try:
             parse(candidate)
-        except BaseException as exc:
-            if isinstance(exc, tuple(forbidden)):
-                report.failures.append({"i": i, "input": repr(candidate)[:200], "exc": repr(exc)})
+        except tuple(forbidden) as exc:
+            report.failures.append({"i": i, "input": repr(candidate)[:200], "exc": repr(exc)})
+        except _DEFAULT_ALLOWED_PARSE_ERRORS:
+            continue
     return report

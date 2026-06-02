@@ -27,6 +27,16 @@ logger = logging.getLogger("Aura.TurnTransaction")
 
 EffectFn = Callable[[], Union[None, Awaitable[Any]]]
 
+_TURN_EFFECT_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 @dataclass
 class StagedEffect:
@@ -182,7 +192,7 @@ class TurnTransaction:
                     await result
                 applied.append(effect)
                 self.receipt.committed_effects.append(effect.name)
-            except BaseException as exc:
+            except _TURN_EFFECT_ERRORS as exc:
                 self.receipt.failed_effects.append({"name": effect.name, "error": repr(exc)})
                 logger.error(
                     "TurnTransaction %s effect '%s' failed (criticality=%s): %s",
@@ -214,7 +224,7 @@ class TurnTransaction:
                 if asyncio.iscoroutine(result):
                     await result
                 self.receipt.rolled_back_effects.append(effect.name)
-            except BaseException as exc:
+            except _TURN_EFFECT_ERRORS as exc:
                 logger.error(
                     "TurnTransaction %s rollback for '%s' failed: %s",
                     self.turn_id, effect.name, exc,

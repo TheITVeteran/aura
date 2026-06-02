@@ -40,6 +40,16 @@ _PROCESS_INTROSPECTION_ERRORS = (
     ValueError,
     OSError,
 ) + _PSUTIL_PROCESS_ERRORS
+_THREAD_RUN_FAILURES = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    SystemError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 def _env_int(name: str, default: int, *, low: int, high: int) -> int:
@@ -478,7 +488,7 @@ class RuntimeHygieneManager:
             record.ident = threading.get_ident()
             try:
                 return original_run(*args, **kwargs)
-            except BaseException as exc:
+            except _THREAD_RUN_FAILURES as exc:
                 record.exception = f"{type(exc).__name__}: {exc}"
                 raise
             finally:

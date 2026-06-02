@@ -4724,6 +4724,22 @@ async def test_self_repair_ladder_runs_caller_probes_in_order():
 
 
 @pytest.mark.asyncio
+async def test_self_repair_ladder_propagates_probe_cancellation():
+    from core.runtime.self_repair_ladder import (
+        SelfRepairProbes,
+        validate_patch,
+    )
+
+    async def _canceling_probe():
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    probes = SelfRepairProbes(targeted=_canceling_probe)
+    with pytest.raises(asyncio.CancelledError):
+        await validate_patch("def f():\n    return 1\n", probes=probes)
+
+
+@pytest.mark.asyncio
 async def test_self_repair_ladder_short_circuits_on_failure():
     from core.runtime.self_repair_ladder import (
         SelfRepairProbes,
@@ -5600,6 +5616,25 @@ def test_fuzz_target_records_failure_when_parser_crashes_with_forbidden_exceptio
     assert report.failures
 
 
+def test_causal_trace_records_cancelled_span_before_propagating(monkeypatch):
+    import core.runtime.causal_trace as causal_trace
+
+    events = []
+
+    def _record(event, *, span=None, **payload):
+        events.append((event, getattr(span, "name", ""), payload))
+
+    monkeypatch.setattr(causal_trace, "record_trace_event", _record)
+
+    with pytest.raises(asyncio.CancelledError):
+        with causal_trace.trace_scope("cancelled_work"):
+            raise asyncio.CancelledError()
+
+    assert events[-1][0] == "span_end"
+    assert events[-1][1] == "cancelled_work"
+    assert events[-1][2]["status"] == "cancelled"
+
+
 def test_telemetry_sli_catalog_covers_pageable_set():
     from core.runtime.telemetry_sli import (
         REQUIRED_SLO_NAMES,
@@ -6028,6 +6063,25 @@ async def test_turn_transaction_links_effects_via_receipt():
     assert receipt.turn_id.startswith("turn-")
 
 
+@pytest.mark.asyncio
+async def test_turn_transaction_propagates_cancellation_without_failed_effect_receipt():
+    from core.runtime.turn_transaction import TurnTransaction
+
+    async def _decide(**kwargs):
+        return {"approved": True, "receipt_id": "rcpt-cancel"}
+
+    async def _canceling_effect():
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    txn = TurnTransaction(origin="user", message="hi", governance_decide=_decide)
+    txn.stage("model.generate", _canceling_effect)
+    await txn.approve()
+    with pytest.raises(asyncio.CancelledError):
+        await txn.commit()
+    assert txn.receipt.failed_effects == []
+
+
 # ==========================================================================
 # A+ Concrete adapters: MemoryWriteGateway / StateGateway / receipts
 # ==========================================================================
@@ -6416,6 +6470,27 @@ async def test_durable_workflow_pauses_for_human_approval(tmp_path):
     assert cp.paused_at_step == "y"
 
 
+@pytest.mark.asyncio
+async def test_durable_workflow_propagates_step_cancellation(tmp_path):
+    from core.runtime.durable_workflow import (
+        DurableWorkflowEngine,
+        WorkflowStep,
+        WorkflowStore,
+    )
+
+    async def _canceling_step(_outs):
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    engine = DurableWorkflowEngine(store=WorkflowStore(root=tmp_path))
+    with pytest.raises(asyncio.CancelledError):
+        await engine.run(
+            "cancel-flow",
+            [WorkflowStep(step_id="cancel", name="cancel", apply=_canceling_step)],
+            workflow_id="cancel-flow",
+        )
+
+
 # ==========================================================================
 # A+ Operator CLI
 # ==========================================================================
@@ -6600,6 +6675,7 @@ async def test_model_runtime_actor_does_not_count_cancellation_as_backend_failur
     )
 
     async def _backend(req):
+        await asyncio.sleep(0)
         raise asyncio.CancelledError()
 
     actor = ModelRuntimeActor(backend=_backend)
@@ -6700,6 +6776,28 @@ async def test_skill_choreographer_runs_chain_in_dependency_order():
     outcome = await choreo.execute(plan, _executor)
     assert outcome.ok is True
     assert outcome.results["c"].output["prior"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_skill_choreographer_propagates_cancellation():
+    from core.runtime.skill_choreographer import (
+        ChainPlan,
+        ChainStep,
+        SkillChoreographer,
+    )
+    from core.runtime.skill_contract import SkillContract, SkillRegistry
+
+    reg = SkillRegistry()
+    reg.register(SkillContract(name="a", version="1.0", description=""))
+    choreo = SkillChoreographer(registry=reg)
+    plan = ChainPlan(objective="o", steps=[ChainStep(skill_name="a")])
+
+    async def _executor(_step, _prior):
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await choreo.execute(plan, _executor)
 
 
 def test_capability_certifications_require_abuse_pass():

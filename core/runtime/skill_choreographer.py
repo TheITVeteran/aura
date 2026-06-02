@@ -47,6 +47,16 @@ class ChainOutcome:
 
 SkillExecutor = Callable[[ChainStep, Dict[str, Any]], Union[SkillExecutionResult, Awaitable[SkillExecutionResult]]]
 
+_SKILL_CHAIN_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class SkillChoreographer:
     def __init__(self, *, registry: Optional[SkillRegistry] = None):
@@ -73,7 +83,7 @@ class SkillChoreographer:
                 result = executor(step, {k: r.output for k, r in completed.items()})
                 if asyncio.iscoroutine(result):
                     result = await result
-            except BaseException as exc:
+            except _SKILL_CHAIN_ERRORS as exc:
                 outcome.failed_step = step.skill_name
                 outcome.results[step.skill_name] = SkillExecutionResult(
                     skill=step.skill_name,

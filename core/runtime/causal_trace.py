@@ -15,6 +15,7 @@ import json
 import os
 import time
 import uuid
+import asyncio
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -90,7 +91,10 @@ def trace_scope(span_or_name: TraceSpanContext | str, *, origin: str = "runtime"
     try:
         yield span
         record_trace_event("span_end", span=span, status="ok")
-    except BaseException as exc:
+    except asyncio.CancelledError as exc:
+        record_trace_event("span_end", span=span, status="cancelled", error_type=type(exc).__name__, error=str(exc))
+        raise
+    except (AttributeError, LookupError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
         record_trace_event("span_end", span=span, status="error", error_type=type(exc).__name__, error=str(exc))
         raise
     finally:
