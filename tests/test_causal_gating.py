@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from core.brain.inference_gate import InferenceGate
 from core.consciousness.attention_schema import AttentionSchema, AttentionalFocus
 from core.consciousness.free_energy import FreeEnergyEngine, FreeEnergyState
+from core.runtime.errors import get_degradation_tracker
 
 
 # ==============================================================================
@@ -45,6 +46,40 @@ def test_inference_gate_get_system_phi_redundancy():
          patch("core.consciousness.phi_compute.get_phi_computer", return_value=None):
         phi = InferenceGate._get_system_phi()
         assert phi == 0.5
+
+
+def test_inference_gate_get_system_phi_records_typed_probe_failure():
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    def _service_get(name, default=None):
+        if name == "closed_causal_loop":
+            raise RuntimeError("loop unavailable")
+        return default
+
+    with patch("core.container.ServiceContainer.get", side_effect=_service_get), \
+         patch("core.consciousness.phi_compute.get_phi_computer", return_value=None):
+        phi = InferenceGate._get_system_phi()
+
+    assert phi == 0.5
+    records = tracker.recent(subsystem="inference_gate", limit=1)
+    assert records
+    assert records[-1].action == "continued phi lookup after closed causal loop probe failed"
+    tracker.reset()
+
+
+def test_inference_gate_get_system_phi_propagates_cancellation():
+    with patch("core.container.ServiceContainer.get", side_effect=asyncio.CancelledError()):
+        with pytest.raises(asyncio.CancelledError):
+            InferenceGate._get_system_phi()
+
+
+def test_inference_gate_source_has_no_raw_broad_exception_catches():
+    from pathlib import Path
+
+    source = Path("core/brain/inference_gate.py").read_text(encoding="utf-8")
+    assert "except Exception" not in source
+    assert "except BaseException" not in source
 
 
 def test_inference_gate_adaptive_max_tokens_phi_scaling():

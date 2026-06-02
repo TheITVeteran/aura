@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -5,6 +6,7 @@ import pytest
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.types import ThinkingMode, Thought
+from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
 
 
@@ -12,6 +14,27 @@ def test_cognitive_engine_treats_prefixed_user_origin_as_foreground():
     assert CognitiveEngine._is_background_request("routing_user", False) is False
     assert CognitiveEngine._is_background_request("routing_voice_command", False) is False
     assert CognitiveEngine._is_background_request("autonomous_thought", False) is True
+
+
+def test_cognitive_engine_context_patch_failure_is_reported(monkeypatch):
+    import core.brain.llm.context_assembler_patch as patch_module
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    def _fail_patch():
+        attempted_patch = True
+        assert attempted_patch
+        raise RuntimeError("patch unavailable")
+
+    monkeypatch.setattr(patch_module, "patch_context_assembler", _fail_patch)
+
+    CognitiveEngine()
+
+    records = tracker.recent(subsystem="cognitive_engine", limit=1)
+    assert records
+    assert records[-1].action == "continued without optional context assembler patch"
+    tracker.reset()
 
 
 @pytest.mark.asyncio
@@ -167,3 +190,62 @@ async def test_cognitive_engine_defaults_missing_origin_to_system(monkeypatch):
 
     assert thought.content == "ok"
     assert captured["origin"] == "system"
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(monkeypatch):
+    import core.brain.llm_health_router as router_module
+
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = None
+    engine._phases = []
+
+    class _CancellingRouter:
+        async def think(self, *args, **kwargs):
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(router_module, "get_llm_router", lambda: _CancellingRouter())
+
+    with pytest.raises(asyncio.CancelledError):
+        await engine._run_thinking_loop(
+            state,
+            "Solve exactly. <answer>required</answer>",
+            ThinkingMode.FAST,
+            "user",
+        )
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_strict_answer_recovery_records_typed_failure(monkeypatch):
+    import core.brain.llm_health_router as router_module
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = None
+    engine._phases = []
+
+    class _FailingRouter:
+        async def think(self, *args, **kwargs):
+            await asyncio.sleep(0)
+            raise RuntimeError("router offline")
+
+    monkeypatch.setattr(router_module, "get_llm_router", lambda: _FailingRouter())
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Solve exactly. <answer>required</answer>",
+        ThinkingMode.FAST,
+        "user",
+    )
+
+    assert thought.content == ""
+    assert "strict_answer_recovery_failed" in thought.reasoning[0]
+    records = tracker.recent(subsystem="cognitive_engine", limit=1)
+    assert records
+    assert records[-1].action == "returned strict answer recovery failure after direct recovery failed"
+    tracker.reset()

@@ -51,6 +51,18 @@ _USER_FACING_ORIGINS = frozenset(
     }
 )
 
+_COGNITIVE_ENGINE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 def _record_objective_binding(
     state: AuraState, objective: str, *, source: str, mode: Any, reason: str
@@ -95,7 +107,13 @@ class CognitiveEngine:
         try:
             from core.brain.llm.context_assembler_patch import patch_context_assembler
             patch_context_assembler()
-        except Exception as e:
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "cognitive_engine",
+                e,
+                severity="warning",
+                action="continued without optional context assembler patch",
+            )
             logger.error("Failed to patch context assembler: %s", e)
 
 
@@ -799,7 +817,13 @@ class CognitiveEngine:
                     )
                     self.thoughts.append(thought)
                     return thought
-            except Exception as rec_err:
+            except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as rec_err:
+                record_degradation(
+                    "cognitive_engine",
+                    rec_err,
+                    severity="degraded",
+                    action="returned strict answer recovery failure after direct recovery failed",
+                )
                 logger.error("Failed last-resort structured recovery: %s", rec_err)
             return self._empty_thought(mode, "strict_answer_recovery_failed")
 

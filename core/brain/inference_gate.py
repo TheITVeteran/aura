@@ -1958,7 +1958,12 @@ class InferenceGate:
                 phi_est = getattr(loop._loop_state, "phi_estimate", 0.0)
                 if phi_est > 0.0:
                     return float(phi_est)
-        except Exception as e:
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
+            _record_inference_degradation(
+                e,
+                action="continued phi lookup after closed causal loop probe failed",
+                severity="debug",
+            )
             logger.debug("Failed to retrieve phi from closed causal loop: %s", e)
 
         try:
@@ -1968,7 +1973,12 @@ class InferenceGate:
                 phi_latest = pc.latest_phi
                 if phi_latest > 0.0:
                     return float(phi_latest)
-        except Exception as e:
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
+            _record_inference_degradation(
+                e,
+                action="continued phi lookup after phi computer probe failed",
+                severity="debug",
+            )
             logger.debug("Failed to retrieve phi from phi computer: %s", e)
 
         try:
@@ -1978,7 +1988,12 @@ class InferenceGate:
                 res = phi_core._last_result
                 if res is not None:
                     return float(res.phi_s)
-        except Exception as e:
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
+            _record_inference_degradation(
+                e,
+                action="returned neutral phi after phi core probe failed",
+                severity="debug",
+            )
             logger.debug("Failed to retrieve phi from phi core: %s", e)
 
         return 0.5  # Neutral default/fallback
@@ -4238,7 +4253,12 @@ class InferenceGate:
                     max_tokens = max(512, int(max_tokens * phi_scale))
                     logger.info("🧠 [PHI CONTROL] Integration Φ=%.3f -> scaling token budget by %.2f (max_tokens=%d)", 
                                 phi_val, phi_scale, max_tokens)
-            except Exception as exc:
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="kept unscaled token budget after phi token-budget probe failed",
+                    severity="debug",
+                )
                 logger.debug("Phi token budget scaling skipped: %s", exc)
 
         # ── Affective Circumplex: let somatic state modulate generation params ──
