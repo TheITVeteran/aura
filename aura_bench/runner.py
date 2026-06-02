@@ -93,10 +93,12 @@ class BenchTest:
     name: str = "unnamed"
 
     async def declare(self) -> Registration:  # pragma: no cover - subclass
-        raise NotImplementedError
+        message = f"{self.__class__.__name__}.declare must be implemented by subclasses"
+        raise NotImplementedError(message)
 
     async def run(self) -> Sample:  # pragma: no cover - subclass
-        raise NotImplementedError
+        message = f"{self.__class__.__name__}.run must be implemented by subclasses"
+        raise NotImplementedError(message)
 
     async def baseline(self) -> Optional[Sample]:
         return None

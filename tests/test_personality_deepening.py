@@ -100,12 +100,11 @@ class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
     def test_persona_persistence(self):
         """Verify persona can be persisted."""
         pe = PersonalityEngine()
-        # Mock to avoid real disk write in test
-        with patch('builtins.open', unittest.mock.mock_open()) as mocked_file:
-            with patch('pathlib.Path.mkdir'):
-                success = pe.persist()
-                self.assertTrue(success)
-                mocked_file.assert_called()
+        with patch("core.brain.personality_engine.atomic_write_text") as mocked_write:
+            success = pe.persist()
+            self.assertTrue(success)
+            mocked_write.assert_called_once()
+            self.assertTrue(str(mocked_write.call_args.args[0]).endswith("evolved_persona.json"))
         print("✓ Persona persistence verified.")
 
 if __name__ == "__main__":

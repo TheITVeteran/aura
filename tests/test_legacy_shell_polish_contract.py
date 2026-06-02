@@ -55,8 +55,8 @@ def test_legacy_shell_matches_conversation_lane_timeout_budget():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 
     assert "function conversationLaneRequestTimeoutMs" in js
-    assert "CHAT_REQUEST_TIMEOUT_READY_MS = 155000" in js
-    assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 185000" in js
+    assert "CHAT_REQUEST_TIMEOUT_READY_MS = 335000" in js
+    assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in js
     assert "const requestTimeoutMs = conversationLaneRequestTimeoutMs(state.conversationLane);" in js
     assert "const requestTimeoutMs = 90000;" not in js
 

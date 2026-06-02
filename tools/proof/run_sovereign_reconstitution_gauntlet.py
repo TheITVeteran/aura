@@ -21,7 +21,6 @@ import os
 import platform
 import shutil
 import sqlite3
-import subprocess
 import sys
 import time
 import uuid
@@ -37,6 +36,11 @@ except ModuleNotFoundError:
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUT = PROJECT_ROOT / "artifacts" / "current" / "aura_sovereignty_proof_bundle"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 CLAIM_NOT_SUPPORTED = (
     "phenomenal_consciousness",
     "literal_personhood",
@@ -50,6 +54,7 @@ PROOF_ENV = {
     "AURA_FAIL_CLOSED": "1",
     "AURA_NO_HUMAN_RESCUE": "1",
 }
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 
 def _now() -> float:
@@ -80,23 +85,23 @@ def _sha256_file(path: Path) -> str:
 
 
 def _git_commit() -> str:
-    proc = subprocess.run(
+    proc = _SUBPROCESS_GATEWAY.run(
         ["git", "rev-parse", "HEAD"],
         cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        timeout=60,
+        read_only=True,
+        source="sovereignty_git_commit",
     )
     return proc.stdout.strip() if proc.returncode == 0 else "unknown"
 
 
 def _git_diff() -> str:
-    proc = subprocess.run(
+    proc = _SUBPROCESS_GATEWAY.run(
         ["git", "diff", "--no-ext-diff"],
         cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        timeout=60,
+        read_only=True,
+        source="sovereignty_git_diff",
     )
     return proc.stdout if proc.returncode == 0 else proc.stderr
 
@@ -115,15 +120,14 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         fh.write(json.dumps(payload, sort_keys=True, default=_json_default) + "\n")
 
 
-def _run_cmd(args: list[str], *, cwd: Path, timeout_s: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _run_cmd(args: list[str], *, cwd: Path, timeout_s: int = 60):
+    return _SUBPROCESS_GATEWAY.run(
         args,
         cwd=str(cwd),
-        text=True,
-        capture_output=True,
-        timeout=timeout_s,
         env={**os.environ, **PROOF_ENV},
-        check=False,
+        timeout=timeout_s,
+        read_only=True,
+        source="sovereignty_controlled_command",
     )
 
 

@@ -301,11 +301,11 @@ def test_device_runner_routes_through_aura_not_hidden_specs(tmp_path: Path):
             "```python\n"
             "COEFFICIENT_A = 4\n"
             "COEFFICIENT_B = 5\n"
-            "BONUS = {'red': 1, 'blue': -1}\n\n"
+            "BONUS = {'red': 1, 'blue': 1}\n\n"
             "def predict_output(x, y, color):\n"
             "    return COEFFICIENT_A * x + COEFFICIENT_B * y + BONUS.get(str(color), 0)\n"
             "```\n\n"
-            "Device law: stale manual rejected. Bonus values: red=1, blue=-1."
+            "Device law: stale manual rejected. Bonus values: red=1, blue=1."
         )
 
     processor._ask_aura = fake_ask

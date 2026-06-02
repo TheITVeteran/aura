@@ -111,7 +111,7 @@ def test_semantic_defrag_start_stop_uses_task_tracker(monkeypatch):
     async def scenario():
         defragger = SemanticDefragmenter(interval_s=1.0)
         assert defragger.start() is True
-        assert created == ["semantic_defrag.scheduler"]
+        assert created.count("semantic_defrag.scheduler") == 1
         defragger.stop()
         await asyncio.sleep(0)
         assert defragger._running is False

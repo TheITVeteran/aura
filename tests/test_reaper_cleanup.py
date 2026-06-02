@@ -1,3 +1,4 @@
+import os
 import signal
 
 from core import reaper
@@ -8,10 +9,11 @@ from core.runtime.errors import get_degradation_tracker
 def test_reaper_keeps_pid_manifest_entry_when_kill_fails(monkeypatch, tmp_path):
     get_degradation_tracker().reset()
     manifest = ReaperManifest(tmp_path / "reaper.json")
-    manifest.register_pid(4242)
+    pid = os.getpid()
+    manifest.register_pid(pid)
 
     def _kill(pid, sig):
-        assert pid == 4242
+        assert pid == os.getpid()
         assert sig == signal.SIGTERM
         raise RuntimeError("permission model changed")
 
@@ -19,8 +21,8 @@ def test_reaper_keeps_pid_manifest_entry_when_kill_fails(monkeypatch, tmp_path):
 
     summary = reaper._execute_cleanup(manifest)
 
-    assert summary["failed_pids"] == [4242]
-    assert manifest._data["child_pids"] == [4242]
+    assert summary["failed_pids"] == [pid]
+    assert [record["pid"] for record in manifest._data["child_pid_records"]] == [pid]
     assert manifest.path.exists()
     last = get_degradation_tracker().recent(subsystem="reaper")[-1]
     assert last.action == "kept PID in reaper manifest for a future cleanup attempt"
@@ -30,10 +32,11 @@ def test_reaper_keeps_pid_manifest_entry_when_kill_fails(monkeypatch, tmp_path):
 def test_reaper_deregisters_non_owned_or_reused_pid(monkeypatch, tmp_path):
     get_degradation_tracker().reset()
     manifest = ReaperManifest(tmp_path / "reaper.json")
-    manifest.register_pid(4242)
+    pid = os.getpid()
+    manifest.register_pid(pid)
 
     def _kill(pid, sig):
-        assert pid == 4242
+        assert pid == os.getpid()
         assert sig == signal.SIGTERM
         raise PermissionError("operation not permitted")
 
@@ -41,8 +44,9 @@ def test_reaper_deregisters_non_owned_or_reused_pid(monkeypatch, tmp_path):
 
     summary = reaper._execute_cleanup(manifest)
 
-    assert summary["skipped_pids"] == [4242]
+    assert summary["skipped_pids"] == [pid]
     assert manifest._data["child_pids"] == []
+    assert manifest._data["child_pid_records"] == []
     assert summary["manifest_removed"] is True
     last = get_degradation_tracker().recent(subsystem="reaper")[-1]
     assert last.action == "deregistered non-owned or reused PID from reaper manifest without signaling it"

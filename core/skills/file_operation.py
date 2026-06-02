@@ -29,25 +29,29 @@ class FileOperationSkill(BaseSkill):
         # Define allowable root (e.g. scratch dir or current dir)
         self.root_dir = os.path.realpath(os.getcwd())
 
+    def _is_within_root(self, full_path: str) -> bool:
+        root = os.path.realpath(self.root_dir)
+        target = os.path.realpath(full_path)
+        try:
+            return os.path.commonpath([root, target]) == root
+        except ValueError:
+            return False
+
     def _safe_resolve(self, path: str) -> str:
-        """v5.0: SECURITY — Resolve path and enforce it stays within root_dir or system temp.
+        """Resolve path and enforce it stays within root_dir.
+
         Prevents path traversal via ../ or absolute paths to unauthorized areas.
         """
         if not path:
-            return self.root_dir
+            return os.path.realpath(self.root_dir)
         # Join relative to root and resolve symlinks
         if os.path.isabs(path):
             full = os.path.realpath(path)
         else:
             full = os.path.realpath(os.path.join(self.root_dir, path))
-        
-        # Allow standard system temporary directory paths for tests and scratch work
-        import tempfile
-        tmp_dir = os.path.realpath(tempfile.gettempdir())
-        is_in_tmp = full.startswith(tmp_dir) or full.startswith("/tmp") or full.startswith("/private/tmp")
-        
+
         # Check containment
-        if not full.startswith(self.root_dir) and not is_in_tmp:
+        if not self._is_within_root(full):
             raise PermissionError(f"Access denied: path '{path}' resolves outside workspace")
         return full
 
@@ -167,7 +171,7 @@ class FileOperationSkill(BaseSkill):
             elif action == "delete":
                 if await asyncio.to_thread(os.path.exists, full_path):
                     # Double-check containment before destructive ops
-                    if not os.path.realpath(full_path).startswith(self.root_dir):
+                    if not self._is_within_root(full_path):
                         return {"ok": False, "error": "Delete blocked: path outside workspace"}
                     
                     is_dir = await asyncio.to_thread(os.path.isdir, full_path)

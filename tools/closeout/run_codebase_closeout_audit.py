@@ -15,17 +15,21 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from subprocess import TimeoutExpired
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 DEFAULT_OUT = ROOT / "artifacts" / "current" / "closeout_audit"
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 TEXT_EXTENSIONS = {
     ".cfg",
@@ -118,13 +122,13 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
-def _run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _run_git(args: list[str]):
+    return _SUBPROCESS_GATEWAY.run(
         ["git", *args],
         cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        timeout=60,
+        read_only=True,
+        source="closeout_audit_git",
     )
 
 
@@ -242,13 +246,12 @@ def audit_file(path: Path, *, line_ledger_path: Path | None = None) -> FileAudit
 def run_command_gate(name: str, command: list[str], *, timeout_s: int = 240) -> GateResult:
     started = time.time()
     try:
-        proc = subprocess.run(
+        proc = _SUBPROCESS_GATEWAY.run(
             command,
             cwd=ROOT,
-            text=True,
-            capture_output=True,
             timeout=timeout_s,
-            check=False,
+            read_only=True,
+            source=f"closeout_audit_gate:{name}",
         )
         detail = (proc.stdout + "\n" + proc.stderr).strip()
         return GateResult(
@@ -258,7 +261,7 @@ def run_command_gate(name: str, command: list[str], *, timeout_s: int = 240) -> 
             detail=detail[-4000:],
             duration_s=round(time.time() - started, 4),
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutExpired as exc:
         return GateResult(
             name=name,
             passed=False,

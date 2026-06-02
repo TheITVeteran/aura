@@ -45,6 +45,11 @@ def _record_personality_degradation(
     severity: str = "warning",
     extra: dict[str, Any] | None = None,
 ) -> None:
+    # Personality recovery call sites already encode the safety outcome
+    # directly: quarantine-and-replace recoverable state, or return False for
+    # identity verification failures. Letting the recorder raise for the
+    # service-level fail-closed policy can interrupt those receipts/recoveries
+    # before the caller reaches its own closed state.
     record_degradation(
         "personality_engine",
         exc,
@@ -53,6 +58,7 @@ def _record_personality_degradation(
         classification=FallbackClassification.SAFE_FALLBACK,
         receipt_required=True,
         extra=extra,
+        enforce_failure_policy=False,
     )
 
 

@@ -450,6 +450,31 @@ class CognitiveRoutingPhase(BasePhase):
             new_state.response_modifiers.pop("matched_skills", None)
             return new_state
 
+        if proof_run_active(origin=routing_origin):
+            analysis = analyze_turn(input_text)
+            logger.info(
+                "🧭 Routing: proof/evaluation turn kept on exclusive DELIBERATE foreground lane."
+            )
+            new_state.cognition.current_mode = CognitiveMode.DELIBERATE
+            new_state.cognition.current_objective = input_text
+            new_state.cognition.current_origin = routing_origin
+            new_state.response_modifiers["intent_type"] = "CHAT"
+            new_state.response_modifiers["semantic_intent"] = analysis.semantic_mode
+            new_state.response_modifiers["model_tier"] = proof_model_tier()
+            new_state.response_modifiers["deep_handoff"] = False
+            new_state.response_modifiers["strict_proof_answer_request"] = (
+                is_strict_proof_answer_prompt(input_text, origin=routing_origin)
+            )
+            new_state.response_modifiers.pop("matched_skills", None)
+            if routing_origin in user_origins:
+                self._record_user_objective(
+                    new_state,
+                    input_text,
+                    routing_origin=routing_origin,
+                    mode=str(CognitiveMode.DELIBERATE.value),
+                )
+            return new_state
+
         if (
             routing_origin in user_origins
             and _looks_like_simple_dialogue_request(input_text)

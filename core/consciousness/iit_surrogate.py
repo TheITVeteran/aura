@@ -111,7 +111,7 @@ class RIIU:
                 phi = self._compute_phi_internal(data)
         else:
             self._warmup = True
-            phi = 0.1
+            phi = 0.0
 
 
 

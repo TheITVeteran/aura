@@ -1,8 +1,7 @@
-import asyncio
+import logging
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, AsyncMock
-import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -31,7 +30,9 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
 
     async def test_automatic_background_tiering_by_flag(self):
         """Verify that is_background=True forces the tertiary tier."""
-        with patch.object(self.router, '_call_endpoint', new_callable=AsyncMock) as mock_call:
+        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
+            self.router, '_call_endpoint', new_callable=AsyncMock
+        ) as mock_call:
             mock_call.return_value = {"ok": True, "text": "Mocked Response"}
             
             await self.router.think("Hello", is_background=True)
@@ -43,7 +44,9 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
 
     async def test_automatic_background_tiering_by_origin(self):
         """Verify that origin='metabolic' forces the tertiary tier."""
-        with patch.object(self.router, '_call_endpoint', new_callable=AsyncMock) as mock_call:
+        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
+            self.router, '_call_endpoint', new_callable=AsyncMock
+        ) as mock_call:
             mock_call.return_value = {"ok": True, "text": "Mocked Response"}
             
             await self.router.think("Hello", origin="metabolic_cycle")
@@ -53,7 +56,9 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
 
     async def test_background_override_is_demoted(self):
         """Background tasks must stay on the 7B path even if they request primary."""
-        with patch.object(self.router, '_call_endpoint', new_callable=AsyncMock) as mock_call:
+        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
+            self.router, '_call_endpoint', new_callable=AsyncMock
+        ) as mock_call:
             mock_call.return_value = {"ok": True, "text": "Mocked Response"}
             
             await self.router.think("Hello", prefer_tier="primary", is_background=True)
@@ -63,7 +68,9 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
 
     async def test_originless_primary_request_is_background_unless_purpose_is_user_facing(self):
         """Internal callers must not become foreground just by requesting primary."""
-        with patch.object(self.router, '_call_endpoint', new_callable=AsyncMock) as mock_call:
+        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
+            self.router, '_call_endpoint', new_callable=AsyncMock
+        ) as mock_call:
             mock_call.return_value = {"ok": True, "text": "Mocked Response"}
 
             await self.router.think("quiet internal reflection", prefer_tier="primary")

@@ -627,6 +627,9 @@ def _patched_build_messages(
       2. attention_focus written from objective before memory filtering,
          so _filter_memories_by_topic follows the live conversation topic.
       3. Delegates to patched build_system_prompt.
+      4. Routes conversation history through the foreground-safe stale skill
+         filter before token allocation, preventing background tool/autonomy
+         noise from entering user-facing Cortex prompts.
     """
     try:
         from core.brain.llm.context_assembler import ContextAssembler
@@ -673,11 +676,22 @@ def _patched_build_messages(
             # NO fake "Understood. I have integrated..." turn — it's gone.
 
     # 3. Conversation history
-    history_blocks  = governor.wrap_messages(state.cognition.working_memory)
+    raw_working_memory = list(getattr(state.cognition, "working_memory", []) or [])
+    working_memory = ContextAssembler._filter_stale_skill_results(
+        state,
+        objective,
+        raw_working_memory,
+    )
+    history_blocks = governor.wrap_messages(working_memory)
     allocated_blocks = governor.allocate(history_blocks)
     for block in allocated_blocks:
+        role = str(block.metadata.get("role", "user") or "user").strip().lower()
+        if role == "aura":
+            role = "assistant"
+        if role not in {"system", "user", "assistant"}:
+            continue
         messages.append({
-            "role":    block.metadata.get("role", "user"),
+            "role":    role,
             "content": block.content,
         })
 

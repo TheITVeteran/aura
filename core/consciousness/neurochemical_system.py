@@ -683,10 +683,14 @@ class NeurochemicalSystem:
             )
         dt = 1.0 / update_hz
 
-        # Get current levels as vector
+        # Get current level deviations as vector. Cross-chemical interactions
+        # should be driven by departures from each chemical's setpoint; using
+        # absolute levels makes the normal baseline state produce permanent
+        # synthesis and pushes idle chemistry away from homeostasis.
         for chemical in self.chemicals.values():
             chemical._sanitize_state(action="normalized chemical state before interaction")
         levels = np.array([self.chemicals[n].level for n in self._order], dtype=np.float32)
+        baselines = np.array([self.chemicals[n].baseline for n in self._order], dtype=np.float32)
         if not np.all(np.isfinite(levels)):
             _record_neurochemical_degradation(
                 ValueError("NeurochemicalSystem level vector contained non-finite values"),
@@ -695,9 +699,11 @@ class NeurochemicalSystem:
             )
             levels = np.nan_to_num(levels, nan=0.5, posinf=1.0, neginf=0.0)
         levels = np.clip(levels, 0.0, 1.0)
+        baselines = np.nan_to_num(baselines, nan=0.5, posinf=1.0, neginf=0.0)
+        baselines = np.clip(baselines, 0.0, 1.0)
 
         # Cross-chemical interactions
-        interaction_deltas = _INTERACTIONS.T @ levels  # (10,)
+        interaction_deltas = _INTERACTIONS.T @ (levels - baselines)  # (10,)
         interaction_deltas *= 0.05 * dt  # scale factor (reduced from 0.1 to prevent drift)
         interaction_deltas = np.nan_to_num(
             interaction_deltas,
@@ -732,6 +738,14 @@ class NeurochemicalSystem:
             
             chem.production_rate = max(0.0, min(0.15, raw_production * damping))
             chem.tick(dt)
+            # Tiny deterministic endogenous activity: the substrate should
+            # continue moving without external events, but this must not become
+            # a tonic mood driver. The sinusoid is zero-centered and homeostasis
+            # pulls it back toward each chemical's baseline.
+            phase = (self._tick_count + 1) * 0.17 + i * 0.91
+            endogenous_microdrive = 0.0008 * float(np.sin(phase)) * dt
+            chem.tonic_level = max(0.0, min(1.0, chem.tonic_level + endogenous_microdrive))
+            chem.level = min(1.0, chem.tonic_level + chem.phasic_burst)
 
         # NOTE: No second homeostatic pull here. Chemical.tick() handles it.
 

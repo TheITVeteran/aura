@@ -72,6 +72,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from core.base_module import AuraBaseModule
 from core.config import config
 from core.container import ServiceContainer
+from core.exceptions import ContainerError
 from core.runtime.service_access import (
     optional_service,
     resolve_edi,
@@ -2854,7 +2855,7 @@ class CapabilityEngine(AuraBaseModule):
                     elif hasattr(gov, "_enforce_policy"):
                         await gov._enforce_policy()
                 orm = rt.container.get("persistent_state", default=None)
-            except (RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
+            except (RuntimeError, OSError, ConnectionError, TimeoutError, ContainerError) as exc:
                 _record_capability_degradation(
                     exc,
                     action="continued skill execution without core runtime memory governance",
@@ -3387,4 +3388,3 @@ async def execute_tool(tool_name: str, parameters: dict[str, Any] | None = None,
         return await engine.execute(real_tool, real_params, **kwargs)
 
     return await engine.execute(tool_name, params, **kwargs)
-

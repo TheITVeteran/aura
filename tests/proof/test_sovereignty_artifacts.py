@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 SMOKE_ENV = {**os.environ, "AURA_SOVEREIGNTY_LIVE_RUNTIME": "0"}
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 
 def _jsonl(path: Path) -> list[dict]:
@@ -17,7 +19,7 @@ def _jsonl(path: Path) -> list[dict]:
 
 def test_sovereign_reconstitution_smoke_artifacts(tmp_path):
     out = tmp_path / "aura_sovereignty_proof_bundle"
-    result = subprocess.run(
+    result = _SUBPROCESS_GATEWAY.run(
         [
             sys.executable,
             "tools/proof/run_sovereign_reconstitution_gauntlet.py",
@@ -32,10 +34,9 @@ def test_sovereign_reconstitution_smoke_artifacts(tmp_path):
         ],
         cwd=ROOT,
         env=SMOKE_ENV,
-        text=True,
-        capture_output=True,
         timeout=180,
-        check=False,
+        read_only=True,
+        source="test_sovereign_reconstitution_smoke_artifacts",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -131,7 +132,7 @@ def test_sovereign_reconstitution_smoke_artifacts(tmp_path):
 
 def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
     out = tmp_path / "tampered"
-    result = subprocess.run(
+    result = _SUBPROCESS_GATEWAY.run(
         [
             sys.executable,
             "tools/proof/run_sovereign_reconstitution_gauntlet.py",
@@ -142,10 +143,9 @@ def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
         ],
         cwd=ROOT,
         env=SMOKE_ENV,
-        text=True,
-        capture_output=True,
         timeout=180,
-        check=False,
+        read_only=True,
+        source="test_sovereignty_scorer_rejects_tampered_receipt_chain",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -156,14 +156,13 @@ def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
         encoding="utf-8",
     )
 
-    score = subprocess.run(
+    score = _SUBPROCESS_GATEWAY.run(
         [sys.executable, "tools/proof/score_sovereignty_run.py", str(out)],
         cwd=ROOT,
         env=SMOKE_ENV,
-        text=True,
-        capture_output=True,
         timeout=60,
-        check=False,
+        read_only=True,
+        source="test_sovereignty_scorer_rejects_tampered_receipt_chain_score",
     )
     assert score.returncode == 1
     scorecard = json.loads((out / "SCORECARD.json").read_text(encoding="utf-8"))

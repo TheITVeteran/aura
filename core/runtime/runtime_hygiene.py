@@ -34,6 +34,7 @@ except ImportError:
 logger = logging.getLogger("Aura.RuntimeHygiene")
 _PROCESS_INTROSPECTION_ERRORS = (
     RuntimeError,
+    SystemError,
     AttributeError,
     TypeError,
     ValueError,
@@ -403,7 +404,7 @@ class RuntimeHygieneManager:
                     for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline", "status"])
                     if int((proc.info or {}).get("ppid") or 0) == parent_pid
                 ]
-            except (OSError, ConnectionError, TimeoutError) + _PSUTIL_PROCESS_ERRORS as exc:
+            except _PROCESS_INTROSPECTION_ERRORS + (ConnectionError, TimeoutError) as exc:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: process_iter child adoption skipped: %s", exc)
                 children = []

@@ -1121,9 +1121,13 @@ async def test_initialize_defers_eager_warmup_when_explicitly_disabled():
     client = MagicMock()
     client.warmup = AsyncMock()
 
-    with patch.dict(os.environ, {"AURA_EAGER_CORTEX_WARMUP": "0"}, clear=False):
+    with patch.dict(
+        os.environ,
+        {"AURA_EAGER_CORTEX_WARMUP": "0", "AURA_SAFE_BOOT_DESKTOP": "0"},
+        clear=False,
+    ):
         with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-            with patch("core.brain.llm.model_registry.get_model_path", return_value="/models/active"):
+            with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
                 with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                     await gate.initialize()
 
@@ -1142,10 +1146,14 @@ async def test_initialize_auto_warms_on_high_memory_desktop():
     client.warmup = AsyncMock()
     vm = MagicMock(total=64 * 1024 ** 3, available=40 * 1024 ** 3, percent=37.0)
 
-    with patch.dict(os.environ, {"AURA_EAGER_CORTEX_WARMUP": "auto"}, clear=False):
+    with patch.dict(
+        os.environ,
+        {"AURA_EAGER_CORTEX_WARMUP": "auto", "AURA_SAFE_BOOT_DESKTOP": "0"},
+        clear=False,
+    ):
         with patch("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
             with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-                with patch("core.brain.llm.model_registry.get_model_path", return_value="/models/active"):
+                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
                     with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                         await gate.initialize()
 
@@ -1164,10 +1172,14 @@ async def test_initialize_allows_opt_in_eager_warmup():
     client.warmup = AsyncMock()
     vm = MagicMock(total=64 * 1024 ** 3, available=42 * 1024 ** 3, percent=34.0)
 
-    with patch.dict(os.environ, {"AURA_EAGER_CORTEX_WARMUP": "1"}, clear=False):
+    with patch.dict(
+        os.environ,
+        {"AURA_EAGER_CORTEX_WARMUP": "1", "AURA_SAFE_BOOT_DESKTOP": "0"},
+        clear=False,
+    ):
         with patch("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
             with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-                with patch("core.brain.llm.model_registry.get_model_path", return_value="/models/active"):
+                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
                     with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                         await gate.initialize()
 

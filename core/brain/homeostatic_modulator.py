@@ -79,6 +79,14 @@ class SubstrateLogitProjection:
 
             # Compute dot product for each token
             for token_id, w in self.weights.items():
+                if len(w) != self.substrate_dim:
+                    logger.warning(
+                        "Skipping incompatible substrate projection weight for token %s: %s != %s",
+                        token_id,
+                        len(w),
+                        self.substrate_dim,
+                    )
+                    continue
                 dot = float(np.dot(w, state))
                 # Soft clamp logit bias to [-2.0, 2.0] to prevent model breakdown
                 bias = float(np.clip(dot * 0.5, -2.0, 2.0))
@@ -157,13 +165,32 @@ class SubstrateLogitProjection:
             return
         try:
             payload = json.loads(self.save_path.read_text(encoding="utf-8"))
-            self.substrate_dim = int(payload.get("substrate_dim", self.substrate_dim))
+            expected_dim = self.substrate_dim
+            persisted_dim = int(payload.get("substrate_dim", expected_dim))
+            if persisted_dim != expected_dim:
+                logger.warning(
+                    "Ignoring SubstrateLogitProjection with incompatible substrate_dim %s at %s; expected %s",
+                    persisted_dim,
+                    self.save_path,
+                    expected_dim,
+                )
+                return
             weights_raw = payload.get("weights", {})
+            weights: Dict[int, np.ndarray] = {}
+            for tid, raw_weight in weights_raw.items():
+                weight = np.asarray(raw_weight, dtype=np.float32)
+                if len(weight) != expected_dim:
+                    logger.warning(
+                        "Skipping incompatible substrate projection weight for token %s at %s: %s != %s",
+                        tid,
+                        self.save_path,
+                        len(weight),
+                        expected_dim,
+                    )
+                    continue
+                weights[int(tid)] = weight
             with self._lock:
-                self.weights = {
-                    int(tid): np.asarray(w, dtype=np.float32)
-                    for tid, w in weights_raw.items()
-                }
+                self.weights = weights
             logger.info("Loaded SubstrateLogitProjection from: %s", self.save_path)
         except Exception as exc:
             logger.error("Failed to load SubstrateLogitProjection: %s", exc)

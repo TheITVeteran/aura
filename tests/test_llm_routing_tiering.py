@@ -131,7 +131,13 @@ class TestLLMRoutingTiering(unittest.IsolatedAsyncioTestCase):
     async def test_gui_report_prefers_last_foreground_endpoint_over_background(self):
         """Background telemetry should not overwrite the visible conversational tier."""
         await self.router.generate("Hello", prefer_tier="primary", origin="user")
-        await self.router.generate("Idle thought", prefer_tier="tertiary", origin="system", is_background=True)
+        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False):
+            await self.router.generate(
+                "Idle thought",
+                prefer_tier="tertiary",
+                origin="system",
+                is_background=True,
+            )
 
         report = self.router.get_health_report()
         self.assertEqual(report["current_tier"], "Cortex (32B)")

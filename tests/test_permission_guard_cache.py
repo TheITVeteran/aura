@@ -1,6 +1,6 @@
 import unittest
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import core.security.permission_guard as permission_guard_module
 from core.security.permission_guard import PermissionGuard, PermissionType, get_permission_guard
@@ -14,8 +14,9 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
             return_value={"granted": True, "status": "active", "guidance": ""}
         )
 
-        first = await guard.check_permission(PermissionType.SCREEN, force=True)
-        second = await guard.check_permission(PermissionType.SCREEN, force=True)
+        with patch.dict("os.environ", {"AURA_ASSUME_SCREEN_PERMISSION": "0"}, clear=False):
+            first = await guard.check_permission(PermissionType.SCREEN, force=True)
+            second = await guard.check_permission(PermissionType.SCREEN, force=True)
 
         self.assertEqual(first, second)
         guard._check_screen_permission.assert_awaited_once()
@@ -33,7 +34,8 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
             return_value={"granted": True, "status": "active", "guidance": ""}
         )
 
-        refreshed = await guard.check_permission(PermissionType.SCREEN, force=False)
+        with patch.dict("os.environ", {"AURA_ASSUME_SCREEN_PERMISSION": "0"}, clear=False):
+            refreshed = await guard.check_permission(PermissionType.SCREEN, force=False)
 
         self.assertTrue(refreshed["granted"])
         guard._check_screen_permission.assert_awaited_once()

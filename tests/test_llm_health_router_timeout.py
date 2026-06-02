@@ -310,7 +310,7 @@ def test_unknown_internal_origin_defaults_to_background():
 
 
 @pytest.mark.asyncio
-async def test_router_stamps_inferred_background_for_local_runtime_client():
+async def test_router_stamps_inferred_background_for_local_runtime_client(monkeypatch):
     router = HealthAwareLLMRouter()
     client = _KwargRecordingGenerateClient()
     router.register(
@@ -322,6 +322,7 @@ async def test_router_stamps_inferred_background_for_local_runtime_client():
         client=client,
     )
 
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "0")
     result = await router.think(
         prompt="Compress this internal affect appraisal.",
         origin="affect_engine",

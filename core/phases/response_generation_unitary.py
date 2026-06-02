@@ -3838,10 +3838,27 @@ class UnitaryResponsePhase(Phase):
                     contract,
                 )
                 deterministic_task_reply = ""
+                pre_model_task_status_reply = False
+                last_task_payload = new_state.response_modifiers.get("last_task_result_payload")
+                if is_user_facing and isinstance(last_task_payload, dict):
+                    try:
+                        from core.agency.task_commitment_verifier import TaskCommitmentVerifier
+
+                        pre_model_task_status_reply = (
+                            TaskCommitmentVerifier.is_status_followup_request(objective)
+                        )
+                    except _RESPONSE_RECOVERABLE_ERRORS as task_status_exc:
+                        _record_response_degradation(
+                            task_status_exc,
+                            "UnitaryResponse: task status fast-path check skipped: %s",
+                            action="continued through normal response generation after task status check failed",
+                            severity="warning",
+                        )
                 allow_task_fast_path = bool(
                     not is_user_facing
                     or proof_evaluation_turn
                     or new_state.response_modifiers.get("allow_pre_model_deterministic_task_reply")
+                    or pre_model_task_status_reply
                 )
                 if allow_task_fast_path:
                     deterministic_task_reply = self._build_deterministic_task_reply(

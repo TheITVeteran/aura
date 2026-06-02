@@ -83,6 +83,11 @@ def _record_environment_degradation(
                 "Environment awareness degradation could not be recorded: %s",
                 signature_exc,
             )
+    except RuntimeError as policy_exc:
+        # Environment context is auxiliary prompt grounding. A fail-closed
+        # degradation policy may still raise after recording the incident; do
+        # not let that abort the device/time fallback path.
+        logger.debug("Environment awareness degradation policy raised: %s", policy_exc)
 
 
 def _safe_text(value: object, *, default: str = "", max_chars: int = 512) -> str:

@@ -815,7 +815,7 @@ class ReActLoop:
             floor_reply = deterministic_user_facing_floor(query)
         except (ImportError, AttributeError, RuntimeError):
             floor_reply = ""
-        if floor_reply and len(str(query or "").split()) <= 18:
+        if floor_reply and self.simple_threshold > 0 and len(str(query or "").split()) <= 18:
             logger.debug("ReAct: Simple foreground floor detected, bypassing reasoning loop")
             trace.final_answer = floor_reply
             trace.terminated_reason = "simple_foreground_floor"

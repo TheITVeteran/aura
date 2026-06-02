@@ -195,6 +195,7 @@ async def test_inference_gate_arbitrates_local_tertiary_lane(monkeypatch):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
+    monkeypatch.setattr(gate, "_background_local_deferral_reason", lambda *, origin=None: None)
 
     monkeypatch.setattr(
         "core.brain.llm.mlx_client.get_mlx_client",

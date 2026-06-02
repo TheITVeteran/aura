@@ -6,6 +6,11 @@ core/governance/will.py
 This module re-exports all elements to ensure complete backward-compatibility
 while preserving the same governance invariant: consequential decisions are
 FAIL-CLOSED when the canonical UnifiedWill cannot decide.
+
+The canonical UnifiedWill composes SubstrateAuthority, ExecutiveCore,
+CanonicalSelf, Affect, and Memory into one WillDecision. It preserves the same
+receipt/provenance/history contract here: REFUSE blocks unauthorized actions,
+and the canonical audit deque remains the source of truth for decision history.
 """
 from __future__ import annotations
 

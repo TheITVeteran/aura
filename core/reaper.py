@@ -462,7 +462,11 @@ def _execute_cleanup(manifest: ReaperManifest, kernel_pid: int | None = None) ->
             manifest.deregister_shm(name)
 
     # 3. Clean up the manifest file itself
-    unresolved = bool(manifest._data.get("child_pids") or manifest._data.get("shm_names"))
+    unresolved = bool(
+        manifest._data.get("child_pids")
+        or manifest._data.get("child_pid_records")
+        or manifest._data.get("shm_names")
+    )
     if unresolved:
         manifest._save()
         logger.warning("[REAPER] Cleanup incomplete; manifest retained for retry.")

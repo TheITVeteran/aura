@@ -237,6 +237,27 @@ def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_proce
     assert summary["rogue_child_processes"] == 0
 
 
+def test_runtime_hygiene_process_iter_system_error_is_nonfatal(monkeypatch):
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [])
+    if not runtime_hygiene_module._HAS_PSUTIL:
+        hygiene._adopt_active_child_processes()
+        assert hygiene._process_records == {}
+        return
+
+    monkeypatch.setattr(
+        runtime_hygiene_module.psutil,
+        "process_iter",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            SystemError("proc_cmdline permission wrapper failed")
+        ),
+    )
+
+    hygiene._adopt_active_child_processes()
+
+    assert hygiene._process_records == {}
+
+
 @pytest.mark.asyncio
 async def test_runtime_hygiene_ignores_python_resource_tracker_children():
     class _ResourceTrackerProc:

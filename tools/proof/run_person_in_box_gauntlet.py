@@ -20,7 +20,6 @@ import platform
 import queue as queue_mod
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -28,6 +27,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import SubprocessError
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -48,6 +48,8 @@ DEFAULT_TASKS = Path(__file__).resolve().parent / "tasks" / "person_box_tasks.ya
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 PROOF_ENV = {
     "AURA_FULL_AUTONOMY_PROOF": "1",
     "AURA_PERSON_BOX_RUN": "1",
@@ -59,6 +61,7 @@ PROOF_ENV = {
     "AURA_ENABLE_FILE_IO": "1",
     "AURA_ENABLE_CODE_EDIT": "1",
 }
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 
 @dataclass
@@ -336,17 +339,16 @@ class PersonBoxGauntlet:
         *,
         cwd: Path | None = None,
         timeout_s: int = 60,
-    ) -> subprocess.CompletedProcess[str]:
+    ):
         receipt_id = self.receipt(task_id=task_id, domain="terminal", action=" ".join(args), payload={"cwd": cwd or PROJECT_ROOT})
         started = _now()
-        proc = subprocess.run(
+        proc = _SUBPROCESS_GATEWAY.run(
             args,
             cwd=str(cwd or PROJECT_ROOT),
-            text=True,
-            capture_output=True,
-            timeout=timeout_s,
             env={**os.environ, **PROOF_ENV},
-            check=False,
+            timeout=timeout_s,
+            read_only=True,
+            source=f"person_box_terminal:{task_id}",
         )
         payload = {
             "args": args,
@@ -1218,7 +1220,7 @@ class PersonBoxGauntlet:
                 try:
                     status, completion_credit, summary, receipt_id = handler(task)
                     result = self.complete_task(task, status, completion_credit, summary, receipt_id)
-                except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError, ValueError) as exc:
+                except (OSError, RuntimeError, SubprocessError, TimeoutError, ValueError) as exc:
                     receipt_id = self.receipt(task_id=task_id, domain="task", action="handler_exception", payload={"handler": handler_name})
                     self.record_failure(task_id, "handler_exception", repr(exc))
                     result = self.complete_task(task, "fail", False, f"Handler exception: {type(exc).__name__}: {exc}", receipt_id)

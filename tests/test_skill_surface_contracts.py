@@ -22,6 +22,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "add_belief",
     "auto_refactor",
     "clock",
+    "code_repl",
     "coding_skill",
     "cognitive_trainer",
     "computer_use",
@@ -38,6 +39,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "force_dream_cycle",
     "free_search",
     "grounded_search",
+    "image_gen",
     "install_package",
     "inter_agent_comm",
     "internal_sandbox",
@@ -55,6 +57,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "query_beliefs",
     "query_visual_context",
     "reddit_adapter",
+    "render_bridge",
     "run_code",
     "search_web",
     "sec_ops",
@@ -76,7 +79,9 @@ EXPECTED_REGISTERED_SKILLS = {
     "toggle_senses",
     "train_self",
     "uplink_local",
+    "voice_output",
     "web_search",
+    "x_tools",
 }
 
 
@@ -122,6 +127,7 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "ManageAbilities": {"action": "activate", "skill_name": "clock"},
         "add_belief": {"source": "Bryan", "relation": "prefers", "target": "Python"},
         "auto_refactor": {"path": str(tmp_path), "run_tests": False},
+        "code_repl": {"code": "1 + 1", "timeout": 1, "capture_files": False},
         "coding_skill": {"objective": "", "params": {"task": ""}},
         "cognitive_trainer": {"dataset_name": "unsupported", "limit": 1, "dry_run": True},
         "computer_use": {"action": "click", "x": 1, "y": 1},
@@ -133,6 +139,10 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "file_operation": {"action": "exists", "path": "."},
         "free_search": {"query": ""},
         "grounded_search": {"objective": ""},
+        "image_gen": {
+            "prompt": "contract sweep placeholder",
+            "source_image_path": str(tmp_path / "missing-source.png"),
+        },
         "install_package": {"package_name": "bad package!"},
         "inter_agent_comm": {"agent_name": "", "message": ""},
         "listen": {"duration": 0.01},
@@ -147,6 +157,9 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "query_beliefs": {"subject": "Bryan"},
         "query_visual_context": {"question": "what is on screen"},
         "reddit_adapter": {"mode": "read_rules", "subreddit": "LocalLLaMA"},
+        "render_bridge": {
+            "instructions": [{"type": "progress", "content": {"percent": 1}}],
+        },
         "run_code": {"code": "1 + 1"},
         "search_web": {"query": ""},
         "sec_ops": {"action": "bogus", "target": "localhost", "path": str(tmp_path)},
@@ -167,7 +180,9 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "speak": {"text": "contract test"},
         "test_generator": {"target_file": str(tmp_path / "missing_target.py")},
         "toggle_senses": {"sense": "vision", "action": "off"},
+        "voice_output": {"text": ""},
         "web_search": {"query": ""},
+        "x_tools": {"action": "unknown"},
     }
     return dict(overrides.get(skill_name, {}))
 
@@ -245,7 +260,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 59
+    assert len(skill_registry) == 64
 
 
 @pytest.mark.asyncio

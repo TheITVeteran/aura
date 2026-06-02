@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from core import long_term_memory_engine as ltm_module
+from core.memory import long_term_memory_engine as ltm_module
 
 
 class ConstitutionScenario:

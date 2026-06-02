@@ -262,7 +262,10 @@ class EmotionSignatureEngine:
     
     def __init__(self):
         self.current_emotion: EmotionName = "joy"
-        self.emotion_intensity: float = 0.5  # 0-1, how strongly to apply effects
+        # Start neutral: the selected recipe is inactive until an upstream
+        # affect process sets a nonzero intensity. A nonzero default makes
+        # idle neurochemical homeostasis impossible.
+        self.emotion_intensity: float = 0.0  # 0-1, how strongly to apply effects
         self.emotion_momentum: float = 0.0  # carries emotional state forward
         
     def set_emotion(self, emotion: EmotionName, intensity: float = 0.5) -> None:

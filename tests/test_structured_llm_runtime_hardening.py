@@ -37,6 +37,10 @@ async def test_validation_telemetry_failure_does_not_block_schema_retry(monkeypa
         {"text": '{"action": "test", "priority": 10}'},
     )
     monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *_args, **_kwargs: "",
+    )
+    monkeypatch.setattr(
         structured_module,
         "record_degraded_event",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("telemetry down")),
@@ -50,10 +54,14 @@ async def test_validation_telemetry_failure_does_not_block_schema_retry(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_router_technical_failure_escalates_and_recovers():
+async def test_router_technical_failure_escalates_and_recovers(monkeypatch):
     router = _MetadataRouter(
         RuntimeError("local lane down"),
         {"text": '{"action": "recover", "priority": 2}'},
+    )
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *_args, **_kwargs: "",
     )
 
     result = await StructuredLLM(_TaskModel, max_retries=2, llm_router=router).generate("Return a task.")

@@ -194,7 +194,10 @@ class TestShutdownCoordination(unittest.TestCase):
             self.assertNotIn("os._exit", source, f"{runner} bypasses multiprocessing cleanup")
 
         dnu_source = proof_runners[0].read_text(encoding="utf-8")
-        self.assertIn("await shutdown_proof_runtime(orch)\n        return 1", dnu_source)
+        self.assertRegex(
+            dnu_source,
+            r"await shutdown_proof_runtime\(orch\)\n\s+return (?:1|fail_run_status\()",
+        )
         self.assertIn("raise SystemExit(code)", dnu_source)
 
     def test_agency_shutdown_prefers_final_client_close_before_reboot_fallback(self):

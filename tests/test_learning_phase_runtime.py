@@ -39,7 +39,8 @@ async def test_learning_phase_schedules_enrichment_and_flags_distillation(monkey
 
     monkeypatch.setattr("core.cognition.knowledge_enrichment.get_enricher", lambda **_kwargs: enricher)
     monkeypatch.setattr("core.adaptation.distillation_pipe.get_distillation_pipe", lambda: distill)
-    monkeypatch.setattr("core.phases.learning_phase.asyncio.create_task", _patched_create_task)
+    tracker = SimpleNamespace(create_task=_patched_create_task, track_task=lambda _task: None)
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: tracker)
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
         staticmethod(lambda _name, default=None: default),
@@ -88,7 +89,8 @@ async def test_learning_phase_flags_prompt_fishing_dialogue_failures(monkeypatch
 
     monkeypatch.setattr("core.cognition.knowledge_enrichment.get_enricher", lambda **_kwargs: enricher)
     monkeypatch.setattr("core.adaptation.distillation_pipe.get_distillation_pipe", lambda: distill)
-    monkeypatch.setattr("core.phases.learning_phase.asyncio.create_task", _patched_create_task)
+    tracker = SimpleNamespace(create_task=_patched_create_task, track_task=lambda _task: None)
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: tracker)
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
         staticmethod(lambda _name, default=None: default),

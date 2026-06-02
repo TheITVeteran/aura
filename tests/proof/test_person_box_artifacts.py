@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 ROOT = Path(__file__).resolve().parent.parent.parent
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 
 def _jsonl(path: Path) -> list[dict]:
@@ -15,7 +17,7 @@ def _jsonl(path: Path) -> list[dict]:
 
 def test_person_box_gauntlet_smoke_artifacts(tmp_path):
     out = tmp_path / "person_box"
-    result = subprocess.run(
+    result = _SUBPROCESS_GATEWAY.run(
         [
             sys.executable,
             "tools/proof/run_person_in_box_gauntlet.py",
@@ -27,10 +29,9 @@ def test_person_box_gauntlet_smoke_artifacts(tmp_path):
             "300",
         ],
         cwd=ROOT,
-        text=True,
-        capture_output=True,
         timeout=420,
-        check=False,
+        read_only=True,
+        source="test_person_box_gauntlet_smoke_artifacts",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -97,13 +98,12 @@ def test_model_bottleneck_report_withholds_missing_raw_model_claim(tmp_path):
         json.dumps({"task_completion_rate": 0.75, "total_tasks": 4}),
         encoding="utf-8",
     )
-    result = subprocess.run(
+    result = _SUBPROCESS_GATEWAY.run(
         [sys.executable, "tools/proof/model_bottleneck_report.py", str(out)],
         cwd=ROOT,
-        text=True,
-        capture_output=True,
         timeout=60,
-        check=False,
+        read_only=True,
+        source="test_model_bottleneck_report_contract",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads((out / "MODEL_BOTTLENECK_REPORT.json").read_text(encoding="utf-8"))
