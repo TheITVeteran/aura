@@ -31,6 +31,14 @@ const DEFAULT_BOOTSTRAP = {
   timestamp: "",
 };
 
+function desktopChatHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "X-Aura-Surface": "desktop-ui",
+    "X-Aura-Require-CognitiveEngine": "true",
+  };
+}
+
 function formatPercent(value) {
   const numeric = Number(value || 0);
   return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}%`;
@@ -356,7 +364,7 @@ export default function App() {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: desktopChatHeaders(),
         body: JSON.stringify({ message: content }),
       });
       if (!response.ok) throw new Error(`Chat failed (${response.status})`);
@@ -385,7 +393,10 @@ export default function App() {
   async function regenerate() {
     setSending(true);
     try {
-      const response = await fetch("/api/chat/regenerate", { method: "POST" });
+      const response = await fetch("/api/chat/regenerate", {
+        method: "POST",
+        headers: desktopChatHeaders(),
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || payload.error || "Regenerate failed");
       if (payload.response) {

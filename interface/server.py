@@ -893,7 +893,7 @@ async def websocket_endpoint(ws: WebSocket):
                                     user_content,
                                     visible_user_message=user_content,
                                     origin="user",
-                                    timeout=300.0,
+                                    timeout_s=300.0,
                                     lane=chat_routes._collect_conversation_lane_status(),
                                     source="websocket",
                                 )

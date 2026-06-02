@@ -1128,7 +1128,7 @@ async def _run_cognitive_engine_chat_turn(
     *,
     visible_user_message: str | None = None,
     origin: str = "user",
-    timeout: float | None = None,
+    timeout_s: float | None = None,
     lane: dict[str, Any] | None = None,
     source: str = "chat_api",
 ) -> str | None:
@@ -1166,7 +1166,7 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
-    timeout_s = max(2.0, float(timeout if timeout is not None else 120.0))
+    timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
     
     # Use connection pool with retry logic. Acquisition is part of the live
     # CognitiveEngine path; if it fails, return no reply so desktop callers
@@ -1682,6 +1682,22 @@ def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
         and not bool(lane.get("warmup_attempted", False))
         and not bool(lane.get("warmup_in_flight", False))
     )
+
+
+def _request_requires_cognitive_engine(request: Request, *, is_benchmark: bool = False) -> tuple[bool, str]:
+    """Return whether this user-facing surface must stay on CognitiveEngine."""
+    request_surface = str(request.headers.get("X-Aura-Surface") or "").strip().lower()
+    require_cognitive_header = str(
+        request.headers.get("X-Aura-Require-CognitiveEngine") or ""
+    ).strip().lower()
+    requires = (
+        not is_benchmark
+        and (
+            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri"}
+            or require_cognitive_header in {"1", "true", "yes", "required"}
+        )
+    )
+    return requires, request_surface
 
 
 def _mark_conversation_lane_timeout(reason: str = "foreground_timeout") -> dict[str, Any]:
@@ -4732,10 +4748,14 @@ return "dismissed"
         )
         return {"ok": False, "result": result}
     for _ in range(10):
-        if staged_pdf.exists():
+        if await asyncio.to_thread(staged_pdf.exists):
             break
         await asyncio.sleep(0.5)
-    return {"ok": staged_pdf.exists(), "result": result, "path": str(staged_pdf)}
+    return {
+        "ok": await asyncio.to_thread(staged_pdf.exists),
+        "result": result,
+        "path": str(staged_pdf),
+    }
 
 
 async def _execute_desktop_chain_from_chat(user_message: str) -> dict[str, Any]:
@@ -5214,6 +5234,7 @@ async def api_chat_regenerate(
     """Regenerate the last Aura response by replaying the last user message.
     Every flagship AI product supports response regeneration."""
     _restore_owner_session_from_request(request)
+    desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(request)
     foreground_timeout = _foreground_timeout_for_lane(_collect_conversation_lane_status())
     try:
         async with _get_convo_lock():
@@ -5239,9 +5260,34 @@ async def api_chat_regenerate(
                 user_msg,
                 visible_user_message=user_msg,
                 origin="user",
-                timeout=cognitive_budget,
+                timeout_s=cognitive_budget,
                 lane=dict(lane or {}),
-                source="chat_regenerate",
+                source="desktop_ui_regenerate" if desktop_requires_cognitive_engine else "chat_regenerate",
+            )
+
+        if desktop_requires_cognitive_engine and not reply_text:
+            lane = _mark_conversation_lane_state(
+                "desktop_cognitive_engine_required_no_reply",
+                state="failed",
+            )
+            logger.error(
+                "Desktop regenerate required CognitiveEngine but no acceptable reply was produced. Surface=%s",
+                request_surface or "unknown",
+            )
+            return JSONResponse(
+                {
+                    "response": (
+                        "The desktop regenerate path required CognitiveEngine, but the live cognitive "
+                        "turn did not produce an acceptable reply, so Aura refused the legacy fallback. "
+                        "status=desktop_cognitive_engine_required_no_reply"
+                    ),
+                    "status": "desktop_cognitive_engine_unavailable",
+                    "reason": "desktop_cognitive_engine_required_no_reply",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                    "regenerated": False,
+                },
+                status_code=503,
             )
 
         if not reply_text and ki.is_ready():
@@ -5389,14 +5435,9 @@ async def api_chat(
 
     is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
     chat_origin = "benchmark" if is_benchmark else "user"
-    request_surface = str(request.headers.get("X-Aura-Surface") or "").strip().lower()
-    require_cognitive_header = str(request.headers.get("X-Aura-Require-CognitiveEngine") or "").strip().lower()
-    desktop_requires_cognitive_engine = (
-        not is_benchmark
-        and (
-            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri"}
-            or require_cognitive_header in {"1", "true", "yes", "required"}
-        )
+    desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(
+        request,
+        is_benchmark=is_benchmark,
     )
 
     # ── Chat preflight ──────────────────────────────────────────
@@ -6271,7 +6312,7 @@ async def api_chat(
                     effective_user_message,
                     visible_user_message=_semantic_user_message,
                     origin=chat_origin,
-                    timeout=cognitive_budget,
+                    timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
                     source="desktop_ui" if desktop_requires_cognitive_engine else "chat_api",
                 )

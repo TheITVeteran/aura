@@ -680,6 +680,7 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
         "interface/static/aura.js",
         "interface/static/error_banner.js",
         "interface/static/first_run.js",
+        "interface/static/shell/src/App.jsx",
     ):
         source = (root / relative).read_text(encoding="utf-8")
         assert "X-Aura-Surface" in source
@@ -688,6 +689,88 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
     source = (root / "interface/static/aura.js").read_text(encoding="utf-8")
     assert "CHAT_REQUEST_TIMEOUT_READY_MS = 335000" in source
     assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in source
+
+
+@pytest.mark.asyncio
+async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    kernel_calls: list[str] = []
+    orchestrator_calls: list[str] = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("desktop regenerate must not use KernelInterface fallback")
+
+    class _FakeOrchestrator:
+        async def process_user_input_priority(self, *_args, **_kwargs):
+            orchestrator_calls.append("process")
+            raise AssertionError("desktop regenerate must not use legacy orchestrator fallback")
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeOrchestrator() if name == "orchestrator" else default),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.append(
+            {
+                "id": "regen-1",
+                "user": "Please explain what changed in the desktop route.",
+                "aura": "Previous answer.",
+                "status": "complete",
+            }
+        )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await chat_routes.api_chat_regenerate(
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+            url=SimpleNamespace(scheme="http"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_cognitive_engine_unavailable" in response.body
+    assert kernel_calls == []
+    assert orchestrator_calls == []
 
 
 @pytest.mark.asyncio
@@ -1137,9 +1220,9 @@ async def test_api_chat_returns_structured_timeout_when_kernel_times_out(monkeyp
 
 @pytest.mark.asyncio
 async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate(monkeypatch):
+    from core.runtime import conversation_support
     from interface import server as server_module
     from interface.routes import chat as chat_routes
-    from core.runtime import conversation_support
 
     kernel_calls = []
     experience_recorder = AsyncMock()
