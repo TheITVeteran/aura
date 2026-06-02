@@ -40,6 +40,7 @@ SELF_MOD_RECOVERABLE_ERRORS = (
 )
 
 _RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
+_SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -52,6 +53,11 @@ def _env_flag(name: str, default: bool = False) -> bool:
 def _runtime_patch_promotion_enabled() -> bool:
     """Runtime source promotion requires explicit operator opt-in."""
     return _env_flag(_RUNTIME_SELF_MODIFICATION_ENV, False)
+
+
+def _supervised_patch_promotion_enabled() -> bool:
+    """Manual force=True promotion requires a separate supervised override."""
+    return _env_flag(_SUPERVISED_SELF_MODIFICATION_ENV, False)
 
 
 def _record_self_modification_degradation(
@@ -247,6 +253,10 @@ class AutonomousSelfModificationEngine:
         """Return whether autonomous runtime code promotion is currently allowed."""
         return _runtime_patch_promotion_enabled()
 
+    def supervised_force_enabled(self) -> bool:
+        """Return whether explicit force=True promotion is currently allowed."""
+        return _supervised_patch_promotion_enabled()
+
     def _record_cycle_failure(
         self,
         error: BaseException,
@@ -398,6 +408,31 @@ class AutonomousSelfModificationEngine:
         """Apply a fix proposal with Swarm Review and Safe Modification (Phase 31)."""
         # Level 3 Check
         from core.container import ServiceContainer
+
+        if force and not self.supervised_force_enabled():
+            _record_self_modification_degradation(
+                RuntimeError(
+                    f"force=True requires {_SUPERVISED_SELF_MODIFICATION_ENV}=1"
+                ),
+                action=(
+                    "Rejected forced self-modification because supervised operator override "
+                    "was not enabled"
+                ),
+                severity="degraded",
+                receipt_required=True,
+                extra={
+                    "target_file": getattr(fix_proposal.get("fix"), "target_file", "unknown")
+                    if isinstance(fix_proposal, dict)
+                    else "unknown",
+                    "force": True,
+                    "required_env": _SUPERVISED_SELF_MODIFICATION_ENV,
+                },
+            )
+            logger.error(
+                "SME: force=True blocked. Set %s=1 only for supervised operator promotion.",
+                _SUPERVISED_SELF_MODIFICATION_ENV,
+            )
+            return False
 
         kernel = ServiceContainer.get("aura_kernel", default=None)
         volition = getattr(kernel, "volition_level", 0) if kernel else 0
@@ -1202,6 +1237,7 @@ class AutonomousSelfModificationEngine:
             "auto_fix_enabled": self.auto_fix_enabled,
             "auto_fix_requested": bool(getattr(self, "_auto_fix_requested", False)),
             "runtime_patch_promotion_enabled": self.runtime_promotion_enabled(),
+            "supervised_force_promotion_enabled": self.supervised_force_enabled(),
             "session_duration_hours": session_time / 3600,
             "session_stats": self.session_stats,
             "last_cycle_error": getattr(self, "_last_cycle_error", None),

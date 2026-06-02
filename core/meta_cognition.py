@@ -158,7 +158,7 @@ class MetaEvolutionEngine(AuraBaseModule):
                 proposal = await sme.propose_fix(top_bug)
                 
                 if proposal and proposal.get("ready_to_apply"):
-                    success = await sme.apply_fix(proposal, force=True)
+                    success = await sme.apply_fix(proposal, force=False)
                     self.last_optimization_time = time.time()
                     elapsed = self.last_optimization_time - start_time
                     self.logger.info("✅ Optimization Applied in %.2fs: %s", elapsed, proposal.get('id'))

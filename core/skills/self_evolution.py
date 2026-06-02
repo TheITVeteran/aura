@@ -389,7 +389,7 @@ class SelfEvolutionSkill(BaseSkill):
             "test_results": test_results
         }
         
-        final_success = await sme.apply_fix(proposal, force=True)
+        final_success = await sme.apply_fix(proposal, force=False)
         
         if final_success:
              return {"ok": True, "summary": f"Evolution applied successfully to {target_file}", "applied": True}

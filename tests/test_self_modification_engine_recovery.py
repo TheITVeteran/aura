@@ -98,6 +98,34 @@ async def test_apply_fix_refuses_unsupervised_promotion_without_opt_in(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_apply_fix_force_requires_supervised_operator_override(monkeypatch, tmp_path):
+    monkeypatch.delenv("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", raising=False)
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("aura_kernel", SimpleNamespace(volition_level=3))
+
+    review_calls = []
+
+    async def review(_proposal, **_kwargs):
+        review_calls.append(_proposal)
+        return True
+
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    engine._swarm_review = review
+    engine.code_base = tmp_path
+
+    proposal = {
+        "fix": SimpleNamespace(target_file="core/example.py"),
+        "test_results": {"success": True},
+    }
+
+    assert await engine.apply_fix(proposal, force=True) is False
+    assert review_calls == []
+    ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
 async def test_autonomous_cycle_returns_structured_failure_when_diagnosis_crashes(
     monkeypatch,
 ):

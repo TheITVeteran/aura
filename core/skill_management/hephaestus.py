@@ -322,13 +322,26 @@ class HephaestusEngine(AuraBaseModule):
             if not patch_result.get("ok"):
                 return patch_result
             
-            # Apply the patch via SME
+            # Apply the patch via SME only when the normal governed runtime
+            # promotion path is explicitly enabled and validation evidence exists.
             sme = ServiceContainer.get("self_modification_engine", default=None)
             if not sme:
                 return {"ok": False, "error": "Self-Modification Engine unavailable to apply refinement."}
             
             fix = patch_result["fix"]
-            success = await sme.apply_fix(fix, force=True)
+            test_results = patch_result.get("test_results")
+            if not isinstance(test_results, dict):
+                return {
+                    "ok": False,
+                    "error": "Refinement patch generated but not applied: sandbox validation evidence is missing.",
+                    "fix": fix,
+                }
+            proposal = {
+                "bug": {"pattern": {"events": [{"error_type": "skill_refinement"}]}},
+                "fix": fix,
+                "test_results": test_results,
+            }
+            success = await sme.apply_fix(proposal, force=False)
             
             if success:
                 self.logger.info("✅ Skill '%s' refined successfully.", skill_name)

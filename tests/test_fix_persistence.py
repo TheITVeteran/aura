@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock
 from pathlib import Path
@@ -9,6 +10,8 @@ from core.config import config
 
 class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self._old_supervised_selfmod = os.environ.get("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION")
+        os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = "1"
         # We need a mock cognitive engine
         class MockBrain:
             async def think(self, prompt, priority=0.0):
@@ -28,6 +31,10 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
                 pass
 
     def tearDown(self):
+        if self._old_supervised_selfmod is None:
+            os.environ.pop("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", None)
+        else:
+            os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = self._old_supervised_selfmod
         if self.test_file.exists():
             get_task_tracker().create_task(get_storage_gateway().delete(self.test_file, cause='TestFixPersistence.tearDown'))
 

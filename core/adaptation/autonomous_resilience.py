@@ -790,7 +790,7 @@ class VerifierGuidedRepairPipeline:
         apply_error = ""
         if hasattr(modifier, "apply_fix"):
             try:
-                applied = bool(await modifier.apply_fix(proposal, force=True, test_results=test_results))
+                applied = bool(await modifier.apply_fix(proposal, force=False, test_results=test_results))
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('autonomous_resilience', exc)
                 apply_error = str(exc)

@@ -37,6 +37,7 @@ class LearningSink:
 async def test_self_modification_registry_lives_outside_source_tree(tmp_path, monkeypatch):
     registry_path = tmp_path / "runtime" / "selfmod" / "pending_patch_registry.jsonl"
     monkeypatch.setenv("AURA_PENDING_PATCH_REGISTRY", str(registry_path))
+    monkeypatch.setenv("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", "1")
 
     async def review(_proposal, **_kwargs):
         return True
