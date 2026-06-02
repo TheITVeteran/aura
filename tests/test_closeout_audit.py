@@ -94,6 +94,23 @@ def test_semantic_review_ledger_marks_current_and_stale_reviews(tmp_path):
     assert stale["stale_reviews"][0]["reason"] == "file_hash_changed"
 
 
+def test_semantic_review_ledger_marks_re_reviewed_stale_receipts_superseded(tmp_path):
+    sample = tmp_path / "reviewed.py"
+    sample.write_text("x = 1\ny = 2\n", encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    first = build_review_entry(sample, reviewer="codex", checkpoint_id="first", root=tmp_path)
+    append_entries(ledger, [first])
+
+    sample.write_text("x = 1\ny = 3\n", encoding="utf-8")
+    second = build_review_entry(sample, reviewer="codex", checkpoint_id="second", root=tmp_path)
+    append_entries(ledger, [second])
+
+    summary = summarize_semantic_reviews(ledger_path=ledger, tracked_paths=[sample], root=tmp_path)
+    assert summary["full_semantic_review_current"] is True
+    assert summary["stale_review_count"] == 0
+    assert summary["superseded_stale_review_count"] == 1
+
+
 def test_semantic_review_ledger_merges_reviewed_spans(tmp_path):
     sample = tmp_path / "spans.py"
     sample.write_text("a\nb\nc\nd\n", encoding="utf-8")

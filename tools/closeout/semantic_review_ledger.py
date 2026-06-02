@@ -204,7 +204,7 @@ def summarize_semantic_reviews(
 
     entries = read_entries(ledger_path)
     current_spans: dict[str, list[tuple[int, int]]] = {}
-    stale_entries: list[dict[str, Any]] = []
+    stale_candidates: list[dict[str, Any]] = []
     orphan_entries: list[dict[str, Any]] = []
     for entry in entries:
         file_name = str(entry.get("file", ""))
@@ -214,7 +214,7 @@ def summarize_semantic_reviews(
             continue
         ok, reason = _entry_is_current(entry, info)
         if not ok:
-            stale_entries.append(
+            stale_candidates.append(
                 {
                     "file": file_name,
                     "checkpoint_id": entry.get("checkpoint_id", ""),
@@ -227,6 +227,7 @@ def summarize_semantic_reviews(
     reviewed_files: dict[str, dict[str, Any]] = {}
     reviewed_line_count = 0
     fully_reviewed_count = 0
+    fully_reviewed_files: set[str] = set()
     for file_name, spans in sorted(current_spans.items()):
         info = current_by_path[file_name]
         merged = _merge_spans(spans)
@@ -234,12 +235,22 @@ def summarize_semantic_reviews(
         reviewed_line_count += line_count
         fully_reviewed = line_count == info.line_count
         fully_reviewed_count += int(fully_reviewed)
+        if fully_reviewed:
+            fully_reviewed_files.add(file_name)
         reviewed_files[file_name] = {
             "line_count": info.line_count,
             "reviewed_line_count": line_count,
             "fully_reviewed": fully_reviewed,
             "spans": [{"first_line": first, "last_line": last} for first, last in merged],
         }
+
+    stale_entries: list[dict[str, Any]] = []
+    superseded_stale_entries: list[dict[str, Any]] = []
+    for candidate in stale_candidates:
+        if str(candidate.get("file", "")) in fully_reviewed_files:
+            superseded_stale_entries.append(candidate)
+        else:
+            stale_entries.append(candidate)
 
     total_text_lines = sum(info.line_count for info in current_by_path.values())
     coverage = reviewed_line_count / total_text_lines if total_text_lines else 0.0
@@ -255,8 +266,10 @@ def summarize_semantic_reviews(
         "semantic_reviewed_line_count": reviewed_line_count,
         "semantic_review_coverage_ratio": round(coverage, 6),
         "stale_review_count": len(stale_entries),
+        "superseded_stale_review_count": len(superseded_stale_entries),
         "orphan_review_count": len(orphan_entries),
         "stale_reviews": stale_entries[:100],
+        "superseded_stale_reviews": superseded_stale_entries[:100],
         "orphan_reviews": orphan_entries[:100],
         "reviewed_files": reviewed_files,
         "full_semantic_review_current": (

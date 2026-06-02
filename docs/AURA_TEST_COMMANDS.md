@@ -153,6 +153,29 @@ python tools/closeout/semantic_review_ledger.py record \
   --note "reviewed closeout proof tooling and claim boundaries"
 ```
 
+## Sovereignty / Person-Box Proof Slices
+
+Use these when validating the person-in-a-box and sovereign reconstitution
+proof paths. Smoke proof verifies the artifact contract. Live-runtime smoke
+adds the desktop user-facing Cortex path, but still does not prove the full
+8-hour/72-hour operational claims.
+
+```bash
+python -m pytest tests/proof/test_person_box_artifacts.py tests/proof/test_sovereignty_artifacts.py -q
+python -m ruff check tools/proof/run_sovereign_reconstitution_gauntlet.py tools/proof/score_sovereignty_run.py tests/proof/test_sovereignty_artifacts.py
+make person-box-proof
+make sovereignty-proof
+AURA_PERSON_BOX_PROFILE=smoke AURA_PERSON_BOX_LIVE_MODEL=1 AURA_PERSON_BOX_OUT=artifacts/current/person_box_proof_live_smoke AURA_PERSON_BOX_MAX_SECONDS=600 make person-box-proof
+AURA_SOVEREIGNTY_LIVE_RUNTIME=1 AURA_SOVEREIGNTY_OUT=artifacts/current/aura_sovereignty_proof_live AURA_SOVEREIGNTY_MAX_SECONDS=600 make sovereignty-proof
+```
+
+To unlock the stronger sovereignty baseline/ablation fields, supply an external
+comparison artifact:
+
+```bash
+AURA_SOVEREIGNTY_COMPARISON_RESULTS=/path/to/comparison.json make sovereignty-proof
+```
+
 ## Native System 2 / IVS Validation Slice
 
 Use this focused slice for the governed native System 2 search substrate and

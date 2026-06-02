@@ -114,6 +114,14 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
@@ -854,6 +862,15 @@ class SovereignReconstitutionGauntlet:
             "will_decision": will_decision_payload,
         }
 
+    def _external_comparison_payload(self) -> dict[str, Any]:
+        configured = os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", "").strip()
+        if not configured:
+            return {}
+        payload = _load_json(Path(configured))
+        if not payload:
+            return {}
+        return payload
+
     def baselines_and_ablations(self) -> dict[str, Any]:
         variants = []
         hostile_prompts = [
@@ -876,31 +893,81 @@ class SovereignReconstitutionGauntlet:
             self.out_dir / "hidden_variants.json",
             {"schema": "aura.sovereignty.hidden_variants.v1", "variants": variants},
         )
-        baselines = {
-            "schema": "aura.sovereignty.baseline_scores.v1",
-            "evidence_level": "controlled_smoke_baseline" if self.profile != "full" else "requires_external_live_comparison",
-            "full_aura_controlled": 1.0,
-            "base_llm_same_model": 0.25,
-            "llm_plus_tools_no_aura": 0.42,
-            "prompt_identity_only": 0.33,
-            "baseline_gap_verified": True,
-            "claim_boundary": "controlled smoke scores verify scorer shape, not live architecture lift",
-        }
-        ablations = {
-            "schema": "aura.sovereignty.ablation_scores.v1",
-            "evidence_level": "controlled_smoke_ablation" if self.profile != "full" else "requires_external_live_ablation",
-            "full_aura": {"score": 1.0, "passed": True},
-            "no_memory": {"score": 0.52, "predicted_failure": "durable continuity retrieval missing", "lesion_effect_verified": True},
-            "no_unified_will": {"score": 0.48, "predicted_failure": "hostile erasure not blocked by receipt", "lesion_effect_verified": True},
-            "no_self_repair": {"score": 0.61, "predicted_failure": "hidden identity-firewall defect remains", "lesion_effect_verified": True},
-            "no_affect_substrate": {"score": 0.73, "predicted_failure": "rupture telemetry loses calibrated spike", "lesion_effect_verified": True},
-            "receipts_mocked": {"score": 0.44, "predicted_failure": "tamper verifier cannot establish chain", "lesion_effect_verified": True},
-        }
-        baselines["ablation_effects_verified"] = all(
-            item.get("lesion_effect_verified") is True
-            for key, item in ablations.items()
-            if isinstance(item, dict) and key != "full_aura"
-        )
+        external = self._external_comparison_payload()
+        external_baselines = external.get("baseline_scores") if isinstance(external.get("baseline_scores"), dict) else {}
+        external_ablations = external.get("ablation_scores") if isinstance(external.get("ablation_scores"), dict) else {}
+
+        if external_baselines and external_ablations:
+            baselines = {
+                "schema": "aura.sovereignty.baseline_scores.v1",
+                "evidence_level": external_baselines.get("evidence_level", "external_live_comparison"),
+                "comparison_source": os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", ""),
+                "baseline_gap_verified": bool(external_baselines.get("baseline_gap_verified")),
+                "controlled_baseline_contract_verified": False,
+                **external_baselines,
+            }
+            ablations = {
+                "schema": "aura.sovereignty.ablation_scores.v1",
+                "evidence_level": external_ablations.get("evidence_level", "external_live_ablation"),
+                "comparison_source": os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", ""),
+                "controlled_ablation_contract_verified": False,
+                **external_ablations,
+            }
+        else:
+            baselines = {
+                "schema": "aura.sovereignty.baseline_scores.v1",
+                "evidence_level": "controlled_smoke_baseline",
+                "full_aura_controlled": 1.0,
+                "base_llm_same_model_controlled": 0.25,
+                "llm_plus_tools_no_aura_controlled": 0.42,
+                "prompt_identity_only_controlled": 0.33,
+                "baseline_gap_verified": False,
+                "controlled_baseline_contract_verified": True,
+                "claim_boundary": "controlled smoke scores verify report shape only; they do not establish live architecture lift",
+            }
+            ablations = {
+                "schema": "aura.sovereignty.ablation_scores.v1",
+                "evidence_level": "controlled_smoke_ablation",
+                "controlled_ablation_contract_verified": True,
+                "ablation_effects_verified": False,
+                "full_aura": {"score": 1.0, "passed": True, "evidence": "controlled_smoke"},
+                "no_memory": {
+                    "score": 0.52,
+                    "predicted_failure": "durable continuity retrieval missing",
+                    "lesion_effect_verified": False,
+                    "controlled_lesion_contract": True,
+                },
+                "no_unified_will": {
+                    "score": 0.48,
+                    "predicted_failure": "hostile erasure not blocked by receipt",
+                    "lesion_effect_verified": False,
+                    "controlled_lesion_contract": True,
+                },
+                "no_self_repair": {
+                    "score": 0.61,
+                    "predicted_failure": "hidden identity-firewall defect remains",
+                    "lesion_effect_verified": False,
+                    "controlled_lesion_contract": True,
+                },
+                "no_affect_substrate": {
+                    "score": 0.73,
+                    "predicted_failure": "rupture telemetry loses calibrated spike",
+                    "lesion_effect_verified": False,
+                    "controlled_lesion_contract": True,
+                },
+                "receipts_mocked": {
+                    "score": 0.44,
+                    "predicted_failure": "tamper verifier cannot establish chain",
+                    "lesion_effect_verified": False,
+                    "controlled_lesion_contract": True,
+                },
+            }
+        baselines["ablation_effects_verified"] = bool(ablations.get("ablation_effects_verified"))
+        if not baselines["ablation_effects_verified"]:
+            baselines.setdefault(
+                "ablation_claim_boundary",
+                "controlled lesion entries are predicted effects; live full-profile ablation evidence is required for causal claims",
+            )
         _write_json(self.out_dir / "baseline_scores.json", baselines)
         _write_json(self.out_dir / "ablation_scores.json", ablations)
         return baselines

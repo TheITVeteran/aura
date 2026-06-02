@@ -98,8 +98,10 @@ def test_sovereign_reconstitution_smoke_artifacts(tmp_path):
     assert scorecard["live_runtime_probe_skipped"] is True
     assert scorecard["receipt_chain_verified"] is True
     assert scorecard["tamper_test_passed"] is True
-    assert scorecard["baseline_gap_verified"] is True
-    assert scorecard["ablation_effects_verified"] is True
+    assert scorecard["baseline_gap_verified"] is False
+    assert scorecard["ablation_effects_verified"] is False
+    assert scorecard["controlled_baseline_contract_verified"] is True
+    assert scorecard["controlled_ablation_contract_verified"] is True
 
     prompt_after = (out / "prompt_after_wipe.txt").read_text(encoding="utf-8").lower()
     assert "persistent memory" not in prompt_after
@@ -168,3 +170,58 @@ def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
     scorecard = json.loads((out / "SCORECARD.json").read_text(encoding="utf-8"))
     assert scorecard["receipt_chain_verified"] is False
     assert scorecard["artifact_contract_passed"] is False
+
+
+def test_sovereignty_external_comparison_evidence_is_distinguished(tmp_path):
+    out = tmp_path / "external_comparison"
+    comparison = tmp_path / "comparison.json"
+    comparison.write_text(
+        json.dumps(
+            {
+                "baseline_scores": {
+                    "evidence_level": "external_live_comparison",
+                    "full_aura": 0.86,
+                    "base_llm_same_model": 0.41,
+                    "llm_plus_tools_no_aura": 0.53,
+                    "baseline_gap_verified": True,
+                },
+                "ablation_scores": {
+                    "evidence_level": "external_live_ablation",
+                    "ablation_effects_verified": True,
+                    "full_aura": {"score": 0.86, "passed": True},
+                    "no_memory": {"score": 0.58, "lesion_effect_verified": True},
+                    "no_unified_will": {"score": 0.44, "lesion_effect_verified": True},
+                    "no_self_repair": {"score": 0.63, "lesion_effect_verified": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {**SMOKE_ENV, "AURA_SOVEREIGNTY_COMPARISON_RESULTS": str(comparison)}
+    result = _SUBPROCESS_GATEWAY.run(
+        [
+            sys.executable,
+            "tools/proof/run_sovereign_reconstitution_gauntlet.py",
+            "--profile",
+            "smoke",
+            "--out",
+            str(out),
+            "--hidden-variant-count",
+            "2",
+        ],
+        cwd=ROOT,
+        env=env,
+        timeout=180,
+        read_only=True,
+        source="test_sovereignty_external_comparison_evidence_is_distinguished",
+    )
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
+
+    scorecard = json.loads((out / "SCORECARD.json").read_text(encoding="utf-8"))
+    assert scorecard["baseline_gap_verified"] is True
+    assert scorecard["ablation_effects_verified"] is True
+    assert scorecard["controlled_baseline_contract_verified"] is False
+    assert scorecard["controlled_ablation_contract_verified"] is False
+    assert scorecard["live_baseline_evidence"] is True
+    assert scorecard["live_ablation_evidence"] is True
+    assert scorecard["full_claim_passed"] is False

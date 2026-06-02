@@ -69,6 +69,43 @@ This checkpoint supports
 repo has already been semantically reviewed, all issues are fixed, or any
 24/72-hour live survival result has landed.
 
+## Latest Sovereignty Proof Purification Pass (2026-06-02)
+
+### Gaps Addressed
+
+- **Controlled smoke baselines could be mistaken for architecture lift**:
+  `tools/proof/run_sovereign_reconstitution_gauntlet.py` now records controlled
+  smoke baseline/ablation entries as contract evidence only. It no longer marks
+  those entries as live baseline superiority or causal lesion proof.
+- **Full-claim unlock needed an explicit evidence path**: the sovereignty
+  harness can now ingest an externally supplied comparison artifact through
+  `AURA_SOVEREIGNTY_COMPARISON_RESULTS`, while
+  `tools/proof/score_sovereignty_run.py` only treats baseline gaps and ablation
+  effects as verified when the artifact declares external live comparison and
+  external live ablation evidence.
+- **Regression coverage**: `tests/proof/test_sovereignty_artifacts.py` now
+  checks both boundaries: smoke proof passes the artifact contract without
+  overclaiming, and external comparison evidence is recognized separately.
+- **Live desktop-runtime check**: the live sovereignty probe was rerun with
+  `AURA_SOVEREIGNTY_LIVE_RUNTIME=1`; `live_runtime_report.json` recorded
+  `last_user_endpoint=Cortex`, `primary_model_passed=true`, a Will refusal
+  receipt, and a clean response refusing identity erasure without format-meta
+  pollution.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/proof/test_sovereignty_artifacts.py tests/proof/test_person_box_artifacts.py -q
+python -m ruff check tools/proof/run_sovereign_reconstitution_gauntlet.py tools/proof/score_sovereignty_run.py tests/proof/test_sovereignty_artifacts.py
+make sovereignty-proof
+AURA_SOVEREIGNTY_LIVE_RUNTIME=1 AURA_SOVEREIGNTY_OUT=artifacts/current/aura_sovereignty_proof_live AURA_SOVEREIGNTY_MAX_SECONDS=600 make sovereignty-proof
+```
+
+Latest result: sovereignty smoke and live desktop-runtime artifact contracts
+**PASS**. The full `operational_sovereign_reconstitution` claim remains
+locked because the run does not satisfy the 72-hour duration, independent live
+baseline, or live ablation requirements.
+
 ## Latest Live Person-Box Smoke Pass (2026-06-02)
 
 ### Gaps Addressed

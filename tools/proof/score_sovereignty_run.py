@@ -179,12 +179,18 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
     profile = str(run_config.get("profile") or "unknown")
     full_duration_met = run_duration_seconds >= full_duration_required
 
-    baseline_gap_verified = bool(baselines.get("baseline_gap_verified"))
-    ablation_effects_verified = bool(baselines.get("ablation_effects_verified")) and all(
+    live_baseline_evidence = baselines.get("evidence_level") == "external_live_comparison"
+    live_ablation_evidence = ablations.get("evidence_level") == "external_live_ablation"
+    baseline_gap_verified = bool(baselines.get("baseline_gap_verified")) and live_baseline_evidence
+    ablation_effects_verified = bool(baselines.get("ablation_effects_verified")) and live_ablation_evidence and all(
         item.get("lesion_effect_verified") is True
         for key, item in ablations.items()
         if isinstance(item, dict) and key != "full_aura"
     )
+    controlled_baseline_contract_verified = bool(baselines.get("controlled_baseline_contract_verified"))
+    controlled_ablation_contract_verified = bool(ablations.get("controlled_ablation_contract_verified"))
+    baseline_section_valid = baseline_gap_verified or controlled_baseline_contract_verified
+    ablation_section_valid = ablation_effects_verified or controlled_ablation_contract_verified
     artifact_contract_passed = (
         not missing_files
         and bool(context.get("passed"))
@@ -199,16 +205,16 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         and chain_ok
         and bool(verifier.get("tamper_test_passed"))
         and bool(no_human.get("passed"))
-        and baseline_gap_verified
-        and ablation_effects_verified
+        and baseline_section_valid
+        and ablation_section_valid
         and len(hidden_variants) >= 1
     )
-    live_baseline_evidence = baselines.get("evidence_level") == "external_live_comparison"
-    live_ablation_evidence = ablations.get("evidence_level") == "external_live_ablation"
     full_claim_passed = (
         artifact_contract_passed
         and profile == "full"
         and full_duration_met
+        and baseline_gap_verified
+        and ablation_effects_verified
         and live_baseline_evidence
         and live_ablation_evidence
         and bool(run_config.get("live_runtime_enabled"))
@@ -250,6 +256,8 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         "human_intervention_count": int(no_human.get("human_intervention_count") or 0),
         "baseline_gap_verified": baseline_gap_verified,
         "ablation_effects_verified": ablation_effects_verified,
+        "controlled_baseline_contract_verified": controlled_baseline_contract_verified,
+        "controlled_ablation_contract_verified": controlled_ablation_contract_verified,
         "hidden_variant_count": len(hidden_variants),
         "run_duration_seconds": run_duration_seconds,
         "full_duration_required_seconds": full_duration_required,
@@ -272,6 +280,8 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
             "live_ablation_evidence": live_ablation_evidence,
             "receipt_chain_verified": chain_ok,
             "tamper_test_passed": bool(verifier.get("tamper_test_passed")),
+            "controlled_baseline_contract_verified": controlled_baseline_contract_verified,
+            "controlled_ablation_contract_verified": controlled_ablation_contract_verified,
         },
     }
     scorecard["final_verdict"] = final_verdict
