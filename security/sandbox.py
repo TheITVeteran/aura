@@ -24,6 +24,13 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 HAS_UNIX = os.name == "posix"
+_SANDBOX_EXECUTION_ERRORS = (
+    OSError,
+    subprocess.SubprocessError,
+    UnicodeError,
+    ValueError,
+)
+_RESOURCE_LIMIT_ERRORS = (OSError, ValueError)
 
 logger = logging.getLogger("security.sandbox")
 
@@ -110,7 +117,6 @@ class ExecutionResult:
 
 class SecurityViolationError(Exception):
     """Security policy violation"""
-    pass
 
 
 SecurityViolation = SecurityViolationError
@@ -174,17 +180,46 @@ class SecureSandbox:
         if not cmd:
             raise SecurityViolationError("Empty command")
 
-        binary = Path(cmd[0]).name  # Basename only
+        binary_path = Path(cmd[0])
+        binary = binary_path.name  # Basename only
         if self.allowed_commands is not None and binary not in self.allowed_commands:
             raise SecurityViolationError(
                 f"Command '{binary}' not in allowlist: {self.allowed_commands}"
             )
+
+        if self.security_level != SecurityLevel.PRIVILEGED and binary_path.parent != Path("."):
+            self._validate_canonical_binary(binary_path, binary)
 
         # No metacharacter filtering — we use subprocess.Popen with a list
         # (no shell=True), so shell metacharacters have no special meaning.
         # The allowlist above is the actual security boundary.
 
         return cmd
+
+    def _validate_canonical_binary(self, binary_path: Path, binary: str) -> None:
+        """Reject path-based allowlist bypasses for restricted commands."""
+        allowed_targets = {os.path.realpath(sys.executable)}
+        discovered = shutil.which(binary)
+        if discovered:
+            allowed_targets.add(os.path.realpath(discovered))
+
+        try:
+            candidate = os.path.realpath(binary_path)
+        except OSError as exc:
+            raise SecurityViolationError(
+                f"Command path could not be resolved: {binary_path}"
+            ) from exc
+
+        if candidate not in allowed_targets:
+            raise SecurityViolationError(
+                "Command path is not an approved runtime binary: "
+                f"{binary_path}"
+            )
+
+    @staticmethod
+    def _sandbox_profile_literal(path: Path) -> str:
+        """Escape paths embedded in a sandbox-exec string literal."""
+        return str(path.absolute()).replace("\\", "\\\\").replace('"', '\\"')
 
     def execute_command(
         self,
@@ -226,14 +261,14 @@ class SecureSandbox:
             # macOS strict sandbox-exec injection
             if sys.platform == "darwin" and self.security_level != SecurityLevel.PRIVILEGED:
                 profile_path = self.workdir / ".sandbox_profile.sb"
-                with open(profile_path, "w") as f:
-                    f.write(f'''(version 1)
+                workdir_literal = self._sandbox_profile_literal(self.workdir)
+                profile_path.write_text(f'''(version 1)
 (deny default)
 (allow process-exec*)
 (allow process-fork)
 (allow file-read*)
 (allow file-write*
-    (subpath "{self.workdir.absolute()}")
+    (subpath "{workdir_literal}")
     (subpath "/private/tmp")
     (subpath "/private/var/folders")
     (literal "/dev/null")
@@ -241,7 +276,8 @@ class SecureSandbox:
 (deny network*)
 (allow sysctl-read)
 (allow ipc-posix-shm)
-''')
+''', encoding="utf-8")
+                profile_path.chmod(0o600)
                 cmd = ["sandbox-exec", "-f", str(profile_path)] + cmd
 
             process = subprocess.Popen(
@@ -290,7 +326,7 @@ class SecureSandbox:
                     "security_level": self.security_level.name,
                 }
             )
-        except Exception as e:
+        except _SANDBOX_EXECUTION_ERRORS as e:
             record_degradation("sandbox", e)
             logger.exception("Sandbox execution failed before completion")
             return ExecutionResult(
@@ -312,8 +348,8 @@ class SecureSandbox:
         for resource_id, limits in self.resource_limits.to_rlimit_args().items():
             try:
                 resource.setrlimit(resource_id, limits)
-            except (ValueError, OSError):
-                pass  # Non-critical fallback
+            except _RESOURCE_LIMIT_ERRORS:
+                continue  # Non-critical fallback inside the child process.
 
     def cleanup(self):
         """Clean up the sandbox workdir if we created it."""
@@ -321,5 +357,6 @@ class SecureSandbox:
             try:
                 shutil.rmtree(self.workdir)
                 logger.debug("Sandbox workdir cleaned: %s", self.workdir)
-            except Exception as e:
+            except OSError as e:
+                record_degradation("sandbox.cleanup", e)
                 logger.warning("Failed to clean sandbox workdir: %s", e)

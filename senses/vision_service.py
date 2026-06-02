@@ -3,13 +3,19 @@ Vision Service (The Eyes)
 Runs in the Background (Sandbox).
 Captures screen content and updates 'sensory_memory.json'.
 """
-import time
-import json
+import asyncio
 import base64
+import json
 import os
 import sys
-import asyncio
 from datetime import datetime
+from pathlib import Path
+
+try:
+    from core.runtime.errors import record_degradation
+except ImportError:
+    def record_degradation(_component: str, _error: BaseException) -> None:
+        return None
 
 # Try to import mss for screenshots
 try:
@@ -18,15 +24,30 @@ try:
 except ImportError:
     mss_available = False
 
-async def run_vision_loop():
+_VISION_CAPTURE_ERRORS = (OSError, RuntimeError, ValueError)
+_VISION_SERVICE_ERRORS = (IndexError, OSError, RuntimeError, ValueError)
+
+
+async def run_vision_loop(
+    *,
+    stop_event: asyncio.Event | None = None,
+    interval_s: float = 5.0,
+    output_dir: str | os.PathLike[str] | None = None,
+    monitor_index: int = 1,
+    max_frames: int | None = None,
+) -> None:
     print("Vision Service Starting (Async)...")
-    
+
     if not mss_available:
         print("Error: 'mss' not installed. Please run 'install_package mss'.")
         return
 
     sys.stdout.flush()
-    
+    target_dir = await asyncio.to_thread(lambda: Path(output_dir or ".").resolve())
+    await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+    interval_s = max(0.1, float(interval_s))
+    frames_attempted = 0
+
     # mss.mss() is a context manager, we wrap the whole loop to reuse the connection
     def _capture_and_save(sct, monitor):
         # 1. Capture Screen
@@ -43,25 +64,33 @@ async def run_vision_loop():
             "image_data": b64_data,
             "description": "Screen capture active. Vision analysis (LLaVA/Ollama) is initialized and waiting for integration."
         }
-        with open("vision_memory.tmp", "w") as f:
+        tmp_path = target_dir / "vision_memory.tmp"
+        final_path = target_dir / "sensory_vision.json"
+        with tmp_path.open("w", encoding="utf-8") as f:
             json.dump(memory, f)
-        os.replace("vision_memory.tmp", "sensory_vision.json")
+        os.replace(tmp_path, final_path)
         return True
 
     try:
         with mss.mss() as sct:
-            monitor = sct.monitors[1] # Primary monitor
-            while True:
+            monitor = sct.monitors[monitor_index] # Primary monitor
+            while stop_event is None or not stop_event.is_set():
                 try:
                     await asyncio.to_thread(_capture_and_save, sct, monitor)
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Frame captured.")
                     sys.stdout.flush()
-                except Exception as e:
+                except _VISION_CAPTURE_ERRORS as e:
+                    record_degradation("vision_service.capture", e)
                     print(f"Vision Error: {e}")
                     sys.stdout.flush()
-                
-                await asyncio.sleep(5.0) # Non-blocking sleep
-    except Exception as e:
+
+                frames_attempted += 1
+                if max_frames is not None and frames_attempted >= max_frames:
+                    break
+
+                await asyncio.sleep(interval_s) # Non-blocking sleep
+    except _VISION_SERVICE_ERRORS as e:
+        record_degradation("vision_service", e)
         print(f"Fatal Vision Error: {e}")
 
 if __name__ == "__main__":

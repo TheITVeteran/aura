@@ -5,22 +5,28 @@ Specialized sandbox for verifying Python code patches before application.
 C-13 FIX: Removed the "Dry Import Check" that executed module-level code
 during verification. Now uses only AST parsing + py_compile for safety.
 """
-import os
+import ast
+import logging
+import subprocess
 import sys
 import tempfile
-import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
-import subprocess
-import ast
+from typing import Any
 
 # Import the base sandbox
 try:
-    from .sandbox import SecureSandbox, SecurityLevel, ExecutionResult
+    from .sandbox import SecureSandbox, SecurityLevel
 except ImportError:
-    from sandbox import SecureSandbox, SecurityLevel, ExecutionResult
+    from sandbox import SecureSandbox, SecurityLevel
 
 logger = logging.getLogger("security.code_sandbox")
+_PATCH_VERIFICATION_ERRORS = (
+    OSError,
+    RuntimeError,
+    subprocess.SubprocessError,
+    UnicodeError,
+    ValueError,
+)
 
 
 class CodeRepairSandbox:
@@ -35,7 +41,7 @@ class CodeRepairSandbox:
     def __init__(self, security_level: SecurityLevel = SecurityLevel.RESTRICTED):
         self.sandbox = SecureSandbox(security_level=security_level)
 
-    def verify_patch(self, original_file: Path, patched_content: str) -> Dict[str, Any]:
+    def verify_patch(self, original_file: Path, patched_content: str) -> dict[str, Any]:
         """Verify a code patch using static analysis only.
 
         Steps:
@@ -57,7 +63,7 @@ class CodeRepairSandbox:
         try:
             # 1. Syntax Check (AST parse)
             try:
-                tree = ast.parse(patched_content)
+                ast.parse(patched_content)
                 results["syntax_valid"] = True
             except SyntaxError as e:
                 results["error"] = f"Syntax Error: {e}"
@@ -110,7 +116,7 @@ class CodeRepairSandbox:
 
             return results
 
-        except Exception as e:
+        except _PATCH_VERIFICATION_ERRORS as e:
             logger.error("Patch verification failed: %s", e)
             results["error"] = str(e)
             return results
