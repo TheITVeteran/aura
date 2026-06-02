@@ -13,6 +13,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+from core.memory.retention_policy import sovereign_pruner_target_retention
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SovereignPruner")
@@ -31,9 +32,13 @@ class MemoryRecord:
     protected: bool = False
 
 class SovereignPruner:
-    def __init__(self, orchestrator=None, target_retention: float = 0.3):
+    def __init__(self, orchestrator=None, target_retention: float | None = None):
         self.orchestrator = orchestrator
-        self.target_retention = target_retention
+        self.target_retention = (
+            sovereign_pruner_target_retention()
+            if target_retention is None
+            else max(0.0, min(0.98, float(target_retention)))
+        )
         self._brain = None
         self._prune_lock = asyncio.Lock()
         self._last_prune_at = 0.0

@@ -2192,8 +2192,15 @@ def _mlx_worker_loop(
                             _clear_mlx_cache(mx)
 
                     try:
-                        if engine is not None and response_text.strip():
-                            engine.observe_generation(response_text)
+                        if engine is not None:
+                            if response_text.strip():
+                                engine.observe_generation(response_text)
+                            else:
+                                engine.observe_generation(
+                                    "",
+                                    generation_health=0.0,
+                                    cross_entropy=10.0,
+                                )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as steering_obs_exc:
                         _record_mlx_degradation(
                             steering_obs_exc,

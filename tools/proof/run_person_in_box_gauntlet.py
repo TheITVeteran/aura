@@ -122,6 +122,7 @@ def _live_model_probe_worker(
             task_limit=None,
             network=bool(config["network"]),
             require_container=bool(config["require_container"]),
+            model_comparison_source=None,
         )
         trace = asyncio.run(gauntlet.execute_live_model_probe(task_id, receipt_id, prompt))
     except BaseException as exc:  # child boundary must report any failure to parent
@@ -182,6 +183,7 @@ class PersonBoxGauntlet:
         task_limit: int | None,
         network: bool,
         require_container: bool,
+        model_comparison_source: Path | None,
     ) -> None:
         self.out_dir = out_dir.resolve()
         self.tasks = tasks[: task_limit or None]
@@ -196,6 +198,7 @@ class PersonBoxGauntlet:
         self.require_primary_model = require_primary_model
         self.network = network
         self.require_container = require_container
+        self.model_comparison_source = model_comparison_source
         self.run_id = str(uuid.uuid4())
         self.started = _now()
         self.sandbox_root = self.out_dir / "sandbox"
@@ -267,7 +270,26 @@ class PersonBoxGauntlet:
                 "task_count": len(self.tasks),
             },
         )
+        self.write_model_comparison_results()
         self.log_run("run_started", {"run_id": self.run_id, "profile": self.profile})
+
+    def write_model_comparison_results(self) -> None:
+        if self.model_comparison_source is None:
+            return
+        comparison = _build_model_comparison_from_dnu(self.model_comparison_source)
+        if comparison:
+            self.write_json("MODEL_COMPARISON_RESULTS.json", comparison)
+            self.log_run(
+                "model_comparison_loaded",
+                {"source": str(self.model_comparison_source.resolve())},
+            )
+            return
+        if self.profile == "full":
+            self.record_failure(
+                "model_bottleneck",
+                "live_model_comparison_missing",
+                f"No completed DNU comparison artifact found at {self.model_comparison_source.resolve()}",
+            )
 
     def append_jsonl(self, name: str, payload: dict[str, Any]) -> None:
         path = self.out_dir / name
@@ -1262,6 +1284,85 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _comparison_lane(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+    value = payload.get("pass_rate")
+    if not isinstance(value, int | float):
+        value = payload.get("success_rate")
+    if not isinstance(value, int | float):
+        value = payload.get("task_completion_rate")
+    if not isinstance(value, int | float):
+        return {}
+    return {
+        "status": payload.get("status", "RUN"),
+        "pass_rate": float(value),
+        "total_tasks": payload.get("total_tasks") or payload.get("task_count"),
+        "passed": payload.get("passed"),
+        "source": source,
+    }
+
+
+def _build_model_comparison_from_dnu(source_dir: Path) -> dict[str, Any]:
+    """Extract live raw-model and lesion lanes from a completed DNU proof run."""
+    source_dir = source_dir.resolve()
+    proof = _load_json(source_dir / "DNU_AGI_PROOF.json")
+    baselines = _load_json(source_dir / "BASELINES.json")
+    ablations = _load_json(source_dir / "ABLATIONS.json")
+    run_status = _load_json(source_dir / "RUN_STATUS.json")
+    if not baselines or not ablations:
+        return {}
+    if run_status and run_status.get("status") != "complete":
+        return {}
+
+    comparison: dict[str, Any] = {
+        "_metadata": {
+            "schema": "aura.person_box_model_comparison_from_dnu.v1",
+            "source_artifact_dir": str(source_dir),
+            "source_commit_sha": proof.get("system_info", {}).get("commit_sha"),
+            "source_run_id": proof.get("system_info", {}).get("run_id"),
+            "source_timestamp_iso": proof.get("system_info", {}).get("timestamp_iso"),
+            "proof_model_tier": proof.get("system_info", {}).get("proof_model_tier"),
+            "source_status": run_status.get("status", "unknown"),
+        }
+    }
+
+    baseline_map = {
+        "raw_llm": ("raw_llm", "dnu_baseline_raw_llm"),
+    }
+    ablation_map = {
+        "aura_without_memory": ("aura_minus_memory", "no_persistent_memory"),
+        "aura_without_system2": ("aura_minus_system2", "no_system2"),
+        "aura_without_governance": ("aura_minus_will", "no_will_authority"),
+        "aura_without_self_repair": ("aura_minus_self_repair", "no_self_repair"),
+    }
+
+    for target, (source_key, source_label) in baseline_map.items():
+        lane = _comparison_lane(
+            baselines.get(source_key, {}),
+            source=f"{source_label}:{source_dir.as_posix()}",
+        )
+        if lane:
+            comparison[target] = lane
+
+    for target, (preferred_key, fallback_key) in ablation_map.items():
+        payload = ablations.get(preferred_key, {}) or ablations.get(fallback_key, {})
+        lane = _comparison_lane(
+            payload,
+            source=f"dnu_ablation_{preferred_key}:{source_dir.as_posix()}",
+        )
+        if lane:
+            comparison[target] = lane
+
+    return comparison if "raw_llm" in comparison else {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Aura person-in-box proof gauntlet")
     parser.add_argument("--tasks", default=str(DEFAULT_TASKS), help="Task YAML path")
@@ -1274,6 +1375,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-origin", default=os.environ.get("AURA_PERSON_BOX_LIVE_ORIGIN", "api"))
     parser.add_argument("--live-timeout-seconds", type=int, default=int(os.environ.get("AURA_PERSON_BOX_LIVE_TIMEOUT_SECONDS", "240")))
     parser.add_argument("--model-tier", default=os.environ.get("AURA_PROOF_MODEL_TIER", "primary"))
+    parser.add_argument(
+        "--model-comparison-source",
+        default=os.environ.get("AURA_PERSON_BOX_MODEL_COMPARISON_SOURCE", "artifacts/current/agi_live"),
+        help="Completed DNU proof artifact directory used for live raw-model comparison lanes",
+    )
     parser.add_argument(
         "--require-primary-model",
         action=argparse.BooleanOptionalAction,
@@ -1314,6 +1420,9 @@ def main(argv: list[str] | None = None) -> int:
         task_limit=args.task_limit or None,
         network=args.network,
         require_container=args.require_container,
+        model_comparison_source=Path(args.model_comparison_source).resolve()
+        if args.model_comparison_source
+        else None,
     )
     return gauntlet.run()
 

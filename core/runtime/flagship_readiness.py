@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.boot_contract import validate_boot_contract
+
 
 @dataclass
 class FlagshipIssue:
@@ -57,6 +59,7 @@ _EXCLUDE_DIRS = {
     "logs",
     "models",
     "node_modules",
+    "scratch",
     "training",
 }
 _ALLOWED_CREATE_TASK_FILES = {
@@ -277,6 +280,18 @@ def scan_codebase(root: str | Path) -> FlagshipReport:
         src = _safe_read(registry)
         if '"quarantined"' not in src or '"dead"' not in src:
             issues.append(FlagshipIssue("MORPHOGENESIS_STATUS_COUNTERS", "warning", "core/morphogenesis/registry.py", 0, "Morphogenesis registry status lacks direct lifecycle counters.", "Expose direct quarantined/dead/active/dormant counters in status()."))
+
+    for issue in validate_boot_contract(root):
+        issues.append(
+            FlagshipIssue(
+                code=issue.code,
+                severity="error",
+                path=issue.path,
+                line=0,
+                message=f"{issue.service}: {issue.message}",
+                suggestion="Restore the canonical boot/runtime contract evidence before launch.",
+            )
+        )
 
     ok = not any(issue.severity == "error" for issue in issues)
     return FlagshipReport(root=str(root), ok=ok, issues=issues)

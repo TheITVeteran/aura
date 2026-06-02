@@ -25,6 +25,7 @@ Usage:
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 import logging
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -68,8 +69,21 @@ class TranscriptEntry:
 # Core transcript
 # ---------------------------------------------------------------------------
 
-# Rolling window — older entries are pruned
-_MAX_HISTORY_DEFAULT = 50
+def _env_int(name: str, default: int, *, low: int, high: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+# Rolling store window. Prompt injection still uses explicit request limits.
+_MAX_HISTORY_DEFAULT = _env_int(
+    "AURA_UNIFIED_TRANSCRIPT_MAX_HISTORY",
+    500,
+    low=50,
+    high=100_000,
+)
 
 
 class UnifiedTranscript:
@@ -120,7 +134,6 @@ class UnifiedTranscript:
         )
         with self._lock:
             self._entries.append(entry)
-            # Prune if over max
             # Prune if over max
             if len(self._entries) > self._max_history:
                 self._entries = self._entries[-self._max_history:]
@@ -220,6 +233,7 @@ class UnifiedTranscript:
                 channels[e.channel] = channels.get(e.channel, 0) + 1
             return {
                 "total_entries": len(self._entries),
+                "max_history": self._max_history,
                 "channels": channels,
                 "last_entry_age": time.time() - self._entries[-1].timestamp
                 if self._entries else None,

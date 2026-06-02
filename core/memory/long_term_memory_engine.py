@@ -20,6 +20,7 @@ from core.config import config
 from core.container import ServiceContainer
 from core.event_bus import get_event_bus
 from core.memory.atomic_storage import atomic_write
+from core.memory.retention_policy import MemoryRetentionPolicy, long_term_retention_policy
 from core.runtime.errors import FallbackClassification, PersistenceCorruption, record_degradation
 from core.utils.task_tracker import task_tracker
 
@@ -105,7 +106,8 @@ class LongTermMemoryEngine:
 
     def __init__(self):
         self.memories: list[TaggedMemory] = []
-        self._max_memories = 10000  # Absolute cap to prevent unbounded growth
+        self._retention_policy = long_term_retention_policy()
+        self._max_memories = self._retention_policy.max_items
         self.memory_facade = None
         self.drive_engine = None
         self.cel = None
@@ -305,13 +307,7 @@ class LongTermMemoryEngine:
         )
         self.memories.append(memory)
 
-        # Enforce absolute memory cap - remove oldest 10% if exceeded
-        if len(self.memories) > self._max_memories:
-            # Sort by importance and age, keep highest-importance recent memories
-            self.memories.sort(key=lambda m: (m.importance, m.timestamp))
-            keep_count = int(self._max_memories * 0.9)
-            self.memories = self.memories[-keep_count:]  # Keep 90% (newest)
-            logger.debug(f"LongTermMemory capped: kept {len(self.memories)} memories")
+        self._enforce_retention_cap()
         
         self._save_memories()
 
@@ -332,6 +328,27 @@ class LongTermMemoryEngine:
                 )
                 logger.debug("LongTermMemory CEL reflection skipped: %s", exc)
         return memory
+
+    def _policy(self) -> MemoryRetentionPolicy:
+        policy = getattr(self, "_retention_policy", None)
+        if isinstance(policy, MemoryRetentionPolicy):
+            return policy
+        max_memories = int(getattr(self, "_max_memories", 10_000) or 10_000)
+        return MemoryRetentionPolicy(max_items=max_memories, prune_keep_fraction=0.92, basis="legacy_fallback")
+
+    def _enforce_retention_cap(self) -> None:
+        policy = self._policy()
+        self._max_memories = policy.max_items
+        if len(self.memories) <= policy.max_items:
+            return
+        self.memories.sort(key=lambda memory: (memory.importance, abs(memory.emotional_valence), memory.timestamp))
+        keep_count = policy.keep_count(len(self.memories))
+        self.memories = self.memories[-keep_count:]
+        logger.info(
+            "LongTermMemory retention cap: kept %d memories using %s policy.",
+            len(self.memories),
+            policy.basis,
+        )
 
     async def recall_relevant(self, query: str, limit: int = 5) -> list[TaggedMemory]:
         now = time.time()

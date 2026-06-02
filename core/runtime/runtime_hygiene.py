@@ -42,6 +42,14 @@ _PROCESS_INTROSPECTION_ERRORS = (
 ) + _PSUTIL_PROCESS_ERRORS
 
 
+def _env_int(name: str, default: int, *, low: int, high: int) -> int:
+    try:
+        value = int(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
 def _process_cmdline(proc: Any) -> List[str]:
     try:
         return [str(part) for part in (proc.cmdline() or [])]
@@ -143,6 +151,12 @@ class RuntimeHygieneManager:
         self.stale_task_age_s = 900.0
         self.process_shutdown_timeout_s = 1.0
         self.thread_join_timeout_s = 0.2
+        self.max_thread_joins_per_shutdown = _env_int(
+            "AURA_RUNTIME_HYGIENE_MAX_SHUTDOWN_THREAD_JOINS",
+            16,
+            low=1,
+            high=256,
+        )
         self.shutdown_timeout_s = max(
             1.5,
             float(os.getenv("AURA_RUNTIME_HYGIENE_SHUTDOWN_TIMEOUT_S", "4.0") or 4.0),
@@ -458,7 +472,6 @@ class RuntimeHygieneManager:
             return
 
         original_run = thread.run
-        manager = self
 
         def _wrapped_run(*args, **kwargs):
             record.started_at = time.monotonic()
@@ -798,14 +811,15 @@ class RuntimeHygieneManager:
             )
         except TimeoutError as exc:
             record_degradation(
-                "runtime_hygiene",
+                "runtime_hygiene_shutdown",
                 exc,
-                severity="degraded",
+                severity="warning",
                 action="continued shutdown after bounded concurrent child-process cleanup timed out",
+                enforce_failure_policy=False,
             )
 
     async def _join_non_daemon_threads(self) -> None:
-        join_coros = []
+        join_candidates: list[threading.Thread] = []
         for thread in list(self._thread_refs.values()):
             if thread.daemon:
                 continue
@@ -813,9 +827,33 @@ class RuntimeHygieneManager:
                 continue
             if thread.ident == threading.get_ident():
                 continue
-            join_coros.append(
-                asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
+            join_candidates.append(thread)
+        if not join_candidates:
+            return
+
+        selected = join_candidates[: self.max_thread_joins_per_shutdown]
+        skipped = join_candidates[self.max_thread_joins_per_shutdown :]
+        if skipped:
+            record_degradation(
+                "runtime_hygiene_shutdown",
+                RuntimeError(f"{len(skipped)} non-daemon thread(s) left for owner shutdown"),
+                severity="warning",
+                action=(
+                    "bounded runtime hygiene shutdown thread joins; remaining live threads "
+                    "are left to their owning services"
+                ),
+                extra={
+                    "skipped_threads": [getattr(thread, "name", "unknown") for thread in skipped[:10]],
+                    "selected_count": len(selected),
+                    "skipped_count": len(skipped),
+                },
+                enforce_failure_policy=False,
             )
+
+        join_coros = [
+            asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
+            for thread in selected
+        ]
         if not join_coros:
             return
         try:
@@ -825,15 +863,27 @@ class RuntimeHygieneManager:
             )
         except TimeoutError as exc:
             record_degradation(
-                "runtime_hygiene",
+                "runtime_hygiene_shutdown",
                 exc,
-                severity="degraded",
+                severity="warning",
                 action="continued shutdown after bounded concurrent thread join timed out",
+                extra={
+                    "selected_count": len(selected),
+                    "skipped_count": len(skipped),
+                    "selected_threads": [getattr(thread, "name", "unknown") for thread in selected[:10]],
+                },
+                enforce_failure_policy=False,
             )
             return
         for result in results:
             if isinstance(result, (RuntimeError, AttributeError, TypeError, ValueError)):
-                record_degradation('runtime_hygiene', result)
+                record_degradation(
+                    "runtime_hygiene_shutdown",
+                    result,
+                    severity="warning",
+                    action="continued shutdown after a bounded thread join failed",
+                    enforce_failure_policy=False,
+                )
                 logger.debug("RuntimeHygiene: thread join failed: %s", result)
 
     @staticmethod

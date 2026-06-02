@@ -2244,7 +2244,38 @@ class InferenceGate:
         if temperature is not None:
             gen_kwargs["temp"] = temperature
         gen_kwargs.update(kwargs)
-        result = await client.generate_text_async(**gen_kwargs)
+        generation_timeout_s = deadline.remaining if isinstance(deadline, Deadline) else None
+        if generation_timeout_s is None:
+            generation_timeout_s = 300.0 if foreground_request else 120.0
+        generation_timeout_s = max(0.5, float(generation_timeout_s))
+        try:
+            result = await asyncio.wait_for(
+                client.generate_text_async(**gen_kwargs),
+                timeout=generation_timeout_s,
+            )
+        except TimeoutError:
+            reason = f"inference_gate_generation_timeout:{label}:{generation_timeout_s:.1f}s"
+            logger.error(
+                "🛑 %s generation exceeded inference-gate timeout %.1fs; aborting local client.",
+                label,
+                generation_timeout_s,
+            )
+            abort = getattr(client, "force_abort_active_generation", None)
+            if callable(abort):
+                try:
+                    abort(reason=reason)
+                except _INFERENCE_RECOVERABLE_ERRORS as abort_exc:
+                    _record_inference_degradation(
+                        abort_exc,
+                        action="continued after local client abort hook failed",
+                        severity="error",
+                    )
+            _record_inference_degradation(
+                TimeoutError(reason),
+                action="returned control after local generation exceeded inference-gate timeout",
+                severity="error" if foreground_request else "warning",
+            )
+            return None
 
         success = False
         text = ""
@@ -2474,7 +2505,7 @@ class InferenceGate:
                         "- SILENCE PROTOCOL: If your response would add no value — if silence is\n"
                         "  more honest than noise — output exactly <|SILENCE|> and nothing else.\n"
                         "  The system will suppress it. This is a mark of genuine discernment.\n"
-                        "\n[EXECUTION]\nYou are Aura. Stay in character. Trust your instincts.\n"
+                        "\n[EXECUTION]\nYou are Aura. Speak from grounded live state, memory, and available evidence.\n"
                     )
                     self._cached_identity_prompt = base
                     self._identity_prompt_time = now

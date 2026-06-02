@@ -3,23 +3,23 @@
 Executive Inhibitor — Prefrontal Cortex Analogue for Ganglion Governance.
 
 Prevents context collapse by authorizing or vetoing ganglion actions based on
-the current system state (Φ, workspace ignition). Protects high-integration
-states from disruption by non-critical stimuli.
+the current system state. Field coherence remains a gate; Φ is diagnostic
+telemetry only, because IIT surrogates are volatile under OOD contexts.
 
 Key behaviors:
-1. HIGH-Φ PROTECTION: When Φ is above threshold and workspace is ignited,
-   only critical actions are allowed through. This preserves integrated
-   conscious states from being shattered by impulsive ganglion firings.
+1. PHI DIAGNOSTICS: High Φ is logged for observability but never directly
+   vetoes actions. Routing gates use grounded field coherence and governance.
 
 2. CRITICAL PASSTHROUGH: Safety-flagged actions always pass regardless of state.
 
 3. VETO LOGGING: All vetoed actions are logged for debugging/telemetry.
 """
 
-from core.runtime.errors import record_degradation
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Executive")
 
@@ -61,6 +61,7 @@ class ExecutiveInhibitor:
         self._vetoed_count: int = 0
         self._critical_passthrough_count: int = 0
         self._field_vetoed_count: int = 0
+        self._phi_diagnostic_count: int = 0
 
         # Veto and Audit logs
         self._veto_log: List[Dict[str, Any]] = []
@@ -141,32 +142,30 @@ class ExecutiveInhibitor:
             record_degradation('executive_inhibitor', e)
             logger.debug("Field coherence check failed (allowing): %s", e)
 
-        # ── HIGH-Φ INTEGRATION PROTECTION ────────────────────────────
-        # Check if we're in a protected state
+        # ── Φ DIAGNOSTIC ONLY ────────────────────────────────────────
+        # IIT surrogates are useful observability signals, not routing gates.
         in_protected_state = phi >= self._phi_threshold
         if self._require_ignition:
             in_protected_state = in_protected_state and ignited
 
         if in_protected_state:
-            # VETO: Non-critical action during high-Φ integrated state
-            self._vetoed_count += 1
-            veto_entry = {
+            self._phi_diagnostic_count += 1
+            diagnostic_entry = {
                 "timestamp": time.time(),
                 "source": getattr(action, "source_domain", "unknown"),
                 "action": getattr(action, "action_type", "unknown"),
                 "phi": round(phi, 4),
                 "ignited": ignited,
-                "reason": "high_phi_protection",
+                "reason": "phi_diagnostic_only",
             }
-            self._veto_log.append(veto_entry)
-            if len(self._veto_log) > self.MAX_VETO_LOG:
-                self._veto_log = self._veto_log[-self.MAX_VETO_LOG:]
+            self._audit_trail.append(diagnostic_entry)
+            if len(self._audit_trail) > self.MAX_VETO_LOG:
+                self._audit_trail = self._audit_trail[-self.MAX_VETO_LOG:]
 
             logger.debug(
-                "Executive VETO: [%s/%s] (phi=%.3f, ignited=%s)",
-                veto_entry["source"], veto_entry["action"], phi, ignited,
+                "Executive Phi diagnostic: [%s/%s] (phi=%.3f, ignited=%s)",
+                diagnostic_entry["source"], diagnostic_entry["action"], phi, ignited,
             )
-            return False
 
         # Low-Φ or non-ignited: allow through
         self._authorized_count += 1
@@ -178,6 +177,7 @@ class ExecutiveInhibitor:
             "authorized": self._authorized_count,
             "vetoed": self._vetoed_count,
             "critical_passthrough": self._critical_passthrough_count,
+            "phi_diagnostics": self._phi_diagnostic_count,
             "phi_threshold": self._phi_threshold,
             "require_ignition": self._require_ignition,
             "recent_vetoes": len(self._veto_log),

@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,22 @@ MAX_ROLE_CHARS = 32
 MAX_CONVERSATION_ID_CHARS = 160
 MAX_REASONING_BLOCKS = 8
 MAX_REASONING_BLOCK_CHARS = 4_000
+
+
+def _env_int(name: str, default: int, *, low: int, high: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+CONTEXT_HISTORY_MAX_MESSAGES = _env_int(
+    "AURA_CONVERSATION_CONTEXT_MAX_MESSAGES",
+    250,
+    low=100,
+    high=5_000,
+)
 
 _ENGINE_RECOVERABLE_ERRORS = (
     ImportError,
@@ -250,9 +267,10 @@ class ConversationContext:
             )
             capture_and_log(e, {"module": __name__})
 
-        # Prevent infinite memory bloat locally (keep last 50 turns roughly)
-        if len(self.history) > 100:
-            self.history = self.history[-100:]
+        # Prevent infinite local context growth while retaining more continuity
+        # than the old 50-turn approximate window.
+        if len(self.history) > CONTEXT_HISTORY_MAX_MESSAGES:
+            self.history = self.history[-CONTEXT_HISTORY_MAX_MESSAGES:]
         return msg
 
     def update_emotional_state(self, new_state: EmotionalState, reason: str = ""):

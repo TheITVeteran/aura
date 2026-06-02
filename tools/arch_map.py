@@ -25,10 +25,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.boot_contract import boot_contract_report
 
 CORE = ROOT / "core"
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
-ARCH_MAP_SCHEMA = "aura.architecture.dependency_map.v1"
+ARCH_MAP_SCHEMA = "aura.architecture.dependency_map.v2"
 
 
 @dataclass(frozen=True)
@@ -641,6 +642,7 @@ def build_architecture_report() -> dict:
         "schema": ARCH_MAP_SCHEMA,
         "generated_at_unix": time.time(),
         "root": str(ROOT),
+        "boot_contract": boot_contract_report(ROOT),
         "inputs": {
             "core_python_files": len(all_files),
             "skills_python_files": len(skills_files),
@@ -730,6 +732,7 @@ def render_markdown_report(report: dict) -> str:
             f"- Dependency edges: {len(report['dependency_edges'])}",
             f"- ServiceContainer `.get()` calls: {report['service_container']['get_call_count']}",
             f"- ServiceContainer registrations: {report['service_container']['register_call_count']}",
+            f"- Boot contract: {'PASS' if report['boot_contract']['ok'] else 'FAIL'}",
             "",
             "## Subsystem Dependency Graph",
             "",
@@ -751,6 +754,31 @@ def render_markdown_report(report: dict) -> str:
         )
 
     service = report["service_container"]
+    boot_contract = report["boot_contract"]
+    lines.extend(
+        [
+            "",
+            "## Boot Runtime Contract",
+            "",
+            f"- Contract status: {'PASS' if boot_contract['ok'] else 'FAIL'}",
+            f"- Canonical proof artifact directories: {len(boot_contract['canonical_proof_artifact_dirs'])}",
+            "",
+            "| Service | Required For | Failure Policy | Owner |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    for service_requirement in boot_contract["services"]:
+        lines.append(
+            f"| {service_requirement['name']} | {service_requirement['required_for']} | "
+            f"{service_requirement['failure_policy']} | `{service_requirement['owner_file']}` |"
+        )
+    if boot_contract["issues"]:
+        lines.extend(["", "### Boot Contract Issues", ""])
+        for issue in boot_contract["issues"]:
+            lines.append(
+                f"- `{issue['code']}` `{issue['service']}` `{issue['path']}`: {issue['message']}"
+            )
+
     lines.extend(
         [
             "",

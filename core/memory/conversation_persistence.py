@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -16,8 +17,28 @@ from core.runtime.errors import FallbackClassification, Severity, record_degrada
 logger = logging.getLogger("Aura.ConversationPersistence")
 
 DEFAULT_PERSIST_DIR = Path.home() / ".aura" / "data" / "conversations"
-MAX_HISTORY_IN_MEMORY = 50
-MAX_SESSIONS_ON_DISK = 20
+
+
+def _env_int(name: str, default: int, *, low: int, high: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+MAX_HISTORY_IN_MEMORY = _env_int(
+    "AURA_CONVERSATION_CACHE_MAX_MESSAGES",
+    500,
+    low=50,
+    high=10_000,
+)
+MAX_SESSIONS_ON_DISK = _env_int(
+    "AURA_CONVERSATION_CACHE_MAX_SESSIONS",
+    200,
+    low=20,
+    high=10_000,
+)
 SAVE_EVERY_N_MESSAGES = 3
 SESSION_SUMMARY_MIN_MESSAGES = 5
 MAX_MESSAGE_CONTENT_CHARS = 20_000

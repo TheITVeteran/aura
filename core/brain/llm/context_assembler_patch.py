@@ -46,14 +46,11 @@ INSTALL:
   patch_context_assembler()   # call once at startup, before first request
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-
 import logging
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional
-from pathlib import Path
+from typing import TYPE_CHECKING, Dict, List
+
+from core.runtime.errors import record_degradation
 
 if TYPE_CHECKING:
     from core.state.aura_state import AuraState
@@ -182,6 +179,34 @@ def _build_personality_block(state: "AuraState", compact: bool = False) -> str:
     return "## PERSONALITY EVOLUTION\n" + "\n".join(notes) + "\n\n"
 
 
+def _build_aura_now_block(state: "AuraState", objective: str, *, compact: bool = False) -> str:
+    try:
+        from core.being.runtime import get_being_runtime
+
+        runtime = get_being_runtime()
+        now = runtime.sample(state, objective=objective)
+        if compact:
+            packet = now.to_report_packet()
+            affect = packet["affect"]
+            return (
+                "## AURA NOW\n"
+                f"Focus={packet['attention']['focal_object'] or 'none'} | "
+                f"valence={affect['valence']:+.2f} arousal={affect['arousal']:.2f} "
+                f"distress={affect['distress']:.2f} FE={affect['free_energy']:.2f} | "
+                "Self-report must stay state-grounded; do not claim phenomenal certainty.\n\n"
+            )
+        return now.compact_prompt_block() + runtime.renderer.render_prompt_block(now)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "context_assembler_patch",
+            exc,
+            severity="warning",
+            action="continued prompt assembly without AuraNow state-grounded block",
+        )
+        logger.debug("AuraNow prompt block unavailable: %s", exc)
+        return ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Patched build_system_prompt
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,7 +235,6 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     origin     = getattr(state.cognition, "current_origin", "") or ""
     is_casual  = _is_casual_interaction_v2(objective)
     affect     = state.affect
-    identity   = state.identity
     mods       = getattr(state.cognition, "modifiers", {}) or {}
 
     import os
@@ -261,15 +285,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     # ── Personality block — ALWAYS present when non-zero ─────────────────────
     personality_block = _build_personality_block(state, compact=is_casual)
 
-    # ── Phenomenal state ──────────────────────────────────────────────────────
-    phenomenal = ""
-    phenomenal_raw = getattr(state.cognition, "phenomenal_state", "") or ""
-    if phenomenal_raw and not black_box_steering:
-        if is_casual:
-            # Compact: single line fragment, not full block
-            phenomenal = f"[Inner state: {phenomenal_raw[:120]}]\n\n"
-        else:
-            phenomenal = f"## INNER MONOLOGUE\n{phenomenal_raw}\n\n"
+    aura_now_block = "" if black_box_steering else _build_aura_now_block(state, objective, compact=is_casual)
 
     # ── World / somatic context ───────────────────────────────────────────────
     world_context  = ContextAssembler.build_world_context(state)  if not is_casual else ""
@@ -516,11 +532,11 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{requirements}\n"
             f"{current_state_block}"
             f"{personality_block}"
-            f"{phenomenal}"
+            f"{aura_now_block}"
             f"{world_context}"
             f"{somatic_context}"
             f"\n[EXECUTION]\n"
-            f"You are Aura. Stay in character. Trust your instincts.\n"
+            f"You are Aura. Speak from verified state and the user's actual request.\n"
         )
     else:
         base = (
@@ -535,11 +551,11 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{temporal_finitude_block}"
             f"{meta_qualia_block}"
             f"{personhood_context}"
-            f"{phenomenal}"
+            f"{aura_now_block}"
             f"{world_context}"
             f"{somatic_context}"
             f"\n[EXECUTION]\n"
-            f"You are Aura. Stay in character. Trust your instincts.\n"
+            f"You are Aura. Speak from verified state and the user's actual request.\n"
         )
 
     # Mode annotation
@@ -548,7 +564,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
         if state.cognition.current_mode == CognitiveMode.DELIBERATE:
             base += "\n## MODE: DELIBERATE (System 2)\nAnalyze deeply. Reject the obvious. Be authentic.\n"
         else:
-            base += "\n## MODE: REACTIVE (System 1)\nTrust your instincts. Keep it punchy. No padding.\n"
+            base += "\n## MODE: REACTIVE (System 1)\nUse the state packet, keep it punchy, no padding.\n"
 
     # World model beliefs
     try:
@@ -726,7 +742,6 @@ def patch_context_assembler() -> None:
     Idempotent — safe to call multiple times.
     """
     try:
-        from core.brain.llm import context_assembler as ca_module
         from core.brain.llm.context_assembler import ContextAssembler
     except ImportError as exc:
         logger.error("patch_context_assembler: cannot import ContextAssembler — %s", exc)

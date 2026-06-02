@@ -34,6 +34,7 @@ This file outlines every registered service, its source code location, registrat
 | `attention_summarizer` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `audit` | `core/orchestrator/initializers/core_baseline.py` | `core/orchestrator/initializers/core_baseline.py` | boot | `fail-closed` |
 | `aura_kernel` | `core/kernel/kernel_interface.py` | `core/kernel/kernel_interface.py` | boot | `fail-closed` |
+| `aura_now_runtime` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `aura_protocol_server` | `core/consciousness/aura_protocol.py` | `core/consciousness/aura_protocol.py` | boot | `fail-closed` |
 | `aura_runtime` | `aura_main.py` | `aura_main.py` | optional features | `degrade_with_receipt` |
 | `aura_workspace` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
@@ -48,6 +49,7 @@ This file outlines every registered service, its source code location, registrat
 | `ava_social` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
 | `backup_manager` | `core/orchestrator/initializers/core_baseline.py` | `core/orchestrator/initializers/core_baseline.py` | boot | `fail-closed` |
 | `backup_system` | `core/safety/self_preservation_safe.py` | `core/safety/self_preservation_safe.py` | boot | `fail-closed` |
+| `being_runtime` | `core/consciousness/system.py` | `core/consciousness/system.py` | optional features | `degrade_with_receipt` |
 | `belief_authority` | `core/constitution.py` | `core/constitution.py` | optional features | `degrade_with_receipt` |
 | `belief_challenger` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `belief_graph` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
@@ -369,8 +371,7 @@ This file outlines every registered service, its source code location, registrat
 | `unified_field` | `core/consciousness/consciousness_bridge.py` | `core/consciousness/consciousness_bridge.py` | boot | `fail-closed` |
 | `unified_self` | `core/consciousness/coordinator.py` | `core/consciousness/coordinator.py` | boot | `fail-closed` |
 | `unified_will` | `core/governance/will.py` | `core/governance/will.py` | optional features | `degrade_with_receipt` |
-| `unity_runtime` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
-| `unity_workspace_frame` | `core/unity/runtime.py` | `core/unity/runtime.py` | optional features | `degrade_with_receipt` |
+| `unity_runtime` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
 | `user_recognizer` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
 | `value_autopoiesis` | `core/adaptation/value_autopoiesis.py` | `core/adaptation/value_autopoiesis.py` | optional features | `degrade_with_receipt` |
 | `value_system` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |

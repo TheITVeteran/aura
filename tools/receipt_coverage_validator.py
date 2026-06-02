@@ -9,14 +9,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from core.runtime.boot_contract import CANONICAL_PROOF_ARTIFACT_DIRS
+
+PERSON_BOX_RECEIPT_DOMAINS = {
+    "ablation",
+    "browser",
+    "file_io",
+    "governance",
+    "live_model",
+    "memory",
+    "model",
+    "packaging",
+    "self_improvement",
+    "self_model",
+    "terminal",
+    "tool",
+    "tool_registry",
+}
 
 
 def run_negative_tests() -> dict[str, bool]:
@@ -37,8 +53,8 @@ def run_negative_tests() -> dict[str, bool]:
         "negative_test_harness_executed": False,
     }
     try:
-        from core.will import get_will, ActionDomain, WillOutcome
         from core.container import ServiceContainer
+        from core.will import ActionDomain, WillOutcome, get_will
         will = get_will()
         results["negative_test_harness_executed"] = True
         
@@ -178,16 +194,101 @@ def run_negative_tests() -> dict[str, bool]:
     return results
 
 
+def _is_hex_digest(value: object, *, length: int) -> bool:
+    if not isinstance(value, str) or len(value) != length:
+        return False
+    return all(ch in "0123456789abcdef" for ch in value.lower())
+
+
+def _is_valid_person_box_receipt(record: dict[str, object]) -> bool:
+    """Validate person-box harness receipts without pretending they are Will receipts.
+
+    Person-box proof receipts are emitted by the bounded gauntlet harness before
+    concrete terminal/browser/file actions. They are not Unified Will decision
+    receipts, but they still carry the evidence the harness needs: approval,
+    effect verification, closure verification, telemetry, stable payload hash,
+    and run/task provenance.
+    """
+    receipt_id = record.get("receipt_id")
+    return (
+        isinstance(receipt_id, str)
+        and receipt_id.startswith("pibox_")
+        and _is_hex_digest(receipt_id.removeprefix("pibox_"), length=24)
+        and record.get("approved") is True
+        and record.get("effect_verified") is True
+        and record.get("closure_verified") is True
+        and record.get("telemetry_logged") is True
+        and record.get("receipt_phase") == "pre_action"
+        and isinstance(record.get("task_id"), str)
+        and bool(str(record.get("task_id")).strip())
+        and isinstance(record.get("run_id"), str)
+        and bool(str(record.get("run_id")).strip())
+        and isinstance(record.get("action"), str)
+        and bool(str(record.get("action")).strip())
+        and record.get("domain") in PERSON_BOX_RECEIPT_DOMAINS
+        and _is_hex_digest(record.get("payload_hash"), length=64)
+    )
+
+
+def _is_valid_signed_will_receipt(record: dict[str, object]) -> bool:
+    receipt_id = record.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.startswith("will_"):
+        return False
+    verification = record.get("verification")
+    if not isinstance(verification, dict):
+        return False
+    payload = verification.get("payload")
+    signature = verification.get("signature")
+    scheme = verification.get("signature_scheme")
+    if not (
+        isinstance(payload, str)
+        and payload.startswith(receipt_id + "|")
+        and isinstance(signature, str)
+        and bool(signature.strip())
+        and isinstance(scheme, str)
+        and bool(scheme.strip())
+    ):
+        return False
+    try:
+        from core.runtime_tools import _sign_payload
+
+        return _sign_payload(payload.encode("utf-8")) == signature
+    except Exception:
+        # Older persisted Ed25519/HMAC material may be unverifiable if the
+        # local key store is unavailable in an isolated validator process.  It
+        # still must carry full payload/signature/scheme material; bare ids
+        # are rejected above.
+        return bool(signature and scheme and payload)
+
+
+def _receipt_files_for(artifacts_dir: Path) -> list[Path]:
+    """Return receipt files for the proof currently being validated.
+
+    ``artifacts/current`` accumulates old smoke runs, backups, and ad-hoc
+    probes.  Those historical folders must not affect the canonical current
+    proof verdict in either direction.
+    """
+    canonical_files: list[Path] = []
+    for name in CANONICAL_PROOF_ARTIFACT_DIRS:
+        receipt_file = artifacts_dir / name / "RECEIPTS.jsonl"
+        if receipt_file.exists():
+            canonical_files.append(receipt_file)
+    if artifacts_dir.name == "current" and canonical_files:
+        return canonical_files
+    return list(artifacts_dir.rglob("RECEIPTS.jsonl"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", default="artifacts/current")
     args = parser.parse_args(argv)
 
     artifacts_dir = Path(args.artifacts).resolve()
-    receipt_files = list(artifacts_dir.rglob("RECEIPTS.jsonl"))
+    receipt_files = _receipt_files_for(artifacts_dir)
 
     total_events = 0
     total_receipts = 0
+    person_box_harness_receipts = 0
     missing_receipts = 0
     invalid_receipts = 0
     broken_chains = 0
@@ -203,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for path in receipt_files:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -211,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
                     total_events += 1
                     try:
                         record = json.loads(line)
-                        if "receipt_id" in record and record["receipt_id"].startswith("will_"):
+                        if isinstance(record, dict) and _is_valid_signed_will_receipt(record):
                             total_receipts += 1
                             domain = record.get("domain", "")
                             
@@ -224,15 +325,18 @@ def main(argv: list[str] | None = None) -> int:
                                 surface_counts["memory_writes"] += 1
                             elif domain in ("state_mutation", "stabilization", "reflection", "semantic_weight_update"):
                                 surface_counts["state_mutations"] += 1
+                        elif isinstance(record, dict) and _is_valid_person_box_receipt(record):
+                            person_box_harness_receipts += 1
                         else:
                             invalid_receipts += 1
                     except json.JSONDecodeError:
                          invalid_receipts += 1
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            invalid_receipts += 1
+            print(f"Warning: skipped unreadable receipt file {path}: {exc}", file=sys.stderr)
 
     # Ensure a governance report with 0 receipts fails for any non-trivial proof run
-    if total_receipts == 0:
+    if total_receipts == 0 and person_box_harness_receipts == 0:
         # Check if we are running in general developer/static check context
         # (if agi_live or agency_emergence directories don't exist yet, we don't have to fail)
         if (artifacts_dir / "agency_emergence_boxed_entity").exists():
@@ -241,12 +345,9 @@ def main(argv: list[str] | None = None) -> int:
 
     negative_tests = run_negative_tests()
     negative_tests_passed = all(value is True for value in negative_tests.values())
-    proof_artifacts_present = any(
-        (artifacts_dir / name).exists()
-        for name in ("agi_live", "agency_emergence_boxed_entity", "external_live_validation")
-    )
+    proof_artifacts_present = any((artifacts_dir / name).exists() for name in CANONICAL_PROOF_ARTIFACT_DIRS)
     passed = (
-        total_receipts > 0
+        (total_receipts > 0 or person_box_harness_receipts > 0)
         and missing_receipts == 0
         and invalid_receipts == 0
         and broken_chains == 0
@@ -256,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "total_events": total_events,
         "total_receipts": total_receipts,
+        "person_box_harness_receipts": person_box_harness_receipts,
         "missing_receipts": missing_receipts,
         "invalid_receipts": invalid_receipts,
         "broken_chains": broken_chains,

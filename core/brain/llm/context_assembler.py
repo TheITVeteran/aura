@@ -14,7 +14,7 @@ from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
 from core.runtime.conversation_support import build_conversational_context_blocks
-from core.state.aura_state import AuraState, phenomenal_text
+from core.state.aura_state import AuraState
 from core.synthesis import IDENTITY_LOCK
 
 logger = logging.getLogger("Brain.Context")
@@ -63,6 +63,34 @@ class ContextAssembler:
         return os.environ.get("AURA_BLACK_BOX_STEERING", "").strip().lower() in {
             "1", "true", "yes", "on"
         }
+
+    @staticmethod
+    def _build_aura_now_prompt_block(state: AuraState, objective: str, *, compact: bool = False) -> str:
+        try:
+            from core.being.runtime import get_being_runtime
+
+            runtime = get_being_runtime()
+            now = runtime.sample(state, objective=objective)
+            if compact:
+                packet = now.to_report_packet()
+                affect = packet["affect"]
+                return (
+                    "## AURA NOW\n"
+                    f"Focus={packet['attention']['focal_object'] or 'none'} | "
+                    f"valence={affect['valence']:+.2f} arousal={affect['arousal']:.2f} "
+                    f"distress={affect['distress']:.2f} FE={affect['free_energy']:.2f} | "
+                    "Self-report must stay state-grounded; do not claim phenomenal certainty.\n\n"
+                )
+            return now.compact_prompt_block() + runtime.renderer.render_prompt_block(now)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler",
+                exc,
+                severity="warning",
+                action="continued prompt assembly without AuraNow state-grounded block",
+            )
+            logger.debug("AuraNow prompt block unavailable: %s", exc)
+            return ""
 
     @staticmethod
     def _resolve_skill_name(skill_name: Any) -> str:
@@ -386,15 +414,10 @@ class ContextAssembler:
 
         # 3. Context Layers (Only if NOT casual or if relevant)
         # Pruned aggressively at higher elasticity to save context for conversation.
-        phenomenal = ""
+        aura_now_block = ""
         phenomenal_state = getattr(state.cognition, "phenomenal_state", None)
-        if phenomenal_state and not black_box_steering:
-            if not is_casual and elasticity < 2:
-                phenomenal = f"## INNER MONOLOGUE\n{phenomenal_text(phenomenal_state)}\n\n"
-            elif is_casual:
-                compact_phenomenal = " ".join(str(phenomenal_text(phenomenal_state)).split())
-                if compact_phenomenal:
-                    phenomenal = f"[Inner state: {compact_phenomenal[:140]}]\n\n"
+        if (phenomenal_state or not is_casual) and not black_box_steering:
+            aura_now_block = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=is_casual or elasticity >= 2)
 
         rolling_summary = ""
         if elasticity < 3 and getattr(state.cognition, "rolling_summary", ""):
@@ -690,6 +713,8 @@ class ContextAssembler:
         if is_casual and _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED):
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
+            if aura_now_block:
+                base += aura_now_block
             # 2. Vital continuity only
             if rolling_summary:
                 base += rolling_summary
@@ -703,7 +728,8 @@ class ContextAssembler:
             if not black_box_steering:
                 tone = "positive" if affect.valence > 0.1 else "negative" if affect.valence < -0.1 else "balanced"
                 energy = "high" if affect.arousal > 0.7 else "mellow" if affect.arousal < 0.3 else "steady"
-                base += f"## CURRENT VIBE\nYou're feeling {tone} and {energy}.\n\n"
+                base += f"## CURRENT VIBE\nFunctional affect is {tone}; activation is {energy}. Self-report must stay grounded in telemetry.\n\n"
+                base += aura_now_block
             # 3. Continuity + Personhood
             if rolling_summary:
                 base += rolling_summary
@@ -724,7 +750,7 @@ class ContextAssembler:
                 f"{temporal_finitude_block}"
                 f"{meta_qualia_block}"
                 f"{personhood_context}"
-                f"{phenomenal}"
+                f"{aura_now_block}"
                 f"{world_context}"
                 f"{somatic_context}"
             )
@@ -1186,13 +1212,14 @@ class ContextAssembler:
         if cls._black_box_steering_enabled(state):
             dynamic_system = system_prompt
         else:
-            # RESTORED: To maintain subjective continuity and identity, the LLM MUST
-            # see its rich phenomenal state on every turn. The prior delta-only
-            # approach starved the model of its inner life, causing it to fall
-            # back to baseline AI disclaimers ('I have no feelings').
             try:
                 affect_summary = state.affect.get_rich_summary() if hasattr(state.affect, "get_rich_summary") else str(state.affect)
-                dynamic_system = f"{system_prompt}\n\n[CURRENT PHENOMENAL STATE]\n{affect_summary}"
+                aura_now = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=True)
+                dynamic_system = (
+                    f"{system_prompt}\n\n"
+                    f"[CURRENT FUNCTIONAL STATE]\n{affect_summary}\n\n"
+                    f"{aura_now}"
+                )
                 
                 # Also include active goals and cognitive focus to give her a full sense of self
                 if state.cognition.active_goals:

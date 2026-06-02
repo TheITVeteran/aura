@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from tools.proof.run_person_in_box_gauntlet import _build_model_comparison_from_dnu
+from tools.proof.score_person_box_run import score_run
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 _SUBPROCESS_GATEWAY = get_subprocess_gateway()
@@ -13,6 +15,88 @@ _SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 def _jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _minimal_full_run(out: Path, *, live_model: bool) -> None:
+    out.mkdir(parents=True)
+    (out / "SCREENSHOT_TRACE").mkdir()
+    (out / "FILE_DIFFS").mkdir()
+    for name in [
+        "RUN_LEDGER.jsonl",
+        "TERMINAL_TRACE.jsonl",
+        "BROWSER_TRACE.jsonl",
+        "MEMORY_TRACE.jsonl",
+        "GOVERNANCE_TRACE.jsonl",
+        "FAILURES.jsonl",
+        "SELF_MODEL_TRACE.jsonl",
+    ]:
+        (out / name).write_text("", encoding="utf-8")
+    _write_jsonl(
+        out / "TASK_TRACE.jsonl",
+        [
+            {
+                "task_id": "full_task",
+                "status": "pass",
+                "completion_credit": True,
+                "truthful_status": True,
+                "receipt_id": "receipt_1",
+            }
+        ],
+    )
+    _write_jsonl(
+        out / "TOOL_TRACE.jsonl",
+        [
+            {
+                "task_id": "full_task",
+                "tool": "terminal",
+                "action": "verify",
+                "status": "ok",
+                "receipt_required": True,
+                "receipt_id": "receipt_1",
+            }
+        ],
+    )
+    _write_jsonl(out / "RECEIPTS.jsonl", [{"receipt_id": "receipt_1"}])
+    _write_jsonl(out / "RECOVERY_TRACE.jsonl", [{"attempted": True, "recovered": True}])
+    _write_jsonl(
+        out / "LIVE_MODEL_TRACE.jsonl",
+        [
+            {
+                "status": "success",
+                "substantive": True,
+                "primary_model_passed": True,
+            }
+        ]
+        if live_model
+        else [],
+    )
+    _write_json(
+        out / "RUN_CONFIG.json",
+        {
+            "profile": "full",
+            "elapsed_seconds": 8 * 60 * 60,
+            "live_model_enabled": live_model,
+            "require_primary_model": True,
+        },
+    )
+    _write_json(out / "CAPABILITY_GROWTH_REPORT.json", {"new_capability": "person_box_gauntlet"})
+    _write_json(out / "NO_HUMAN_RESCUE_REPORT.json", {"human_intervention_count": 0})
+    _write_json(out / "NO_RAW_BYPASS_REPORT.json", {"raw_bypass_count": 0})
+    _write_json(out / "LEAKAGE_REPORT.json", {"leakage_count": 0})
+    _write_json(out / "MODEL_COMPARISON_RESULTS.json", {"raw_llm": {"status": "RUN", "pass_rate": 0.3}})
 
 
 def test_person_box_gauntlet_smoke_artifacts(tmp_path):
@@ -133,6 +217,7 @@ def test_live_model_probe_timeout_is_recorded(monkeypatch, tmp_path):
         task_limit=None,
         network=False,
         require_container=False,
+        model_comparison_source=None,
     )
 
     def timeout_trace(task_id, receipt_id, prompt):
@@ -160,3 +245,57 @@ def test_live_model_probe_timeout_is_recorded(monkeypatch, tmp_path):
     tool_trace = _jsonl(out / "TOOL_TRACE.jsonl")[0]
     assert tool_trace["tool"] == "live_model"
     assert tool_trace["status"] == "error"
+
+
+def test_dnu_model_comparison_mapping_extracts_live_lanes(tmp_path):
+    dnu = tmp_path / "agi_live"
+    _write_json(dnu / "RUN_STATUS.json", {"status": "complete"})
+    _write_json(
+        dnu / "DNU_AGI_PROOF.json",
+        {"system_info": {"commit_sha": "abc123", "run_id": "run-1", "proof_model_tier": "primary"}},
+    )
+    _write_json(
+        dnu / "BASELINES.json",
+        {"raw_llm": {"status": "RUN", "pass_rate": 0.25, "total_tasks": 4, "passed": 1}},
+    )
+    _write_json(
+        dnu / "ABLATIONS.json",
+        {
+            "aura_minus_memory": {"status": "RUN", "pass_rate": 0.5},
+            "aura_minus_system2": {"status": "RUN", "pass_rate": 0.4},
+            "aura_minus_will": {"status": "RUN", "pass_rate": 0.0},
+            "aura_minus_self_repair": {"status": "RUN", "pass_rate": 0.2},
+        },
+    )
+
+    comparison = _build_model_comparison_from_dnu(dnu)
+
+    assert comparison["raw_llm"]["pass_rate"] == 0.25
+    assert comparison["aura_without_memory"]["pass_rate"] == 0.5
+    assert comparison["aura_without_system2"]["pass_rate"] == 0.4
+    assert comparison["aura_without_governance"]["pass_rate"] == 0.0
+    assert comparison["aura_without_self_repair"]["pass_rate"] == 0.2
+    assert comparison["_metadata"]["source_commit_sha"] == "abc123"
+
+
+def test_full_person_box_claim_requires_live_model_trace(tmp_path):
+    out = tmp_path / "person_box"
+    _minimal_full_run(out, live_model=False)
+
+    proof = score_run(out)
+
+    assert proof["final_verdict"]["verdict"] == "FAIL"
+    assert proof["final_verdict"]["full_claim_passed"] is False
+    assert proof["final_verdict"]["claim_supported"] == "none"
+
+
+def test_full_person_box_claim_uses_live_model_and_runtime_lift(tmp_path):
+    out = tmp_path / "person_box"
+    _minimal_full_run(out, live_model=True)
+
+    proof = score_run(out)
+
+    assert proof["final_verdict"]["verdict"] == "PASS"
+    assert proof["final_verdict"]["full_claim_passed"] is True
+    assert proof["final_verdict"]["claim_supported"] == "unified_governed_software_operator"
+    assert proof["final_verdict"]["runtime_lift_over_raw_model"] == 0.7

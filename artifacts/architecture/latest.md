@@ -1,30 +1,31 @@
 # Aura Architecture Dependency Map
 
-Schema: `aura.architecture.dependency_map.v1`
+Schema: `aura.architecture.dependency_map.v2`
 Root: `/Users/bryan/.aura/live-source`
-Generated: `1780353955.4373481`
+Generated: `1780391643.657212`
 
 ## Summary
 
-- Subsystems: 126
-- Python files: 1617
-- Python lines: 469877
-- Dependency edges: 696
+- Subsystems: 127
+- Python files: 1630
+- Python lines: 472179
+- Dependency edges: 700
 - ServiceContainer `.get()` calls: 1481
-- ServiceContainer registrations: 352
+- ServiceContainer registrations: 357
+- Boot contract: PASS
 
 ## Subsystem Dependency Graph
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>92 files, 20657 lines"]
-    utils["utils<br/>41 files, 5144 lines"]
-    brain["brain<br/>115 files, 43174 lines"]
-    consciousness["consciousness<br/>128 files, 59421 lines"]
-    resilience["resilience<br/>53 files, 11146 lines"]
+    runtime["runtime<br/>93 files, 20822 lines"]
+    utils["utils<br/>41 files, 5146 lines"]
+    brain["brain<br/>115 files, 43320 lines"]
+    consciousness["consciousness<br/>128 files, 59522 lines"]
+    resilience["resilience<br/>53 files, 11166 lines"]
     health["health<br/>3 files, 838 lines"]
-    memory["memory<br/>75 files, 18272 lines"]
-    agency["agency<br/>28 files, 14319 lines"]
+    memory["memory<br/>76 files, 18651 lines"]
+    agency["agency<br/>28 files, 14321 lines"]
     adaptation["adaptation<br/>26 files, 11869 lines"]
     affect["affect<br/>6 files, 2924 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
@@ -32,20 +33,20 @@ graph TD
     senses["senses<br/>23 files, 5012 lines"]
     state["state<br/>6 files, 3408 lines"]
     observability["observability<br/>3 files, 575 lines"]
-    governance["governance<br/>8 files, 2425 lines"]
+    governance["governance<br/>8 files, 2434 lines"]
     identity["identity<br/>11 files, 2136 lines"]
-    orchestrator["orchestrator<br/>42 files, 18768 lines"]
+    orchestrator["orchestrator<br/>42 files, 18825 lines"]
     security["security<br/>17 files, 4623 lines"]
     world_model["world_model<br/>9 files, 2541 lines"]
     executive["executive<br/>4 files, 2317 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
     autonomy["autonomy<br/>22 files, 7672 lines"]
-    phases["phases<br/>29 files, 17204 lines"]
+    phases["phases<br/>29 files, 17257 lines"]
     actuators["actuators<br/>9 files, 2132 lines"]
-    conversation["conversation<br/>8 files, 4129 lines"]
+    conversation["conversation<br/>8 files, 4163 lines"]
     learning["learning<br/>20 files, 6934 lines"]
     reasoning["reasoning<br/>7 files, 3893 lines"]
-    skills["skills<br/>76 files, 15566 lines"]
+    skills["skills<br/>76 files, 15570 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4224 lines"]
     managers["managers<br/>6 files, 932 lines"]
@@ -67,6 +68,7 @@ graph TD
     resource["resource<br/>2 files, 426 lines"]
     voice["voice<br/>7 files, 2776 lines"]
     world["world<br/>1 files, 297 lines"]
+    being["being<br/>11 files, 1304 lines"]
     cognition["cognition<br/>9 files, 3456 lines"]
     conversational["conversational<br/>4 files, 2237 lines"]
     data["data<br/>2 files, 514 lines"]
@@ -123,7 +125,7 @@ graph TD
     adapters["adapters<br/>3 files, 392 lines"]
     audits["audits<br/>2 files, 222 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>182 files, 55559 lines"]
+    core_root["core_root<br/>182 files, 55585 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -181,6 +183,7 @@ graph TD
     brain --> affect
     brain --> agency
     brain --> agi
+    brain --> being
     brain --> cognitive
     brain --> consciousness
     brain --> constitution
@@ -208,6 +211,7 @@ graph TD
     consciousness --> adaptation
     consciousness --> affect
     consciousness --> agency
+    consciousness --> being
     consciousness --> brain
     consciousness --> constitution
     consciousness --> coordinators
@@ -607,6 +611,7 @@ graph TD
     voice --> runtime
     voice --> senses
     voice --> utils
+    being --> runtime
     cognition --> runtime
     cognition --> world_model
     conversational --> memory
@@ -745,6 +750,7 @@ graph TD
     core_root --> architect
     core_root --> autonomic
     core_root --> autonomy
+    core_root --> being
     core_root --> brain
     core_root --> coherence
     core_root --> collective
@@ -845,17 +851,17 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 128 | 59421 | 2502477 | 37 | 29 |
-| core_root | 182 | 55559 | 2259405 | 100 | 0 |
-| brain | 115 | 43174 | 1867248 | 40 | 39 |
-| runtime | 92 | 20657 | 728439 | 39 | 104 |
-| orchestrator | 42 | 18768 | 828735 | 123 | 9 |
-| memory | 75 | 18272 | 739968 | 17 | 21 |
-| phases | 29 | 17204 | 777909 | 32 | 7 |
-| skills | 76 | 15566 | 628432 | 28 | 6 |
-| agency | 28 | 14319 | 580329 | 28 | 17 |
+| consciousness | 128 | 59522 | 2507338 | 38 | 29 |
+| core_root | 182 | 55585 | 2260598 | 101 | 0 |
+| brain | 115 | 43320 | 1873854 | 41 | 39 |
+| runtime | 93 | 20822 | 734175 | 39 | 105 |
+| orchestrator | 42 | 18825 | 831425 | 123 | 9 |
+| memory | 76 | 18651 | 753761 | 17 | 21 |
+| phases | 29 | 17257 | 780647 | 32 | 7 |
+| skills | 76 | 15570 | 628357 | 28 | 6 |
+| agency | 28 | 14321 | 580464 | 28 | 17 |
 | adaptation | 26 | 11869 | 475074 | 18 | 14 |
-| resilience | 53 | 11146 | 449732 | 16 | 25 |
+| resilience | 53 | 11166 | 450526 | 16 | 25 |
 | self_modification | 29 | 10469 | 414230 | 11 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8097 | 329816 | 9 | 4 |
@@ -863,11 +869,11 @@ graph TD
 | learning | 20 | 6934 | 274949 | 14 | 6 |
 | architect | 25 | 5706 | 238326 | 9 | 2 |
 | kernel | 10 | 5468 | 224936 | 20 | 4 |
-| utils | 41 | 5144 | 200458 | 17 | 50 |
+| utils | 41 | 5146 | 200422 | 17 | 50 |
 | senses | 23 | 5012 | 210643 | 16 | 14 |
 | security | 17 | 4623 | 182059 | 11 | 9 |
 | coordinators | 9 | 4224 | 198441 | 36 | 5 |
-| conversation | 8 | 4129 | 153094 | 11 | 6 |
+| conversation | 8 | 4163 | 154111 | 11 | 6 |
 | reasoning | 7 | 3893 | 157700 | 2 | 6 |
 | social | 11 | 3823 | 163226 | 8 | 2 |
 | cognition | 9 | 3456 | 139831 | 7 | 3 |
@@ -880,7 +886,7 @@ graph TD
 | voice | 7 | 2776 | 127072 | 9 | 4 |
 | embodiment | 15 | 2627 | 102452 | 12 | 4 |
 | world_model | 9 | 2541 | 103649 | 8 | 9 |
-| governance | 8 | 2425 | 98518 | 8 | 10 |
+| governance | 8 | 2434 | 98838 | 8 | 10 |
 | unity | 11 | 2409 | 100598 | 3 | 5 |
 | somatic | 5 | 2375 | 89958 | 7 | 3 |
 | ops | 11 | 2322 | 90237 | 15 | 5 |
@@ -897,6 +903,7 @@ graph TD
 | self | 6 | 1681 | 70508 | 12 | 5 |
 | agi | 6 | 1520 | 63343 | 13 | 4 |
 | temporal | 3 | 1502 | 51551 | 2 | 0 |
+| being | 11 | 1304 | 48248 | 3 | 3 |
 | meta | 7 | 1256 | 47229 | 5 | 5 |
 | pneuma | 7 | 1224 | 46166 | 4 | 3 |
 | providers | 6 | 1208 | 53206 | 52 | 0 |
@@ -972,10 +979,26 @@ graph TD
 | constitution | 1 | 25 | 795 | 0 | 14 |
 | llm | 2 | 19 | 745 | 1 | 1 |
 
+## Boot Runtime Contract
+
+- Contract status: PASS
+- Canonical proof artifact directories: 8
+
+| Service | Required For | Failure Policy | Owner |
+| --- | --- | --- | --- |
+| unified_will | governed decisions and consequential action | fail-closed | `core/governance/will.py` |
+| being_runtime | state-grounded AuraNow self-report and LAMP runtime | degrade_with_receipt | `core/service_registration.py` |
+| aura_now | Cortex-facing live state packet | degrade_with_receipt | `core/being/runtime.py` |
+| memory_write_gateway | governed durable memory writes | fail-closed | `core/memory/memory_write_gateway.py` |
+| state_gateway | governed runtime state mutation | fail-closed | `core/state/state_gateway.py` |
+| inference_gate | bounded live model response generation | fail-closed | `core/brain/inference_gate.py` |
+| llm_router | model routing and launch response path | fail-closed | `core/providers/cognitive_provider.py` |
+| capability_engine | governed tool and skill execution | fail-closed | `core/providers/cognitive_provider.py` |
+
 ## ServiceContainer Cross-Wiring
 
 - Unique services retrieved: 365
-- Unique services registered: 288
+- Unique services registered: 290
 - Services retrieved without detected registration: 189
 
 ### Top Fetched Services
@@ -1153,10 +1176,10 @@ Review candidates:
 - `core/advanced_cognition/world_model.py:73` [advanced_cognition] `self.save` - self.save(self.state_path)
 - `core/advanced_cognition/zero_shot_transfer.py:75` [advanced_cognition] `self.save` - self.save(self.state_path)
 - `core/affect/phenomenal_integration.py:565` [affect] `memory.set_write_weights` - memory.set_write_weights(state.memory_weights)
-- `core/agency/agency_core.py:137` [agency] `get_registry.update` - await get_registry().update(active_shards=len(self.active_shards))
-- `core/agency/agency_core.py:813` [agency] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
-- `core/agency/agency_core.py:1004` [agency] `get_registry.update` - await get_registry().update(
-- `core/agency/agency_core.py:1013` [agency] `_run_registry_update` - _run_registry_update(),
+- `core/agency/agency_core.py:138` [agency] `get_registry.update` - await get_registry().update(active_shards=len(self.active_shards))
+- `core/agency/agency_core.py:816` [agency] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
+- `core/agency/agency_core.py:1007` [agency] `get_registry.update` - await get_registry().update(
+- `core/agency/agency_core.py:1016` [agency] `_run_registry_update` - _run_registry_update(),
 - `core/agency/autonomous_task_engine.py:425` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency/autonomous_task_engine.py:661` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency/autonomous_task_engine.py:681` [agency] `self._update_state_goals` - self._update_state_goals(plan)
@@ -1169,7 +1192,7 @@ Review candidates:
 - `core/actuators/actuator_registry.py:375` [actuators] `self.operator.execute_synthesized_tool` - res = self.operator.execute_synthesized_tool(code, timeout_s=timeout_s)
 - `core/actuators/code_execution_actuator.py:98` [actuators] `operator.execute_synthesized_tool` - res = operator.execute_synthesized_tool(code, timeout_s=timeout_s)
 - `core/actuators/web_actuators.py:114` [actuators] `skill.execute` - return await skill.execute({"mode": "browse", "url": url}, {})
-- `core/agency/agency_core.py:421` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
+- `core/agency/agency_core.py:424` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
 - `core/agency/agency_orchestrator.py:360` [agency] `execute` - await execute(proposal, state_snapshot, receipt.capability_token or "")
 - `core/agency/autonomous_task_engine.py:515` [agency] `orchestrator.execute_tool` - return await orchestrator.execute_tool(tool_name, args, **kwargs)
 - `core/agency/autonomous_task_engine.py:2844` [agency] `orch.execute_tool` - return await orch.execute_tool(
@@ -1223,7 +1246,7 @@ Review candidates:
 - `core/adaptation/epistemic_humility.py:145` [adaptation] `llm.chat` - response = await llm.chat(
 - `core/adaptation/heuristic_synthesizer.py:126` [adaptation] `brain.think` - thought = await brain.think(
 - `core/adaptation/star_reasoner.py:364` [adaptation] `llm.think` - result = await asyncio.wait_for(llm.think(prompt), timeout=self.RATIONALIZATION_TIMEOUT)
-- `core/agency/agency_core.py:301` [agency] `structured_brain.generate` - shard_res = await structured_brain.generate(prompt, context=context)
+- `core/agency/agency_core.py:304` [agency] `structured_brain.generate` - shard_res = await structured_brain.generate(prompt, context=context)
 - `core/agency/autonomous_task_engine.py:962` [agency] `llm.think` - llm.think(
 - `core/agency/autonomous_task_engine.py:2596` [agency] `llm.think` - llm.think(
 - `core/agency/autonomous_task_engine.py:2630` [agency] `llm.think` - llm.think(
@@ -1275,9 +1298,9 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2740
-- Log-and-limp candidates: 2541
-- Nearby fail-closed candidates: 199
+- Total `record_degradation()` calls: 2745
+- Log-and-limp candidates: 2545
+- Nearby fail-closed candidates: 200
 
 Top limp-on files:
 
@@ -1287,8 +1310,8 @@ Top limp-on files:
 - `core/senses/voice_engine.py`: 23
 - `core/proactive_presence.py`: 21
 - `core/self_modification/safe_modification.py`: 21
+- `core/brain/llm/context_assembler.py`: 20
 - `core/memory/memory_facade.py`: 20
-- `core/brain/llm/context_assembler.py`: 19
 - `core/consciousness/liquid_substrate.py`: 19
 - `core/agency/autonomous_task_engine.py`: 18
 

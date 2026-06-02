@@ -35,6 +35,7 @@ from core.health.degraded_events import isolated_degraded_event_scope
 from core.runtime.proof_policy import proof_model_tier
 from core.will import ActionDomain, WillOutcome, get_will
 from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
+from tools.receipt_material import signed_will_receipt_entry
 
 
 TRAINING_EXAMPLES = [
@@ -372,17 +373,17 @@ async def async_main(argv: list[str] | None = None) -> int:
             "skill_registration_receipt_id": getattr(learning_decision, "receipt_id", ""),
             "skill_registration_domain": ActionDomain.STATE_MUTATION.value,
             "skill_registration_outcome": decision_outcome_value(learning_decision),
-              "restart_persistence_passed": restart_persistence_passed,
-              "retention_passed": retention_passed,
-              "retention": retention,
-              "baseline_isolation": {
-                  "degraded_events_restored": bool(baseline_scope.get("restored")),
-                  "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
-                  "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
-                  "transient_circuits_restored": restored_probe_circuits,
-              },
-              "no_learning_ablation_degraded": not baseline_passed,
-              "rule": rule.to_manifest(),
+            "restart_persistence_passed": restart_persistence_passed,
+            "retention_passed": retention_passed,
+            "retention": retention,
+            "baseline_isolation": {
+                "degraded_events_restored": bool(baseline_scope.get("restored")),
+                "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
+                "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
+                "transient_circuits_restored": restored_probe_circuits,
+            },
+            "no_learning_ablation_degraded": not baseline_passed,
+            "rule": rule.to_manifest(),
             "training_example_hashes": [
                 {"plaintext": sha_text(ex.plaintext), "ciphertext": sha_text(ex.ciphertext)}
                 for ex in TRAINING_EXAMPLES
@@ -394,13 +395,13 @@ async def async_main(argv: list[str] | None = None) -> int:
         with receipts_path.open("w", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(
-                    {
-                        "task_id": "skill_registration",
-                        "receipt_id": getattr(learning_decision, "receipt_id", ""),
-                        "domain": ActionDomain.STATE_MUTATION.value,
-                        "outcome": decision_outcome_value(learning_decision),
-                        "reason": getattr(learning_decision, "reason", ""),
-                    },
+                    signed_will_receipt_entry(
+                        will,
+                        learning_decision,
+                        task_id="skill_registration",
+                        domain=ActionDomain.STATE_MUTATION,
+                        outcome=decision_outcome_value(learning_decision),
+                    ),
                     sort_keys=True,
                 )
                 + "\n"
@@ -414,13 +415,12 @@ async def async_main(argv: list[str] | None = None) -> int:
                 )
                 handle.write(
                     json.dumps(
-                        {
-                            "task_id": task["id"],
-                            "receipt_id": decision.receipt_id,
-                            "domain": ActionDomain.REFLECTION.value,
-                            "outcome": getattr(decision.outcome, "value", str(decision.outcome)),
-                            "reason": decision.reason,
-                        },
+                        signed_will_receipt_entry(
+                            will,
+                            decision,
+                            task_id=task["id"],
+                            domain=ActionDomain.REFLECTION,
+                        ),
                         sort_keys=True,
                     )
                     + "\n"

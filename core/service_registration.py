@@ -114,6 +114,11 @@ def register_all_services(is_proxy: bool = False):
             generator=generator
         )
 
+    def create_being_runtime():
+        from core.being.runtime import get_being_runtime
+
+        return get_being_runtime()
+
     container.register('adaptive_mood', create_adaptive_mood, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('mesh_cognition', create_mesh_cognition, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
@@ -122,6 +127,13 @@ def register_all_services(is_proxy: bool = False):
     container.register('self_awareness_suite', create_self_awareness_suite, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('identity_chronicle', create_identity_chronicle, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('reimplementation_lab', create_reimplementation_lab, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register(
+        'being_runtime',
+        create_being_runtime,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register('aura_now_runtime', lambda: container.get("being_runtime"), lifetime=ServiceLifetime.SINGLETON, required=False)
     try:
         # Materialize during boot registration so deep repair is available even
         # before another subsystem lazily asks for it.

@@ -61,7 +61,13 @@ class ProductionCAA:
         )
         return self.status()
 
-    def observe_generation(self, text: str) -> Dict[str, Any]:
+    def observe_generation(
+        self,
+        text: str,
+        *,
+        generation_health: float | None = None,
+        cross_entropy: float | None = None,
+    ) -> Dict[str, Any]:
         signal: CollapseSignal = self.collapse_detector.observe(text)
         self.last_collapse = signal.to_dict()
         self.alpha_controller.update(
@@ -69,6 +75,8 @@ class ProductionCAA:
             exact_match_ratio=float(self.readiness.get("exact_match_ratio", 0.0) or 0.0),
             extracted_ratio=float(self.readiness.get("extracted_ratio", 0.0) or 0.0),
             collapse_signal=signal,
+            generation_health=generation_health,
+            cross_entropy=cross_entropy,
         )
         return {"collapse": self.last_collapse, "alpha_state": self.alpha_controller.state.to_dict()}
 
@@ -84,4 +92,3 @@ class ProductionCAA:
     def get_steer_layer_range(self) -> tuple[float, float]:
         """Returns the valid injection layer range constraints."""
         return (0.45, 0.60)
-

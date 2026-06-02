@@ -45,10 +45,19 @@ logger = logging.getLogger("Aura.ScarFormation")
 _DATA_DIR = Path.home() / ".aura" / "data" / "scars"
 _SCAR_FILE = _DATA_DIR / "scars.json"
 
+
+def _env_int(name: str, default: int, *, low: int, high: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
 # Scars below this severity are considered healed and can be pruned
 _HEALED_THRESHOLD = 0.05
-# Maximum number of scars to keep (prevents unbounded growth)
-_MAX_SCARS = 200
+# Maximum number of scars before healed-scar pruning is attempted.
+_MAX_SCARS = _env_int("AURA_MAX_BEHAVIORAL_SCARS", 2_000, low=200, high=100_000)
 # Default healing rate per hour (severity reduction when threat doesn't recur)
 _DEFAULT_HEAL_RATE = 0.005
 

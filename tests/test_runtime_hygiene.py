@@ -314,6 +314,95 @@ def test_runtime_hygiene_thread_join_helper_skips_current_thread():
     RuntimeHygieneManager._join_thread_if_not_current(current, 0.01)
 
 
+def test_runtime_hygiene_shutdown_thread_join_env_is_bounded(monkeypatch):
+    monkeypatch.setenv("AURA_RUNTIME_HYGIENE_MAX_SHUTDOWN_THREAD_JOINS", "not-an-int")
+
+    hygiene = RuntimeHygieneManager()
+
+    assert hygiene.max_thread_joins_per_shutdown == 16
+
+
+@pytest.mark.asyncio
+async def test_runtime_hygiene_shutdown_thread_join_is_bounded(monkeypatch):
+    recorded = []
+
+    def fake_record_degradation(subsystem, error, **kwargs):
+        recorded.append((subsystem, error, kwargs))
+
+    monkeypatch.setattr(runtime_hygiene_module, "record_degradation", fake_record_degradation)
+
+    class FakeThread:
+        daemon = False
+
+        def __init__(self, idx: int):
+            self.ident = 10_000 + idx
+            self.name = f"fake-thread-{idx}"
+            self.joined = False
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            del timeout
+            self.joined = True
+
+    hygiene = RuntimeHygieneManager()
+    hygiene.max_thread_joins_per_shutdown = 2
+    threads = [FakeThread(idx) for idx in range(5)]
+    hygiene._thread_refs = {idx: thread for idx, thread in enumerate(threads)}
+
+    await hygiene._join_non_daemon_threads()
+
+    assert [thread.joined for thread in threads] == [True, True, False, False, False]
+    assert recorded
+    subsystem, error, kwargs = recorded[0]
+    assert subsystem == "runtime_hygiene_shutdown"
+    assert "left for owner shutdown" in str(error)
+    assert kwargs["severity"] == "warning"
+    assert kwargs["enforce_failure_policy"] is False
+    assert kwargs["extra"]["skipped_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_runtime_hygiene_shutdown_thread_join_errors_do_not_fail_closed(monkeypatch):
+    recorded = []
+
+    def fake_record_degradation(subsystem, error, **kwargs):
+        recorded.append((subsystem, type(error).__name__, kwargs))
+
+    monkeypatch.setattr(runtime_hygiene_module, "record_degradation", fake_record_degradation)
+
+    class FailingThread:
+        daemon = False
+        ident = 20_000
+        name = "failing-thread"
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            del timeout
+            raise RuntimeError("join failed")
+
+    hygiene = RuntimeHygieneManager()
+    hygiene.max_thread_joins_per_shutdown = 1
+    hygiene._thread_refs = {1: FailingThread()}
+
+    await hygiene._join_non_daemon_threads()
+
+    assert recorded == [
+        (
+            "runtime_hygiene_shutdown",
+            "RuntimeError",
+            {
+                "severity": "warning",
+                "action": "continued shutdown after a bounded thread join failed",
+                "enforce_failure_policy": False,
+            },
+        )
+    ]
+
+
 @pytest.mark.asyncio
 async def test_runtime_hygiene_child_cleanup_is_concurrent():
     class SlowTerminatingProcess:

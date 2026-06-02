@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
+from core.memory.retention_policy import episodic_retention_policy
 from core.resilience.state_manager import _SafeEncoder
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
@@ -113,7 +114,8 @@ class EpisodicMemory:
     """Persistent autobiographical memory with importance-weighted retention.
     """
 
-    MAX_EPISODES = 10_000  # Hard cap — after this, prune low-importance episodes
+    MAX_EPISODES = episodic_retention_policy().max_items  # Hard cap, scaled by machine policy.
+    RETENTION_POLICY = episodic_retention_policy()
     _RECORD_COOLDOWN = 0.5  # Minimum seconds between recordings (rate limit)
     
     # Retention Policy Constants
@@ -1052,7 +1054,8 @@ class EpisodicMemory:
         with self._get_conn() as conn:
             count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
             if count > self.MAX_EPISODES:
-                excess = count - self.MAX_EPISODES
+                keep_count = self.RETENTION_POLICY.keep_count(count)
+                excess = count - keep_count
                 conn.execute(
                     """DELETE FROM episodes WHERE episode_id IN (
                         SELECT episode_id FROM episodes
@@ -1062,7 +1065,11 @@ class EpisodicMemory:
                     (excess,),
                 )
                 conn.commit()
-                logger.info("Pruned %s low-importance episodes", excess)
+                logger.info(
+                    "Pruned %s low-importance episodes using %s policy",
+                    excess,
+                    self.RETENTION_POLICY.basis,
+                )
 
     def delete_episodes(self, episode_ids: list[str]):
         """Hard delete specific episodes (e.g., after consolidation)."""

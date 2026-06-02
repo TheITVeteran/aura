@@ -32,6 +32,7 @@ from core.environment.novel_adaptation import (
     nim_winning_move,
 )
 from core.will import ActionDomain, get_will
+from tools.receipt_material import signed_will_receipt_entry
 from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
 
 
@@ -342,13 +343,12 @@ async def async_main(argv: list[str] | None = None) -> int:
                 )
                 handle.write(
                     json.dumps(
-                        {
-                            "task_id": item["id"],
-                            "receipt_id": decision.receipt_id,
-                            "domain": ActionDomain.ENVIRONMENT_ACTION.value,
-                            "outcome": getattr(decision.outcome, "value", str(decision.outcome)),
-                            "reason": decision.reason,
-                        },
+                        signed_will_receipt_entry(
+                            will,
+                            decision,
+                            task_id=item["id"],
+                            domain=ActionDomain.ENVIRONMENT_ACTION,
+                        ),
                         sort_keys=True,
                     )
                     + "\n"
@@ -401,4 +401,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

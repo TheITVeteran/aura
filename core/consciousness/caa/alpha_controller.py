@@ -13,6 +13,9 @@ class AlphaState:
     readiness_level: str
     reason: str
     collapse_events: int = 0
+    health_score: float = 1.0
+    cross_entropy: float | None = None
+    dampening: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -21,7 +24,7 @@ class AlphaState:
 class AlphaController:
     """Adaptive steering strength with conservative collapse backoff."""
 
-    def __init__(self, *, base_alpha: float = 5.0, min_alpha: float = 3.0, max_alpha: float = 8.5) -> None:
+    def __init__(self, *, base_alpha: float = 5.0, min_alpha: float = 0.25, max_alpha: float = 8.5) -> None:
         self._base_alpha = float(base_alpha)
         self._min_alpha = float(min_alpha)
         self._max_alpha = float(max_alpha)
@@ -32,6 +35,24 @@ class AlphaController:
             reason="bootstrap baseline",
         )
 
+    @staticmethod
+    def _health_dampening(
+        generation_health: float | None,
+        cross_entropy: float | None,
+    ) -> tuple[float, float, float | None, str]:
+        health = 1.0 if generation_health is None else max(0.0, min(1.0, float(generation_health)))
+        entropy = None if cross_entropy is None else max(0.0, float(cross_entropy))
+        dampening = 1.0
+        reasons: list[str] = []
+        if health < 0.55:
+            dampening = min(dampening, max(0.18, 0.30 + health))
+            reasons.append("low_generation_health")
+        if entropy is not None and entropy > 5.5:
+            entropy_backoff = max(0.15, 1.0 - min(0.85, (entropy - 5.5) / 6.0))
+            dampening = min(dampening, entropy_backoff)
+            reasons.append("high_cross_entropy")
+        return dampening, health, entropy, "+".join(reasons)
+
     def update(
         self,
         *,
@@ -39,6 +60,8 @@ class AlphaController:
         exact_match_ratio: float = 0.0,
         extracted_ratio: float = 0.0,
         collapse_signal: CollapseSignal | None = None,
+        generation_health: float | None = None,
+        cross_entropy: float | None = None,
     ) -> AlphaState:
         target = self._base_alpha
         reason = "bootstrap baseline"
@@ -68,6 +91,11 @@ class AlphaController:
                 reason = "watch collapse hold"
         else:
             current = current + (target - current) * 0.35
+        dampening, health, entropy, health_reason = self._health_dampening(generation_health, cross_entropy)
+        if dampening < 1.0:
+            target *= dampening
+            current = min(current, target)
+            reason = f"{reason}; health dampening:{health_reason}"
         current = max(self._min_alpha, min(self._max_alpha, current))
         self._state = AlphaState(
             current_alpha=round(float(current), 4),
@@ -75,6 +103,9 @@ class AlphaController:
             readiness_level=str(readiness_level),
             reason=reason,
             collapse_events=collapse_events,
+            health_score=round(float(health), 4),
+            cross_entropy=round(float(entropy), 4) if entropy is not None else None,
+            dampening=round(float(dampening), 4),
         )
         return self._state
 

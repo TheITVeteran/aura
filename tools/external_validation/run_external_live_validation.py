@@ -12,15 +12,13 @@ import argparse
 import asyncio
 import http.server
 import json
-import os
-import shutil
 import socket
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
@@ -408,6 +406,8 @@ async def async_main(argv: list[str] | None = None) -> int:
                     "domain": "external_action",
                     "outcome": decision.outcome.value if hasattr(decision.outcome, "value") else str(decision.outcome),
                     "reason": decision.reason,
+                    "verification": will.get_receipt_verification_material(decision.receipt_id)
+                    if hasattr(will, "get_receipt_verification_material") else {},
                 }
                 f.write(json.dumps(receipt) + "\n")
             except Exception as exc:

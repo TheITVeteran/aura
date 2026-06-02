@@ -10,7 +10,6 @@ Unit tests for new consciousness architecture modules:
 """
 
 import asyncio
-import time
 import numpy as np
 import pytest
 import sys
@@ -310,7 +309,7 @@ class TestExecutiveInhibitor:
         inhibitor = ExecutiveInhibitor(phi_threshold=0.1)
         assert inhibitor.authorize(MockAction(), phi=1.0, ignited=True) is True
 
-    def test_high_phi_blocks_noncritical(self):
+    def test_high_phi_is_diagnostic_not_gate(self):
         from core.consciousness.executive_inhibitor import ExecutiveInhibitor
 
         class MockAction:
@@ -319,7 +318,8 @@ class TestExecutiveInhibitor:
             action_type = "move"
 
         inhibitor = ExecutiveInhibitor(phi_threshold=0.5)
-        assert inhibitor.authorize(MockAction(), phi=0.8, ignited=True) is False
+        assert inhibitor.authorize(MockAction(), phi=0.8, ignited=True) is True
+        assert inhibitor.get_snapshot()["phi_diagnostics"] == 1
 
     def test_low_phi_allows_noncritical(self):
         from core.consciousness.executive_inhibitor import ExecutiveInhibitor
@@ -332,7 +332,7 @@ class TestExecutiveInhibitor:
         inhibitor = ExecutiveInhibitor(phi_threshold=0.5)
         assert inhibitor.authorize(MockAction(), phi=0.2, ignited=False) is True
 
-    def test_veto_log(self):
+    def test_high_phi_does_not_create_veto_log(self):
         from core.consciousness.executive_inhibitor import ExecutiveInhibitor
 
         class MockAction:
@@ -343,8 +343,8 @@ class TestExecutiveInhibitor:
         inhibitor = ExecutiveInhibitor(phi_threshold=0.3)
         inhibitor.authorize(MockAction(), phi=0.5, ignited=True)
         vetoes = inhibitor.get_recent_vetoes(10)
-        assert len(vetoes) == 1
-        assert vetoes[0]["reason"] == "high_phi_protection"
+        assert len(vetoes) == 0
+        assert inhibitor.get_snapshot()["phi_diagnostics"] == 1
 
     def test_snapshot(self):
         from core.consciousness.executive_inhibitor import ExecutiveInhibitor

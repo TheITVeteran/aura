@@ -9,12 +9,16 @@ from typing import Any, Dict, List
 
 from core.autonomy.research_cycle import ResearchCycle
 from core.backup import BackupManager
-from core.config import config
 from core.consciousness.subconscious_loop import SubconsciousLoop
+from core.conversation.engine import CONTEXT_HISTORY_MAX_MESSAGES
 from core.conversation import persistence as conversation_persistence
+from core.conversation.unified_transcript import _MAX_HISTORY_DEFAULT as UNIFIED_TRANSCRIPT_MAX_HISTORY
 from core.evolution import liquid_time_engine
 from core.long_term_memory_engine import LongTermMemoryEngine
+from core.memory import conversation_persistence as memory_conversation_persistence
 from core.memory.episodic_memory import EpisodicMemory
+from core.memory.retention_policy import black_hole_retention_policy, hybrid_memory_retention_policy
+from core.memory.scar_formation import _MAX_SCARS
 from core.phases import phi_consciousness
 from core.resilience.lock_watchdog import get_lock_watchdog
 from core.resilience.memory_governor import MemoryGovernor
@@ -81,11 +85,24 @@ class RuntimeRegistry:
     subconscious_sandbox_interval_s: float
     episodic_eval_interval_s: float
     episodic_max_episodes: int
+    episodic_retention_basis: str
+    black_hole_max_memories: int
+    black_hole_prune_keep_fraction: float
+    black_hole_retention_basis: str
+    hybrid_memory_max_entries: int
+    hybrid_memory_retention_basis: str
     ltm_consolidation_interval_s: float
     ltm_rehearsal_min_age_s: float
+    ltm_max_memories: int
+    ltm_retention_basis: str
     conversation_retention_days: int
     conversation_prune_interval_s: float
     conversation_prune_scheduled: bool
+    unified_transcript_max_history: int
+    conversation_context_max_messages: int
+    conversation_cache_max_messages: int
+    conversation_cache_max_sessions: int
+    behavioral_scar_max_records: int
     pending_initiative_cap: int
     active_goal_cap: int
     vector_prune_interval_s: float
@@ -174,6 +191,8 @@ def _critical_supervision_audit() -> Dict[str, Any]:
 def build_registry() -> RuntimeRegistry:
     motivation = MotivationState()
     memory_governor = MemoryGovernor(SimpleNamespace(memory_manager=None))
+    black_hole_policy = black_hole_retention_policy(ram_gb=64.0)
+    hybrid_memory_policy = hybrid_memory_retention_policy(ram_gb=64.0)
     backup_manager = BackupManager()
     ltm_engine = LongTermMemoryEngine()
     repo = StateRepository(db_path=":memory:")
@@ -185,7 +204,6 @@ def build_registry() -> RuntimeRegistry:
     episodic_path = PROJECT_ROOT / "core" / "memory" / "episodic_memory.py"
     will_engine_path = PROJECT_ROOT / "core" / "self" / "will_engine.py"
     lock_watchdog_path = PROJECT_ROOT / "core" / "resilience" / "lock_watchdog.py"
-    backup_path = PROJECT_ROOT / "core" / "backup.py"
     core_baseline_path = PROJECT_ROOT / "core" / "orchestrator" / "initializers" / "core_baseline.py"
     boot_path = PROJECT_ROOT / "core" / "orchestrator" / "boot.py"
     orchestrator_main_path = PROJECT_ROOT / "core" / "orchestrator" / "main.py"
@@ -193,15 +211,11 @@ def build_registry() -> RuntimeRegistry:
     stability_path = PROJECT_ROOT / "core" / "resilience" / "stability_guardian.py"
     conversation_path = PROJECT_ROOT / "core" / "conversation" / "persistence.py"
 
-    continuity_source = _read_source(continuity_path)
-    subconscious_source = _read_source(subconscious_path)
     motivation_source = _read_source(motivation_path)
     will_engine_source = _read_source(will_engine_path)
     lock_watchdog_source = _read_source(lock_watchdog_path)
-    backup_source = _read_source(backup_path)
     core_baseline_source = _read_source(core_baseline_path)
     boot_source = _read_source(boot_path)
-    main_source = _read_source(orchestrator_main_path)
     state_repo_source = _read_source(state_repository_path)
     stability_source = _read_source(stability_path)
     conversation_source = _read_source(conversation_path)
@@ -405,11 +419,24 @@ def build_registry() -> RuntimeRegistry:
         subconscious_sandbox_interval_s=float(subconscious_sandbox_interval),
         episodic_eval_interval_s=float(episodic_eval_interval),
         episodic_max_episodes=int(EpisodicMemory.MAX_EPISODES),
+        episodic_retention_basis=str(getattr(EpisodicMemory, "RETENTION_POLICY").basis),
+        black_hole_max_memories=int(black_hole_policy.max_items),
+        black_hole_prune_keep_fraction=float(black_hole_policy.prune_keep_fraction),
+        black_hole_retention_basis=str(black_hole_policy.basis),
+        hybrid_memory_max_entries=int(hybrid_memory_policy.max_items),
+        hybrid_memory_retention_basis=str(hybrid_memory_policy.basis),
         ltm_consolidation_interval_s=float(ltm_engine.consolidation_interval_s),
         ltm_rehearsal_min_age_s=float(ltm_engine.rehearsal_min_age_s),
+        ltm_max_memories=int(ltm_engine._max_memories),
+        ltm_retention_basis=str(ltm_engine._policy().basis),
         conversation_retention_days=int(conversation_persistence.DEFAULT_CONVERSATION_RETENTION_DAYS),
         conversation_prune_interval_s=float(conversation_persistence.DEFAULT_CONVERSATION_PRUNE_INTERVAL_S),
         conversation_prune_scheduled=bool(conversation_prune_scheduled),
+        unified_transcript_max_history=int(UNIFIED_TRANSCRIPT_MAX_HISTORY),
+        conversation_context_max_messages=int(CONTEXT_HISTORY_MAX_MESSAGES),
+        conversation_cache_max_messages=int(memory_conversation_persistence.MAX_HISTORY_IN_MEMORY),
+        conversation_cache_max_sessions=int(memory_conversation_persistence.MAX_SESSIONS_ON_DISK),
+        behavioral_scar_max_records=int(_MAX_SCARS),
         pending_initiative_cap=10,
         active_goal_cap=10,
         vector_prune_interval_s=float(memory_governor.vector_prune_interval_s),

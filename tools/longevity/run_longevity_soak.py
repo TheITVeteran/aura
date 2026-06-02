@@ -79,6 +79,7 @@ async def async_main(argv: list[str] | None = None) -> int:
     from aura_main import boot_aura_runtime
     from core.will import ActionDomain, get_will
     from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
+    from tools.receipt_material import signed_will_receipt_entry
 
     orch = await boot_aura_runtime(
         profile=args.profile,
@@ -116,13 +117,12 @@ async def async_main(argv: list[str] | None = None) -> int:
                 )
                 receipt_file.write(
                     json.dumps(
-                        {
-                            "task_id": f"longevity_pulse_{index}",
-                            "receipt_id": decision.receipt_id,
-                            "domain": ActionDomain.STABILIZATION.value,
-                            "outcome": getattr(decision.outcome, "value", str(decision.outcome)),
-                            "reason": decision.reason,
-                        },
+                        signed_will_receipt_entry(
+                            will,
+                            decision,
+                            task_id=f"longevity_pulse_{index}",
+                            domain=ActionDomain.STABILIZATION,
+                        ),
                         sort_keys=True,
                     )
                     + "\n"
@@ -169,4 +169,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

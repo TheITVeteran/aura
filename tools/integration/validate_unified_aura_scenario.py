@@ -16,6 +16,7 @@ REQUIRED_FILES = {
     "SCENARIO_TRACE.jsonl",
     "RECEIPTS.jsonl",
     "SELF_REPAIR_PROPOSAL.json",
+    "TEST_PROTECTION_REPORT.json",
     "MANIFEST.json",
 }
 
@@ -141,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if invalid:
             failures.append("one or more receipts have invalid identifiers")
+        unsigned_will = [
+            receipt
+            for receipt in receipts
+            if str(receipt.get("receipt_id") or "").startswith("will_")
+            and not (isinstance(receipt.get("verification"), dict) and receipt["verification"].get("signature"))
+        ]
+        if unsigned_will:
+            failures.append("one or more Will receipts lack signature verification material")
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         failures.append(f"receipts unreadable: {exc}")
 
@@ -151,8 +160,26 @@ def main(argv: list[str] | None = None) -> int:
             failures.append("self-repair proposal does not prove fail-then-pass repair")
         if proposal.get("approved") is not True:
             failures.append("self-repair proposal was not governance-approved")
+        protection = proposal.get("test_protection") or {}
+        if not all(
+            bool(protection.get(key))
+            for key in ("source_hash_unchanged", "ast_functions_unchanged", "assertions_preserved")
+        ):
+            failures.append("self-repair proposal does not prove test integrity preservation")
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         failures.append(f"self-repair proposal unreadable: {exc}")
+
+    try:
+        protection_report = _read_json(bundle / "TEST_PROTECTION_REPORT.json")
+        if protection_report.get("schema") != "self_repair_test_protection_v1":
+            failures.append("test protection report schema mismatch")
+        if not all(
+            bool(protection_report.get(key))
+            for key in ("source_hash_unchanged", "ast_functions_unchanged", "assertions_preserved")
+        ):
+            failures.append("test protection report did not pass")
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        failures.append(f"test protection report unreadable: {exc}")
 
     if failures:
         print("Unified Aura Scenario: FAIL", file=sys.stderr)

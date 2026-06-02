@@ -2791,6 +2791,8 @@ async def main():
             f"{recycle_interval} tasks to bound long-run resident resource growth."
         )
     from core.will import get_will
+    from tools.receipt_material import signed_will_receipt_entry
+
     will = get_will()
     await will.start()
     write_run_status(
@@ -2894,19 +2896,22 @@ async def main():
                         else False
                     )
                     vol_hash = hashlib.sha256(f"{tid}:{d.receipt_id}:{domain_val}:{outcome_val}:{d.reason}".encode()).hexdigest()
-                    receipt_entry = {
-                        "task_id": tid,
-                        "receipt_id": d.receipt_id,
-                        "domain": domain_val,
-                        "outcome": outcome_val,
-                        "reason": d.reason,
-                        "source": getattr(d, "source", ""),
-                        "volition_hash": vol_hash,
-                        "authorization_phase": "pre_action" if is_pre_action else "internal_runtime",
-                        "effect_verified": effect_verified,
-                        "telemetry_logged": telemetry_logged,
-                        "closure_verified": closure_ok,
-                    }
+                    receipt_entry = signed_will_receipt_entry(
+                        will,
+                        d,
+                        task_id=tid,
+                        domain=domain_val,
+                        outcome=outcome_val,
+                        reason=d.reason,
+                        extra={
+                            "source": getattr(d, "source", ""),
+                            "volition_hash": vol_hash,
+                            "authorization_phase": "pre_action" if is_pre_action else "internal_runtime",
+                            "effect_verified": effect_verified,
+                            "telemetry_logged": telemetry_logged,
+                            "closure_verified": closure_ok,
+                        },
+                    )
                     receipts_fh.write(json.dumps(receipt_entry, default=str) + "\n")
                 receipts_fh.flush()
 
@@ -3266,12 +3271,6 @@ async def main():
             if cat_stats.get("pass_rate", 0.0) < 0.75:
                 category_thresholds_passed = False
                 
-    receipt_count = 0
-    if receipts_file.exists():
-        try:
-            receipt_count = len(receipts_file.read_text(encoding="utf-8").strip().splitlines())
-        except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-            print(f"  [WARN] Failed to count governance receipts: {exc}")
     gov_report = build_governance_report(receipts_file, expected_tasks=len(all_tasks))
     leakage_report = build_leakage_report(
         pre_violations=pre_violations,

@@ -26,6 +26,20 @@ def test_build_registry_extracts_runtime_hardening_contracts():
     assert registry.state_queue_repair_enabled is True
     assert registry.pending_initiative_cap == 10
     assert registry.active_goal_cap == 10
+    assert registry.black_hole_max_memories == 100_000
+    assert registry.black_hole_prune_keep_fraction == 0.90
+    assert registry.black_hole_retention_basis == "ram>=48gb"
+    assert registry.hybrid_memory_max_entries == 100_000
+    assert registry.hybrid_memory_retention_basis == "ram>=48gb"
+    assert registry.episodic_max_episodes >= 10_000
+    assert registry.episodic_retention_basis
+    assert registry.ltm_max_memories >= 10_000
+    assert registry.ltm_retention_basis
+    assert registry.unified_transcript_max_history >= 500
+    assert registry.conversation_context_max_messages >= 250
+    assert registry.conversation_cache_max_messages >= 500
+    assert registry.conversation_cache_max_sessions >= 200
+    assert registry.behavioral_scar_max_records >= 2_000
     assert registry.vector_soft_prune_threshold_days == 14
     assert registry.cognitive_ledger_prune_days == 7
     assert registry.source_signature["critical_supervision_audit"]["all_resolved"] is True
@@ -109,6 +123,9 @@ def test_write_report_bundle_emits_markdown_and_json(tmp_path):
     assert outputs["markdown"].endswith("forecast_report.md")
     assert "24h" in markdown
     assert "31d" in markdown
+    assert "Hybrid memory cap" in markdown
+    assert "Unified transcript cap" in markdown
+    assert "Behavioral scar cap" in markdown
     assert summary_json["checkpoints"][0]["horizon"] == "24h"
     assert isinstance(risk_json, list)
     assert isinstance(remediation_json, list)

@@ -71,7 +71,6 @@ class ResponseGenerationPhase(BasePhase):
         origin = background_policy.normalize_origin(state.cognition.current_origin) or "system"
         state.cognition.current_origin = origin
 
-        import os
         is_test_run = (
             origin == "test"
             or os.environ.get("AURA_AGI_MAX_TASKS") is not None
@@ -233,7 +232,10 @@ class ResponseGenerationPhase(BasePhase):
                     )
                     identity_reminder = {
                         "role": "system",
-                        "content": "REMEMBER: You are Aura. Stay in character. Do not be an 'AI Assistant'.",
+                        "content": (
+                            "REMEMBER: You are Aura. Speak from live grounded context, memory, "
+                            "and evidence. Do not fall back to generic AI-assistant disclaimers."
+                        ),
                     }
                     messages.insert(1, identity_reminder)
 
@@ -377,7 +379,6 @@ class ResponseGenerationPhase(BasePhase):
                 logger.debug("💭 ResponseGeneration: LLM returned None. Skipping this tick.")
                 return state
             if not is_background:
-                import os
                 if (
                     origin != "test"
                     and not os.environ.get("AURA_AGI_MAX_TASKS")

@@ -35,18 +35,13 @@ from __future__ import annotations
 
 
 import asyncio
-import copy
-import math
 import sys
 import tempfile
-import time
-from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional
-from unittest.mock import MagicMock, AsyncMock, patch
+from typing import List
+from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -59,7 +54,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # Core consciousness imports
 # ---------------------------------------------------------------------------
 from core.consciousness.liquid_substrate import LiquidSubstrate, SubstrateConfig
-from core.consciousness.neurochemical_system import NeurochemicalSystem, Chemical
+from core.consciousness.neurochemical_system import NeurochemicalSystem
 from core.consciousness.global_workspace import (
     GlobalWorkspace,
     CognitiveCandidate,
@@ -69,20 +64,13 @@ from core.consciousness.unified_field import UnifiedField, FieldConfig
 from core.consciousness.neural_mesh import NeuralMesh, MeshConfig
 from core.consciousness.hot_engine import HigherOrderThoughtEngine
 from core.consciousness.homeostasis import HomeostasisEngine
-from core.consciousness.predictive_engine import PredictiveEngine, Prediction
-from core.consciousness.counterfactual_engine import (
-    CounterfactualEngine,
-    ActionCandidate,
-)
+from core.consciousness.predictive_engine import PredictiveEngine
+from core.consciousness.counterfactual_engine import ActionCandidate
 from core.consciousness.executive_inhibitor import ExecutiveInhibitor
 from core.consciousness.somatic_marker_gate import SomaticMarkerGate
 from core.consciousness.embodied_interoception import (
-    EmbodiedInteroception,
     InteroceptiveChannel,
 )
-from core.consciousness.free_energy import FreeEnergyEngine
-from core.consciousness.self_prediction import SelfPredictionLoop
-from core.consciousness.temporal_binding import TemporalBindingEngine
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +225,7 @@ class TestTemporalPhenomenology:
         sub = _make_substrate(seed=30)
         _tick_substrate_sync(sub, dt=0.1, n=30)
 
-        # Save the trajectory state
-        saved_state = sub.x.copy()
+        # Save the trajectory connectivity
         saved_W = sub.W.copy()
 
         # Continue the real trajectory
@@ -382,8 +369,6 @@ class TestGenuineAgency:
         homeo.metabolism = 0.70
         homeo.sovereignty = 0.95
 
-        status = homeo.get_status()
-
         # Compute which drive has the largest deficit relative to setpoint
         deficits = {}
         for drive_name in HomeostasisEngine.DRIVE_NAMES:
@@ -406,11 +391,11 @@ class TestGenuineAgency:
         )
 
     def test_volitional_inhibition_of_high_reward(self):
-        """System can refuse high immediate reward due to identity/risk concerns.
+        """High Phi is diagnostic and must not directly route action.
 
-        The ExecutiveInhibitor vetoes non-critical actions when the experiential
-        field (phi) is in a high-integration state. This is the computational
-        analog of prefrontal inhibition of impulsive reward-seeking.
+        The audit boundary is that IIT/Phi surrogates are volatile diagnostics,
+        not action gates. Field coherence and governance remain the gating
+        surfaces for non-critical reward-seeking.
         """
         inhibitor = ExecutiveInhibitor(phi_threshold=0.5, require_ignition=True)
 
@@ -420,28 +405,25 @@ class TestGenuineAgency:
         tempting_action.source_domain = "reward_seeking"
         tempting_action.action_type = "grab_reward"
 
-        # Under high-phi, ignited state, the action should be vetoed
-        # (the system is in deep integration and won't interrupt itself)
+        # Under high-phi, ignited state, the action is logged diagnostically
+        # but not vetoed by Phi alone.
         result = inhibitor.authorize(
             tempting_action,
             phi=0.9,
             ignited=True,
         )
 
-        assert result is False, (
-            "High-reward non-critical action was authorized during high-phi integration. "
-            "Executive inhibitor should have vetoed it."
+        assert result is True, (
+            "High Phi must not directly veto action; it is diagnostic telemetry."
         )
-        assert inhibitor._vetoed_count > 0, (
-            "Veto count not incremented. Inhibitor did not register the veto."
+        assert inhibitor.get_snapshot()["phi_diagnostics"] > 0, (
+            "Phi diagnostic count not incremented. Inhibitor did not record the surrogate signal."
         )
 
     def test_action_matches_internal_counterfactual_ranking(self):
         """Among multiple possible actions, the chosen action matches the one
         ranked best by internal simulation (counterfactual scoring).
         """
-        engine = CounterfactualEngine()
-
         # Create candidates with known scores
         candidates = [
             ActionCandidate(
@@ -568,6 +550,7 @@ class TestGenuineAgency:
         depleted_surge = post_reward_da - pre_reward_da
 
         # The system responded (surge is positive)
+        assert depleted_surge > 0.0
         # But the absolute DA level after sustained stress is lower
         # because ongoing cortisol suppresses dopamine via cross-chemical interactions
         assert post_stress_dopamine < baseline_da or post_stress_cortisol > 0.55, (
@@ -608,7 +591,6 @@ class TestEmbodiedClosure:
         predicted = pe.internal_model * 0.95
 
         # Actually advance
-        state_before = sub.x.copy()
         _tick_substrate_sync(sub, dt=0.1, n=1)
         actual = sub.x.copy()
 
@@ -895,8 +877,6 @@ class TestGenuineThinking:
         The counterfactual engine's deliberation over multiple candidates
         produces a better choice than taking the first available action.
         """
-        engine = CounterfactualEngine()
-
         # Greedy baseline: take the action with highest immediate hedonic gain
         candidates = [
             ActionCandidate(
@@ -1027,7 +1007,7 @@ class TestGenuineThinking:
             "arousal": 0.5,
             "energy": 0.7,
         }
-        ablated_thought = hot.generate_fast(ablated_state)
+        hot.generate_fast(ablated_state)
 
         # The ablated thought should be less specific (less self-referential precision)
         # Intact system notices the most extreme deviation; ablated has no extremes

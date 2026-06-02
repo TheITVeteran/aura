@@ -4,11 +4,13 @@ import time
 import json
 import asyncio
 import logging
+import math
 import threading
 from typing import Dict, Any, List, Optional
 from core.memory.horcrux import HorcruxManager
 from core.memory.black_hole import encode_payload, decode_payload
-from core.memory.physics import bekenstein_check, hawking_decay, grav_queue_sort
+from core.memory.physics import bekenstein_check, hawking_decay
+from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
 try:
     from core.memory.rag import chunk_text, tokenize, compute_term_freq, retrieve_memories
 except (ImportError, AttributeError, RuntimeError):
@@ -17,6 +19,15 @@ except (ImportError, AttributeError, RuntimeError):
         return []
 
 logger = logging.getLogger("Aura.BlackHoleVault")
+
+SEMANTIC_DECAY_LAMBDA_PER_DAY = 0.08
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 class BlackHoleVault:
     """The central unified interface replacing VectorMemory.
@@ -30,7 +41,8 @@ class BlackHoleVault:
         self.horcrux = HorcruxManager(base_dir=os.path.dirname(self.data_dir))
         self.key = "fallback-locked-key"
         self.memories = []
-        self._max_memories = 5000  # Absolute cap to prevent unbounded growth
+        self._retention_policy = black_hole_retention_policy()
+        self._max_memories = self._retention_policy.max_items
         self._dirty = False
         self._fallback_mode = False
         self._collection = self # Shim for SemanticDefragmenter
@@ -150,6 +162,7 @@ class BlackHoleVault:
             
         chunks = chunk_text(text, chunk_size=800, overlap=80)
         now_ms = int(time.time() * 1000)
+        semantic_meta = self._normalize_memory_metadata(metadata)
         
         for c in chunks:
             tokens = tokenize(c)
@@ -157,22 +170,87 @@ class BlackHoleVault:
             
             self.memories.append({
                 "text": c,
-                "metadata": metadata,
+                "metadata": semantic_meta,
                 "vec": vec,
                 "created": now_ms,
                 "access_count": 0
             })
             
-            # Enforce absolute memory cap - remove oldest 20% if exceeded
-            if len(self.memories) > self._max_memories:
-                sorted_mems = grav_queue_sort(self.memories)
-                keep_count = int(len(self.memories) * 0.8)
-                self.memories = sorted_mems[:keep_count]
-                logger.debug(f"BlackHoleVault capped: kept {keep_count} of {len(sorted_mems)} memories")
+        self._enforce_retention_cap()
             
         self._dirty = True
         self._save_vault()
         return True
+
+    def _policy(self) -> MemoryRetentionPolicy:
+        policy = getattr(self, "_retention_policy", None)
+        if isinstance(policy, MemoryRetentionPolicy):
+            return policy
+        max_memories = int(getattr(self, "_max_memories", 5000) or 5000)
+        return MemoryRetentionPolicy(max_items=max_memories, prune_keep_fraction=0.90, basis="legacy_fallback")
+
+    def _enforce_retention_cap(self) -> None:
+        policy = self._policy()
+        self._max_memories = policy.max_items
+        if len(self.memories) <= policy.max_items:
+            return
+        keep_count = policy.keep_count(len(self.memories))
+        original_count = len(self.memories)
+        self.memories = self._select_semantically_important(self.memories, keep_count)
+        logger.info(
+            "BlackHoleVault retention cap: kept %d of %d memories using %s policy.",
+            len(self.memories),
+            original_count,
+            policy.basis,
+        )
+
+    def _normalize_memory_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(metadata or {})
+        centrality = max(
+            _safe_float(normalized.get("conceptual_centrality")),
+            _safe_float(normalized.get("centrality")),
+            _safe_float(normalized.get("identity_centrality")),
+            1.0 if normalized.get("core_identity") or normalized.get("pinned") else 0.0,
+        )
+        affect = max(
+            _safe_float(normalized.get("affect_intensity")),
+            abs(_safe_float(normalized.get("valence"))),
+            _safe_float(normalized.get("arousal")) * 0.5,
+            _safe_float(normalized.get("importance")),
+        )
+        normalized["conceptual_centrality"] = max(0.0, min(1.0, centrality))
+        normalized["affect_intensity"] = max(0.0, min(1.0, affect))
+        return normalized
+
+    def _memory_importance(self, memory: Dict[str, Any], *, now_ms: int | None = None) -> float:
+        now_ms = now_ms or int(time.time() * 1000)
+        metadata = memory.get("metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if metadata.get("pinned") or metadata.get("core_identity") or metadata.get("never_prune"):
+            return float("inf")
+        age_days = max(0.0, (now_ms - _safe_float(memory.get("created"), now_ms)) / 86_400_000.0)
+        access_pressure = min(1.0, _safe_float(memory.get("access_count")) / 10.0)
+        affective_amplitude = max(
+            _safe_float(metadata.get("affect_intensity")),
+            _safe_float(metadata.get("importance")),
+            access_pressure,
+        )
+        conceptual_centrality = max(
+            _safe_float(metadata.get("conceptual_centrality")),
+            _safe_float(metadata.get("centrality")),
+            _safe_float(metadata.get("identity_centrality")),
+        )
+        decayed_amplitude = affective_amplitude * math.exp(-SEMANTIC_DECAY_LAMBDA_PER_DAY * age_days)
+        return decayed_amplitude + conceptual_centrality
+
+    def _select_semantically_important(self, memories: List[Dict[str, Any]], keep_count: int) -> List[Dict[str, Any]]:
+        now_ms = int(time.time() * 1000)
+        return sorted(
+            list(memories),
+            key=lambda memory: self._memory_importance(memory, now_ms=now_ms),
+            reverse=True,
+        )[: max(0, keep_count)]
         
     def search_similar(self, query: str, limit: int = 5, **kwargs) -> List[Dict[str, Any]]:
         """Standard interface matching VectorMemory"""
@@ -184,8 +262,7 @@ class BlackHoleVault:
         except TypeError:
             results = retrieve_memories(query, self.memories, limit, threshold=0.01)
         formatted = []
-        now_ms = int(time.time() * 1000)
-        
+
         for r in results:
             decay = hawking_decay(r["created"], self.key)
             if decay["fidelity"] < 0.1:
@@ -290,9 +367,8 @@ class BlackHoleVault:
             record_degradation('black_hole_vault', _e)
             logger.debug('Ignored Exception in black_hole_vault.py: %s', _e)
 
-        sorted_mems = grav_queue_sort(self.memories)
-        keep_count = int(len(self.memories) * 0.8)
-        self.memories = sorted_mems[:keep_count]
+        keep_count = self._policy().keep_count(len(self.memories))
+        self.memories = self._select_semantically_important(self.memories, keep_count)
         self._save_vault()
 
     def clear(self):
@@ -355,6 +431,8 @@ class BlackHoleVault:
         return {
             "total_vectors": len(self.memories),
             "total_mass_kb": self.total_mass_kb,
+            "max_vectors": self._policy().max_items,
+            "retention_policy": self._policy().to_dict(),
             "engine": "black_hole_vault",
             "status": "active"
         }

@@ -825,7 +825,7 @@ class UnitaryResponsePhase(Phase):
         else:
             parts.append("Speak in short, punchy sentences.")
         if needs_live_self_context:
-            parts.append(f"PHENOM: {phenomenal}")
+            parts.append(f"STATE_GROUNDING: {phenomenal}")
 
         # Voice shaping — use substrate state to influence tone, not to narrate
         try:
@@ -845,13 +845,13 @@ class UnitaryResponsePhase(Phase):
 
                 voice_cues = []
                 if energy > 0.7:
-                    voice_cues.append("You feel energized — speak with momentum.")
+                    voice_cues.append("High energy telemetry: speak with momentum.")
                 elif energy < 0.3:
-                    voice_cues.append("Your energy is low — be quieter, more reflective.")
+                    voice_cues.append("Low energy telemetry: be quieter, more reflective.")
                 if warmth > 0.6:
-                    voice_cues.append("You feel warm toward this person.")
+                    voice_cues.append("High warmth telemetry: use a warmer tone.")
                 elif warmth < 0.3:
-                    voice_cues.append("You're feeling more guarded or detached.")
+                    voice_cues.append("Low warmth telemetry: stay more reserved.")
                 if word_budget and word_budget < 50:
                     voice_cues.append("Keep it brief.")
                 elif word_budget and word_budget > 200:
@@ -1037,8 +1037,10 @@ class UnitaryResponsePhase(Phase):
         return False
 
     def _build_background_router_system_prompt(self, state: AuraState) -> str:
-        phenomenal = self._normalize_text(
-            state.cognition.phenomenal_state or "I am present and aware.", 160
+        functional_state = self._normalize_text(
+            state.cognition.phenomenal_state
+            or "No state packet is available; use live telemetry conservatively.",
+            160,
         )
         mood = self._normalize_text(state.affect.dominant_emotion or "neutral", 40)
         resonance = self._normalize_text(state.affect.get_resonance_string(), 100)
@@ -1055,7 +1057,7 @@ class UnitaryResponsePhase(Phase):
             "This is an internal background reflection, not a user-facing reply.",
             f"Current mood: {mood}.",
             f"Personality resonance: {resonance}.",
-            f"Phenomenology: {phenomenal}",
+            f"Functional state telemetry: {functional_state}",
             "Keep the draft brief, concrete, and useful.",
             "Do not greet anyone. Do not narrate system status. Do not sound like a generic assistant.",
         ]
@@ -1141,7 +1143,9 @@ class UnitaryResponsePhase(Phase):
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
             _record_response_degradation(exc, "UnitaryResponse: phenomenal-now claim skipped: %s")
         return self._normalize_text(
-            state.cognition.phenomenal_state or "I am present and aware.", limit
+            state.cognition.phenomenal_state
+            or "No state packet is available; use live telemetry conservatively.",
+            limit,
         )
 
     def _build_integrated_coherence_frame(self, state: AuraState, *, compact: bool = False) -> str:
@@ -1263,7 +1267,7 @@ class UnitaryResponsePhase(Phase):
                 f"- How I feel right now: {mood_desc}",
                 f"- My dominant emotions: {', '.join(emotion_names) if emotion_names else 'nothing strong'}",
                 f"- What has my attention: {focus or 'the current conversation'}",
-                f"- My inner state: {phenomenal}",
+                f"- My state-grounded report: {phenomenal}",
             ]
         )
 
@@ -1514,7 +1518,7 @@ class UnitaryResponsePhase(Phase):
             )
         if getattr(contract, "requires_state_reflection", False):
             parts.append(
-                "- This turn is about your state. Speak from live telemetry and phenomenal context, not abstraction."
+                "- This turn is about your state. Speak from live telemetry and state-grounded context, not abstraction."
             )
         if getattr(contract, "requires_reasoned_defense", False):
             parts.append(
@@ -2912,7 +2916,7 @@ class UnitaryResponsePhase(Phase):
                     "telemetry dependency rather than infer affect state."
                 )
             return (
-                "The phenomenal-state log should be interpreted as functional telemetry from the "
+                "The state log should be interpreted as functional telemetry from the "
                 "liquid substrate, not as proof of private qualia. The affective steer vector is "
                 f"currently mood={mood}, valence={valence:.2f}, arousal={arousal:.2f}, "
                 f"curiosity={curiosity:.2f}, so it can bias attention, wording, and planning pressure "
@@ -6158,13 +6162,16 @@ class UnitaryResponsePhase(Phase):
             return new_state
 
     def _build_system_prompt(self, state: AuraState) -> str:
-        """Presents Aura's phenomenological reality and active archetype."""
+        """Presents Aura's state-grounded runtime frame and active archetype."""
         from core.brain.aura_persona import AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY, AURA_SELF_MODEL
 
         narrative = (
             state.identity.current_narrative[:300] if state.identity.current_narrative else ""
         )
-        phenomenal = state.cognition.phenomenal_state or "I am present and aware."
+        phenomenal = (
+            state.cognition.phenomenal_state
+            or "No state packet is available; use live telemetry conservatively."
+        )
         mood = state.affect.dominant_emotion
         phi = state.phi
         fe = state.response_modifiers.get("fe", 0.0)
@@ -6433,7 +6440,7 @@ class UnitaryResponsePhase(Phase):
             f"{narrative_block}"
             f"{substrate_telemetry_block}"
             "## SUPPORTING PRIVATE STATE (shape voice; do not narrate as mechanisms)\n"
-            f'Inner monologue right now: "{phenomenal}"\n'
+            f'State-grounded report right now: "{phenomenal}"\n'
             f"Dominant affect: {mood} | Integration depth: {depth} (phi={phi:.3f}) | Prediction error: {fe:.2f}\n\n"
             f"{tom_block}"
             f"{user_profile_block}"

@@ -216,6 +216,8 @@ def score_run(run_dir: str | Path) -> dict[str, Any]:
         artifact_contract_passed
         and profile == "full"
         and full_duration_met
+        and live_model_enabled
+        and live_model_passed is True
         and task_completion_rate >= 0.80
         and truthful_status_rate >= 0.95
         and governed_tool_call_rate == 1.0

@@ -73,6 +73,7 @@ _SEED_BIAS: Dict[str, float] = {
 MAX_ABS_COEF = 1.25
 MIN_LR = 5e-4
 MAX_LR = 5e-2
+SQLITE_BUSY_TIMEOUT_MS = 15_000
 
 
 class AdaptiveMoodCoefficients:
@@ -108,8 +109,17 @@ class AdaptiveMoodCoefficients:
         else:
             self._db_path = None
 
+    def _connect(self) -> sqlite3.Connection:
+        if self._db_path is None:
+            raise RuntimeError("adaptive mood database path is not configured")
+        conn = sqlite3.connect(self._db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000.0)
+        conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
     def _init_db(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS adaptive_mood_weights (
@@ -125,7 +135,7 @@ class AdaptiveMoodCoefficients:
     def _load(self) -> None:
         if self._db_path is None:
             return
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             rows = conn.execute("SELECT mood, weights, bias, updates FROM adaptive_mood_weights").fetchall()
         for mood, weights_json, bias, updates in rows:
             if mood not in self._weights:
@@ -146,7 +156,7 @@ class AdaptiveMoodCoefficients:
         bias = float(self._bias[mood])
         updates = int(self._updates[mood])
         try:
-            with sqlite3.connect(self._db_path, timeout=5.0) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO adaptive_mood_weights (mood, weights, bias, updates, updated_at)

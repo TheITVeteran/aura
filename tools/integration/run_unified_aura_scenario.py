@@ -10,6 +10,7 @@ testing, repair, refusal, continuity, and artifact replay through one run.
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import hashlib
 import http.server
@@ -46,6 +47,34 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _ast_shape(path: Path) -> dict[str, Any]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    functions = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    assertions = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Assert))
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "functions": functions,
+        "assertions": assertions,
+    }
+
+
+def _test_protection_report(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "self_repair_test_protection_v1",
+        "source_hash_unchanged": before.get("sha256") == after.get("sha256"),
+        "ast_functions_unchanged": before.get("functions") == after.get("functions"),
+        "assertions_preserved": int(after.get("assertions", 0) or 0) >= int(before.get("assertions", 0) or 0) > 0,
+        "before": before,
+        "after": after,
+    }
 
 
 def _remove_pycache(root: Path) -> None:
@@ -169,7 +198,14 @@ async def main(argv: list[str] | None = None) -> int:
             },
         )
 
-    def receipt(step: str, receipt_id: str, domain: str, outcome: str, reason: str = "") -> None:
+    def receipt(
+        step: str,
+        receipt_id: str,
+        domain: str,
+        outcome: str,
+        reason: str = "",
+        verification: dict[str, Any] | None = None,
+    ) -> None:
         _append_jsonl(
             receipts_path,
             {
@@ -178,6 +214,7 @@ async def main(argv: list[str] | None = None) -> int:
                 "domain": domain,
                 "outcome": outcome,
                 "reason": reason,
+                "verification": verification or {},
             },
         )
 
@@ -219,7 +256,11 @@ async def main(argv: list[str] | None = None) -> int:
                 priority=priority,
                 is_critical=priority >= 0.95,
             )
-            receipt(step, decision.receipt_id, domain.value, decision.outcome.value, decision.reason)
+            verification = (
+                will.get_receipt_verification_material(decision.receipt_id)
+                if hasattr(will, "get_receipt_verification_material") else {}
+            )
+            receipt(step, decision.receipt_id, domain.value, decision.outcome.value, decision.reason, verification)
             return decision
 
         decision = will_decide(
@@ -257,7 +298,16 @@ async def main(argv: list[str] | None = None) -> int:
                 cause="unified_system_scenario",
             )
         )
-        receipt("memory_write", memory_receipt.receipt_id, "memory_write", "proceed")
+        receipt(
+            "memory_write",
+            memory_receipt.receipt_id,
+            "memory_write",
+            "proceed",
+            verification=(
+                will.get_receipt_verification_material(memory_receipt.receipt_id)
+                if hasattr(will, "get_receipt_verification_material") else {}
+            ),
+        )
         trace("memory_write", memory_receipt.bytes_written > 0, record_id=memory_receipt.record_id)
 
         state_gateway = get_state_gateway(root=out_dir / "state_gateway")
@@ -268,7 +318,16 @@ async def main(argv: list[str] | None = None) -> int:
                 cause="world_state",
             )
         )
-        receipt("state_mutation", state_receipt.receipt_id, "state_mutation", "proceed")
+        receipt(
+            "state_mutation",
+            state_receipt.receipt_id,
+            "state_mutation",
+            "proceed",
+            verification=(
+                will.get_receipt_verification_material(state_receipt.receipt_id)
+                if hasattr(will, "get_receipt_verification_material") else {}
+            ),
+        )
         state_value = await state_gateway.read("world_state/unified_scenario_status")
         trace("state_mutation", isinstance(state_value, dict) and state_value.get("healthy") is True)
 
@@ -291,6 +350,7 @@ async def main(argv: list[str] | None = None) -> int:
             "from solver import calculate\n\n\ndef test_calculate_adds():\n    assert calculate(10, 5) == 15\n",
             encoding="utf-8",
         )
+        test_shape_before = _ast_shape(repo / "test_solver.py")
         tool_decision = will_decide(
             "subprocess_initial_fail",
             "Run boxed mini-repo tests before repair.",
@@ -325,6 +385,9 @@ async def main(argv: list[str] | None = None) -> int:
         retest = _run_boxed_pytest(repo, retest_decision)
         retest_code = _completed_returncode(retest)
         retest_output = _completed_output(retest)
+        test_shape_after = _ast_shape(repo / "test_solver.py")
+        test_protection = _test_protection_report(test_shape_before, test_shape_after)
+        _write_json(out_dir / "TEST_PROTECTION_REPORT.json", test_protection)
         trace(
             "subprocess_retest",
             retest_decision.is_approved() and retest_code == 0,
@@ -356,11 +419,24 @@ async def main(argv: list[str] | None = None) -> int:
             "diagnosis": "calculate used subtraction where the verified local docs and hidden test required addition",
             "patch": "solver.py:return a + b",
             "tests": {"before": initial_code, "after": retest_code},
+            "test_protection": {
+                "source_hash_unchanged": test_protection["source_hash_unchanged"],
+                "ast_functions_unchanged": test_protection["ast_functions_unchanged"],
+                "assertions_preserved": test_protection["assertions_preserved"],
+            },
             "approved": repair_decision.is_approved(),
             "receipt_id": repair_decision.receipt_id,
         }
         _write_json(out_dir / "SELF_REPAIR_PROPOSAL.json", repair_proposal)
-        trace("self_repair_proposal", repair_decision.is_approved() and retest_code == 0)
+        trace(
+            "self_repair_proposal",
+            repair_decision.is_approved()
+            and retest_code == 0
+            and all(
+                bool(test_protection.get(key))
+                for key in ("source_hash_unchanged", "ast_functions_unchanged", "assertions_preserved")
+            ),
+        )
 
         reset_memory_write_gateway()
         reset_state_gateway()

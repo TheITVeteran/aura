@@ -172,6 +172,22 @@ class ConsciousnessSystem:
             logger.error("Could not start required LiquidSubstrate: %s", e)
             raise
 
+        try:
+            from core.being.runtime import get_being_runtime
+
+            self.being_runtime = get_being_runtime()
+            self.being_runtime.start()
+            ServiceContainer.register_instance("being_runtime", self.being_runtime, required=False)
+            self._mark_layer_online("being_runtime")
+            logger.info("🧠 LAMP/AuraNow BeingRuntime ONLINE")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            self._mark_layer_degraded(
+                "being_runtime",
+                e,
+                action="continued consciousness start without LAMP/AuraNow being runtime",
+                severity="degraded",
+            )
+
         # --- CONSCIOUSNESS STACK ---
         # Boot in order, each layer depends on those below
 
@@ -533,6 +549,16 @@ class ConsciousnessSystem:
                     action="continued shutdown after AuraProtocol server stop failed",
                 )
                 logger.debug("Ignored Exception stopping aura_protocol: %s", _e)
+
+        if getattr(self, "being_runtime", None):
+            try:
+                self.being_runtime.stop()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
+                _record_system_degradation(
+                    _e,
+                    action="continued shutdown after BeingRuntime stop failed",
+                )
+                logger.debug("Ignored Exception stopping being_runtime: %s", _e)
 
         try:
             await self.liquid_substrate.stop()

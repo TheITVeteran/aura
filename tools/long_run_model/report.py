@@ -22,9 +22,23 @@ def render_markdown(summary: ForecastRunSummary) -> str:
         f"- Liquid-time clamp: `{summary.registry['liquid_time_clamp_s']}s`",
         f"- Circadian update interval: `{summary.registry['circadian_update_interval_s']}s`",
         f"- Episodic evaluation interval: `{summary.registry['episodic_eval_interval_s']}s`",
+        f"- Episodic cap: `{summary.registry['episodic_max_episodes']}` episodes "
+        f"(`{summary.registry['episodic_retention_basis']}`)",
         f"- LTM consolidation interval: `{summary.registry['ltm_consolidation_interval_s']}s`",
+        f"- LTM cap: `{summary.registry['ltm_max_memories']}` memories "
+        f"(`{summary.registry['ltm_retention_basis']}`)",
         f"- Conversation prune interval: `{summary.registry['conversation_prune_interval_s']}s`",
+        f"- Unified transcript cap: `{summary.registry['unified_transcript_max_history']}` entries",
+        f"- Conversation context cap: `{summary.registry['conversation_context_max_messages']}` messages",
+        f"- Compatibility conversation cache: `{summary.registry['conversation_cache_max_messages']}` messages / "
+        f"`{summary.registry['conversation_cache_max_sessions']}` sessions",
+        f"- Behavioral scar cap: `{summary.registry['behavioral_scar_max_records']}` records",
         f"- Vector prune interval: `{summary.registry['vector_prune_interval_s']}s`",
+        f"- BlackHoleVault cap: `{summary.registry['black_hole_max_memories']}` memories "
+        f"(`{summary.registry['black_hole_retention_basis']}`, "
+        f"keep `{summary.registry['black_hole_prune_keep_fraction']}` on cap prune)",
+        f"- Hybrid memory cap: `{summary.registry['hybrid_memory_max_entries']}` entries "
+        f"(`{summary.registry['hybrid_memory_retention_basis']}`)",
         f"- Backup interval: `{summary.registry['backup_interval_s']}s`",
         f"- Backup wired: `{summary.registry['backup_wired']}`",
         f"- Lock watchdog auto-repair: `{summary.registry['lock_watchdog_auto_repair']}`",
@@ -96,7 +110,7 @@ def render_markdown(summary: ForecastRunSummary) -> str:
 
 
 def write_report_bundle(summary: ForecastRunSummary, output_dir: Path) -> Dict[str, str]:
-    get_task_tracker().create_task(get_storage_gateway().create_dir(output_dir, cause='write_report_bundle'))
+    output_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = output_dir / "forecast_report.md"
     summary_path = output_dir / "forecast_summary.json"
     risk_path = output_dir / "risk_ledger.json"

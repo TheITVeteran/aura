@@ -1600,11 +1600,21 @@ class AffectiveSteeringEngine:
         for hook in self._hooks:
             hook._alpha = min(float(getattr(hook, "_alpha", self._surface_alpha_override)), self._surface_alpha_override)
 
-    def observe_generation(self, text: str) -> dict[str, Any]:
+    def observe_generation(
+        self,
+        text: str,
+        *,
+        generation_health: float | None = None,
+        cross_entropy: float | None = None,
+    ) -> dict[str, Any]:
         """Feed completed text back into collapse detection and adaptive alpha."""
         if not self._production_caa:
             return {}
-        report = self._production_caa.observe_generation(text)
+        report = self._production_caa.observe_generation(
+            text,
+            generation_health=generation_health,
+            cross_entropy=cross_entropy,
+        )
         recommended = float(report.get("alpha_state", {}).get("current_alpha", self._alpha) or self._alpha)
         if abs(recommended - self._alpha) >= 0.05:
             self.set_alpha(recommended)

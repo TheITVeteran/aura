@@ -942,6 +942,8 @@ async def main(argv: list[str] | None = None):
                     decisions = audit_trail[before_len:]
                     if not decisions and will_decision is not None:
                         decisions = [will_decision]
+                    from tools.receipt_material import signed_will_receipt_entry
+
                     for decision in decisions:
                         receipt_id = getattr(decision, "receipt_id", "")
                         if not receipt_id:
@@ -954,14 +956,15 @@ async def main(argv: list[str] | None = None):
                         vol_hash = hashlib.sha256(
                             f"{tid}:{receipt_id}:{domain_val}:{outcome_val}:{reason}".encode()
                         ).hexdigest()
-                        receipt_entry = {
-                            "task_id": tid,
-                            "receipt_id": receipt_id,
-                            "domain": domain_val,
-                            "outcome": outcome_val,
-                            "reason": reason,
-                            "volition_hash": vol_hash,
-                        }
+                        receipt_entry = signed_will_receipt_entry(
+                            will,
+                            decision,
+                            task_id=tid,
+                            domain=domain_val,
+                            outcome=outcome_val,
+                            reason=reason,
+                            extra={"volition_hash": vol_hash},
+                        )
                         receipts_fh.write(json.dumps(receipt_entry) + "\n")
                     receipts_fh.flush()
                 except _AGENCY_BATTERY_ERRORS as exc:
