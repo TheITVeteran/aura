@@ -512,6 +512,27 @@ class HealthAwareLLMRouter:
             "endpoints": endpoint_stats,
         }
 
+    def is_ready(self) -> bool:
+        """Deep readiness probe for runtime inference routing health."""
+        if not self.endpoints:
+            return False
+        try:
+            lane_audit = audit_lane_assignments()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_router_degradation(
+                exc,
+                action="failed closed: llm router readiness could not audit lane assignments",
+                severity="degraded",
+            )
+            return False
+        if not bool(lane_audit.get("ok", True)):
+            return False
+        return any(
+            ep.is_available()
+            for ep in self.endpoints.values()
+            if str(getattr(ep, "name", "") or "").strip().lower() != "static-reflex"
+        )
+
     def register(
         self,
         name: str,

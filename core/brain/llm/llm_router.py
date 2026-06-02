@@ -22,6 +22,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from core.brain.llm.model_registry import (
+    audit_lane_assignments,
     guard_solver_request,
     normalize_endpoint_name,
 )
@@ -1573,6 +1574,30 @@ class IntelligentLLMRouter:
 
     def get_stats(self) -> dict[str, Any]:
         return {**self.stats, "endpoint_health": {name: self.health_monitor.is_healthy(name) for name in self.endpoints}}
+
+    def is_ready(self) -> bool:
+        """Deep readiness probe for runtime inference routing health."""
+        if not self.endpoints:
+            return False
+        try:
+            lane_audit = audit_lane_assignments()
+        except ROUTER_RECOVERABLE_ERRORS as exc:
+            _record_router_degradation(
+                exc,
+                action="failed closed: legacy llm router readiness could not audit lane assignments",
+                severity="degraded",
+            )
+            return False
+        if not bool(lane_audit.get("ok", True)):
+            return False
+        for name, endpoint in self.endpoints.items():
+            tier = getattr(endpoint, "tier", None)
+            tier_value = getattr(tier, "value", tier)
+            if str(tier_value or "").strip().lower() == "emergency":
+                continue
+            if self.health_monitor.is_healthy(name):
+                return True
+        return False
 
     def get_status(self) -> dict[str, Any]:
         status: dict[str, Any] = {

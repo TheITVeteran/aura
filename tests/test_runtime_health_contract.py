@@ -207,7 +207,7 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
 
     assert required["kernel_interface"].liveness_check == "is_ready"
     assert required["inference_gate"].liveness_check == "is_inference_ready"
-    assert required["llm_router"].tier == ServiceTier.CRITICAL
+    assert required["llm_router"].liveness_check == "is_ready"
     assert required["state_repository"].liveness_check == "is_initialized"
     assert required["memory_facade"].liveness_check == "is_ready"
     assert required["scheduler"].liveness_check == "is_alive"
@@ -227,6 +227,43 @@ def test_required_probe_summary_fails_if_scheduler_or_tool_governance_is_unhealt
     assert probes["scheduler"]["ok"] is False
     assert probes["tool_governance"]["ok"] is True
     assert probes["all_passed"] is False
+
+
+def test_required_probe_summary_fails_if_llm_router_is_present_but_not_ready():
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    ServiceContainer.register_instance("llm_router", SimpleNamespace())
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.CRITICAL.value
+    assert probes["inference"]["ok"] is False
+    assert probes["inference"]["components"]["llm_router"] is False
+    assert probes["all_passed"] is False
+    assert any(
+        failure["container_key"] == "llm_router"
+        for failure in report["failures"]["critical"]
+    )
+
+
+def test_health_aware_llm_router_readiness_requires_routable_endpoint():
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+
+    router = HealthAwareLLMRouter()
+    assert router.is_ready() is False
+
+    router.register(
+        "Cortex",
+        url="http://127.0.0.1:9001",
+        model="local-cortex",
+        is_local=True,
+        tier="local",
+    )
+    assert router.is_ready() is True
+
+    for endpoint in router.endpoints.values():
+        endpoint.trip_temporarily("unit_test")
+    assert router.is_ready() is False
 
 
 def test_observability_readiness_uses_runtime_health_contract():

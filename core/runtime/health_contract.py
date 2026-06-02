@@ -70,6 +70,7 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "llm_router",
         ServiceTier.CRITICAL,
         "Selects model tier and provider. Without it, InferenceGate has no backend.",
+        liveness_check="is_ready",
     ),
     ServiceRequirement(
         "State Repository",
