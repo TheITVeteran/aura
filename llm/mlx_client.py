@@ -1,7 +1,28 @@
 import logging
-import sys
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("LLM.MLX")
+
+_LEGACY_MLX_CLIENT_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_legacy_mlx_degradation(exc: BaseException, *, action: str) -> None:
+    record_degradation(
+        "legacy_mlx_client",
+        exc,
+        severity="warning",
+        action=action,
+    )
+
 
 class MLXClient:
     """
@@ -16,13 +37,14 @@ class MLXClient:
     def _load_model(self):
         try:
             from mlx_lm import load
-            import mlx.core as mx
             logger.info(f"Loading MLX Model: {self.model_path}...")
             self.model, self.tokenizer = load(self.model_path)
             logger.info("MLX Model Loaded Successfully.")
-        except ImportError:
+        except ImportError as e:
+            _record_legacy_mlx_degradation(e, action="failed to import mlx_lm while loading legacy MLX client")
             logger.error("mlx-lm not installed. Run 'pip install mlx-lm mlx'.")
-        except Exception as e:
+        except _LEGACY_MLX_CLIENT_ERRORS as e:
+            _record_legacy_mlx_degradation(e, action="failed to load legacy MLX model")
             logger.error(f"Failed to load MLX model: {e}")
 
     @staticmethod
@@ -65,7 +87,8 @@ class MLXClient:
             cleaned, thought = self._extract_think_segments(response_text)
             return {"ok": True, "text": cleaned, "thought": thought}
             
-        except Exception as e:
+        except _LEGACY_MLX_CLIENT_ERRORS as e:
+            _record_legacy_mlx_degradation(e, action="failed during legacy MLX generation")
             logger.error(f"MLX Generation Error: {e}")
             return {"ok": False, "error": str(e)}
 
@@ -76,8 +99,8 @@ class MLXClient:
             return
             
         try:
-            from mlx_lm import generate_step
             import mlx.core as mx
+            from mlx_lm import generate_step
             
             if system_prompt:
                 formatted_prompt = f"{system_prompt}\n\n{prompt}"
@@ -90,7 +113,11 @@ class MLXClient:
             # A true prod impl would run this in a threadpool
             in_think_block = False
             
-            for (token, _), _ in zip(generate_step(mx.array(self.tokenizer.encode(formatted_prompt)), self.model, temp), range(max_tokens)):
+            for (token, _), _ in zip(
+                generate_step(mx.array(self.tokenizer.encode(formatted_prompt)), self.model, temp),
+                range(max_tokens),
+                strict=False,
+            ):
                 token_str = self.tokenizer.decode([token])
                 
                 # Real-time think block filtering
@@ -112,6 +139,7 @@ class MLXClient:
                 if token_str:
                     yield token_str
                     
-        except Exception as e:
+        except _LEGACY_MLX_CLIENT_ERRORS as e:
+            _record_legacy_mlx_degradation(e, action="failed during legacy MLX streaming generation")
             logger.error(f"MLX Streaming Error: {e}")
             yield f"\n[MLX Generation Failed: {str(e)}]"

@@ -6,11 +6,33 @@ to dynamically scale down LLM generation parameters under heavy load to prevent
 thermal throttling or out-of-memory (OOM) crashes.
 """
 import logging
+from typing import Any
+
 import psutil
-from typing import Dict, Any
+
+from core.runtime.errors import record_degradation
 from core.runtime.service_access import resolve_affect_engine
 
 logger = logging.getLogger("Aura.Brain.SomaticThrottle")
+
+_SOMATIC_THROTTLE_BOUNDARY_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+def _record_somatic_throttle_degradation(exc: BaseException, *, action: str) -> None:
+    record_degradation(
+        "somatic_throttle",
+        exc,
+        severity="warning",
+        action=action,
+    )
 
 
 class SomaticComputeSentinel:
@@ -19,7 +41,7 @@ class SomaticComputeSentinel:
     def __init__(self):
         logger.info("🌡️ SomaticComputeSentinel initialized.")
 
-    def adjust_generation_options(self, base_options: Dict[str, Any]) -> Dict[str, Any]:
+    def adjust_generation_options(self, base_options: dict[str, Any]) -> dict[str, Any]:
         """Dynamically adjusts LLM sampling and length parameters based on metabolic and hardware stress."""
         # 1. Fetch virtual physiological stress (arousal)
         arousal = 0.0
@@ -29,7 +51,8 @@ class SomaticComputeSentinel:
                 current_state = affect.current
                 if hasattr(current_state, "arousal"):
                     arousal = float(current_state.arousal)
-        except Exception as e:
+        except _SOMATIC_THROTTLE_BOUNDARY_ERRORS as e:
+            _record_somatic_throttle_degradation(e, action="using neutral arousal for generation throttle")
             logger.debug("Failed to resolve affect engine arousal: %s", e)
 
         # 1b. Fetch governance token throttle factor
@@ -38,7 +61,8 @@ class SomaticComputeSentinel:
             from research.protocols.resource_quotas import get_compute_governor
             gov = get_compute_governor()
             gov_throttle = gov.get_throttle_factor()
-        except Exception as e:
+        except _SOMATIC_THROTTLE_BOUNDARY_ERRORS as e:
+            _record_somatic_throttle_degradation(e, action="using default compute governor throttle")
             logger.debug("Failed to resolve compute governor: %s", e)
 
         # 2. Fetch hardware stress metrics
@@ -47,7 +71,8 @@ class SomaticComputeSentinel:
         try:
             cpu_load = psutil.cpu_percent(interval=0) / 100.0
             ram_pct = psutil.virtual_memory().percent / 100.0
-        except Exception as e:
+        except _SOMATIC_THROTTLE_BOUNDARY_ERRORS as e:
+            _record_somatic_throttle_degradation(e, action="using neutral hardware metrics for generation throttle")
             logger.debug("Failed to retrieve hardware metrics: %s", e)
 
         # 3. Determine if systemic overload is present.

@@ -2,8 +2,10 @@
 
 Verifies parameter cuts occur under real or coupled hardware stress.
 """
-from unittest.mock import MagicMock, patch
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 from core.brain.llm.somatic_throttle import SomaticComputeSentinel
 
 
@@ -108,3 +110,59 @@ def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical
         assert adjusted["max_tokens"] == 512
         assert adjusted["temperature"] == 0.7
         assert adjusted["recurrent_depth"] == 0.8
+
+
+def test_somatic_throttle_does_not_swallow_generic_exceptions():
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "core"
+        / "brain"
+        / "llm"
+        / "somatic_throttle.py"
+    ).read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "except BaseException" not in source
+
+
+def test_mlx_generation_throttle_hook_uses_typed_boundary():
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "core"
+        / "brain"
+        / "llm"
+        / "mlx_client.py"
+    ).read_text(encoding="utf-8")
+    throttle_block = source.split("SomaticComputeSentinel", 1)[1].split("foreground_owner_cm", 1)[0]
+
+    assert "except Exception" not in throttle_block
+    assert "continued generation without somatic parameter throttle" in throttle_block
+
+
+def test_somatic_throttle_records_expected_probe_failures(monkeypatch):
+    records = []
+
+    monkeypatch.setattr(
+        "core.brain.llm.somatic_throttle.record_degradation",
+        lambda subsystem, exc, **metadata: records.append((subsystem, exc, metadata)),
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.somatic_throttle.resolve_affect_engine",
+        MagicMock(side_effect=RuntimeError("affect offline")),
+    )
+
+    with (
+        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
+        patch("psutil.cpu_percent", return_value=5.0),
+        patch("psutil.virtual_memory") as mock_vm,
+    ):
+        mock_vm_obj = MagicMock()
+        mock_vm_obj.percent = 20.0
+        mock_vm.return_value = mock_vm_obj
+
+        adjusted = SomaticComputeSentinel().adjust_generation_options({"max_tokens": 512})
+
+    assert adjusted["max_tokens"] == 512
+    assert records
+    assert records[0][0] == "somatic_throttle"
+    assert records[0][2]["action"] == "using neutral arousal for generation throttle"

@@ -47,6 +47,17 @@ def _record_mlx_degradation(
     )
 
 
+_MLX_OPTIONAL_THROTTLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 # Global state for swap management
 _GLOBAL_LAST_SWAP_TIME = 0.0
 _GLOBAL_LAST_HEAVY_MODEL = None
@@ -1255,9 +1266,10 @@ class MLXLocalClient:
         )
         loop = asyncio.get_running_loop()
         wait_started = loop.time()
+        wait_deadline = wait_started + wait_budget
         last_log_at = 0.0
 
-        while True:
+        while loop.time() < wait_deadline:
             if self._request_lock.acquire(False):
                 self._request_lock_owner_label = str(owner_label or "")
                 self._request_lock_acquired_at = time.time()
@@ -1265,79 +1277,6 @@ class MLXLocalClient:
 
             now = loop.time()
             waited = max(0.0, now - wait_started)
-            if waited >= wait_budget:
-                holder = self._request_lock_owner_label or "another_request"
-                holder_age = (
-                    max(0.0, time.time() - self._request_lock_acquired_at)
-                    if self._request_lock_acquired_at
-                    else 0.0
-                )
-                logger.warning(
-                    "⏳ [MLX] Request queue timeout after %.1fs for %s while waiting on %s (held %.1fs).",
-                    wait_budget,
-                    os.path.basename(self.model_path),
-                    holder,
-                    holder_age,
-                )
-                self._record_degraded_event(
-                    "request_lock_timeout",
-                    detail=f"{os.path.basename(self.model_path)} owner={holder} held={holder_age:.1f}s",
-                    severity="warning",
-                    foreground_request=foreground_request,
-                )
-                # Preemption: if a foreground caller has been waiting past its
-                # budget AND the current lock holder has itself exceeded the
-                # first-token SLA (i.e. it's almost certainly wedged, not just
-                # slow), cancel the in-flight future and defer a worker reboot
-                # so the NEXT caller can make progress rather than pile on
-                # another 30 s timeout.  Without this, two user messages in
-                # quick succession can stack a 60–90 s visible hang even
-                # though the first message was already dead in the water.
-                if foreground_request:
-                    sla = self._first_token_sla(foreground_request=True)
-                    if holder_age > sla:
-                        # Check heartbeats before deciding whether the lane
-                        # should be marked failed. Even with fresh heartbeats,
-                        # abandoning a foreground generation means its late
-                        # text is unsafe for later turns, so recycle the
-                        # worker cleanly instead of keeping it warm.
-                        heartbeat_age = (
-                            time.time() - self._last_heartbeat
-                            if self._last_heartbeat > 0
-                            else 999.0
-                        )
-                        if heartbeat_age > 30.0:
-                            logger.error(
-                                "🛑 [MLX] Preempting wedged holder %s (age=%.1fs > sla=%.1fs, no heartbeat for %.1fs). "
-                                "Cancelling in-flight future and scheduling worker reboot.",
-                                holder,
-                                holder_age,
-                                sla,
-                                heartbeat_age,
-                            )
-                            self._deferred_reboot_reason = "foreground_preemption_wedged_holder"
-                        else:
-                            logger.warning(
-                                "🛡️ [MLX] Holder %s slow (age=%.1fs > sla=%.1fs) but heartbeat fresh (%.1fs ago). "
-                                "Cancelling generation and scheduling a clean recycle so stale text cannot bleed into the next turn.",
-                                holder,
-                                holder_age,
-                                sla,
-                                heartbeat_age,
-                            )
-                            self._deferred_reboot_reason = (
-                                "recoverable_foreground_preemption_slow_holder"
-                            )
-                        try:
-                            stuck_future = self._current_gen_future
-                            if stuck_future is not None:
-                                _cancel_shared_future(stuck_future)
-                        except (RuntimeError, AttributeError) as exc:
-                            logger.debug(
-                                "MLX request preemption future cancel skipped: %s",
-                                exc,
-                            )
-                return False
 
             if waited >= 5.0 and (now - last_log_at) >= 5.0:
                 holder = self._request_lock_owner_label or "another_request"
@@ -1354,7 +1293,70 @@ class MLXLocalClient:
                 )
                 last_log_at = now
 
-            await asyncio.sleep(min(0.05, max(0.0, wait_budget - waited)))
+            await asyncio.sleep(min(0.05, max(0.0, wait_deadline - loop.time())))
+
+        holder = self._request_lock_owner_label or "another_request"
+        holder_age = (
+            max(0.0, time.time() - self._request_lock_acquired_at)
+            if self._request_lock_acquired_at
+            else 0.0
+        )
+        logger.warning(
+            "⏳ [MLX] Request queue timeout after %.1fs for %s while waiting on %s (held %.1fs).",
+            wait_budget,
+            os.path.basename(self.model_path),
+            holder,
+            holder_age,
+        )
+        self._record_degraded_event(
+            "request_lock_timeout",
+            detail=f"{os.path.basename(self.model_path)} owner={holder} held={holder_age:.1f}s",
+            severity="warning",
+            foreground_request=foreground_request,
+        )
+        # Preemption: if a foreground caller waited through the explicit queue
+        # deadline and the current holder exceeded the first-token SLA, cancel
+        # the in-flight future and recycle the worker before stale text can
+        # leak into a later turn.
+        if foreground_request:
+            sla = self._first_token_sla(foreground_request=True)
+            if holder_age > sla:
+                heartbeat_age = (
+                    time.time() - self._last_heartbeat
+                    if self._last_heartbeat > 0
+                    else 999.0
+                )
+                if heartbeat_age > 30.0:
+                    logger.error(
+                        "🛑 [MLX] Preempting wedged holder %s (age=%.1fs > sla=%.1fs, no heartbeat for %.1fs). "
+                        "Cancelling in-flight future and scheduling worker reboot.",
+                        holder,
+                        holder_age,
+                        sla,
+                        heartbeat_age,
+                    )
+                    self._deferred_reboot_reason = "foreground_preemption_wedged_holder"
+                else:
+                    logger.warning(
+                        "🛡️ [MLX] Holder %s slow (age=%.1fs > sla=%.1fs) but heartbeat fresh (%.1fs ago). "
+                        "Cancelling generation and scheduling a clean recycle so stale text cannot bleed into the next turn.",
+                        holder,
+                        holder_age,
+                        sla,
+                        heartbeat_age,
+                    )
+                    self._deferred_reboot_reason = (
+                        "recoverable_foreground_preemption_slow_holder"
+                    )
+                try:
+                    stuck_future = self._current_gen_future
+                    if stuck_future is not None:
+                        _cancel_shared_future(stuck_future)
+                except (RuntimeError, AttributeError) as exc:
+                    logger.debug(
+                        "MLX request preemption future cancel skipped: %s",
+                        exc,
+                    )
         return False
 
     def _release_request_lock(self) -> None:
@@ -2623,7 +2625,11 @@ class MLXLocalClient:
             from core.brain.llm.somatic_throttle import SomaticComputeSentinel
             sentinel = SomaticComputeSentinel()
             kwargs = sentinel.adjust_generation_options(kwargs)
-        except Exception as exc:
+        except _MLX_OPTIONAL_THROTTLE_ERRORS as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued generation without somatic parameter throttle",
+            )
             logger.debug("Somatic parameter throttle check failed: %s", exc)
 
         foreground_owner_cm = None
