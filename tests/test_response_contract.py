@@ -387,6 +387,7 @@ def test_role_artifact_sanitizer_cuts_simulated_next_user_turns():
     assert strip_role_artifacts("Paris User What is the sum of 2+2") == "Paris"
     assert strip_role_artifacts("8_user") == "8"
     assert strip_role_artifacts("User: 180") == "180"
+    assert strip_role_artifacts("Operationally complete.User:That's a lot.") == "Operationally complete."
 
 
 def test_user_facing_stabilizer_corrects_tiny_direct_answers():

@@ -18,6 +18,7 @@ _ROLE_OR_PROMPT_ARTIFACT_RE = re.compile(
     r"(?im)"
     r"(?:<\|im_(?:start|end)\|>)"
     r"|(?:^\s*(?:assistant|system|human|user|aura)\s*[:：])"
+    r"|(?:(?<=[.!?])\s*(?:assistant|system|human|user|aura)\s*[:：])"
     r"|(?:^\s*(?:obj|prev_obj|state|phenom|mood|goals|history|narr|pers|usr|ctx|voice)\s*:)"
     r"|(?:\[ACTIVE GROUNDING EVIDENCE\])"
     r"|(?:\[FETCHED PAGE CONTENT\])"

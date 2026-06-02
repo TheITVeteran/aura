@@ -301,8 +301,8 @@ def _strip_leading_chatml_prefix(text: str) -> str:
 
 _ROLE_CONTINUATION_RE = re.compile(
     r"(?is)(?:<\|im_end\|>\s*)?<\|im_start\|>\s*"
-    r"(?:user|human|system|assistant)\b.*$"
-    r"|(?:^|\n)\s*(?:User|Human|System|Assistant)\s*[:：].*$"
+    r"(?:user|human|system|assistant|aura)\b.*$"
+    r"|(?:^|\n|(?<=[.!?]))\s*(?:User|Human|System|Assistant|Aura)\s*[:：].*$"
 )
 _LEADING_GENERATION_ROLE_RE = re.compile(
     r"^\s*(?:<\|im_start\|>\s*)?(?:User|Human|Assistant|Aura|System)\s*[:：]\s*",
@@ -616,6 +616,8 @@ def _build_operator_evidence_retry_prompt(messages: Any, fallback_prompt: Any) -
 
 def _operator_evidence_fragment_incomplete(text: str) -> bool:
     stripped = str(text or "").strip()
+    if _ROLE_CONTINUATION_RE.search(stripped):
+        return True
     body = stripped.lower()
     if len(body.split()) < 24:
         return True
@@ -644,6 +646,8 @@ def _operator_evidence_rejection_reasons(text: str) -> list[str]:
     stripped = str(text or "").strip()
     body = stripped.lower()
     reasons: list[str] = []
+    if _ROLE_CONTINUATION_RE.search(stripped):
+        reasons.append("role_continuation")
     if len(body.split()) < 24:
         reasons.append("too_short")
     for term in ("objective", "governed", "tool", "receipt", "trace", "stop", "personhood"):
@@ -676,6 +680,9 @@ def _trim_complete_operator_evidence(text: str) -> str:
         return stripped
 
     stripped = _OPERATOR_EVIDENCE_META_TAIL_RE.sub("", stripped).strip()
+    role_trimmed, role_hit = _truncate_role_continuation(stripped)
+    if role_hit:
+        stripped = role_trimmed
     if not _proof_evaluation_fragment_incomplete(stripped):
         return stripped
 

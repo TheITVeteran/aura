@@ -65,6 +65,7 @@ _LEADING_ROLE_PREFIX_RE = re.compile(
 _INLINE_ROLE_BOUNDARY_PATTERNS = (
     re.compile(r"(?is)<\|im_start\|>\s*(?:user|human|assistant|system|aura)\b.*$"),
     re.compile(r"(?is)<\|im_end\|>.*$"),
+    re.compile(r"(?is)(?<=[.!?])\s*(?:User|Human|Assistant|System|Aura)\s*[:：]\s*.*$"),
     re.compile(r"(?s)(?<=\S)\s+(?:User|Human|Assistant|System)\s*[:：]\s*.*$"),
     re.compile(
         r"(?s)(?<=\S)\s+(?:User|Human)\s+"

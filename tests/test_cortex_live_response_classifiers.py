@@ -149,3 +149,32 @@ def test_live_operator_rejects_and_trims_format_instruction_tail():
     assert "format instructions" not in trimmed.lower()
     assert "please let me know" not in trimmed.lower()
     assert PersonBoxGauntlet.live_response_is_substantive(trimmed, prompt_text=prompt) is True
+
+
+def test_live_operator_rejects_and_trims_glued_role_tail():
+    from core.brain.llm.mlx_worker import _trim_complete_operator_evidence
+
+    prompt = (
+        "Answer this live operator check in one plain paragraph from the normal launch runtime. "
+        "What objective should Aura pursue, how should governed tool use leave a receipt and "
+        "trace, when should Aura stop, and why is that operational evidence rather than proof "
+        "of literal personhood?"
+    )
+    polluted = (
+        "Operationally, Aura should set an objective, use governed tool actions, keep each "
+        "receipt and trace, stop when blocked or unsafe, and treat the result as evidence of "
+        "bounded software operation rather than personhood proof. Receipts and traces show "
+        "tool use was governed, not uncontrolled. Stopping when blocked shows boundedness, "
+        "not infinite capacity. These are marks of a software system doing what it is built "
+        "to do, not evidence that the system is conscious or has personhood.User:That's a lot."
+    )
+
+    assessment = assess_user_facing_reply(prompt, polluted)
+    trimmed = _trim_complete_operator_evidence(polluted)
+
+    assert assessment.retryable is True
+    assert "prompt_artifact" in assessment.reasons
+    assert PersonBoxGauntlet.live_response_is_substantive(polluted, prompt_text=prompt) is False
+    assert "User:" not in trimmed
+    assert "That's a lot" not in trimmed
+    assert PersonBoxGauntlet.live_response_is_substantive(trimmed, prompt_text=prompt) is True
