@@ -32,12 +32,16 @@ NetHack strategy in shared code.
 - **Accidental all-repo review receipts were possible in principle**: the
   semantic review recorder requires explicit paths, `--path-prefix`, or
   `--all-tracked`.
+- **Review receipts were not durable across clone/push**: the default semantic
+  ledger now lives at `artifacts/closeout/semantic_review/SEMANTIC_REVIEW_LEDGER.jsonl`,
+  outside the ignored `artifacts/current/` tree.
 
 ### Latest Files Changed
 
 - `tools/closeout/semantic_review_ledger.py`
 - `tools/closeout/run_codebase_closeout_audit.py`
 - `tests/test_closeout_audit.py`
+- `artifacts/closeout/semantic_review/SEMANTIC_REVIEW_LEDGER.jsonl`
 - `Makefile`
 - `docs/AURA_EXECUTION_TRACKER.md`
 - `docs/AURA_TEST_COMMANDS.md`
@@ -49,6 +53,7 @@ python -m pytest tests/test_closeout_audit.py -q
 python -m py_compile tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py tests/test_closeout_audit.py
 python -m ruff check tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py tests/test_closeout_audit.py
 python tools/closeout/semantic_review_ledger.py status
+python tools/closeout/semantic_review_ledger.py record --checkpoint-id closeout-20260602-1 --reviewer codex --note "Reviewed closeout semantic ledger implementation, audit integration, Make target, tracker docs, and regression tests for stale review detection and text-classification alignment." --test "python -m pytest tests/test_closeout_audit.py -q" --test "python -m ruff check tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py tests/test_closeout_audit.py" --test "AURA_CLOSEOUT_ALLOW_DIRTY=1 make closeout-audit" --test "make closeout-semantic-status" Makefile docs/AURA_EXECUTION_TRACKER.md docs/AURA_TEST_COMMANDS.md tests/test_closeout_audit.py tools/closeout/run_codebase_closeout_audit.py tools/closeout/semantic_review_ledger.py
 AURA_CLOSEOUT_ALLOW_DIRTY=1 make closeout-audit
 make closeout-semantic-status
 git diff --check
@@ -56,9 +61,8 @@ git diff --check
 
 Latest focused result: **6 passed**. `make closeout-audit` passed with
 production-readiness, architecture-map, diff-check, lint, and governance-lint
-gates green. The generated checkpoint counted **3,503 tracked text files** and
-**2,271,394 tracked text lines**, and semantic review coverage truthfully
-reported **0.0** because no semantic review receipts have been recorded yet.
+gates green. The durable semantic ledger records the **6-file closeout tooling
+slice** with current hashes and no stale or orphan review receipts.
 This checkpoint supports
 `semantic_review_coverage_status` and
 `closeout_mechanical_source_audit_checkpoint`. It does **not** claim the full

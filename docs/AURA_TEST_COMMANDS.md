@@ -137,7 +137,8 @@ make closeout-semantic-status
 ```
 
 To record a real semantic review checkpoint after actually reviewing a file or
-prefix, use explicit scope:
+prefix, use explicit scope. The default durable ledger is
+`artifacts/closeout/semantic_review/SEMANTIC_REVIEW_LEDGER.jsonl`.
 
 ```bash
 python tools/closeout/semantic_review_ledger.py record \
