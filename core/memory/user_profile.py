@@ -23,6 +23,14 @@ from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Memory.UserProfile")
+_PROFILE_PERSISTENCE_ERRORS = (
+    AttributeError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass
@@ -80,7 +88,7 @@ class UserProfile:
                                 ProfileFact(**fact) for fact in facts_list
                             ]
                 logger.debug(f"✓ Loaded user profile from {self._storage_path}")
-        except Exception as e:
+        except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("user_profile", e)
             logger.debug("Failed to load user profile: %s", e)
     
@@ -96,7 +104,7 @@ class UserProfile:
                 }
                 json.dump(data, f, indent=2)
             logger.debug(f"✓ Saved user profile to {self._storage_path}")
-        except Exception as e:
+        except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("user_profile", e)
             logger.warning("Failed to save user profile: %s", e)
     

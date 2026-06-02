@@ -5,15 +5,19 @@ Acts as a gatekeeper for tool calls and file system operations.
 """
 
 from core.runtime.errors import record_degradation
+import ipaddress
 import json
 import logging
 import os
+import socket
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import config
 
 logger = logging.getLogger("Aura.CapabilityGuard")
+_NETWORK_RESOLUTION_ERRORS = (OSError, UnicodeError, ValueError)
 
 class CapabilityGuard:
     """Runtime enforcement of system capabilities."""
@@ -166,10 +170,6 @@ class CapabilityGuard:
                 url = args.get("query", "")
 
             if url:
-                import urllib.parse
-                import socket
-                import ipaddress
-                
                 parsed = urllib.parse.urlparse(url)
                 domain = parsed.hostname or url
                 
@@ -180,7 +180,7 @@ class CapabilityGuard:
                     if ip_obj.is_loopback or ip_obj.is_private or ip_obj.is_link_local:
                         logger.warning("SSRF SecurityViolation: Blocked request to private/loopback IP: %s (resolved from %s)", ip, domain)
                         return False
-                except Exception as e:
+                except _NETWORK_RESOLUTION_ERRORS:
                     if url.startswith("http://") or url.startswith("https://"):
                         logger.warning("SecurityViolation: Blocked unresolvable URL: %s", url)
                         return False

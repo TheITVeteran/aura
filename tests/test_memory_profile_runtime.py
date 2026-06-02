@@ -78,8 +78,10 @@ async def test_profile_manager_reports_partial_fact_write_failures():
 def test_profile_memory_runtime_uses_narrow_recoverable_exceptions():
     root = Path(__file__).resolve().parents[1]
     for relative in (
+        "core/memory/aura_self_profile.py",
         "core/memory/profile_manager.py",
         "core/memory/semantic_fact_extractor.py",
+        "core/memory/user_profile.py",
     ):
         source = (root / relative).read_text(encoding="utf-8")
         assert "except Exception" not in source

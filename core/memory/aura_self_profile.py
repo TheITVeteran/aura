@@ -22,6 +22,14 @@ from typing import Any, Dict, List, Optional
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Memory.AuraSelfProfile")
+_PROFILE_PERSISTENCE_ERRORS = (
+    AttributeError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass
@@ -81,7 +89,7 @@ class AuraSelfProfile:
                                 SelfProfileFact(**fact) for fact in facts_list
                             ]
                 logger.debug(f"✓ Loaded Aura self-profile from {self._storage_path}")
-        except Exception as e:
+        except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("aura_self_profile", e)
             logger.debug("Failed to load Aura self-profile: %s", e)
     
@@ -97,7 +105,7 @@ class AuraSelfProfile:
                 }
                 json.dump(data, f, indent=2)
             logger.debug(f"✓ Saved Aura self-profile to {self._storage_path}")
-        except Exception as e:
+        except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("aura_self_profile", e)
             logger.warning("Failed to save Aura self-profile: %s", e)
     

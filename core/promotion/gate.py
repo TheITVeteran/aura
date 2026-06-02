@@ -22,6 +22,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
+_WILL_DECISION_ERRORS = (AttributeError, LookupError, RuntimeError, TypeError, ValueError)
 
 
 @dataclass
@@ -195,7 +196,7 @@ class PromotionGate:
                     reasons.append(
                         f"will_{outcome}:{will_out.get('reason', 'no_reason')}"
                     )
-            except Exception as exc:  # noqa: BLE001 — fail-closed
+            except _WILL_DECISION_ERRORS as exc:
                 accepted = False
                 reasons.append(f"will_decide_raised:{type(exc).__name__}")
 

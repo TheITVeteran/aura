@@ -44,6 +44,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional
 import numpy as np
 
 logger = logging.getLogger("Aura.Cognitive.AnomalyDetector")
+_CUSTOM_EXTRACTOR_ERRORS = (AttributeError, FloatingPointError, RuntimeError, TypeError, ValueError)
 
 __all__ = [
     "AnomalyDetector",
@@ -266,7 +267,7 @@ class FeatureExtractor:
                 try:
                     val = self.custom_extractors[axis.axis_id](event)
                     expanded_vals.append(float(np.clip(val, 0.0, 1.0)))
-                except Exception as exc:
+                except _CUSTOM_EXTRACTOR_ERRORS as exc:
                     logger.debug("Custom extractor for %s failed, falling back: %s", axis.axis_id, exc)
                     expanded_vals.append(self._project_axis(raw_vec, axis))
             else:
