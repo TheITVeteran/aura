@@ -136,6 +136,7 @@ class RuntimeRegistry:
     state_queue_repair_enabled: bool
     state_commit_queue_maxsize: int
     state_log_max_rows: int
+    state_log_retention_basis: str
     stability_max_task_count: int
     stability_max_tick_lag_ms: float
     stability_memory_warning_pct: float
@@ -482,6 +483,7 @@ def build_registry() -> RuntimeRegistry:
         state_queue_repair_enabled=bool(state_queue_repair_enabled),
         state_commit_queue_maxsize=int(repo._mutation_queue_maxsize),
         state_log_max_rows=int(StateRepository.STATE_LOG_MAX_ROWS),
+        state_log_retention_basis=str(StateRepository.STATE_LOG_RETENTION_BASIS),
         stability_max_task_count=int(StabilityGuardian.MAX_TASK_COUNT),
         stability_max_tick_lag_ms=float(StabilityGuardian.MAX_TICK_LAG_MS),
         stability_memory_warning_pct=float(StabilityGuardian.MEMORY_WARNING_PCT),

@@ -17,6 +17,7 @@ import aiosqlite
 from core.runtime.background_policy import is_user_facing_origin
 from core.runtime.effect_boundary import effect_sink
 from core.runtime.errors import record_degradation
+from core.memory.retention_policy import state_log_retention_policy
 from core.utils.task_tracker import get_task_tracker
 
 from ..bus.shared_mem_bus import SharedMemoryTransport
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+_STATE_LOG_RETENTION_POLICY = state_log_retention_policy()
 
 _STATE_SUBSYSTEM = "state_repository"
 _STATE_BOUNDARY_ERRORS = (
@@ -174,7 +176,8 @@ class StateRepository:
     """
 
     # ── Long-Run Stability Config ──────────────────────────────────────────
-    STATE_LOG_MAX_ROWS = 500  # Keep last N state versions
+    STATE_LOG_MAX_ROWS = _STATE_LOG_RETENTION_POLICY.max_items
+    STATE_LOG_RETENTION_BASIS = _STATE_LOG_RETENTION_POLICY.basis
     STATE_LOG_PRUNE_EVERY = 100  # Prune check interval (commits)
     STATE_LOG_VACUUM_EVERY = 1000  # VACUUM interval (commits)
     DB_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024

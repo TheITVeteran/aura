@@ -11,6 +11,7 @@ from core.memory.retention_policy import (
     hybrid_memory_retention_policy,
     long_term_retention_policy,
     sovereign_pruner_target_retention,
+    state_log_retention_policy,
     working_history_retention_policy,
 )
 
@@ -62,6 +63,14 @@ def test_working_history_retention_policy_honors_env_override(monkeypatch) -> No
 
     assert policy.max_items == 12_000
     assert policy.basis == "env:AURA_COGNITIVE_THOUGHT_HISTORY_MAX"
+
+
+def test_state_log_retention_policy_raises_legacy_cap_without_unbounded_growth(monkeypatch) -> None:
+    monkeypatch.delenv("AURA_STATE_LOG_MAX_ROWS", raising=False)
+
+    assert state_log_retention_policy(ram_gb=64).max_items == 5_000
+    assert state_log_retention_policy(ram_gb=16).max_items == 2_000
+    assert state_log_retention_policy(ram_gb=4).max_items == 500
 
 
 def test_behavioral_scar_cap_exceeds_legacy_floor() -> None:

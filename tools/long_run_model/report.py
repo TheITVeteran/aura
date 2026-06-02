@@ -47,6 +47,8 @@ def render_markdown(summary: ForecastRunSummary) -> str:
         f"- Backup wired: `{summary.registry['backup_wired']}`",
         f"- Lock watchdog auto-repair: `{summary.registry['lock_watchdog_auto_repair']}`",
         f"- State queue repair enabled: `{summary.registry['state_queue_repair_enabled']}`",
+        f"- State log cap: `{summary.registry['state_log_max_rows']}` rows "
+        f"(`{summary.registry['state_log_retention_basis']}`)",
         "",
         "## Checkpoints",
         "",

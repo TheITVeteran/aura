@@ -227,6 +227,40 @@ def working_history_retention_policy(
     )
 
 
+def state_log_retention_policy(*, ram_gb: float | None = None) -> MemoryRetentionPolicy:
+    """Return the SQLite state-version log retention policy.
+
+    State snapshots can be substantially larger than lightweight decision or
+    thought records, so this policy raises the legacy 500-row cap without
+    treating state versions like cheap semantic memories.
+    """
+    if "AURA_STATE_LOG_MAX_ROWS" in os.environ:
+        max_items = _env_int("AURA_STATE_LOG_MAX_ROWS", 5_000, low=500, high=100_000)
+        basis = "env:AURA_STATE_LOG_MAX_ROWS"
+    else:
+        ram = physical_ram_gb() if ram_gb is None else float(ram_gb)
+        if ram >= 48.0:
+            max_items = 5_000
+            basis = "ram>=48gb"
+        elif ram >= 32.0:
+            max_items = 3_000
+            basis = "ram>=32gb"
+        elif ram >= 16.0:
+            max_items = 2_000
+            basis = "ram>=16gb"
+        elif ram >= 8.0:
+            max_items = 1_000
+            basis = "ram>=8gb"
+        else:
+            max_items = 500
+            basis = "ram<8gb"
+    return MemoryRetentionPolicy(
+        max_items=max_items,
+        prune_keep_fraction=0.90,
+        basis=basis,
+    )
+
+
 def sovereign_pruner_target_retention() -> float:
     return _env_float(
         "AURA_SOVEREIGN_PRUNER_TARGET_RETENTION",
