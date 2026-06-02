@@ -1,9 +1,12 @@
-from core.runtime.errors import record_degradation
 import contextlib
 import io
 import json
 import sys
 import traceback
+
+from core.runtime.errors import record_degradation
+
+_REPL_EXECUTION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 
 
 def main() -> None:
@@ -12,7 +15,7 @@ def main() -> None:
     if callable(reconfigure):
         reconfigure(line_buffering=True)
     
-    while True:
+    while not sys.stdin.closed:
         try:
             line = sys.stdin.readline()
             if not line:
@@ -36,7 +39,7 @@ def main() -> None:
                     # Execute the code in the shared namespace
                     exec(code, namespace)  # nosec
                     success = True
-                except BaseException:
+                except _REPL_EXECUTION_ERRORS:
                     traceback.print_exc(file=out)
             
             result_text = out.getvalue()

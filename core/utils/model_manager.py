@@ -7,19 +7,22 @@ ModelManager: single point-of-truth for loading/unloading heavy model objects.
 - exposes async load_model / unload_model
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
+
 import psutil
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("aura.model_manager")
 
 
 class ModelLoadError(Exception):
-    pass  # no-op: intentional
+    """Raised when a model cannot be loaded into the local manager."""
 
 
 class ModelManager:
@@ -28,12 +31,12 @@ class ModelManager:
         load_fn(name, opts) -> model_object
         """
         self._load_fn = load_fn
-        self._models: "OrderedDict[str, Any]" = OrderedDict()
-        self._meta: Dict[str, dict] = {}
+        self._models: OrderedDict[str, Any] = OrderedDict()
+        self._meta: dict[str, dict] = {}
         self._semaphore = asyncio.Semaphore(semaphore_value)
         self._max_models = max_models
         self._lock = asyncio.Lock()
-        self._last_used: Dict[str, float] = {}
+        self._last_used: dict[str, float] = {}
 
     def _pop_model_locked(self, name: str):
         """Internal helper to remove model from state tracking. MUST hold _lock."""
@@ -58,7 +61,7 @@ class ModelManager:
         except (RuntimeError, AttributeError, TypeError):
             logger.exception("ModelManager: exception while unloading %s", name)
 
-    async def load_model(self, name: str, opts: Optional[dict] = None) -> Any:
+    async def load_model(self, name: str, opts: dict | None = None) -> Any:
         opts = opts or {}
         async with self._lock:
             if name in self._models:
@@ -130,7 +133,7 @@ class ModelManager:
 
     async def evict_if_needed(self):
         """Evict LRU while memory pressure or over capacity."""
-        while True:
+        while self._models:
             cleanup_obj = None
             evicted_name = None
             

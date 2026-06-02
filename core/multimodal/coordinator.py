@@ -27,21 +27,30 @@ drift even under jitter.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Multimodal.Coordinator")
+_SUBSCRIBER_QUEUE_ERRORS = (
+    asyncio.QueueFull,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass
 class TimelineEvent:
     kind: str
     offset_ms: float
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     seq: int = 0
 
 
@@ -49,10 +58,10 @@ class TimelineEvent:
 class Timeline:
     turn_id: str
     started_at: float = field(default_factory=time.time)
-    events: List[TimelineEvent] = field(default_factory=list)
+    events: list[TimelineEvent] = field(default_factory=list)
     closed: bool = False
 
-    def add(self, kind: str, payload: Dict[str, Any], *, offset_ms: Optional[float] = None) -> TimelineEvent:
+    def add(self, kind: str, payload: dict[str, Any], *, offset_ms: float | None = None) -> TimelineEvent:
         if offset_ms is None:
             offset_ms = (time.time() - self.started_at) * 1000.0
         ev = TimelineEvent(kind=kind, offset_ms=offset_ms, payload=payload, seq=len(self.events))
@@ -64,11 +73,11 @@ class StreamingCoordinator:
     """Per-turn timeline manager + multi-consumer fan-out."""
 
     def __init__(self) -> None:
-        self._timelines: Dict[str, Timeline] = {}
-        self._subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._timelines: dict[str, Timeline] = {}
+        self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
 
-    async def open_turn(self, *, turn_id: Optional[str] = None) -> Timeline:
+    async def open_turn(self, *, turn_id: str | None = None) -> Timeline:
         async with self._lock:
             tid = turn_id or f"turn-{uuid.uuid4().hex[:10]}"
             t = Timeline(turn_id=tid)
@@ -76,7 +85,7 @@ class StreamingCoordinator:
             self._subscribers.setdefault(tid, [])
             return t
 
-    async def emit(self, turn_id: str, kind: str, payload: Dict[str, Any], *, offset_ms: Optional[float] = None) -> TimelineEvent:
+    async def emit(self, turn_id: str, kind: str, payload: dict[str, Any], *, offset_ms: float | None = None) -> TimelineEvent:
         t = self._timelines.get(turn_id)
         if t is None or t.closed:
             raise ValueError(f"unknown_or_closed_turn:{turn_id}")
@@ -84,8 +93,9 @@ class StreamingCoordinator:
         for q in list(self._subscribers.get(turn_id, [])):
             try:
                 q.put_nowait(ev)
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+            except _SUBSCRIBER_QUEUE_ERRORS as exc:
+                record_degradation("multimodal_coordinator.subscriber_queue", exc)
+                logger.debug("Skipped multimodal subscriber queue update: %s", exc)
         return ev
 
     async def close(self, turn_id: str) -> None:
@@ -107,11 +117,10 @@ class StreamingCoordinator:
                 for ev in t.events:
                     q.put_nowait(ev)
         try:
-            while True:
-                ev = await q.get()
-                if ev is None:
-                    return
+            ev = await q.get()
+            while ev is not None:
                 yield ev
+                ev = await q.get()
         finally:
             async with self._lock:
                 if q in self._subscribers.get(turn_id, []):
@@ -121,7 +130,7 @@ class StreamingCoordinator:
 # ─── ergonomic helpers used by chat / voice / vision ──────────────────────
 
 
-_COORDINATOR: Optional[StreamingCoordinator] = None
+_COORDINATOR: StreamingCoordinator | None = None
 
 
 def get_coordinator() -> StreamingCoordinator:

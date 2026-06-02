@@ -1,5 +1,3 @@
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
 import fcntl
 import json
 import logging
@@ -8,16 +6,19 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Utils.Singleton")
+_PROCESS_METADATA_ERRORS = (AttributeError, ImportError, OSError, RuntimeError, ValueError)
 
 _LOCK_FD: int | None = None
 _LOCK_NAME: str | None = None
-T = TypeVar("T")
 
 
-def singleton(cls: type[T]) -> Callable[..., T]:
+def singleton[T](cls: type[T]) -> Callable[..., T]:
     """
     Decorator to make a class a singleton.
     Usage:
@@ -97,7 +98,7 @@ def _current_process_metadata(lock_name: str, pid: int) -> dict[str, Any]:
                 "username": str(proc.username()),
             }
         )
-    except Exception as exc:  # pragma: no cover - optional diagnostic metadata
+    except _PROCESS_METADATA_ERRORS as exc:  # pragma: no cover - optional diagnostic metadata
         metadata["identity_error"] = f"{type(exc).__name__}: {exc}"
     return metadata
 
@@ -191,7 +192,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                             _LOCK_FD = os.open(str(lock_file), flags, 0o600)
                             fcntl.flock(_LOCK_FD, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             logger.info("🔓 Stale lock reclaimed via unlink+recreate.")
-                        except (OSError, IOError) as reclaim_exc:
+                        except OSError as reclaim_exc:
                             message = f"⚠️  Failed to reclaim stale lock for {lock_name}: {reclaim_exc}"
                             logger.error(message)
                             print(message)
@@ -207,7 +208,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                         flags |= os.O_CLOEXEC
                     _LOCK_FD = os.open(str(lock_file), flags, 0o600)
                     fcntl.flock(_LOCK_FD, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except (OSError, IOError):
+                except OSError:
                     message = f"⚠️  Aura ({lock_name}) is already running in another window."
                     logger.error(message)
                     print(message)
@@ -222,7 +223,7 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
         
         logger.info("🔒 Instance lock acquired: %s (PID: %d)", lock_name, os.getpid())
         
-    except (OSError, IOError) as e:
+    except OSError as e:
         record_degradation('singleton', e)
         logger.warning("Failed to acquire single-instance lock for '%s': %s", lock_name, e)
 
