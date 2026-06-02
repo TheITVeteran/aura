@@ -33,12 +33,10 @@ import asyncio
 import csv
 import json
 import logging
-import os
-import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("Aura.Longevity")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -110,7 +108,7 @@ async def main() -> int:
     profile = _PROFILES[args.profile]
     run_id = f"longevity-{args.profile}-{uuid.uuid4().hex[:8]}"
     run_dir = Path.home() / ".aura" / "data" / "longevity" / run_id
-    get_task_tracker().create_task(get_storage_gateway().create_dir(run_dir, cause='main'))
+    run_dir.mkdir(parents=True, exist_ok=True)
     logger.info("longevity run_id=%s profile=%s dir=%s duration_s=%s", run_id, args.profile, run_dir, profile["duration_s"])
 
     started = time.time()
@@ -159,4 +157,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    raise SystemExit(asyncio.run(main()))
