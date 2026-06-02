@@ -3,6 +3,7 @@ from core.runtime.errors import record_degradation
 
 
 import logging
+import binascii
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,7 @@ from interface.routes.privacy import get_browser_camera_privacy
 logger = logging.getLogger("Aura.Server.InteractionSignals")
 
 router = APIRouter()
+_VISION_PAYLOAD_ERRORS = (binascii.Error, TypeError, ValueError)
 
 
 class TypingSignalPayload(BaseModel):
@@ -91,7 +93,7 @@ async def api_signal_vision(payload: VisionSignalPayload, _: None = Depends(_req
     engine = _get_engine()
     try:
         frame_bytes = decode_data_url_image(payload.frame_data_url)
-    except Exception as exc:
+    except _VISION_PAYLOAD_ERRORS as exc:
         record_degradation('interaction_signals', exc)
         raise HTTPException(status_code=400, detail="Invalid image payload") from exc
 

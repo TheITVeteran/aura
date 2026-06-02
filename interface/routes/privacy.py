@@ -27,6 +27,7 @@ from interface.auth import _require_internal
 logger = logging.getLogger("Aura.Server.Privacy")
 
 router = APIRouter()
+_SOURCE_DOWNLOAD_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueError)
 
 # ── Voice Engine Accessor ─────────────────────────────────────
 # The voice engine factory is set by the main server lifespan.
@@ -209,7 +210,7 @@ async def api_source_download(
             media_type="text/plain",
             filename=f"aura_source_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
         )
-    except Exception as exc:
+    except _SOURCE_DOWNLOAD_ERRORS as exc:
         record_degradation('privacy', exc)
         logger.error("Source download failed: %s", exc)
         raise HTTPException(status_code=500, detail="Source bundle generation failed")

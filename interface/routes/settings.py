@@ -42,6 +42,16 @@ SETTINGS_RESET_BODY = Body(...)
 _SETTINGS_DIR = Path.home() / ".aura" / "data" / "settings"
 _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 _SETTINGS_PATH = _SETTINGS_DIR / "runtime.json"
+_SETTINGS_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    json.JSONDecodeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 # ─── schema ────────────────────────────────────────────────────────────────
@@ -121,7 +131,7 @@ class SettingsStore:
             data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 self._data.update({k: v for k, v in data.items() if k in self._data})
-        except Exception as exc:
+        except _SETTINGS_RECOVERABLE_ERRORS as exc:
             record_degradation('settings', exc)
             logger.warning("settings load failed: %s", exc)
 
@@ -150,7 +160,7 @@ class SettingsStore:
         for cb in self._subscribers:
             try:
                 cb(key, previous, coerced)
-            except Exception as exc:
+            except _SETTINGS_RECOVERABLE_ERRORS as exc:
                 record_degradation("settings", exc)
                 logger.debug("Settings subscriber failed for %s: %s", key, exc)
         return coerced
@@ -249,7 +259,7 @@ async def patch_settings(
     for k, v in payload.items():
         try:
             applied[k] = store.set(k, v)
-        except Exception as exc:
+        except _SETTINGS_RECOVERABLE_ERRORS as exc:
             record_degradation('settings', exc)
             errors[k] = str(exc)
     return JSONResponse({"applied": applied, "errors": errors, "values": store.all()})
@@ -280,7 +290,7 @@ async def acknowledge_fresh_auth(_: None = Depends(_require_internal)) -> JSONRe
         from core.ethics.conscience import get_conscience
         get_conscience().acknowledge_user_authorization()
         return JSONResponse({"ok": True, "when": time.time()})
-    except Exception as exc:
+    except _SETTINGS_RECOVERABLE_ERRORS as exc:
         record_degradation('settings', exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
