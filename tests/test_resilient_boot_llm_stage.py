@@ -1,5 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -7,7 +8,12 @@ from core.ops.resilient_boot import BootStatus, ResilientBoot
 
 
 class _DummyOrchestrator:
-    pass
+    __slots__ = ()
+
+
+async def _failing_llm_stage():
+    await asyncio.sleep(0)
+    raise RuntimeError("llama_server_missing")
 
 
 def _stub_boot_dependencies(monkeypatch):
@@ -50,10 +56,7 @@ async def test_resilient_boot_strict_runtime_fails_closed_on_llm_stage_error(ser
     orchestrator = SimpleNamespace(status=SimpleNamespace(initialized=False, health_metrics={}))
     boot = ResilientBoot(orchestrator)
 
-    async def _fail_stage():
-        raise RuntimeError("llama_server_missing")
-
-    boot.stages = [("LLM Infrastructure", _fail_stage)]
+    boot.stages = [("LLM Infrastructure", _failing_llm_stage)]
 
     with pytest.raises(RuntimeError, match="Strict runtime critical boot stage failed: LLM Infrastructure"):
         await boot.ignite()
@@ -67,10 +70,7 @@ async def test_resilient_boot_non_strict_runtime_degrades_on_llm_stage_error(ser
     orchestrator = SimpleNamespace(status=SimpleNamespace(initialized=False, health_metrics={}))
     boot = ResilientBoot(orchestrator)
 
-    async def _fail_stage():
-        raise RuntimeError("llama_server_missing")
-
-    boot.stages = [("LLM Infrastructure", _fail_stage)]
+    boot.stages = [("LLM Infrastructure", _failing_llm_stage)]
 
     status = await boot.ignite()
 

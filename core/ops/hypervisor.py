@@ -15,6 +15,14 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger("Aura.Hypervisor")
 metrics = get_metrics()
 
+_HYPERVISOR_PROBE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 class Hypervisor:
     def __init__(self, lag_threshold_s: float = 1.5):
@@ -167,7 +175,14 @@ class Hypervisor:
             
             try:
                 total_ram_mb = float(psutil.virtual_memory().total) / (1024 * 1024)
-            except Exception:
+            except _HYPERVISOR_PROBE_ERRORS as exc:
+                record_degradation(
+                    "hypervisor",
+                    exc,
+                    severity="warning",
+                    action="used conservative RAM default after memory capacity probe failed",
+                    enforce_failure_policy=False,
+                )
                 total_ram_mb = 8192.0
                 
             # Dynamic warning threshold: 85% of total RAM, or at least 12GB to avoid false alarms on M-series Macs running local models.

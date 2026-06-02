@@ -10,9 +10,21 @@ loop is blocked or deadlocked.
 import logging
 import threading
 import time
-from typing import Dict, Any, Optional, Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("Infra.Watchdog")
+
+_WATCHDOG_RECOVERY_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class SystemWatchdog:
     """Monitors system heartbeats from an external thread.
@@ -23,19 +35,19 @@ class SystemWatchdog:
     
     def __init__(self, check_interval: float = 5.0):
         self._check_interval = check_interval
-        self._heartbeats: Dict[str, float] = {}
-        self._timeouts: Dict[str, float] = {}
-        self._callbacks: Dict[str, Callable] = {}
+        self._heartbeats: dict[str, float] = {}
+        self._timeouts: dict[str, float] = {}
+        self._callbacks: dict[str, Callable] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stalled: set[str] = set()
         
     def register_component(
         self, 
         name: str, 
         timeout: float = 60.0, 
-        on_stall: Optional[Callable] = None
+        on_stall: Callable | None = None
     ):
         """Register a component to be monitored."""
         with self._lock:
@@ -98,7 +110,7 @@ class SystemWatchdog:
                     try:
                         logger.warning("Executing recovery callback for %s", name)
                         callback()
-                    except Exception as e:
+                    except _WATCHDOG_RECOVERY_ERRORS as e:
                         logger.error("Recovery callback for %s failed: %s", name, e)
                 
                 # A+ Hardening: Auto-Rollback on persistent stall
@@ -110,13 +122,11 @@ class SystemWatchdog:
                         sm = SnapshotManager()
                         if sm.rollback():
                             logger.info("✅ Watchdog-initiated rollback successful. Restarting system might be required.")
-                    except Exception as e:
+                    except _WATCHDOG_RECOVERY_ERRORS as e:
                         logger.error("Watchdog rollback failed: %s", e)
-
-                pass
             self._stop_event.wait(self._check_interval)
 
-_global_watchdog: Optional[SystemWatchdog] = None
+_global_watchdog: SystemWatchdog | None = None
 _watchdog_lock = threading.Lock()
 
 def get_watchdog() -> SystemWatchdog:

@@ -9,27 +9,36 @@ transitions. All state mutations are protected against TOCTOU races.
 Retry uses exponential backoff with full jitter.
 """
 from __future__ import annotations
-import inspect
-
 
 import asyncio
 import functools
+import inspect
 import logging
 import random
 import threading
 import time
+from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any
 
 logger = logging.getLogger("Infra.Resilience")
+
+_DEFAULT_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
+    ConnectionError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 # ── Exceptions ────────────────────────────────────────────────
 
-class RetryExhausted(Exception):
+class RetryExhausted(Exception):  # noqa: N818 - public API kept for compatibility.
     """All retry attempts failed."""
 
-    def __init__(self, message: str, last_error: Optional[Exception] = None):
+    def __init__(self, message: str, last_error: Exception | None = None):
         super().__init__(message)
         self.last_error = last_error
 
@@ -62,7 +71,7 @@ class CircuitBreaker:
         self._lock = threading.Lock()
         self._state = CircuitState.CLOSED
         self._failures = 0
-        self._opened_at: Optional[float] = None
+        self._opened_at: float | None = None
         self._total_opens = 0
         self._half_open_probe_active = False
 
@@ -174,7 +183,7 @@ class AsyncCircuitBreaker:
 
 
 class _SafeDatabaseLockGuard:
-    def __init__(self, lock: threading.RLock, *, name: str, timeout: Optional[float]) -> None:
+    def __init__(self, lock: threading.RLock, *, name: str, timeout: float | None) -> None:
         self._lock = lock
         self._name = name
         self._timeout = timeout
@@ -201,7 +210,7 @@ class SafeDatabaseLock:
         self.timeout_s = timeout_s
         self._lock = threading.RLock()
 
-    def acquire(self, timeout: Optional[float] = None) -> _SafeDatabaseLockGuard:
+    def acquire(self, timeout: float | None = None) -> _SafeDatabaseLockGuard:
         return _SafeDatabaseLockGuard(
             self._lock,
             name=self.name,
@@ -218,7 +227,7 @@ async def retry_async(
     attempts: int = 3,
     base_delay: float = 1.0,
     max_delay: float = 30.0,
-    retryable: tuple[Type[Exception], ...] = (Exception,),
+    retryable: tuple[type[Exception], ...] = _DEFAULT_RETRYABLE_ERRORS,
     **kwargs,
 ) -> Any:
     """Retry an async function with exponential backoff and full jitter.
@@ -226,7 +235,7 @@ async def retry_async(
     Uses the "Full Jitter" algorithm from AWS Architecture Blog:
     sleep = random_between(0, min(cap, base * 2 ** attempt))
     """
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
     for attempt in range(attempts):
         try:
             return await fn(*args, **kwargs)
@@ -254,7 +263,7 @@ async def retry_async(
 
 # ── @resilient Decorator ──────────────────────────────────────
 
-_breakers: Dict[str, CircuitBreaker] = {}
+_breakers: dict[str, CircuitBreaker] = {}
 _breakers_lock = threading.Lock()
 
 
@@ -279,6 +288,7 @@ def resilient(
     failure_threshold: int = 5,
     recovery_timeout: float = 30.0,
     fallback: Any = None,
+    retry_exceptions: tuple[type[Exception], ...] = _DEFAULT_RETRYABLE_ERRORS,
 ):
     """Decorator combining retry + circuit-breaker for resilient calls.
 
@@ -306,6 +316,7 @@ def resilient(
                     *args,
                     attempts=retry_attempts,
                     base_delay=base_delay,
+                    retryable=retry_exceptions,
                     **kwargs,
                 )
                 breaker.record_success()
@@ -330,7 +341,7 @@ def resilient(
                     result = fn(*args, **kwargs)
                     breaker.record_success()
                     return result
-                except Exception as exc:
+                except retry_exceptions as exc:
                     last_error = exc
                     if attempt < retry_attempts - 1:
                         delay = random.uniform(
@@ -364,7 +375,7 @@ def resilient(
 class InfrastructureHardeningSystem:
     """Centralized resilience management with thread-safe breaker registry."""
 
-    _instance: Optional["InfrastructureHardeningSystem"] = None
+    _instance: InfrastructureHardeningSystem | None = None
     _init_lock = threading.Lock()
 
     def __new__(cls):
@@ -389,7 +400,7 @@ class InfrastructureHardeningSystem:
         """Get or create a named circuit breaker (thread-safe)."""
         return _get_or_create_breaker(name, failure_threshold, recovery_timeout)
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         """Return health status of all circuit breakers."""
         with _breakers_lock:
             return {
@@ -402,7 +413,7 @@ class InfrastructureHardeningSystem:
             }
 
 
-_system: Optional[InfrastructureHardeningSystem] = None
+_system: InfrastructureHardeningSystem | None = None
 
 
 def get_resilience_system() -> InfrastructureHardeningSystem:

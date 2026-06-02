@@ -6,13 +6,18 @@ tests/test_resilience.py
 Verify async resilience primitives.
 """
 
-import pytest
 import asyncio
-import time
+
+import pytest
+
 from infrastructure.resilience import (
-    retry_async, AsyncCircuitBreaker, CircuitBreaker, CircuitState,
-    RetryExhausted, resilient
+    CircuitBreaker,
+    CircuitState,
+    RetryExhausted,
+    resilient,
+    retry_async,
 )
+
 
 @pytest.mark.asyncio
 async def test_retry_async_success():
@@ -38,6 +43,21 @@ async def test_retry_async_failure_capture():
         await retry_async(fail_fn, attempts=3, base_delay=0.01)
     
     assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_async_does_not_retry_programming_assertions():
+    call_count = 0
+
+    async def fail_fn():
+        nonlocal call_count
+        call_count += 1
+        raise AssertionError("programming bug")
+
+    with pytest.raises(AssertionError):
+        await retry_async(fail_fn, attempts=3, base_delay=0.01)
+
+    assert call_count == 1
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_logic():
@@ -77,6 +97,21 @@ async def test_resilient_decorator():
     # Should fail after retries (raises RetryExhausted)
     with pytest.raises(RetryExhausted):
         await unstable_api(False)
+
+
+def test_resilient_sync_decorator_does_not_retry_programming_assertions():
+    call_count = 0
+
+    @resilient("test-sync-programming-bug", retry_attempts=3)
+    def broken_invariant():
+        nonlocal call_count
+        call_count += 1
+        raise AssertionError("programming bug")
+
+    with pytest.raises(AssertionError):
+        broken_invariant()
+
+    assert call_count == 1
 
 
 ##

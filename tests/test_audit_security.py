@@ -5,37 +5,40 @@
 Automated security audit suite to verify remediated vulnerabilities.
 """
 
-import asyncio
-import hmac
-import json
-import logging
-import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-import websockets
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from interface.server import app
-from core.security.input_sanitizer import InputSanitizer
 from core.security.ast_guard import ASTGuard
-from infrastructure.watchdog import get_watchdog
+from core.security.input_sanitizer import InputSanitizer
 
-# --- 1. WebSocket Authentication Tests (C-01) ---
+# --- 1. Runtime Authentication Tests (C-01) ---
 
-@pytest.mark.asyncio
-async def test_websocket_auth_failure():
-    """Verify that WebSocket connection fails without a valid token."""
-    uri = "ws://localhost:8000/ws"
-    # Note: We need a running server or use a mock for websockets
-    # Since we can't easily spin up a full uvicorn in pytest-asyncio here,
-    # we'll use the TestClient for HTTP parts and assume the WS logic is verified.
-    # Alternatively, we can test the token validation function in server.py directly if exposed.
-    pass
+
+def test_runtime_auth_failure_for_external_request_without_token(monkeypatch):
+    """Runtime API requests from non-local clients fail closed without a valid token."""
+    from core.config import config
+    from interface.auth import validate_runtime_security_request
+
+    monkeypatch.setattr(config, "api_token", "expected-token", raising=False)
+    monkeypatch.setattr(config.security, "internal_only_mode", False, raising=False)
+
+    request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/chat"),
+        client=SimpleNamespace(host="203.0.113.42"),
+        headers={},
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_runtime_security_request(request)
+
+    assert excinfo.value.status_code == 401
 
 # --- 2. Input Sanitization Tests (M-03, H-03, C-04) ---
 
@@ -97,8 +100,9 @@ def test_ast_guard_unsafe_builtins():
 
 def test_watchdog_stall_detection():
     """Verify that the watchdog detects and logs stalls."""
-    from infrastructure.watchdog import SystemWatchdog
     import time
+
+    from infrastructure.watchdog import SystemWatchdog
     
     logged_stall = False
     def mock_on_stall():
@@ -123,4 +127,3 @@ def test_watchdog_stall_detection():
     watchdog.stop()
 
 # --- 5. CORS Restrictions (C-02) ---
-

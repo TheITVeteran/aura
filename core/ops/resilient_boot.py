@@ -1,16 +1,27 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import json
 import logging
-import sys
 import os
-import shutil
-import time
-from pathlib import Path
+import sys
+from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import List, Callable, Awaitable, Dict, Any, Optional
+from pathlib import Path
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Boot")
+
+_BOOT_STAGE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 _STRICT_TRUE_VALUES = {"1", "true", "yes", "on"}
 _STRICT_CRITICAL_STAGES = {
@@ -35,7 +46,7 @@ class BootStatus(Enum):
     CRITICAL = "CRITICAL"
 
 class BootStageResult:
-    def __init__(self, name: str, success: bool, error: Optional[str] = None):
+    def __init__(self, name: str, success: bool, error: str | None = None):
         self.name = name
         self.success = success
         self.error = error
@@ -48,7 +59,7 @@ class ResilientBoot:
     
     def __init__(self, orchestrator: Any):
         self.orchestrator = orchestrator
-        self.stages: List[tuple[str, Callable[[], Awaitable[Any]]]] = [
+        self.stages: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
             ("Dependencies", self._stage_dependencies),
             ("State Repository", self._stage_state),
             ("LLM Infrastructure", self._stage_llm),
@@ -57,11 +68,11 @@ class ResilientBoot:
             ("Sensory Systems", self._stage_sensory),
         ]
         self.timeout_per_stage = 10.0 # Guarded wall-clock time
-        self.stage_timeouts: Dict[str, float] = {
+        self.stage_timeouts: dict[str, float] = {
             "State Repository": 20.0,
             "Kernel Interface": 15.0,
         }
-        self.results: Dict[str, BootStageResult] = {}
+        self.results: dict[str, BootStageResult] = {}
 
     async def ignite(self) -> BootStatus:
         """Execute the resilient bootstrap sequence."""
@@ -83,8 +94,8 @@ class ResilientBoot:
             logger.info("🚀 Aura: Ignition sequence started.")
             
             # [UNITY] Register Global Inhibition Manager
-            from core.resilience.inhibition_manager import InhibitionManager
             from core.container import ServiceContainer
+            from core.resilience.inhibition_manager import InhibitionManager
             ServiceContainer.register_instance("inhibition_manager", InhibitionManager())
             
             # 1. Hook Immunity System (Moved up for maximal coverage)
@@ -105,8 +116,8 @@ class ResilientBoot:
                 logger.error("💥 [BOOT] Omni-Tracer hook failed: %s", e)
 
             # 1.5 Start Neural Neuro-Surgeon Tools (Phase 29)
-            from core.resilience.stall_watchdog import start_watchdog
             from core.resilience.diagnostic_hub import get_diagnostic_hub
+            from core.resilience.stall_watchdog import start_watchdog
             self.watchdog = start_watchdog()
             self.diagnostic_hub = get_diagnostic_hub()
             
@@ -130,7 +141,7 @@ class ResilientBoot:
                     await asyncio.wait_for(stage_fn(), timeout=timeout)
                     self.results[name] = BootStageResult(name, True)
                     logger.info("✅ [BOOT] Stage '%s' completed successfully.", name)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.error("⏰ [BOOT] Stage '%s' TIMED OUT. Applying fallback.", name)
                     # Attempt to audit the timeout with immunity
                     immunity.registry.match_and_repair(f"Stage {name} timed out")
@@ -140,7 +151,7 @@ class ResilientBoot:
                             f"Strict runtime critical boot stage failed: {name} (Timeout)"
                         ) from None
                     await self._apply_fallback(name)
-                except Exception as e:
+                except _BOOT_STAGE_RECOVERABLE_ERRORS as e:
                     _record_boot_degradation(e, action=f"boot stage failed: {name}")
                     logger.error("💥 [BOOT] Stage '%s' FAILED: %s. Applying fallback.", name, e)
                     # Immediate immunity audit
@@ -166,6 +177,7 @@ class ResilientBoot:
     async def _stage_dependencies(self):
         """Verify core binary availability and exact manifest match."""
         import importlib.util
+
         from core.config import config
         from core.senses.sensory_registry import SensoryCapabilityFlags, set_capabilities
 
@@ -245,7 +257,7 @@ class ResilientBoot:
                 ("Reflex", FALLBACK_MODEL),
             ):
                 model_path = Path(get_runtime_model_path(model_name))
-                if model_path.exists():
+                if await asyncio.to_thread(model_path.exists):
                     logger.info("   ✅ %s artifact: %s", label, model_path)
                 else:
                     logger.warning("   ⚠️ %s artifact missing: %s", label, model_path)
@@ -253,9 +265,8 @@ class ResilientBoot:
     async def _stage_state(self):
         """Initialize State Repository (Aura's heart) via Supervision Tree."""
         from core.container import ServiceContainer
-        from core.supervisor.tree import ActorSpec
         from core.state.vault import vault_process_entry
-        from core.state.state_repository import StateRepository
+        from core.supervisor.tree import ActorSpec
         
         supervisor = ServiceContainer.get("supervisor")
         actor_bus = ServiceContainer.get("actor_bus")
@@ -323,14 +334,20 @@ class ResilientBoot:
         the system is still coming online.
         """
         from core.brain.llm.mlx_client import get_mlx_client
-        from core.brain.llm.model_registry import ACTIVE_MODEL, find_llama_server_bin, get_local_backend, get_runtime_model_path
+        from core.brain.llm.model_registry import (
+            ACTIVE_MODEL,
+            find_llama_server_bin,
+            get_local_backend,
+            get_runtime_model_path,
+        )
 
         backend = get_local_backend()
         if backend == "llama_cpp" and find_llama_server_bin() is None:
             raise RuntimeError("llama_server_missing")
 
         model_path = str(get_runtime_model_path(ACTIVE_MODEL))
-        if backend == "llama_cpp" and not Path(model_path).exists():
+        model_exists = await asyncio.to_thread(Path(model_path).exists)
+        if backend == "llama_cpp" and not model_exists:
             raise RuntimeError(f"llama_model_missing:{model_path}")
         get_mlx_client(model_path=model_path)
         logger.info("🧠 [BOOT] Primary %s client prepared. Cortex warmup deferred to InferenceGate.", backend)
@@ -366,7 +383,7 @@ class ResilientBoot:
     async def _stage_sensory(self):
         """Async initialization of ears, voice, and vision with lazy-loading."""
         from core.container import ServiceContainer
-        from core.utils.safe_import import safe_import, is_missing, async_safe_import
+        from core.utils.safe_import import async_safe_import, is_missing
         
         # 1. SovereignEars (Hearing) - Non-blocking
         ears_mod = await async_safe_import("core.senses.ears", optional=True)

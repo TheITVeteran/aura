@@ -1,22 +1,38 @@
 """infrastructure/services.py - Core Aura services.
 """
-import inspect
-from core.utils.task_tracker import get_task_tracker
 import asyncio
+import inspect
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Infra.Services")
+
+_INPUT_BUS_CALLBACK_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class SimpleInputBus:
     """Real in-memory event bus implementation of InputBus protocol."""
 
     def __init__(self):
-        self._subscribers: Dict[str, List[Callable]] = {}
+        self._subscribers: dict[str, list[Callable]] = {}
         self._logger = logging.getLogger("Infra.InputBus")
 
-    async def publish(self, message: Dict[str, Any]) -> bool:
+    async def publish(self, message: dict[str, Any]) -> bool:
         topic = message.get("topic", "default")
         if topic in self._subscribers:
             async def _run_cb(cb):
@@ -25,7 +41,13 @@ class SimpleInputBus:
                         await cb(message)
                     else:
                         cb(message)
-                except Exception as e:
+                except _INPUT_BUS_CALLBACK_ERRORS as e:
+                    record_degradation(
+                        "simple_input_bus",
+                        e,
+                        severity="warning",
+                        action=f"subscriber callback failed for topic {topic}",
+                    )
                     self._logger.error("Error in subscriber %s: %s", cb, e)
 
             await asyncio.gather(*[_run_cb(cb) for cb in self._subscribers[topic]])
@@ -45,10 +67,10 @@ class SimpleProcessManager:
     """Real asyncio task manager implementation of ProcessManager protocol."""
 
     def __init__(self):
-        self._processes: Dict[str, asyncio.Task] = {}
+        self._processes: dict[str, asyncio.Task] = {}
         self._logger = logging.getLogger("Infra.ProcessManager")
 
-    async def start_process(self, process_id: str, config: Dict[str, Any]) -> bool:
+    async def start_process(self, process_id: str, config: dict[str, Any]) -> bool:
         target = config.get("target")
         if not target or not inspect.iscoroutinefunction(target):
             self._logger.error("Invalid target for process %s", process_id)
@@ -82,11 +104,11 @@ class KeyValueMemory:
     """Real in-memory Key-Value store implementation of MemoryStoreV2 protocol."""
 
     def __init__(self):
-        self._store: Dict[str, Any] = {}
-        self._ttls: Dict[str, float] = {}
+        self._store: dict[str, Any] = {}
+        self._ttls: dict[str, float] = {}
         self._logger = logging.getLogger("Infra.Memory")
 
-    async def store(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+    async def store(self, key: str, value: Any, ttl: int | None = None) -> bool:
         self._store[key] = value
         if ttl:
             self._ttls[key] = time.time() + ttl
@@ -94,7 +116,7 @@ class KeyValueMemory:
             del self._ttls[key]
         return True
 
-    async def retrieve(self, key: str) -> Optional[Any]:
+    async def retrieve(self, key: str) -> Any | None:
         if key in self._ttls and time.time() > self._ttls[key]:
             del self._store[key]
             del self._ttls[key]
