@@ -6205,6 +6205,18 @@ async def test_boot_probes_strict_mode_raises_on_failure(monkeypatch):
         await run_boot_probes(extra_probes={"bad": _bad_probe}, strict=True)
 
 
+@pytest.mark.asyncio
+async def test_boot_probe_runner_does_not_swallow_cancellation():
+    from core.runtime.boot_probes import _run_probe
+
+    async def _cancelled_probe():
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await _run_probe("cancelled", _cancelled_probe)
+
+
 def test_aura_main_invokes_boot_probes_after_manifest_enforcement():
     project_root = Path(__file__).resolve().parent.parent
     src = (project_root / "aura_main.py").read_text(encoding="utf-8")
