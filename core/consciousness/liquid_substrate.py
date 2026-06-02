@@ -43,6 +43,18 @@ class LiquidStateVector:
 
 logger = logging.getLogger("Consciousness.Substrate")
 
+_SUBSTRATE_LOOP_ERRORS = (
+    AttributeError,
+    IndexError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    np.linalg.LinAlgError,
+)
+
 
 def _default_substrate_dim() -> int:
     raw = os.environ.get("AURA_SUBSTRATE_DIM", "512")
@@ -415,7 +427,7 @@ class LiquidSubstrate:
                     await asyncio.sleep(sleep_time)
                 except asyncio.CancelledError:
                     raise
-                except Exception as loop_e:
+                except _SUBSTRATE_LOOP_ERRORS as loop_e:
                     self._loop_failure_streak += 1
                     backoff_s = min(30.0, 1.0 * (2 ** min(self._loop_failure_streak - 1, 5)))
                     self._record_operational_degradation(

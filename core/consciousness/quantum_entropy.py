@@ -21,14 +21,18 @@ Integration: Enhances ManagedEntropy as a backend source. Also usable directly
 via collapse_decision() for weighted random selection.
 """
 
-from core.runtime.errors import record_degradation
 from collections import deque
+import json
 import logging
 import os
 import struct
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Any, List, Optional, Sequence
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.QuantumEntropy")
 
@@ -38,6 +42,16 @@ _POOL_SIZE = 1024          # Bytes to fetch per API call
 _POOL_REFILL_THRESHOLD = 64  # Refill when pool drops below this
 _API_TIMEOUT = 5.0         # Seconds
 _MIN_REFILL_INTERVAL = 30.0  # Don't hammer the API
+_QUANTUM_API_RECOVERABLE_ERRORS = (
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    urllib.error.HTTPError,
+    urllib.error.URLError,
+)
 
 
 class QuantumEntropyBridge:
@@ -261,9 +275,6 @@ class QuantumEntropyBridge:
         """Attempt to refill the pool from ANU QRNG API in the background."""
 
         try:
-            import urllib.request
-            import json
-
             url = f"{_ANU_API_URL}?length={self._pool_size}&type=uint8"
             req = urllib.request.Request(url, headers={"User-Agent": "AURA/1.0"})
             with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as resp:
@@ -283,22 +294,17 @@ class QuantumEntropyBridge:
                 self._api_failures += 1
                 logger.warning("ANU QRNG API returned non-success: %s", data)
 
-        except Exception as e:
+        except _QUANTUM_API_RECOVERABLE_ERRORS as e:
             self._api_failures += 1
-            try:
-                import urllib.error
-
-                external_entropy_unavailable = isinstance(
-                    e,
-                    (
-                        urllib.error.HTTPError,
-                        urllib.error.URLError,
-                        TimeoutError,
-                        OSError,
-                    ),
-                )
-            except Exception:
-                external_entropy_unavailable = isinstance(e, (TimeoutError, OSError))
+            external_entropy_unavailable = isinstance(
+                e,
+                (
+                    urllib.error.HTTPError,
+                    urllib.error.URLError,
+                    TimeoutError,
+                    OSError,
+                ),
+            )
 
             if external_entropy_unavailable:
                 logger.info("ANU QRNG API unavailable; using OS entropy fallback (%s)", e)

@@ -5,7 +5,20 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Consciousness.Attention")
+
+_ATTENTION_SCHEMA_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +115,13 @@ class AttentionSchema:
                                     fe, priority, required_priority, self.current_focus.source
                                 )
                                 return self.current_focus
-            except Exception as e:
+            except _ATTENTION_SCHEMA_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "attention_schema",
+                    e,
+                    severity="debug",
+                    action="continued focus update without free-energy rigidity gate",
+                )
                 logger.debug("Failed to apply Free Energy focus gating in AttentionSchema: %s", e)
 
             focus = AttentionalFocus(

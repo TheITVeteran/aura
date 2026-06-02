@@ -19,6 +19,17 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.IdentityDriver")
 
+_IDENTITY_DRIVER_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class IdentityDriver:
     """Uses unified self to drive behavior and decision-making."""
@@ -54,7 +65,7 @@ class IdentityDriver:
             
             logger.debug("✓ IdentityDriver initialized")
         
-        except Exception as e:
+        except _IDENTITY_DRIVER_RECOVERABLE_ERRORS as e:
             record_degradation("identity_driver", e)
             logger.warning("IdentityDriver initialization incomplete: %s", e)
     
@@ -66,10 +77,10 @@ class IdentityDriver:
         if not self._unified_self:
             return []
         
-        drives = []
-        self_state = self._unified_self.get_state()
-        
         try:
+            drives = []
+            self_state = self._unified_self.get_state()
+
             # Core identity drives
             drives.append({
                 "name": "maintain_continuity",
@@ -112,7 +123,7 @@ class IdentityDriver:
             logger.debug(f"Derived {len(drives)} identity-based drives")
             return drives
         
-        except Exception as e:
+        except _IDENTITY_DRIVER_RECOVERABLE_ERRORS as e:
             record_degradation("identity_driver", e)
             logger.debug("Failed to derive identity drives: %s", e)
             return []
@@ -129,10 +140,10 @@ class IdentityDriver:
         if not self._unified_self:
             return []
         
-        goals = []
-        self_state = self._unified_self.get_state()
-        
         try:
+            goals = []
+            self_state = self._unified_self.get_state()
+
             if time_horizon in ["immediate", "session"]:
                 # Goals for this conversation/interaction
                 goals.append({
@@ -189,7 +200,7 @@ class IdentityDriver:
             logger.debug(f"Generated {len(goals)} identity-based goals for {time_horizon}")
             return goals
         
-        except Exception as e:
+        except _IDENTITY_DRIVER_RECOVERABLE_ERRORS as e:
             record_degradation("identity_driver", e)
             logger.debug("Failed to generate identity goals: %s", e)
             return []
@@ -233,7 +244,7 @@ class IdentityDriver:
             logger.debug(f"Applied identity directives to response generation")
             return directives
         
-        except Exception as e:
+        except _IDENTITY_DRIVER_RECOVERABLE_ERRORS as e:
             record_degradation("identity_driver", e)
             return {}
     
@@ -258,7 +269,7 @@ class IdentityDriver:
                 )
                 logger.debug(f"📖 Significant interaction recorded: {interaction_summary[:60]}...")
         
-        except Exception as e:
+        except _IDENTITY_DRIVER_RECOVERABLE_ERRORS as e:
             record_degradation("identity_driver", e)
             logger.debug("Failed to update identity: %s", e)
 

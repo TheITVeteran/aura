@@ -18,6 +18,17 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.SelfAwareness")
 
+_SELF_AWARENESS_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class SelfAwareness:
     """Creates the phenomenal sense of unified self.
@@ -66,7 +77,7 @@ class SelfAwareness:
                 significance=0.95,
             )
         
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
             record_degradation("self_awareness", e)
             logger.warning("SelfAwareness initialization incomplete: %s", e)
     
@@ -103,7 +114,7 @@ class SelfAwareness:
             
             logger.debug(f"🧠 Synced with phenomenal substrate: agency={self_state.sense_of_agency:.0%}, presence={self_state.sense_of_presence:.0%}")
         
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
             record_degradation("self_awareness", e)
             logger.debug("Failed to sync with phenomenal substrate: %s", e)
     
@@ -128,7 +139,13 @@ class SelfAwareness:
                     self._phenomenal_engine.update_state,
                     {"agency": agency_level}
                 )
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "self_awareness",
+                e,
+                severity="debug",
+                action="skipped agency signal to phenomenal engine",
+            )
             logger.debug("Could not signal agency: %s", e)
     
     async def _signal_embodiment(self, embodiment_level: float):
@@ -145,7 +162,13 @@ class SelfAwareness:
                     self._phenomenal_engine.set_embodiment,
                     embodiment_level
                 )
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "self_awareness",
+                e,
+                severity="debug",
+                action="skipped embodiment signal to phenomenal engine",
+            )
             logger.debug("Could not signal embodiment: %s", e)
     
     async def _signal_continuity(self, continuity_level: float):
@@ -162,7 +185,13 @@ class SelfAwareness:
                     self._phenomenal_engine.set_continuity,
                     continuity_level
                 )
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "self_awareness",
+                e,
+                severity="debug",
+                action="skipped continuity signal to phenomenal engine",
+            )
             logger.debug("Could not signal continuity: %s", e)
     
     async def _signal_presence(self, presence_level: float):
@@ -179,7 +208,13 @@ class SelfAwareness:
                     self._phenomenal_engine.set_presence,
                     presence_level
                 )
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "self_awareness",
+                e,
+                severity="debug",
+                action="skipped presence signal to phenomenal engine",
+            )
             logger.debug("Could not signal presence: %s", e)
     
     async def integrate_identity_into_response(self, response_text: str) -> str:
@@ -200,7 +235,7 @@ class SelfAwareness:
             
             return response_text
         
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
             record_degradation("self_awareness", e)
             return response_text
     
@@ -212,7 +247,13 @@ class SelfAwareness:
         try:
             await self._unified_self.interact()
             await self.sync_with_phenomenal_substrate()
-        except Exception as e:
+        except _SELF_AWARENESS_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "self_awareness",
+                e,
+                severity="debug",
+                action="skipped interaction update",
+            )
             logger.debug("Failed to process interaction: %s", e)
 
 

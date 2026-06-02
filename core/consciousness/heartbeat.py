@@ -33,6 +33,11 @@ _RECOVERABLE_HEARTBEAT_ERRORS = (
     TypeError,
     ValueError,
 )
+_HEARTBEAT_KEEPALIVE_ERRORS = (
+    OSError,
+    RuntimeError,
+    TimeoutError,
+)
 
 
 def _record_heartbeat_degradation(
@@ -179,7 +184,12 @@ class CognitiveHeartbeat:
                 import socket
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     sock.sendto(b"AURA_HEARTBEAT", ("127.0.0.1", 9999))
-            except Exception as e:
+            except _HEARTBEAT_KEEPALIVE_ERRORS as e:
+                _record_heartbeat_degradation(
+                    e,
+                    action="continued heartbeat tick after watchdog keep-alive emit failed",
+                    severity="debug",
+                )
                 logger.debug("Failed to emit keep-alive socket message to watchdog: %s", e)
 
             try:
