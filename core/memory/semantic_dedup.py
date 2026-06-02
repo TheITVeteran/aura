@@ -28,6 +28,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Set
 
+from core.memory.retention_policy import working_history_retention_policy
+
 logger = logging.getLogger("Aura.Memory.SemanticDedup")
 
 
@@ -54,7 +56,7 @@ class SemanticDedupGate:
     NORMALIZED_EDIT_THRESHOLD = 0.85     # Normalized similarity > 0.85 = duplicate
 
     # Window size
-    MAX_RECENT_WRITES = 500
+    MAX_RECENT_WRITES = working_history_retention_policy("AURA_SEMANTIC_DEDUP_RECENT_WRITES_MAX").max_items
     WRITE_WINDOW_S = 3600.0  # Only compare against writes in the last hour
 
     def __init__(self) -> None:

@@ -87,6 +87,14 @@ def test_governance_receipt_buffers_use_working_history_policy() -> None:
     assert IncidentManager.MAX_HISTORY >= 1_000
 
 
+def test_legacy_atomic_and_dedup_memory_caps_are_not_legacy_tiny() -> None:
+    from core.memory.atomic_storage import Memory
+    from core.memory.semantic_dedup import SemanticDedupGate
+
+    assert Memory.MAX_EPISODIC_ENTRIES >= 10_000
+    assert SemanticDedupGate.MAX_RECENT_WRITES >= 1_000
+
+
 def test_behavioral_scar_cap_exceeds_legacy_floor() -> None:
     assert _MAX_SCARS >= 2_000
 

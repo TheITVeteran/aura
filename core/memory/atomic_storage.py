@@ -10,17 +10,15 @@ import json
 import logging
 import os
 import threading
-import time
-from dataclasses import asdict, dataclass
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger("Kernel.Memory")
 
 
-from core.memory.base import MemoryEvent, MemoryType
+from core.memory.base import MemoryEvent
+from core.memory.retention_policy import episodic_retention_policy
 
 
 class Memory:
@@ -33,7 +31,7 @@ class Memory:
     """
     
     # Class constants
-    MAX_EPISODIC_ENTRIES = 1000
+    MAX_EPISODIC_ENTRIES = episodic_retention_policy().max_items
     AUTO_SAVE_THRESHOLD = 100
     BACKUP_COUNT = 3
     
