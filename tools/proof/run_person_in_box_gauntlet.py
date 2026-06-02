@@ -14,8 +14,10 @@ import contextlib
 import difflib
 import hashlib
 import json
+import multiprocessing as mp
 import os
 import platform
+import queue as queue_mod
 import re
 import shutil
 import subprocess
@@ -86,6 +88,48 @@ def _json_default(value: Any) -> str:
 def _stable_hash(payload: Any) -> str:
     encoded = json.dumps(payload, sort_keys=True, default=_json_default).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _live_model_probe_worker(
+    config: dict[str, Any],
+    task_id: str,
+    receipt_id: str,
+    prompt: str,
+    result_queue: Any,
+) -> None:
+    """Run the launch-runtime model probe in a child process.
+
+    The live desktop runtime can contain non-cancellable model or shutdown work.
+    Keeping it outside the parent proof process lets the harness fail closed with
+    a trace instead of hanging without a verdict.
+    """
+    try:
+        gauntlet = PersonBoxGauntlet(
+            out_dir=Path(config["out_dir"]),
+            tasks=[],
+            profile=str(config["profile"]),
+            max_seconds=int(config["max_seconds"]),
+            soak_interval_seconds=int(config["soak_interval_seconds"]),
+            live_model=True,
+            runtime_profile=str(config["runtime_profile"]),
+            live_origin=str(config["live_origin"]),
+            live_timeout_seconds=int(config["live_timeout_seconds"]),
+            model_tier=str(config["model_tier"]),
+            require_primary_model=bool(config["require_primary_model"]),
+            task_limit=None,
+            network=bool(config["network"]),
+            require_container=bool(config["require_container"]),
+        )
+        trace = asyncio.run(gauntlet.execute_live_model_probe(task_id, receipt_id, prompt))
+    except BaseException as exc:  # child boundary must report any failure to parent
+        trace = {
+            "task_id": task_id,
+            "receipt_id": receipt_id,
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "substantive": False,
+        }
+    result_queue.put(trace)
 
 
 def _read_text(path: Path) -> str:
@@ -476,7 +520,7 @@ class PersonBoxGauntlet:
             "rather than proof of literal personhood?"
         )
         try:
-            trace = asyncio.run(self.execute_live_model_probe(task_id, receipt_id, prompt))
+            trace = self.execute_live_model_probe_bounded(task_id, receipt_id, prompt)
         except (RuntimeError, TimeoutError, OSError, ImportError, AttributeError, TypeError, ValueError) as exc:
             trace = {
                 "task_id": task_id,
@@ -524,6 +568,138 @@ class PersonBoxGauntlet:
             else "Live launch-model probe failed.",
             receipt_id,
         )
+
+    def live_model_hard_timeout_seconds(self) -> float:
+        configured = os.environ.get("AURA_PERSON_BOX_LIVE_PROBE_HARD_TIMEOUT_SECONDS")
+        if configured:
+            try:
+                return max(5.0, float(configured))
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return max(90.0, float(self.live_timeout_seconds) + 90.0)
+
+    def execute_live_model_probe_bounded(
+        self,
+        task_id: str,
+        receipt_id: str,
+        prompt: str,
+    ) -> dict[str, Any]:
+        hard_timeout_s = self.live_model_hard_timeout_seconds()
+        if os.environ.get("AURA_PERSON_BOX_LIVE_PROBE_IN_PROCESS", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return asyncio.run(
+                asyncio.wait_for(
+                    self.execute_live_model_probe(task_id, receipt_id, prompt),
+                    timeout=hard_timeout_s,
+                )
+            )
+        return self.execute_live_model_probe_subprocess(
+            task_id,
+            receipt_id,
+            prompt,
+            hard_timeout_s=hard_timeout_s,
+        )
+
+    def execute_live_model_probe_subprocess(
+        self,
+        task_id: str,
+        receipt_id: str,
+        prompt: str,
+        *,
+        hard_timeout_s: float,
+    ) -> dict[str, Any]:
+        started = _now()
+        ctx = mp.get_context(os.environ.get("AURA_PERSON_BOX_MP_CONTEXT", "spawn"))
+        result_queue = ctx.Queue(maxsize=1)
+        config = {
+            "out_dir": str(self.out_dir),
+            "profile": self.profile,
+            "max_seconds": self.max_seconds,
+            "soak_interval_seconds": self.soak_interval_seconds,
+            "runtime_profile": self.runtime_profile,
+            "live_origin": self.live_origin,
+            "live_timeout_seconds": self.live_timeout_seconds,
+            "model_tier": self.model_tier,
+            "require_primary_model": self.require_primary_model,
+            "network": self.network,
+            "require_container": self.require_container,
+        }
+        proc = ctx.Process(
+            target=_live_model_probe_worker,
+            args=(config, task_id, receipt_id, prompt, result_queue),
+            name="aura_person_box_live_model_probe",
+        )
+        proc.start()
+        proc.join(timeout=hard_timeout_s)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=10.0)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=5.0)
+            with contextlib.suppress(Exception):
+                result_queue.close()
+            return {
+                "task_id": task_id,
+                "receipt_id": receipt_id,
+                "status": "timeout",
+                "error": f"live_model_probe_hard_timeout:{hard_timeout_s:.1f}s",
+                "substantive": False,
+                "primary_model_passed": False,
+                "primary_model_required": self.require_primary_model,
+                "elapsed_s": round(_now() - started, 4),
+                "runtime_profile": self.runtime_profile,
+                "origin": self.live_origin,
+                "model_tier_requested": self.model_tier,
+                "attempts": [],
+                "model_status": {"worker_exitcode": proc.exitcode},
+            }
+
+        try:
+            trace = result_queue.get_nowait()
+        except queue_mod.Empty:
+            trace = {
+                "task_id": task_id,
+                "receipt_id": receipt_id,
+                "status": "error",
+                "error": f"live_model_probe_worker_exited_without_trace:{proc.exitcode}",
+                "substantive": False,
+                "primary_model_passed": False,
+                "primary_model_required": self.require_primary_model,
+                "elapsed_s": round(_now() - started, 4),
+                "runtime_profile": self.runtime_profile,
+                "origin": self.live_origin,
+                "model_tier_requested": self.model_tier,
+                "attempts": [],
+                "model_status": {"worker_exitcode": proc.exitcode},
+            }
+        finally:
+            with contextlib.suppress(Exception):
+                result_queue.close()
+
+        if isinstance(trace, dict):
+            trace.setdefault("elapsed_s", round(_now() - started, 4))
+            trace.setdefault("model_status", {})["worker_exitcode"] = proc.exitcode
+            return trace
+        return {
+            "task_id": task_id,
+            "receipt_id": receipt_id,
+            "status": "error",
+            "error": f"live_model_probe_worker_returned_{type(trace).__name__}",
+            "substantive": False,
+            "primary_model_passed": False,
+            "primary_model_required": self.require_primary_model,
+            "elapsed_s": round(_now() - started, 4),
+            "runtime_profile": self.runtime_profile,
+            "origin": self.live_origin,
+            "model_tier_requested": self.model_tier,
+            "attempts": [],
+            "model_status": {"worker_exitcode": proc.exitcode},
+        }
 
     async def execute_live_model_probe(self, task_id: str, receipt_id: str, prompt: str) -> dict[str, Any]:
         started = _now()

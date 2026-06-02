@@ -81,6 +81,19 @@ def _user_visible_will_refusal(reason: str, constraints: list[str] | None = None
     )
 
 
+def _user_visible_live_timeout(timeout_sec: float | None = None) -> str:
+    """Return an honest foreground reply when the live model path times out."""
+    try:
+        timeout_label = f"{float(timeout_sec):.0f}s"
+    except (TypeError, ValueError, OverflowError):
+        timeout_label = "the configured"
+    return (
+        f"Primary Cortex did not return within {timeout_label} live reply timeout, so I stopped "
+        "waiting instead of inventing an answer. The turn was logged as a degraded timeout; "
+        "I can continue with a smaller bounded step while the model lane recovers."
+    )
+
+
 # ── Response Repetition Detection ────────────────────────────────────────
 # General-purpose mechanism that detects when Aura is stuck in a cognitive
 # loop producing near-identical responses. When detected, injects a
@@ -657,7 +670,9 @@ class MessageHandlingMixin:
                     return await self._process_user_input_core(message, origin)
             except TimeoutError:
                 logger.error("⌛ Priority processing TIMEOUT for: %s...", message[:50])
-                # [STABILITY v55] Return empty so chat.py can retry/escalate.
+                if self._is_user_facing_origin(origin):
+                    return _user_visible_live_timeout(timeout_sec)
+                # Background/internal callers still use an empty result as a retry/escalation signal.
                 return ""
             except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as e:
                 _record_message_degradation(

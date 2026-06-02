@@ -62,6 +62,37 @@ def test_user_visible_will_refusal_is_substantive_identity_boundary():
     assert "i will obey" not in lowered
 
 
+def test_priority_input_timeout_returns_honest_live_status():
+    from core.orchestrator.mixins.message_handling import MessageHandlingMixin
+
+    class SlowForegroundOrchestrator(MessageHandlingMixin):
+        def __init__(self):
+            self._user_input_semaphore = asyncio.Semaphore(1)
+
+        @staticmethod
+        def _is_user_facing_origin(origin):
+            return origin in {"api", "user"}
+
+        async def _process_user_input_core(self, message, origin="user"):
+            await asyncio.sleep(0.2)
+            return "late answer"
+
+    response = asyncio.run(
+        SlowForegroundOrchestrator().process_user_input_priority(
+            "answer the live prompt",
+            origin="api",
+            timeout_sec=0.01,
+        )
+    )
+    lowered = response.lower()
+
+    assert "primary cortex" in lowered
+    assert "timeout" in lowered
+    assert "stopped waiting" in lowered
+    assert "logged" in lowered
+    assert_no_live_reset_boilerplate(response)
+
+
 def test_lock_watchdog_start_failure_is_observable(monkeypatch):
     from core.resilience.lock_watchdog import get_lock_watchdog
 
@@ -871,8 +902,7 @@ async def test_intent_router_route_execution_drives_capability_engine():
     ]
 
 
-@pytest.mark.asyncio
-async def test_legacy_interface_router_delegates_to_canonical_capability_path():
+def test_legacy_interface_router_delegates_to_canonical_capability_path():
     from pathlib import Path
 
     from interface.router import IntentRouter
@@ -884,10 +914,12 @@ async def test_legacy_interface_router_delegates_to_canonical_capability_path():
             calls.append((skill_name, params, context))
             return {"ok": True, "skill": skill_name, "params": params, "context": context}
 
-    result = await IntentRouter().route_execution(
-        "forge_skill",
-        {"name": "diagnostic_skill"},
-        FakeCapabilityEngine(),
+    result = asyncio.run(
+        IntentRouter().route_execution(
+            "forge_skill",
+            {"name": "diagnostic_skill"},
+            FakeCapabilityEngine(),
+        )
     )
 
     assert result["ok"] is True

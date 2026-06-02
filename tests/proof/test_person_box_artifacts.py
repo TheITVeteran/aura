@@ -111,3 +111,52 @@ def test_model_bottleneck_report_withholds_missing_raw_model_claim(tmp_path):
     assert report["raw_llm_success"] is None
     assert report["runtime_lift_over_raw_model"] is None
     assert report["claim"] == "runtime_lift_not_established_without_live_raw_model_comparison"
+
+
+def test_live_model_probe_timeout_is_recorded(monkeypatch, tmp_path):
+    from tools.proof.run_person_in_box_gauntlet import PersonBoxGauntlet
+
+    out = tmp_path / "person_box"
+    out.mkdir()
+    gauntlet = PersonBoxGauntlet(
+        out_dir=out,
+        tasks=[],
+        profile="smoke",
+        max_seconds=60,
+        soak_interval_seconds=1,
+        live_model=True,
+        runtime_profile="desktop",
+        live_origin="api",
+        live_timeout_seconds=1,
+        model_tier="primary",
+        require_primary_model=True,
+        task_limit=None,
+        network=False,
+        require_container=False,
+    )
+
+    def timeout_trace(task_id, receipt_id, prompt):
+        return {
+            "task_id": task_id,
+            "receipt_id": receipt_id,
+            "status": "timeout",
+            "error": "live_model_probe_hard_timeout:1.0s",
+            "substantive": False,
+            "primary_model_passed": False,
+        }
+
+    monkeypatch.setattr(gauntlet, "execute_live_model_probe_bounded", timeout_trace)
+
+    status, ok, summary, receipt_id = gauntlet.handle_live_model_operator_probe(
+        {"id": "live_model_operator_probe"}
+    )
+
+    assert status == "fail"
+    assert ok is False
+    assert summary == "Live launch-model probe failed."
+    assert receipt_id
+    assert _jsonl(out / "LIVE_MODEL_TRACE.jsonl")[0]["status"] == "timeout"
+    assert _jsonl(out / "FAILURES.jsonl")[0]["failure_type"] == "live_model_probe_failed"
+    tool_trace = _jsonl(out / "TOOL_TRACE.jsonl")[0]
+    assert tool_trace["tool"] == "live_model"
+    assert tool_trace["status"] == "error"
