@@ -161,7 +161,9 @@ _SURFACE_NONSENSE_DRIFT_RE = re.compile(
 )
 _FORMAT_META_ARTIFACT_RE = re.compile(
     r"\b(?:that'?s one paragraph as requested|this is one paragraph as requested|"
-    r"anything else from the normal runtime state)\b",
+    r"anything else from the normal runtime state|"
+    r"this response adheres strictly to (?:the )?format instructions(?: provided)?|"
+    r"if you need any adjustments or have additional constraints)\b",
     re.IGNORECASE,
 )
 _CJK_INTRUSION_RE = re.compile(r"[\u3400-\u9fff]")

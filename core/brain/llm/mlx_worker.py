@@ -52,12 +52,16 @@ _OPERATOR_EVIDENCE_DRIFT_MARKERS = re.compile(
 )
 _OPERATOR_EVIDENCE_META_MARKERS = re.compile(
     r"\b(?:for example|that'?s one paragraph as requested|"
-    r"this is one paragraph as requested|anything else from the normal runtime state)\b",
+    r"this is one paragraph as requested|anything else from the normal runtime state|"
+    r"this response adheres strictly to (?:the )?format instructions(?: provided)?|"
+    r"if you need any adjustments or have additional constraints)\b",
     re.IGNORECASE,
 )
 _OPERATOR_EVIDENCE_META_TAIL_RE = re.compile(
     r"\s*(?:that'?s one paragraph as requested|this is one paragraph as requested|"
-    r"anything else from the normal runtime state)\b.*$",
+    r"anything else from the normal runtime state|"
+    r"this response adheres strictly to (?:the )?format instructions(?: provided)?|"
+    r"if you need any adjustments or have additional constraints)\b.*$",
     re.IGNORECASE | re.DOTALL,
 )
 

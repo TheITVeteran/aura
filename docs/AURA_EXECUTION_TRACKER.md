@@ -101,6 +101,32 @@ Latest live proof result: `person_box_gauntlet_artifact_contract` **PASS**,
 `unified_governed_software_operator` claim remains unproven because the smoke
 run does not satisfy the 8-hour duration or raw-model lift requirements.
 
+## Latest Live Cortex Response Pollution Fix (2026-06-02)
+
+### Gaps Addressed
+
+- **Primary Cortex still produced format-meta tail pollution**: the live
+  operator response path had previously allowed tails such as "This response
+  adheres strictly to the format instructions provided" and follow-up offers.
+- **Classifier hardening**: `core/conversation/response_reliability.py` now
+  marks those phrases as `format_meta_artifact` for user-facing replies.
+- **Worker cleanup**: `core/brain/llm/mlx_worker.py` now trims the same
+  operator-evidence meta tails before finalizing the Cortex response.
+- **Regression coverage**: `tests/test_cortex_live_response_classifiers.py`
+  proves the polluted text is rejected and the worker-trimmed text remains a
+  valid substantive operator answer.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_cortex_live_response_classifiers.py tests/proof/test_person_box_artifacts.py -q
+AURA_PERSON_BOX_PROFILE=smoke AURA_PERSON_BOX_LIVE_MODEL=1 AURA_PERSON_BOX_OUT=artifacts/current/person_box_proof_live_smoke_after_tail_fix AURA_PERSON_BOX_MAX_SECONDS=600 make person-box-proof
+```
+
+Latest live trace: `last_user_endpoint=Cortex`, `primary_model_passed=true`,
+`live_model_passed=true`, and the response excerpt no longer contains the
+format-instruction/follow-up tail.
+
 ## Latest Final Hardening Pass (2026-05-05)
 
 ### Gaps Addressed
