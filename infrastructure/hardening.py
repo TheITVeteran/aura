@@ -9,9 +9,10 @@ Includes:
 - State management and recovery
 - Resource management
 """
-import inspect
 import asyncio
+import concurrent.futures
 import functools
+import inspect
 import json
 import logging
 import sys
@@ -27,6 +28,31 @@ from typing import Any, cast
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Infrastructure.Hardening")
+
+
+class CircuitBreakerOpenError(RuntimeError):
+    """Raised when a circuit breaker is open and still cooling down."""
+
+
+class RetryPolicyExhaustedError(RuntimeError):
+    """Raised when all configured retry attempts fail."""
+
+
+class ResourceLimitExceededError(RuntimeError):
+    """Raised when a managed resource pool exceeds its configured limit."""
+
+
+_RECOVERABLE_OPERATION_ERRORS: tuple[type[Exception], ...] = (
+    ConnectionError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+)
+_STATE_CHECKPOINT_ERRORS = (OSError, TypeError, ValueError)
+_STATE_RESTORE_ERRORS = (json.JSONDecodeError, OSError, TypeError, ValueError)
+_HEALTH_PROBE_ERRORS = (AssertionError, OSError, RuntimeError, TimeoutError, ValueError)
+_HEALTH_MONITOR_LOOP_ERRORS = (OSError, RuntimeError)
+_RESOURCE_CLEANUP_ERRORS = (OSError, RuntimeError, ValueError)
 
 
 class ComponentState(Enum):
@@ -72,12 +98,14 @@ class CircuitBreaker:
         name: str,
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
-        success_threshold: int = 2
+        success_threshold: int = 2,
+        failure_exceptions: tuple[type[Exception], ...] = _RECOVERABLE_OPERATION_ERRORS,
     ):
         self.name = name
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.success_threshold = success_threshold
+        self.failure_exceptions = failure_exceptions
         
         # State
         self.state = "CLOSED"
@@ -96,7 +124,9 @@ class CircuitBreaker:
                 self.state = "HALF_OPEN"
                 self.success_count = 0
             else:
-                raise Exception(f"Circuit breaker OPEN for {self.name}. Subsystem is cooling down.")
+                raise CircuitBreakerOpenError(
+                    f"Circuit breaker OPEN for {self.name}. Subsystem is cooling down."
+                )
         
         try:
             if inspect.iscoroutinefunction(func):
@@ -107,7 +137,7 @@ class CircuitBreaker:
                 
             self.record_success()
             return result
-        except Exception as e:
+        except self.failure_exceptions as e:
             self.record_failure(str(e))
             raise
     
@@ -166,12 +196,14 @@ class RetryPolicy:
         max_retries: int = 3,
         base_delay: float = 1.0,
         max_delay: float = 60.0,
-        exponential_base: float = 2.0
+        exponential_base: float = 2.0,
+        retry_exceptions: tuple[type[Exception], ...] = _RECOVERABLE_OPERATION_ERRORS,
     ):
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.exponential_base = exponential_base
+        self.retry_exceptions = retry_exceptions
     
     async def execute(self, func: Callable, *args, **kwargs):
         """Execute function with retry (Async)"""
@@ -183,7 +215,7 @@ class RetryPolicy:
                     return await func(*args, **kwargs)
                 else:
                     return await asyncio.to_thread(func, *args, **kwargs)
-            except Exception as e:
+            except self.retry_exceptions as e:
                 last_exception = e
                 
                 if attempt < self.max_retries:
@@ -203,7 +235,7 @@ class RetryPolicy:
         
         if last_exception is not None:
             raise cast(BaseException, last_exception)
-        raise Exception("Unknown error in RetryPolicy")
+        raise RetryPolicyExhaustedError("Unknown error in RetryPolicy")
 
 
 class StateManager:
@@ -233,6 +265,7 @@ class StateManager:
         
         # Auto-checkpoint in background
         self.checkpoint_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self.running = False
         
         logger.info("StateManager initialized")
@@ -268,7 +301,8 @@ class StateManager:
             logger.info("State checkpoint saved: %s", checkpoint_file.name)
             return True
             
-        except Exception as e:
+        except _STATE_CHECKPOINT_ERRORS as e:
+            record_degradation("infrastructure_hardening.checkpoint", e)
             logger.error("Checkpoint failed: %s", e)
             return False
     
@@ -296,7 +330,8 @@ class StateManager:
             logger.info("State restored from %s", latest.name)
             return True
             
-        except Exception as e:
+        except _STATE_RESTORE_ERRORS as e:
+            record_degradation("infrastructure_hardening.restore", e)
             logger.error("Restore failed: %s", e)
             return False
 
@@ -324,8 +359,9 @@ class StateManager:
         """Start background checkpointing"""
         if self.running:
             return
-        
+
         self.running = True
+        self._stop_event.clear()
         thread = threading.Thread(
             target=self._checkpoint_loop,
             daemon=True,
@@ -338,16 +374,17 @@ class StateManager:
     def stop_auto_checkpoint(self):
         """Stop background checkpointing"""
         self.running = False
+        self._stop_event.set()
         if isinstance(self.checkpoint_thread, threading.Thread) and self.checkpoint_thread.is_alive():
             self.checkpoint_thread.join(timeout=5)
     
-    async def _checkpoint_loop(self):
-        """Background checkpoint loop (Async)."""
+    def _checkpoint_loop(self):
+        """Background checkpoint loop for the checkpoint worker thread."""
         while self.running:
-            await asyncio.sleep(self.checkpoint_interval)
+            if self._stop_event.wait(self.checkpoint_interval):
+                break
             if self.running:
-                # Wrap sync checkpoint in to_thread to prevent event loop blocking
-                await asyncio.to_thread(self.checkpoint)
+                self.checkpoint()
 
 
 class HealthMonitor:
@@ -361,6 +398,7 @@ class HealthMonitor:
         
         # Background monitoring
         self.monitor_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self.running = False
         self.check_interval = 30  # 30 seconds
         
@@ -419,7 +457,8 @@ class HealthMonitor:
                 latency_ms=latency
             )
             
-        except Exception as e:
+        except _HEALTH_PROBE_ERRORS as e:
+            record_degradation("infrastructure_hardening.health_probe", e)
             result = HealthCheck(
                 component=component,
                 state=ComponentState.FAILED,
@@ -473,8 +512,9 @@ class HealthMonitor:
         """Start background health monitoring"""
         if self.running:
             return
-        
+
         self.running = True
+        self._stop_event.clear()
         thread = threading.Thread(
             target=self._monitor_loop,
             daemon=True,
@@ -487,20 +527,22 @@ class HealthMonitor:
     def stop_monitoring(self):
         """Stop background monitoring"""
         self.running = False
+        self._stop_event.set()
         if isinstance(self.monitor_thread, threading.Thread) and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=5)
     
-    async def _monitor_loop(self):
-        """Background monitoring loop (Async)."""
+    def _monitor_loop(self):
+        """Background monitoring loop for the health worker thread."""
         while self.running:
             # Execute health checks as tasks
             try:
-                # check_all is synchronous, so we run it in a thread
-                await asyncio.to_thread(self.check_all)
-            except Exception as e:
+                self.check_all()
+            except _HEALTH_MONITOR_LOOP_ERRORS as e:
+                record_degradation("infrastructure_hardening.health_monitor", e)
                 logger.error("Health Monitor loop error: %s", e)
-                
-            await asyncio.sleep(self.check_interval)
+
+            if self._stop_event.wait(self.check_interval):
+                break
 
 
 class ResourceManager:
@@ -527,7 +569,10 @@ class ResourceManager:
         limit_key = f"max_{resource_type}"
         
         if limit_key in self.limits and current_count >= self.limits[limit_key]:
-            raise Exception(f"Resource limit exceeded: {resource_type} (limit: {self.limits[limit_key]})")
+            raise ResourceLimitExceededError(
+                f"Resource limit exceeded: {resource_type} "
+                f"(limit: {self.limits[limit_key]})"
+            )
         
         self.resources[resource_type][key] = {
             "resource": resource,
@@ -546,7 +591,7 @@ class ResourceManager:
             if hasattr(resource, 'close'):
                 try:
                     resource.close()
-                except Exception as exc:
+                except _RESOURCE_CLEANUP_ERRORS as exc:
                     record_degradation("infrastructure_hardening", exc)
                     logger.debug("Resource cleanup failed for %s:%s: %s", resource_type, key, exc)
             
@@ -682,9 +727,8 @@ def resilient(component_name: str, retry: bool = True, circuit_breaker: bool = T
                 # For sync functions, delegate to a thread if in a running loop
                 # Alternatively, create a short-lived loop safely.
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                     # If we're already in a loop, we must delegate the resilient call to a separate thread
-                    import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(
                             lambda: asyncio.run(_hardening_system.resilient_call(
@@ -694,18 +738,14 @@ def resilient(component_name: str, retry: bool = True, circuit_breaker: bool = T
                         return future.result()
                 except RuntimeError:
                     # No running loop — safe to create one for this sync wrapper
-                    pass
-                
+                    logger.debug("No running loop for resilient sync wrapper: %s", func.__name__)
+
+                loop = asyncio.new_event_loop()
                 try:
-                    loop = asyncio.new_event_loop()
-                    try:
-                        return loop.run_until_complete(_hardening_system.resilient_call(
-                            component_name, func, *args, use_retry=retry, use_circuit_breaker=circuit_breaker, **kwargs
-                        ))
-                    finally:
-                        loop.close()
-                except Exception as e:
-                    logger.debug("Resilience wrapper fallback for %s: %s", func.__name__, e)
-                    return func(*args, **kwargs)
+                    return loop.run_until_complete(_hardening_system.resilient_call(
+                        component_name, func, *args, use_retry=retry, use_circuit_breaker=circuit_breaker, **kwargs
+                    ))
+                finally:
+                    loop.close()
             return sync_wrapper
     return decorator
