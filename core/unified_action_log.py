@@ -13,11 +13,12 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ActionLog")
 
-_MAX_ENTRIES = 500
+_MAX_ENTRIES = working_history_retention_policy("AURA_UNIFIED_ACTION_LOG_MAX_ENTRIES").max_items
 
 
 class UnifiedActionLog:

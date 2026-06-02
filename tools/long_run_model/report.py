@@ -37,6 +37,10 @@ def render_markdown(summary: ForecastRunSummary) -> str:
         f"(`{summary.registry['executive_decision_history_basis']}`)",
         f"- Cognitive thought history cap: `{summary.registry['cognitive_thought_history_max']}` thoughts "
         f"(`{summary.registry['cognitive_thought_history_basis']}`)",
+        f"- Governance/action receipt caps: action log `{summary.registry['unified_action_log_max_entries']}`, "
+        f"will audit `{summary.registry['unified_will_audit_max_entries']}`, "
+        f"authority audit `{summary.registry['authority_audit_max_entries']}`, "
+        f"incidents `{summary.registry['incident_history_max_entries']}`",
         f"- Vector prune interval: `{summary.registry['vector_prune_interval_s']}s`",
         f"- BlackHoleVault cap: `{summary.registry['black_hole_max_memories']}` memories "
         f"(`{summary.registry['black_hole_retention_basis']}`, "

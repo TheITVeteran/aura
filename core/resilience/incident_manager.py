@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Deque, Dict, List, Optional
 
+from core.memory.retention_policy import working_history_retention_policy
+
 logger = logging.getLogger("Aura.Resilience.IncidentManager")
 
 
@@ -63,7 +65,7 @@ class IncidentManager:
     """
 
     MAX_ACTIVE = 100
-    MAX_HISTORY = 500
+    MAX_HISTORY = working_history_retention_policy("AURA_INCIDENT_HISTORY_MAX").max_items
     ESCALATION_THRESHOLD = 5  # occurrences before severity escalation
 
     def __init__(self) -> None:

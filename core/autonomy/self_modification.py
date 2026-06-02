@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SelfModification.Autonomous")
@@ -46,7 +47,7 @@ logger = logging.getLogger("Aura.SelfModification.Autonomous")
 # ── Persistence ─────────────────────────────────────────────────────────────
 _DATA_DIR = Path.home() / ".aura" / "data" / "self_modification"
 _AUDIT_LOG_PATH = _DATA_DIR / "audit_log.jsonl"
-_MAX_AUDIT_ENTRIES = 2000
+_MAX_AUDIT_ENTRIES = working_history_retention_policy("AURA_SELF_MODIFICATION_AUDIT_MAX").max_items
 _RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
 
 
@@ -186,7 +187,7 @@ class AutonomousSelfModification:
     """
 
     _MAX_PENDING = 50
-    _MAX_RECEIPTS = 500
+    _MAX_RECEIPTS = working_history_retention_policy("AURA_SELF_MODIFICATION_RECEIPT_MAX").max_items
 
     def __init__(self) -> None:
         self._pending: list[ModificationProposal] = []

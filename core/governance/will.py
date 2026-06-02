@@ -37,6 +37,7 @@ from enum import StrEnum
 from typing import Any
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Will")
@@ -243,7 +244,7 @@ class UnifiedWill:
             # action was refused or deferred
     """
 
-    _MAX_AUDIT_TRAIL = 500
+    _MAX_AUDIT_TRAIL = working_history_retention_policy("AURA_UNIFIED_WILL_AUDIT_MAX").max_items
 
     def __init__(self) -> None:
         self._state = WillState()

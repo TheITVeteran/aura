@@ -13,6 +13,8 @@ from core.consciousness.subconscious_loop import SubconsciousLoop
 from core.conversation.engine import CONTEXT_HISTORY_MAX_MESSAGES
 from core.conversation import persistence as conversation_persistence
 from core.conversation.unified_transcript import _MAX_HISTORY_DEFAULT as UNIFIED_TRANSCRIPT_MAX_HISTORY
+from core.consciousness import authority_audit
+from core.governance.will import UnifiedWill
 from core.evolution import liquid_time_engine
 from core.long_term_memory_engine import LongTermMemoryEngine
 from core.memory import conversation_persistence as memory_conversation_persistence
@@ -23,6 +25,7 @@ from core.memory.retention_policy import (
     working_history_retention_policy,
 )
 from core.memory.scar_formation import _MAX_SCARS
+from core.resilience.incident_manager import IncidentManager
 from core.phases import phi_consciousness
 from core.resilience.lock_watchdog import get_lock_watchdog
 from core.resilience.memory_governor import MemoryGovernor
@@ -31,6 +34,7 @@ from core.resilience.stability_guardian import StabilityGuardian
 from core.senses import circadian
 from core.state.aura_state import MotivationState
 from core.state.state_repository import StateRepository
+from core.unified_action_log import _MAX_ENTRIES as UNIFIED_ACTION_LOG_MAX_ENTRIES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -111,6 +115,10 @@ class RuntimeRegistry:
     executive_decision_history_basis: str
     cognitive_thought_history_max: int
     cognitive_thought_history_basis: str
+    unified_action_log_max_entries: int
+    unified_will_audit_max_entries: int
+    authority_audit_max_entries: int
+    incident_history_max_entries: int
     pending_initiative_cap: int
     active_goal_cap: int
     vector_prune_interval_s: float
@@ -458,6 +466,10 @@ def build_registry() -> RuntimeRegistry:
         executive_decision_history_basis=str(executive_history_policy.basis),
         cognitive_thought_history_max=int(cognitive_history_policy.max_items),
         cognitive_thought_history_basis=str(cognitive_history_policy.basis),
+        unified_action_log_max_entries=int(UNIFIED_ACTION_LOG_MAX_ENTRIES),
+        unified_will_audit_max_entries=int(UnifiedWill._MAX_AUDIT_TRAIL),
+        authority_audit_max_entries=int(authority_audit._MAX_ENTRIES),
+        incident_history_max_entries=int(IncidentManager.MAX_HISTORY),
         pending_initiative_cap=10,
         active_goal_cap=10,
         vector_prune_interval_s=float(memory_governor.vector_prune_interval_s),

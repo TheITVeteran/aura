@@ -73,6 +73,20 @@ def test_state_log_retention_policy_raises_legacy_cap_without_unbounded_growth(m
     assert state_log_retention_policy(ram_gb=4).max_items == 500
 
 
+def test_governance_receipt_buffers_use_working_history_policy() -> None:
+    from core.autonomy.self_modification import AutonomousSelfModification
+    from core.consciousness import authority_audit
+    from core.governance.will import UnifiedWill
+    from core.resilience.incident_manager import IncidentManager
+    from core.unified_action_log import _MAX_ENTRIES as ACTION_LOG_MAX_ENTRIES
+
+    assert ACTION_LOG_MAX_ENTRIES >= 1_000
+    assert UnifiedWill._MAX_AUDIT_TRAIL >= 1_000
+    assert authority_audit._MAX_ENTRIES >= 1_000
+    assert AutonomousSelfModification._MAX_RECEIPTS >= 1_000
+    assert IncidentManager.MAX_HISTORY >= 1_000
+
+
 def test_behavioral_scar_cap_exceeds_legacy_floor() -> None:
     assert _MAX_SCARS >= 2_000
 

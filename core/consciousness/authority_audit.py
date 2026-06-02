@@ -18,12 +18,14 @@ import logging
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional, Set
+
+from core.memory.retention_policy import working_history_retention_policy
 
 logger = logging.getLogger("Consciousness.AuthorityAudit")
 
-_MAX_ENTRIES = 5000
+_MAX_ENTRIES = working_history_retention_policy("AURA_AUTHORITY_AUDIT_MAX_ENTRIES").max_items
 
 
 @dataclass

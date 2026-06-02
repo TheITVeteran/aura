@@ -44,6 +44,10 @@ def test_build_registry_extracts_runtime_hardening_contracts():
     assert registry.executive_decision_history_basis
     assert registry.cognitive_thought_history_max >= 5_000
     assert registry.cognitive_thought_history_basis
+    assert registry.unified_action_log_max_entries >= 5_000
+    assert registry.unified_will_audit_max_entries >= 5_000
+    assert registry.authority_audit_max_entries >= 5_000
+    assert registry.incident_history_max_entries >= 5_000
     assert registry.state_log_max_rows >= 5_000
     assert registry.state_log_retention_basis
     assert registry.vector_soft_prune_threshold_days == 14
@@ -134,6 +138,7 @@ def test_write_report_bundle_emits_markdown_and_json(tmp_path):
     assert "Behavioral scar cap" in markdown
     assert "Executive decision history cap" in markdown
     assert "Cognitive thought history cap" in markdown
+    assert "Governance/action receipt caps" in markdown
     assert "State log cap" in markdown
     assert summary_json["checkpoints"][0]["horizon"] == "24h"
     assert isinstance(risk_json, list)
