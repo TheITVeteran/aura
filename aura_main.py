@@ -56,7 +56,6 @@ _AURA_MAIN_BOUNDARY_ERRORS = (
     asyncio.InvalidStateError,
     subprocess.SubprocessError,
     httpx.HTTPError,
-    Exception,
 )
 
 # Install global task supervision before subsystems spawn background tasks.
@@ -634,7 +633,7 @@ async def _boot_runtime_orchestrator(
     try:
         ServiceContainer.write_service_ownership_manifest(PROJECT_ROOT)
         logger.info("🧾 SERVICE_OWNERSHIP.md manifest written successfully.")
-    except Exception as exc:
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write SERVICE_OWNERSHIP.md: %s", exc)
     await _enforce_boot_probes(ready_label)
     _write_runtime_manifest(
@@ -813,7 +812,7 @@ async def _boot_runtime_orchestrator(
                 timeout=5.0
             )
             logger.info("🩺 FlagshipDoctorDaemon started and registered for shutdown.")
-        except Exception as exc:
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
             record_degradation('aura_main', exc)
             logger.warning("FlagshipDoctorDaemon failed to start: %s", exc)
 
@@ -1211,7 +1210,7 @@ async def _stop_orchestrator_once(orchestrator: Any, *, reason: str, timeout_s: 
 
     if orchestrator is None or getattr(orchestrator, "_aura_stop_invoked", False):
         return
-    setattr(orchestrator, "_aura_stop_invoked", True)
+    orchestrator._aura_stop_invoked = True
     request_shutdown(reason)
     stop = getattr(orchestrator, "stop", None)
     if not callable(stop):

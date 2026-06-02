@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import asyncio
 import pytest
 
 
@@ -73,6 +74,22 @@ def test_provider_constructors_accept_boot_time_defaults():
 
     assert curiosity.proactive_comm.get_boredom_level() == 0.0
     assert monitor.get_status()["status"] == "STABLE"
+
+
+def test_live_boot_paths_do_not_use_generic_exception_boundaries():
+    project_root = Path(__file__).resolve().parent.parent
+    aura_main = (project_root / "aura_main.py").read_text(encoding="utf-8")
+    boot_identity = (
+        project_root / "core" / "orchestrator" / "mixins" / "boot" / "boot_identity.py"
+    ).read_text(encoding="utf-8")
+
+    boundary_tuple = aura_main.split("_AURA_MAIN_BOUNDARY_ERRORS = (", 1)[1].split(")", 1)[0]
+
+    assert "Exception," not in boundary_tuple
+    assert "except Exception" not in aura_main
+    assert "except BaseException" not in aura_main
+    assert "except Exception" not in boot_identity
+    assert "except BaseException" not in boot_identity
 
 
 def test_memory_provider_registers_usable_knowledge_graph_and_dreamer(tmp_path, monkeypatch):
@@ -161,7 +178,7 @@ def test_final_engines_create_persistence_dirs_without_generated_gateways(tmp_pa
 
 def test_scaffolds_and_null_telemetry_are_operational():
     from core.pipeline.prompt_scaffold import PromptScaffold
-    from core.runtime.telemetry_exporter import NullExporter, MetricSample
+    from core.runtime.telemetry_exporter import MetricSample, NullExporter
 
     prompt = PromptScaffold().build_structured_prompt("solve it", context="ctx")
     exporter = NullExporter()
@@ -265,8 +282,8 @@ def test_system_state_monitor_initializes_health_history():
 
 @pytest.mark.asyncio
 async def test_heartbeat_telemetry_clamps_negative_runtime_metrics(monkeypatch):
-    from core.consciousness.heartbeat import CognitiveHeartbeat
     import core.consciousness.heartbeat as heartbeat_module
+    from core.consciousness.heartbeat import CognitiveHeartbeat
 
     published = {}
 

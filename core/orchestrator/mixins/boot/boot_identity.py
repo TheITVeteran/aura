@@ -1,17 +1,18 @@
-from core.runtime.errors import record_degradation
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from core.container import ServiceContainer
 from core.config import config
+from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
 
 _BOOT_IDENTITY_BOUNDARY_ERRORS = (
     ImportError,
     AttributeError,
+    LookupError,
     RuntimeError,
     OSError,
     TypeError,
@@ -59,9 +60,9 @@ class BootIdentityMixin:
             else:
                 self.fictional_engines = register_all_fictional_engines(orchestrator=self)
 
-            from core.self_modification.shadow_ast_healer import ShadowASTHealer
-            from core.memory.snap_kv_evictor import SnapKVEvictor
             from core.agency.latent_distiller import LatentSpaceDistiller
+            from core.memory.snap_kv_evictor import SnapKVEvictor
+            from core.self_modification.shadow_ast_healer import ShadowASTHealer
 
             # Register SOTA sub-components
             self.ast_healer = ShadowASTHealer(
@@ -73,7 +74,7 @@ class BootIdentityMixin:
             )
 
             logger.info("🎬 Fictional Engine Synthesis Complete (JARVIS-class online)")
-        except Exception as e:
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot without registering JARVIS-class fictional engines", severity="error")
             logger.error("🎬 Fictional Engine Synthesis failed: %s", e)
 
@@ -128,7 +129,7 @@ class BootIdentityMixin:
                 if identity:
                     gate.identity_guard.identity = identity
                 logger.info("🛡️  Identity Guard Gate active on OutputGate")
-        except Exception as e:
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with unguarded OutputGate", severity="error")
             logger.error("Identity Guard initialization failed: %s", e)
 
@@ -140,7 +141,7 @@ class BootIdentityMixin:
             self.persona_evolver = PersonaEvolver(self)
             ServiceContainer.register_instance("persona_evolver", self.persona_evolver)
             logger.info("🧬 Persona Evolver initialized (waiting for heartbeat)")
-        except Exception as e:
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with disabled persona evolution", severity="error")
             logger.error("Failed to init Persona Evolver: %s", e)
             self.persona_evolver = None
@@ -168,7 +169,7 @@ class BootIdentityMixin:
             social = ServiceContainer.get("theory_of_mind")
             ServiceContainer.register_instance("moral", moral)
             ServiceContainer.register_instance("social", social)
-        except Exception as e:
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with missing soul/moral system integration", severity="error")
             logger.error("Failed to integrate moral systems: %s", e)
 
@@ -199,7 +200,7 @@ class BootIdentityMixin:
                     from core.consciousness.contract import attach_contract
 
                     attach_contract(self)
-                except Exception as e:
+                except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
                     _record_identity_degradation(e, action="skipped attaching consciousness contract to boot runtime")
                     logger.debug("Failed to attach consciousness contract: %s", e)
 
@@ -210,7 +211,7 @@ class BootIdentityMixin:
                 )
 
                 bridge_to_orchestrator(self)
-            except Exception as e:
+            except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
                 _record_identity_degradation(e, action="continued boot with disconnected liquid substrate bridge", severity="error")
                 logger.error("Liquid Substrate bridge failed: %s", e, exc_info=True)
 
@@ -220,7 +221,7 @@ class BootIdentityMixin:
 
             logger.info("✓ Core Architecture ACTIVE")
 
-        except Exception as e:
+        except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with degraded Core Architecture configuration", severity="error")
             logger.error("Failed to initialize Core Architecture: %s", e)
 
