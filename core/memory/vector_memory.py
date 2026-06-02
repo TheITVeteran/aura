@@ -1,19 +1,22 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import hashlib
 import json
 import logging
+import queue
 import sqlite3
+import threading
 import time
 import uuid
-import threading
-import queue
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Memory.Vector")
 
+_CHROMA_IMPORT_ERRORS = (ImportError, OSError, RuntimeError)
 _SQLITE_FALLBACK_ERRORS = (OSError, sqlite3.Error, RuntimeError, TypeError, ValueError)
+_UPSERT_QUEUE_STOP = object()
 
 
 # ---------------------------------------------------------------------------
@@ -24,14 +27,14 @@ try:
     import chromadb
     from chromadb.config import Settings as ChromaSettings
     _CHROMA_AVAILABLE = True
-except (ImportError, Exception) as e:
+except _CHROMA_IMPORT_ERRORS as e:
     logger.warning("VectorMemory: ChromaDB unavailable. Falling back to Sovereign Mode. Error: %s", e)
     _CHROMA_AVAILABLE = False
 
 
 class AuraEmbeddingFunction:
     """Consolidated embedding function using Aura's internal LLMs."""
-    def __call__(self, input: List[str]) -> List[List[float]]:
+    def __call__(self, input: list[str]) -> list[list[float]]:
         try:
             from core.container import ServiceContainer
             adapter = ServiceContainer.get("api_adapter")
@@ -48,11 +51,12 @@ class AuraEmbeddingFunction:
             logger.error("AuraEmbeddingFunction failed: %s", e)
             return [self._pseudo_embed(text) for text in input]
 
-    def _pseudo_embed(self, text: str) -> List[float]:
+    def _pseudo_embed(self, text: str) -> list[float]:
         """Bag-of-words hashing embedding that preserves semantic similarity.
         Texts sharing words will have proportional cosine similarity.
         """
         import hashlib
+
         import numpy as np
         dim = 768
         vec = np.zeros(dim, dtype=np.float64)
@@ -87,7 +91,7 @@ class VectorMemory:
     def __init__(
         self,
         collection_name: str = "aura_memories",
-        persist_directory: Optional[str] = None,
+        persist_directory: str | None = None,
     ):
         self.collection_name = collection_name
         self._fallback_mode = False
@@ -99,7 +103,11 @@ class VectorMemory:
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         self.fallback_file = self.persist_directory / f"{collection_name}_fallback.json"
-        
+        self._upsert_queue: queue.Queue = queue.Queue(maxsize=1000)
+        self._upsert_stop = threading.Event()
+        self._upsert_thread: threading.Thread | None = None
+        self._closed = False
+
         from core.utils.core_db import get_core_db
         self.db = get_core_db()
         self._sqlite_vectors = None
@@ -120,8 +128,11 @@ class VectorMemory:
                     "VectorMemory ONLINE — collection '%s' (%d vectors), persist=%s",
                     collection_name, self._collection.count(), persist_directory
                 )
-                self._upsert_queue = queue.Queue(maxsize=1000)
-                self._upsert_thread = threading.Thread(target=self._async_upsert_loop, daemon=True, name="ChromaUpsert")
+                self._upsert_thread = threading.Thread(
+                    target=self._async_upsert_loop,
+                    daemon=True,
+                    name="ChromaUpsert",
+                )
                 self._upsert_thread.start()
             except (OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('vector_memory', e)
@@ -139,9 +150,9 @@ class VectorMemory:
             self._store = self._load_fallback()
             logger.info("VectorMemory: Sovereign Fallback Active (records: %d)", len(self._store))
 
-    def _load_fallback(self) -> List[Dict[str, Any]]:
+    def _load_fallback(self) -> list[dict[str, Any]]:
         """Load memories from local SQLite BLOB store with legacy JSON migration."""
-        memories: List[Dict[str, Any]] = []
+        memories: list[dict[str, Any]] = []
         if self._sqlite_vectors is not None:
             try:
                 memories = self._sqlite_vectors.list_records()
@@ -153,7 +164,7 @@ class VectorMemory:
         if not memories and self.fallback_file.exists():
             try:
                 logger.info("📦 Migrating '%s' memories from JSON to SQLite...", self.collection_name)
-                with open(self.fallback_file, 'r') as f:
+                with open(self.fallback_file, encoding="utf-8") as f:
                     legacy_store = json.load(f)
                 
                 # Bulk insert into binary-vector SQLite storage.
@@ -165,7 +176,7 @@ class VectorMemory:
 
         return memories
 
-    def _upsert_fallback_batch(self, memories: List[Dict[str, Any]]):
+    def _upsert_fallback_batch(self, memories: list[dict[str, Any]]):
         """Persist a batch of entries to SQLite fallback efficiently."""
         if not memories or self._sqlite_vectors is None:
             return
@@ -184,7 +195,7 @@ class VectorMemory:
             record_degradation('vector_memory', e)
             logger.error("Failed to batch upsert fallback memories to DB: %s", e)
 
-    def _upsert_fallback(self, doc_id: str, content: str, metadata: Dict[str, Any]):
+    def _upsert_fallback(self, doc_id: str, content: str, metadata: dict[str, Any]):
         """Persist a single entry to SQLite fallback."""
         if self._sqlite_vectors is None:
             return
@@ -195,7 +206,7 @@ class VectorMemory:
             record_degradation('vector_memory', e)
             logger.error("Failed to upsert fallback memory to DB: %s", e)
 
-    def _fallback_keyword_search(self, query: str, limit: int) -> List[Dict[str, Any]]:
+    def _fallback_keyword_search(self, query: str, limit: int) -> list[dict[str, Any]]:
         """Compatibility path for tests that inject ``_store`` directly."""
         query_words = set(query.lower().split())
         if not query_words:
@@ -220,15 +231,22 @@ class VectorMemory:
 
     def _async_upsert_loop(self) -> None:
         """Background thread for ChromaDB upserts to avoid event loop blocking."""
-        while True:
+        while not self._upsert_stop.is_set():
             try:
                 batch = []
-                batch.append(self._upsert_queue.get(timeout=1.0))
-                while not self._upsert_queue.empty() and len(batch) < 100:
+                item = self._upsert_queue.get(timeout=0.2)
+                if item is _UPSERT_QUEUE_STOP:
+                    break
+                batch.append(item)
+                while not self._upsert_stop.is_set() and len(batch) < 100:
                     try:
-                        batch.append(self._upsert_queue.get_nowait())
+                        item = self._upsert_queue.get_nowait()
                     except queue.Empty:
                         break
+                    if item is _UPSERT_QUEUE_STOP:
+                        self._upsert_stop.set()
+                        break
+                    batch.append(item)
                 if batch:
                     ids = [i[0] for i in batch]
                     documents = [i[1] for i in batch]
@@ -244,11 +262,40 @@ class VectorMemory:
                 logger.debug("Async Chroma writer error: %s", e)
                 time.sleep(1.0)
 
+    def close(self, timeout_s: float = 2.0) -> None:
+        """Stop the Chroma upsert worker deterministically."""
+        if self._closed:
+            return
+        self._closed = True
+        self._upsert_stop.set()
+        if self._upsert_thread is None:
+            return
+        try:
+            self._upsert_queue.put_nowait(_UPSERT_QUEUE_STOP)
+        except queue.Full:
+            try:
+                self._upsert_queue.get_nowait()
+                self._upsert_queue.put_nowait(_UPSERT_QUEUE_STOP)
+            except queue.Empty:
+                logger.debug("VectorMemory upsert queue drained before stop sentinel")
+        if threading.current_thread() is self._upsert_thread:
+            return
+        if self._upsert_thread.is_alive():
+            self._upsert_thread.join(timeout=max(0.0, float(timeout_s)))
+            if self._upsert_thread.is_alive():
+                logger.warning("VectorMemory upsert writer did not stop within %.2fs", timeout_s)
+
+    def on_stop(self) -> None:
+        self.close()
+
+    def cleanup(self) -> None:
+        self.close()
+
     def add_memory(
         self,
         content: str,
-        metadata: Optional[Dict] = None,
-        _id: Optional[str] = None,
+        metadata: dict | None = None,
+        _id: str | None = None,
     ) -> bool:
         """Persist a text memory with optional metadata and emotional state."""
         if not content:
@@ -287,6 +334,9 @@ class VectorMemory:
         
         # Ensure last_accessed is set
         meta.setdefault("last_accessed", time.time())
+        if self._closed or self._upsert_stop.is_set():
+            logger.warning("VectorMemory add rejected because upsert writer is closed: %s", doc_id)
+            return False
 
         try:
             self._upsert_queue.put_nowait((doc_id, content, meta))
@@ -300,7 +350,7 @@ class VectorMemory:
             logger.error("VectorMemory.add_memory enqueue failed: %s", e)
             return False
 
-    def search_similar(self, query: str, limit: int = 5, **kwargs) -> List[Dict]:
+    def search_similar(self, query: str, limit: int = 5, **kwargs) -> list[dict]:
         """Return semantically similar memories, biased by Emotional Salience."""
         if not query:
             return []
@@ -427,7 +477,7 @@ class VectorMemory:
             logger.error("VectorMemory.search_similar failed: %s", e)
             return []
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Return collection statistics."""
         if self._fallback_mode:
             total = self._sqlite_vectors.count() if self._sqlite_vectors is not None else len(self._store)
@@ -444,14 +494,14 @@ class VectorMemory:
     # Aliases — compatibility
     # ------------------------------------------------------------------
 
-    def add(self, content: str, metadata: Optional[Dict] = None, **kwargs) -> bool:
+    def add(self, content: str, metadata: dict | None = None, **kwargs) -> bool:
         return self.add_memory(content, metadata=metadata, _id=kwargs.get("_id"))
 
-    async def index(self, content: str, metadata: Optional[Dict] = None, **kwargs) -> bool:
+    async def index(self, content: str, metadata: dict | None = None, **kwargs) -> bool:
         """Async shim for MemoryManager compatibility."""
         return await asyncio.to_thread(self.add_memory, content, metadata=metadata, **kwargs)
 
-    def search(self, query: str = "", limit: int = 5, k: int = 0, **kwargs) -> List[Dict]:
+    def search(self, query: str = "", limit: int = 5, k: int = 0, **kwargs) -> list[dict]:
         effective_limit = k if k > 0 else limit
         return self.search_similar(query or "", limit=effective_limit)
 
@@ -511,7 +561,7 @@ class VectorMemory:
             ids = results.get("ids", [])
             metas = results.get("metadatas", [])
 
-            for _id, meta in zip(ids, metas):
+            for _id, meta in zip(ids, metas, strict=False):
                 last_access = meta.get("last_accessed", meta.get("timestamp", 0))
                 valence = meta.get("valence", 0.0)
                 

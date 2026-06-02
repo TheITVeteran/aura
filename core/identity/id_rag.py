@@ -16,14 +16,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import queue
 import re
 import sqlite3
-import time
 import threading
-import queue
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 logger = logging.getLogger("Aura.Identity.IDRAG")
 
@@ -132,7 +133,7 @@ class IdentityChronicle:
         self._writer_thread = threading.Thread(target=self._async_writer_loop, daemon=True, name="IDRAGWriter")
         self._writer_thread.start()
 
-    def __enter__(self) -> "IdentityChronicle":
+    def __enter__(self) -> IdentityChronicle:
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
@@ -156,7 +157,7 @@ class IdentityChronicle:
                 self._access_queue.get_nowait()
                 self._access_queue.put_nowait(_ACCESS_QUEUE_STOP)
             except queue.Empty:
-                pass
+                logger.debug("ID-RAG access queue drained before stop sentinel")
         if threading.current_thread() is self._writer_thread:
             return
         if self._writer_thread.is_alive():
@@ -361,7 +362,7 @@ class IdentityChronicle:
                     break
                 batch.append(item)
                 # Drain the rest of the queue
-                while True:
+                while not self._writer_stop.is_set():
                     try:
                         item = self._access_queue.get_nowait()
                     except queue.Empty:
@@ -401,7 +402,7 @@ class IdentityChronicle:
         )
 
 
-_chronicle_singleton: Optional[IdentityChronicle] = None
+_chronicle_singleton: IdentityChronicle | None = None
 
 
 def get_identity_chronicle() -> IdentityChronicle:

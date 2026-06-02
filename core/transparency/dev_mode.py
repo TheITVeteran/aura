@@ -12,18 +12,21 @@ This enables collaborative development and debugging while maintaining
 security boundaries.
 """
 
-import json
+import asyncio
 import logging
 import time
-from dataclasses import dataclass, asdict, field
-from typing import Any, Dict, List, Optional, Callable
-from enum import Enum
-import asyncio
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
+_DEV_MODE_CALLBACK_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
-class TransparencyLevel(str, Enum):
+class TransparencyLevel(StrEnum):
     """Verbosity levels for transparency output."""
     SILENT = "silent"          # No transparency
     MINIMAL = "minimal"        # Errors and major milestones only
@@ -40,9 +43,9 @@ class ThoughtTrace:
     reasoning: str = ""
     confidence: float = 0.0
     decision: str = ""
-    alternatives: List[str] = field(default_factory=list)
+    alternatives: list[str] = field(default_factory=list)
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -51,14 +54,14 @@ class ToolExecutionTrace:
     """Records a tool execution event."""
     timestamp: float = field(default_factory=time.time)
     tool_name: str = ""
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     status: str = "pending"  # pending, running, succeeded, failed
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
     execution_time_ms: float = 0.0
     origin: str = "unknown"
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         # Don't leak sensitive param details in logs
         d["params"] = {k: "***" if k in {"password", "token", "secret", "key"} else v 
@@ -72,12 +75,12 @@ class ConsentRequest:
     timestamp: float = field(default_factory=time.time)
     request_type: str = ""  # tool_execution, memory_write, state_mutation, etc.
     description: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
     requires_user_input: bool = False
     approved: bool = False
     approval_reason: str = ""
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -96,12 +99,12 @@ class DevMode:
     
     def __init__(self, level: TransparencyLevel = TransparencyLevel.NORMAL):
         self.level = level
-        self.thought_traces: List[ThoughtTrace] = []
-        self.tool_traces: List[ToolExecutionTrace] = []
-        self.consent_requests: List[ConsentRequest] = []
+        self.thought_traces: list[ThoughtTrace] = []
+        self.tool_traces: list[ToolExecutionTrace] = []
+        self.consent_requests: list[ConsentRequest] = []
         self.active_session_id = ""
-        self._callbacks: List[Callable[[str, Dict[str, Any]], None]] = []
-        self._lock: Optional[asyncio.Lock] = None  # Lazy-loaded in async context
+        self._callbacks: list[Callable[[str, dict[str, Any]], None]] = []
+        self._lock: asyncio.Lock | None = None  # Lazy-loaded in async context
     
     async def _get_lock(self) -> asyncio.Lock:
         """Get or create the async lock (lazy-loaded)."""
@@ -117,7 +120,7 @@ class DevMode:
     
     async def record_thought(self, objective: str, reasoning: str, 
                             confidence: float = 0.5, decision: str = "",
-                            alternatives: List[str] = None) -> ThoughtTrace:
+                            alternatives: list[str] | None = None) -> ThoughtTrace:
         """Record a reasoning step for visibility."""
         if self.level == TransparencyLevel.SILENT:
             return ThoughtTrace()
@@ -142,7 +145,7 @@ class DevMode:
         
         return trace
     
-    async def record_tool_execution(self, tool_name: str, params: Dict[str, Any],
+    async def record_tool_execution(self, tool_name: str, params: dict[str, Any],
                                    origin: str = "unknown") -> ToolExecutionTrace:
         """Record the start of tool execution."""
         trace = ToolExecutionTrace(
@@ -165,8 +168,8 @@ class DevMode:
         
         return trace
     
-    async def complete_tool_execution(self, trace: ToolExecutionTrace, 
-                                     result: Dict[str, Any], 
+    async def complete_tool_execution(self, trace: ToolExecutionTrace,
+                                     result: dict[str, Any],
                                      execution_time_ms: float = 0.0):
         """Record tool execution completion."""
         trace.status = "succeeded" if result.get("ok", False) else "failed"
@@ -186,7 +189,7 @@ class DevMode:
         await self._emit_event("tool_completed", trace.to_dict())
     
     async def record_consent_request(self, request_type: str, description: str,
-                                    details: Dict[str, Any] = None,
+                                    details: dict[str, Any] | None = None,
                                     requires_user: bool = False) -> ConsentRequest:
         """Record a consent/approval request."""
         request = ConsentRequest(
@@ -233,19 +236,19 @@ class DevMode:
         
         await self._emit_event("consent_denied", request.to_dict())
     
-    def get_thought_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_thought_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent thoughts for inspection."""
         return [t.to_dict() for t in self.thought_traces[-limit:]]
     
-    def get_tool_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_tool_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent tool executions for inspection."""
         return [t.to_dict() for t in self.tool_traces[-limit:]]
     
-    def get_consent_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_consent_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent consent requests for inspection."""
         return [c.to_dict() for c in self.consent_requests[-limit:]]
     
-    async def get_session_summary(self) -> Dict[str, Any]:
+    async def get_session_summary(self) -> dict[str, Any]:
         """Get a summary of the current session."""
         async with await self._get_lock():
             return {
@@ -260,12 +263,12 @@ class DevMode:
                 "timestamp": time.time(),
             }
     
-    async def register_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
+    async def register_callback(self, callback: Callable[[str, dict[str, Any]], None]):
         """Register a callback for transparency events."""
         async with await self._get_lock():
             self._callbacks.append(callback)
     
-    async def _emit_event(self, event_type: str, data: Dict[str, Any]):
+    async def _emit_event(self, event_type: str, data: dict[str, Any]):
         """Emit a transparency event to all registered callbacks."""
         async with await self._get_lock():
             callbacks = list(self._callbacks)
@@ -276,12 +279,13 @@ class DevMode:
                     await callback(event_type, data)
                 else:
                     callback(event_type, data)
-            except Exception as e:
+            except _DEV_MODE_CALLBACK_ERRORS as e:
+                record_degradation("dev_mode.callback", e)
                 logger.warning("DevMode callback failed: %s", e)
 
 
 # Global dev mode instance
-_dev_mode_instance: Optional[DevMode] = None
+_dev_mode_instance: DevMode | None = None
 
 
 def get_dev_mode(level: TransparencyLevel = TransparencyLevel.NORMAL) -> DevMode:
