@@ -37,6 +37,16 @@ def render_markdown(summary: ForecastRunSummary) -> str:
         f"(`{summary.registry['executive_decision_history_basis']}`)",
         f"- Cognitive thought history cap: `{summary.registry['cognitive_thought_history_max']}` thoughts "
         f"(`{summary.registry['cognitive_thought_history_basis']}`)",
+        f"- Learning execution history cap: `{summary.registry['learning_execution_history_max']}` executions "
+        f"(`{summary.registry['learning_execution_history_basis']}`)",
+        f"- Metacognitive reasoning history cap: `{summary.registry['metacognitive_reasoning_history_max']}` assessments "
+        f"(`{summary.registry['metacognitive_reasoning_history_basis']}`)",
+        f"- Omni-reflector history cap: `{summary.registry['omni_reflector_history_max']}` entries "
+        f"(`{summary.registry['omni_reflector_history_basis']}`)",
+        f"- Global Workspace history cap: `{summary.registry['global_workspace_history_max']}` work items "
+        f"(`{summary.registry['global_workspace_history_basis']}`)",
+        f"- Live learner buffer cap: `{summary.registry['live_learner_buffer_max_examples']}` examples "
+        f"(`{summary.registry['live_learner_buffer_basis']}`)",
         f"- Governance/action receipt caps: action log `{summary.registry['unified_action_log_max_entries']}`, "
         f"will audit `{summary.registry['unified_will_audit_max_entries']}`, "
         f"authority audit `{summary.registry['authority_audit_max_entries']}`, "

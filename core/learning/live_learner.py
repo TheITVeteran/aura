@@ -15,6 +15,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.memory.retention_policy import training_buffer_retention_policy
 from core.tasks.managed_command import run_project_command
 
 logger = logging.getLogger("Aura.LiveLearner")
@@ -357,8 +358,9 @@ class LiveLearner:
         self._fused_dir = self._repo_dir / "training" / "fused-model"
         self._active_model_manifest = self._fused_dir / "active.json"
         self._policy = TrainingPolicy.from_env()
+        self._buffer_retention_policy = training_buffer_retention_policy()
 
-        self._buffer:         deque   = deque(maxlen=5000)
+        self._buffer:         deque   = deque(maxlen=self._buffer_retention_policy.max_items)
         self._lock:           threading.Lock = threading.Lock()
         self._training_lock:  threading.Lock = threading.Lock()
         self._last_train_time: float  = 0.0

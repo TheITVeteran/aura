@@ -261,6 +261,45 @@ def state_log_retention_policy(*, ram_gb: float | None = None) -> MemoryRetentio
     )
 
 
+def training_buffer_retention_policy(*, ram_gb: float | None = None) -> MemoryRetentionPolicy:
+    """Return retention for live-learning examples.
+
+    Training examples can be bulkier than compact memories, but the old 5k
+    ceiling was too small for long-running launched systems.  Keep this below
+    durable memory vault caps while still making high-RAM machines useful.
+    """
+    if "AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES" in os.environ:
+        max_items = _env_int(
+            "AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES",
+            25_000,
+            low=1_000,
+            high=1_000_000,
+        )
+        basis = "env:AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES"
+    else:
+        ram = physical_ram_gb() if ram_gb is None else float(ram_gb)
+        if ram >= 48.0:
+            max_items = 50_000
+            basis = "ram>=48gb"
+        elif ram >= 32.0:
+            max_items = 25_000
+            basis = "ram>=32gb"
+        elif ram >= 16.0:
+            max_items = 15_000
+            basis = "ram>=16gb"
+        elif ram >= 8.0:
+            max_items = 10_000
+            basis = "ram>=8gb"
+        else:
+            max_items = 5_000
+            basis = "ram<8gb"
+    return MemoryRetentionPolicy(
+        max_items=max_items,
+        prune_keep_fraction=0.95,
+        basis=basis,
+    )
+
+
 def sovereign_pruner_target_retention() -> float:
     return _env_float(
         "AURA_SOVEREIGN_PRUNER_TARGET_RETENTION",

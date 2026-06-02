@@ -17,8 +17,9 @@ import asyncio
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.meta.mirror_layer import MirrorLayer
 
 logger = logging.getLogger("AGI.MetaCognition")
@@ -72,7 +73,9 @@ class MetaCognitiveMonitor:
     def __init__(self, cognitive_engine):
         self.brain = cognitive_engine
         self.reasoning_history: List[MetaCognitiveAssessment] = []
-        self.max_history = 100
+        self.max_history = working_history_retention_policy(
+            "AURA_METACOGNITIVE_REASONING_HISTORY_MAX",
+        ).max_items
         logger.info("MetaCognitiveMonitor initialized")
     
     async def assess_reasoning(
@@ -234,7 +237,9 @@ class OmniReflector:
         self.reflections: List[Reflection] = []
         self.experience_log: List[Dict[str, Any]] = []
         self.max_depth = 3
-        self.max_history = 100
+        self.max_history = working_history_retention_policy(
+            "AURA_OMNI_REFLECTOR_HISTORY_MAX",
+        ).max_items
         logger.info("OmniReflector initialized")
 
     async def reflect_on_experience(self, experience: Dict[str, Any], depth: int = 1):

@@ -12,6 +12,7 @@ from core.memory.retention_policy import (
     long_term_retention_policy,
     sovereign_pruner_target_retention,
     state_log_retention_policy,
+    training_buffer_retention_policy,
     working_history_retention_policy,
 )
 
@@ -71,6 +72,39 @@ def test_state_log_retention_policy_raises_legacy_cap_without_unbounded_growth(m
     assert state_log_retention_policy(ram_gb=64).max_items == 5_000
     assert state_log_retention_policy(ram_gb=16).max_items == 2_000
     assert state_log_retention_policy(ram_gb=4).max_items == 500
+
+
+def test_training_buffer_retention_policy_exceeds_live_learner_legacy_cap(monkeypatch) -> None:
+    monkeypatch.delenv("AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES", raising=False)
+
+    assert training_buffer_retention_policy(ram_gb=64).max_items == 50_000
+    assert training_buffer_retention_policy(ram_gb=16).max_items == 15_000
+    assert training_buffer_retention_policy(ram_gb=4).max_items == 5_000
+
+
+def test_training_buffer_retention_policy_honors_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES", "75000")
+
+    policy = training_buffer_retention_policy(ram_gb=4)
+
+    assert policy.max_items == 75_000
+    assert policy.basis == "env:AURA_LIVE_LEARNER_BUFFER_MAX_EXAMPLES"
+
+
+def test_runtime_cognition_histories_use_working_retention_policy(monkeypatch) -> None:
+    monkeypatch.setenv("AURA_LEARNING_EXECUTION_HISTORY_MAX", "1200")
+    monkeypatch.setenv("AURA_METACOGNITIVE_REASONING_HISTORY_MAX", "1300")
+    monkeypatch.setenv("AURA_OMNI_REFLECTOR_HISTORY_MAX", "1400")
+    monkeypatch.setenv("AURA_GLOBAL_WORKSPACE_HISTORY_MAX", "1500")
+
+    from core.consciousness.metacognition import MetaCognitiveMonitor, OmniReflector
+    from core.global_workspace import GlobalWorkspace
+    from core.memory.learning.learning_system import LearningSystem
+
+    assert LearningSystem()._execution_history_max == 1_200
+    assert MetaCognitiveMonitor(None).max_history == 1_300
+    assert OmniReflector(None).max_history == 1_400
+    assert GlobalWorkspace().max_history == 1_500
 
 
 def test_governance_receipt_buffers_use_working_history_policy() -> None:

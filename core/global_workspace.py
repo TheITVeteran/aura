@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
 from uuid import uuid4
 
+from core.memory.retention_policy import working_history_retention_policy
+
 logger = logging.getLogger("Aura.GlobalWorkspace")
 
 @dataclass(order=True)
@@ -53,7 +55,9 @@ class GlobalWorkspace:
         self._queue = []
         self._subscribers: List[Callable[[WorkItem], Any]] = []
         self._lock = asyncio.Lock()
-        self.max_history = 500
+        self.max_history = working_history_retention_policy(
+            "AURA_GLOBAL_WORKSPACE_HISTORY_MAX",
+        ).max_items
         self._history = HistoryBuffer(self.max_history) # Phase 16: Narrative History
         self._stop = False
         logger.info("Global Workspace initialized.")

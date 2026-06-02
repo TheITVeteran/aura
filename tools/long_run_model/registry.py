@@ -22,6 +22,7 @@ from core.memory.episodic_memory import EpisodicMemory
 from core.memory.retention_policy import (
     black_hole_retention_policy,
     hybrid_memory_retention_policy,
+    training_buffer_retention_policy,
     working_history_retention_policy,
 )
 from core.memory.scar_formation import _MAX_SCARS
@@ -115,6 +116,16 @@ class RuntimeRegistry:
     executive_decision_history_basis: str
     cognitive_thought_history_max: int
     cognitive_thought_history_basis: str
+    learning_execution_history_max: int
+    learning_execution_history_basis: str
+    metacognitive_reasoning_history_max: int
+    metacognitive_reasoning_history_basis: str
+    omni_reflector_history_max: int
+    omni_reflector_history_basis: str
+    global_workspace_history_max: int
+    global_workspace_history_basis: str
+    live_learner_buffer_max_examples: int
+    live_learner_buffer_basis: str
     unified_action_log_max_entries: int
     unified_will_audit_max_entries: int
     authority_audit_max_entries: int
@@ -218,6 +229,23 @@ def build_registry() -> RuntimeRegistry:
         "AURA_COGNITIVE_THOUGHT_HISTORY_MAX",
         ram_gb=64.0,
     )
+    learning_execution_policy = working_history_retention_policy(
+        "AURA_LEARNING_EXECUTION_HISTORY_MAX",
+        ram_gb=64.0,
+    )
+    metacognitive_history_policy = working_history_retention_policy(
+        "AURA_METACOGNITIVE_REASONING_HISTORY_MAX",
+        ram_gb=64.0,
+    )
+    omni_reflector_policy = working_history_retention_policy(
+        "AURA_OMNI_REFLECTOR_HISTORY_MAX",
+        ram_gb=64.0,
+    )
+    global_workspace_policy = working_history_retention_policy(
+        "AURA_GLOBAL_WORKSPACE_HISTORY_MAX",
+        ram_gb=64.0,
+    )
+    live_learner_buffer_policy = training_buffer_retention_policy(ram_gb=64.0)
     backup_manager = BackupManager()
     ltm_engine = LongTermMemoryEngine()
     repo = StateRepository(db_path=":memory:")
@@ -466,6 +494,16 @@ def build_registry() -> RuntimeRegistry:
         executive_decision_history_basis=str(executive_history_policy.basis),
         cognitive_thought_history_max=int(cognitive_history_policy.max_items),
         cognitive_thought_history_basis=str(cognitive_history_policy.basis),
+        learning_execution_history_max=int(learning_execution_policy.max_items),
+        learning_execution_history_basis=str(learning_execution_policy.basis),
+        metacognitive_reasoning_history_max=int(metacognitive_history_policy.max_items),
+        metacognitive_reasoning_history_basis=str(metacognitive_history_policy.basis),
+        omni_reflector_history_max=int(omni_reflector_policy.max_items),
+        omni_reflector_history_basis=str(omni_reflector_policy.basis),
+        global_workspace_history_max=int(global_workspace_policy.max_items),
+        global_workspace_history_basis=str(global_workspace_policy.basis),
+        live_learner_buffer_max_examples=int(live_learner_buffer_policy.max_items),
+        live_learner_buffer_basis=str(live_learner_buffer_policy.basis),
         unified_action_log_max_entries=int(UNIFIED_ACTION_LOG_MAX_ENTRIES),
         unified_will_audit_max_entries=int(UnifiedWill._MAX_AUDIT_TRAIL),
         authority_audit_max_entries=int(authority_audit._MAX_ENTRIES),

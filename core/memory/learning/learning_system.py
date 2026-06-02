@@ -1,11 +1,11 @@
 """core/memory/learning/learning_system.py — Canonical location for LearningSystem"""
-from core.runtime.errors import record_degradation
-import json
 import logging
 import asyncio
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from core.memory.retention_policy import working_history_retention_policy
 
 logger = logging.getLogger("Aura.Learning")
 
@@ -16,7 +16,9 @@ class LearningSystem:
         self.logger = logger
         self.vector_memory = vector_memory
         self.execution_history: list = []
-        self._execution_history_max = 500
+        self._execution_history_max = working_history_retention_policy(
+            "AURA_LEARNING_EXECUTION_HISTORY_MAX",
+        ).max_items
         self.strategy_stats = defaultdict(lambda: {
             "attempts": 0, "successes": 0, "failures": 0, "avg_quality": 0.0
         })
