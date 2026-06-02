@@ -7,7 +7,11 @@ import pytest
 from core.memory.black_hole_vault import BlackHoleVault
 from core.memory.memory_facade import MemoryFacade
 from core.skills.memory_ops import MemoryOpsInput, MemoryOpsSkill
-from interface.routes.memory import api_memory_goals, api_memory_semantic
+from interface.routes.memory import (
+    _build_episodic_memory_response,
+    api_memory_goals,
+    api_memory_semantic,
+)
 
 
 @pytest.mark.asyncio
@@ -113,6 +117,62 @@ async def test_api_memory_semantic_reads_semantic_store(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_api_memory_semantic_reports_degraded_backend_failure(monkeypatch):
+    class _FailingSemanticStore:
+        def __init__(self):
+            self.called = False
+
+        def get(self, _ids=None, limit=None, include=None):
+            self.called = True
+            raise RuntimeError("semantic store unavailable")
+
+    store = _FailingSemanticStore()
+    monkeypatch.setattr(
+        "interface.routes.memory.ServiceContainer.get",
+        staticmethod(lambda name, default=None: store if name == "semantic_memory" else default),
+    )
+
+    response = await api_memory_semantic(limit=10, offset=0, _=None, __=None)
+    payload = json.loads(response.body)
+
+    assert store.called is True
+    assert payload["items"] == []
+    assert payload["degraded"] is True
+    assert "Semantic memory failed" in payload["degradation_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_api_memory_episodic_reports_degraded_recall_failure(monkeypatch):
+    class _FailingMemoryManager:
+        def __init__(self):
+            self.called = False
+
+        async def recall(self, *_args, **_kwargs):
+            self.called = True
+            raise RuntimeError("episodic recall unavailable")
+
+    manager = _FailingMemoryManager()
+
+    def _get_service(name, default=None):
+        if name == "memory_manager":
+            return manager
+        return default
+
+    monkeypatch.setattr(
+        "interface.routes.memory.ServiceContainer.get",
+        staticmethod(_get_service),
+    )
+
+    response = await _build_episodic_memory_response(limit=10, offset=0)
+    payload = json.loads(response.body)
+
+    assert manager.called is True
+    assert payload["items"] == []
+    assert payload["degraded"] is True
+    assert "Memory manager recall failed" in payload["degradation_reasons"]
+
+
+@pytest.mark.asyncio
 async def test_api_memory_goals_prefers_canonical_goal_engine(monkeypatch):
     fake_goal_engine = SimpleNamespace(
         build_snapshot=lambda limit, include_external=True: {
@@ -147,6 +207,33 @@ async def test_api_memory_goals_prefers_canonical_goal_engine(monkeypatch):
     assert payload["summary"]["active_count"] == 1
     assert payload["summary"]["completed_count"] == 1
     assert payload["items"][0]["source"] == "goal_engine"
+
+
+@pytest.mark.asyncio
+async def test_api_memory_goals_reports_degraded_planner_failure(monkeypatch):
+    class _FailingPlannerStore:
+        def __init__(self):
+            self.called = False
+
+        def get_active_projects(self):
+            self.called = True
+            raise RuntimeError("planner store unavailable")
+
+    planner_store = _FailingPlannerStore()
+    planner = SimpleNamespace(store=planner_store)
+
+    monkeypatch.setattr(
+        "interface.routes.memory.ServiceContainer.get",
+        staticmethod(lambda name, default=None: planner if name == "strategic_planner" else default),
+    )
+
+    response = await api_memory_goals(limit=10, _=None)
+    payload = json.loads(response.body)
+
+    assert planner_store.called is True
+    assert payload["degraded"] is True
+    assert "Strategic planner goals failed" in payload["degradation_reasons"]
+    assert payload["summary"]["active_count"] == 0
 
 
 def test_black_hole_vault_get_prefers_most_recent_items_when_limited():

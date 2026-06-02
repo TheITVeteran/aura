@@ -78,6 +78,32 @@ async def test_stop_cancels_background_and_deliberation_tasks():
 
 
 @pytest.mark.asyncio
+async def test_run_applies_backoff_after_recoverable_cycle_failure(monkeypatch):
+    import core.cognitive_loop as cognitive_loop_module
+
+    sleeps = []
+    loop = CognitiveLoop(SimpleNamespace())
+    loop.is_running = True
+
+    async def failed_cycle():
+        raise RuntimeError("cycle dependency failed")
+
+    async def fake_sleep(delay: float):
+        sleeps.append(delay)
+        loop.is_running = False
+
+    loop._process_cycle = failed_cycle
+    monkeypatch.setattr(cognitive_loop_module.asyncio, "sleep", fake_sleep)
+
+    try:
+        await loop.run()
+    finally:
+        close_loop(loop)
+
+    assert sleeps == [1.0]
+
+
+@pytest.mark.asyncio
 async def test_run_recovers_stalled_cycle():
     recovered = asyncio.Event()
     loop = CognitiveLoop(SimpleNamespace())

@@ -32,6 +32,14 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IntentGate")
+_INTENT_GATE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +414,7 @@ class IntentClassifierQueue:
                 continue  # Normal idle timeout, loop continues
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except _INTENT_GATE_RECOVERABLE_ERRORS as e:
                 record_degradation('intent_gate', e)
                 if future is not None and not future.done():
                     future.set_result(RouteResult(kind=RouteKind.PASSTHROUGH))
@@ -463,7 +471,7 @@ class IntentClassifierQueue:
                         confidence=confidence,
                         latency_ms=(time.monotonic() - t0) * 1000,
                     )
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except _INTENT_GATE_RECOVERABLE_ERRORS as e:
             record_degradation('intent_gate', e)
             logger.debug("LLM intent classification failed: %s", e)
 

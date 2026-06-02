@@ -25,11 +25,13 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger("Aura.CognitiveLoop")
 
 _COGNITIVE_LOOP_RECOVERABLE_ERRORS = (
-    OSError,
-    ConnectionError,
-    TimeoutError,
-    RuntimeError,
     AttributeError,
+    ConnectionError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
     TypeError,
     ValueError,
 )
@@ -143,7 +145,7 @@ class CognitiveLoop:
                 await self._recover_from_stall()
                 if self.is_running:
                     await asyncio.sleep(1.0)
-            except Exception as e:
+            except _COGNITIVE_LOOP_RECOVERABLE_ERRORS as e:
                 _record_cognitive_loop_degradation(
                     e,
                     action="kept cognitive loop alive after failed cycle and applied backoff",

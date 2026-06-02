@@ -22,6 +22,15 @@ from interface.auth import _check_rate_limit, _require_internal
 logger = logging.getLogger("Aura.Server.Memory")
 
 router = APIRouter()
+_MEMORY_ROUTE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 # ── Pagination Helpers ────────────────────────────────────────
@@ -44,28 +53,46 @@ def _memory_page_payload(
     limit: int,
     offset: int,
     window_limit: int,
+    degradation_reasons: List[str] | None = None,
 ) -> Dict[str, Any]:
     page_items = list(items[offset : offset + limit])
     page_end = offset + len(page_items)
     has_more = len(items) > page_end or (len(items) == window_limit and len(page_items) == limit)
-    return {
+    payload = {
         "items": page_items,
         "limit": limit,
         "offset": offset,
         "count": len(page_items),
         "has_more": has_more,
     }
+    if degradation_reasons is not None:
+        payload["degraded"] = bool(degradation_reasons)
+        payload["degradation_reasons"] = list(degradation_reasons)
+    return payload
+
+
+def _record_memory_route_degradation(stage: str, exc: BaseException, reasons: List[str]) -> None:
+    reasons.append(stage)
+    record_degradation('memory', exc)
+    logger.debug("%s: %s", stage, exc)
 
 
 async def _build_episodic_memory_response(limit: int, offset: int) -> JSONResponse:
     safe_limit, safe_offset, window_limit = _normalize_memory_pagination(limit, offset)
+    degradation_reasons: List[str] = []
     try:
         ep_mem = ServiceContainer.get("episodic_memory", default=None)
         if ep_mem and hasattr(ep_mem, "recall_recent"):
             episodes = ep_mem.recall_recent(limit=window_limit)
             items = [e.to_dict() for e in episodes]
             return JSONResponse(
-                _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                _memory_page_payload(
+                    items,
+                    limit=safe_limit,
+                    offset=safe_offset,
+                    window_limit=window_limit,
+                    degradation_reasons=degradation_reasons,
+                )
             )
         mem = ServiceContainer.get("memory_manager", default=None)
         if mem and hasattr(mem, "recall"):
@@ -78,16 +105,26 @@ async def _build_episodic_memory_response(limit: int, offset: int) -> JSONRespon
                     else:
                         items.append({"context": str(i), "timestamp": time.time()})
                 return JSONResponse(
-                    _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                    _memory_page_payload(
+                        items,
+                        limit=safe_limit,
+                        offset=safe_offset,
+                        window_limit=window_limit,
+                        degradation_reasons=degradation_reasons,
+                    )
                 )
-            except Exception as e:
-                record_degradation('memory', e)
-                logger.debug("Memory recall failed: %s", e)
-    except Exception as exc:
-        record_degradation('memory', exc)
-        logger.debug("Episodic memory recall failed: %s", exc)
+            except _MEMORY_ROUTE_RECOVERABLE_ERRORS as e:
+                _record_memory_route_degradation("Memory manager recall failed", e, degradation_reasons)
+    except _MEMORY_ROUTE_RECOVERABLE_ERRORS as exc:
+        _record_memory_route_degradation("Episodic memory recall failed", exc, degradation_reasons)
     return JSONResponse(
-        _memory_page_payload([], limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+        _memory_page_payload(
+            [],
+            limit=safe_limit,
+            offset=safe_offset,
+            window_limit=window_limit,
+            degradation_reasons=degradation_reasons,
+        )
     )
 
 
@@ -109,6 +146,7 @@ def _semantic_items_from_bulk_result(payload: Dict[str, Any]) -> List[Dict[str, 
 
 async def _build_semantic_memory_response(limit: int, offset: int) -> JSONResponse:
     safe_limit, safe_offset, window_limit = _normalize_memory_pagination(limit, offset)
+    degradation_reasons: List[str] = []
     try:
         sem = ServiceContainer.get("semantic_memory", default=None)
         if sem:
@@ -119,7 +157,13 @@ async def _build_semantic_memory_response(limit: int, offset: int) -> JSONRespon
                     if items:
                         items.reverse()
                         return JSONResponse(
-                            _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                            _memory_page_payload(
+                                items,
+                                limit=safe_limit,
+                                offset=safe_offset,
+                                window_limit=window_limit,
+                                degradation_reasons=degradation_reasons,
+                            )
                         )
             if hasattr(sem, "memories"):
                 raw_memories = list(getattr(sem, "memories", []) or [])[-window_limit:]
@@ -135,7 +179,13 @@ async def _build_semantic_memory_response(limit: int, offset: int) -> JSONRespon
                 ]
                 items.reverse()
                 return JSONResponse(
-                    _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                    _memory_page_payload(
+                        items,
+                        limit=safe_limit,
+                        offset=safe_offset,
+                        window_limit=window_limit,
+                        degradation_reasons=degradation_reasons,
+                    )
                 )
             if hasattr(sem, "search"):
                 raw = await asyncio.to_thread(sem.search, "", window_limit)
@@ -152,7 +202,13 @@ async def _build_semantic_memory_response(limit: int, offset: int) -> JSONRespon
                             )
                     if items:
                         return JSONResponse(
-                            _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                            _memory_page_payload(
+                                items,
+                                limit=safe_limit,
+                                offset=safe_offset,
+                                window_limit=window_limit,
+                                degradation_reasons=degradation_reasons,
+                            )
                         )
 
         kg = ServiceContainer.get("knowledge_graph", default=None)
@@ -168,19 +224,36 @@ async def _build_semantic_memory_response(limit: int, offset: int) -> JSONRespon
                     else:
                         items.append({"key": str(r), "value": ""})
                 return JSONResponse(
-                    _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                    _memory_page_payload(
+                        items,
+                        limit=safe_limit,
+                        offset=safe_offset,
+                        window_limit=window_limit,
+                        degradation_reasons=degradation_reasons,
+                    )
                 )
             if hasattr(kg, "get_stats"):
                 stats = kg.get_stats()
                 items = [{"key": k, "value": str(v)} for k, v in stats.items()]
                 return JSONResponse(
-                    _memory_page_payload(items, limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+                    _memory_page_payload(
+                        items,
+                        limit=safe_limit,
+                        offset=safe_offset,
+                        window_limit=window_limit,
+                        degradation_reasons=degradation_reasons,
+                    )
                 )
-    except Exception as exc:
-        record_degradation('memory', exc)
-        logger.debug("Semantic memory failed: %s", exc)
+    except _MEMORY_ROUTE_RECOVERABLE_ERRORS as exc:
+        _record_memory_route_degradation("Semantic memory failed", exc, degradation_reasons)
     return JSONResponse(
-        _memory_page_payload([], limit=safe_limit, offset=safe_offset, window_limit=window_limit)
+        _memory_page_payload(
+            [],
+            limit=safe_limit,
+            offset=safe_offset,
+            window_limit=window_limit,
+            degradation_reasons=degradation_reasons,
+        )
     )
 
 
@@ -224,6 +297,7 @@ async def api_memory_goals(limit: int = 20, _: None = Depends(_require_internal)
     """Retrieve the unified goal lifecycle snapshot."""
     goals: List[Dict[str, Any]] = []
     summary: Dict[str, Any] = {}
+    degradation_reasons: List[str] = []
     try:
         goal_engine = ServiceContainer.get("goal_engine", default=None)
         if goal_engine and hasattr(goal_engine, "build_snapshot"):
@@ -264,9 +338,8 @@ async def api_memory_goals(limit: int = 20, _: None = Depends(_require_internal)
                         "status": getattr(p, "status", "active"),
                         "source": "strategic",
                     })
-            except Exception as _exc:
-                record_degradation('memory', _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
+            except _MEMORY_ROUTE_RECOVERABLE_ERRORS as _exc:
+                _record_memory_route_degradation("Strategic planner goals failed", _exc, degradation_reasons)
 
         # 3. Orchestrator goal queue
         orch = ServiceContainer.get("orchestrator", default=None)
@@ -293,12 +366,15 @@ async def api_memory_goals(limit: int = 20, _: None = Depends(_require_internal)
                         "status": "active",
                         "source": "belief_graph",
                     })
-    except Exception as exc:
-        record_degradation('memory', exc)
-        logger.debug("Goals retrieval failed: %s", exc)
+    except _MEMORY_ROUTE_RECOVERABLE_ERRORS as exc:
+        _record_memory_route_degradation("Goals retrieval failed", exc, degradation_reasons)
     summary = {
         "active_count": sum(1 for item in goals if item.get("status") not in {"completed", "failed"}),
         "completed_count": sum(1 for item in goals if item.get("status") == "completed"),
         "failed_count": sum(1 for item in goals if item.get("status") == "failed"),
     }
-    return JSONResponse({"items": goals[:limit], "summary": summary})
+    payload: Dict[str, Any] = {"items": goals[:limit], "summary": summary}
+    if degradation_reasons:
+        payload["degraded"] = True
+        payload["degradation_reasons"] = degradation_reasons
+    return JSONResponse(payload)

@@ -16,12 +16,27 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - exercised on minimal installs
+    psutil = None
+
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
 LEGACY_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
 DEFAULT_REAPER_MANIFEST_DIR = Path.home() / ".aura" / "run" / "reaper"
 POLL_INTERVAL = 1.0  # seconds
 
 logger = logging.getLogger("Aura.Reaper")
+_PSUTIL_ERRORS = (psutil.Error,) if psutil is not None else ()
+_REAPER_PROCESS_ERRORS = (
+    *_PSUTIL_ERRORS,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 def _record_reaper_degradation(
@@ -110,7 +125,8 @@ class ReaperManifest:
             "registered_by": os.getpid(),
         }
         try:
-            import psutil
+            if psutil is None:
+                raise ImportError("psutil is required for reaper PID identity metadata")
 
             proc = psutil.Process(int(pid))
             record.update(
@@ -121,7 +137,7 @@ class ReaperManifest:
                     "cwd": proc.cwd(),
                 }
             )
-        except Exception as exc:  # pragma: no cover - defensive identity metadata path
+        except _REAPER_PROCESS_ERRORS as exc:  # pragma: no cover - defensive identity metadata path
             record["identity_error"] = f"{type(exc).__name__}: {exc}"
         return record
 
@@ -273,7 +289,15 @@ def _pid_cleanup_authorized(
         return False, pid, "legacy_pid_without_identity"
 
     try:
-        import psutil
+        if psutil is None:
+            _record_reaper_degradation(
+                ImportError("psutil is required for reaper PID identity verification"),
+                stage="pid_identity",
+                action="skipped PID cleanup because process identity verification is unavailable",
+                severity="degraded",
+                extra={"pid": pid},
+            )
+            return False, pid, "identity_check_failed:psutil_unavailable"
 
         proc = psutil.Process(pid)
         actual_create_time = float(proc.create_time())
@@ -291,7 +315,7 @@ def _pid_cleanup_authorized(
         return True, pid, "identity_verified"
     except ProcessLookupError:
         return False, pid, "missing_pid"
-    except Exception as exc:
+    except _REAPER_PROCESS_ERRORS as exc:
         if type(exc).__name__ in {"NoSuchProcess", "ZombieProcess"}:
             return False, pid, "missing_pid"
         return False, pid, f"identity_check_failed:{type(exc).__name__}"
