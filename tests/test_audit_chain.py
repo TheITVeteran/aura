@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from core.runtime.audit_chain import (
     AuditChain,
     ChainEntry,
@@ -85,6 +83,30 @@ def test_emit_appends_one_entry_per_receipt(tmp_path):
     assert result["ok"] is True
     assert result["length"] == 3
     assert result["problems"] == []
+
+
+def test_receipt_store_surfaces_chain_append_failure(tmp_path, monkeypatch):
+    store = _fresh_store(tmp_path)
+    append_attempts = []
+
+    def fail_append(**_kwargs):
+        append_attempts.append(dict(_kwargs))
+        raise RuntimeError("audit chain disk full")
+
+    monkeypatch.setattr(store._chain, "append", fail_append)
+    receipt = store.emit(TurnReceipt(receipt_id="turn-chain-gap", cause="test", origin="user"))
+
+    result = store.verify_chain()
+    reasons = [problem["reason"] for problem in result["problems"]]
+
+    assert store.get(receipt.receipt_id) is receipt
+    assert append_attempts
+    assert (tmp_path / "receipts" / "turn" / "turn-chain-gap.json").exists()
+    assert result["ok"] is False
+    assert result["chain_append_errors"]
+    assert result["missing_from_chain"] == ["turn-chain-gap"]
+    assert "chain append failed" in reasons
+    assert "receipt missing from audit chain" in reasons
 
 
 def test_chain_head_advances_monotonically(tmp_path):

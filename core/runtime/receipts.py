@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 logger = logging.getLogger("core.runtime.receipts")
 
-import json
 import threading
 import time
 import uuid
@@ -21,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
-from core.runtime.audit_chain import AuditChain, ChainEntry
+from core.runtime.audit_chain import AuditChain
 
 
 def _new_id(prefix: str) -> str:
@@ -221,6 +220,7 @@ class ReceiptStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._index: Dict[str, AnyReceipt] = {}
+        self._chain_append_errors: List[Dict[str, Any]] = []
         # Tamper-evident chain lives at root/_chain.jsonl. Sidecar; do not
         # break existing callers if the chain file cannot be initialised.
         self._chain: Optional[AuditChain] = None
@@ -253,11 +253,33 @@ class ReceiptStore:
                     body=body,
                     timestamp=float(getattr(receipt, "created_at", 0.0) or 0.0),
                 )
-            except (RuntimeError, AttributeError, TypeError):
-                # Chain failure must not bring down the emit path; the
-                # receipt is already durable.  A subsequent verify() will
-                # surface the gap.
-                pass
+            except (RuntimeError, AttributeError, TypeError) as exc:
+                # Chain failure must not bring down the emit path because the
+                # receipt body is already durable, but it must be visible to
+                # verifiers and health monitors. Otherwise a post-action body
+                # could exist without a tamper-evident authorization trail.
+                error = {
+                    "receipt_id": receipt.receipt_id,
+                    "kind": receipt.kind,
+                    "error_type": type(exc).__qualname__,
+                    "message": str(exc)[:240],
+                    "timestamp": time.time(),
+                }
+                with self._lock:
+                    self._chain_append_errors.append(error)
+                    self._chain_append_errors = self._chain_append_errors[-100:]
+                try:
+                    from core.runtime.errors import record_degradation
+
+                    record_degradation(
+                        "receipt_store",
+                        exc,
+                        severity="warning",
+                        action="receipt body persisted but audit-chain append failed; verify_chain will fail",
+                        receipt_required=False,
+                    )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as record_exc:
+                    logger.debug("Receipt chain append degradation record failed: %s", record_exc)
         return receipt
 
     def get(self, receipt_id: str) -> Optional[AnyReceipt]:
@@ -347,11 +369,32 @@ class ReceiptStore:
                 {"reason": "chain not initialised"}
             ]}
         ok, problems = self._chain.verify(body_loader=self._load_body_from_disk)
+        problems = list(problems)
+        entries = self._chain.entries()
+        chained_ids = {entry.receipt_id for entry in entries}
+        with self._lock:
+            indexed_ids = set(self._index)
+            append_errors = list(self._chain_append_errors)
+        missing_from_chain = sorted(indexed_ids - chained_ids)
+        for receipt_id in missing_from_chain:
+            receipt = self.get(receipt_id)
+            problems.append(
+                {
+                    "reason": "receipt missing from audit chain",
+                    "receipt_id": receipt_id,
+                    "kind": getattr(receipt, "kind", "unknown"),
+                }
+            )
+        for error in append_errors:
+            problems.append({"reason": "chain append failed", **error})
+        ok = bool(ok and not missing_from_chain and not append_errors)
         return {
             "ok": ok,
             "length": self._chain.length(),
             "head_hash": self._chain.head_hash(),
             "problems": problems,
+            "chain_append_errors": append_errors,
+            "missing_from_chain": missing_from_chain,
         }
 
     def export_chain(self, dest_dir: Path) -> Dict[str, Any]:
