@@ -31,6 +31,17 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ResilienceEngine")
 
+_SOMA_RESILIENCE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 
 class ResilienceState(StrEnum):
     RESTED = "rested"
@@ -367,7 +378,7 @@ class ResilienceEngine:
                         resolution="Auto-recovered: No new degradation events recorded for 300 seconds."
                     )
                     logger.info("🏥 Subsystem %s auto-recovered back to healthy.", name)
-        except Exception as err:
+        except _SOMA_RESILIENCE_RECOVERABLE_ERRORS as err:
             logger.debug("Error checking subsystem auto recovery in decay loop: %s", err)
 
 

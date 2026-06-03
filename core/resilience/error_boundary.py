@@ -8,14 +8,25 @@ import logging
 import inspect
 import time
 import traceback
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("Aura.ErrorBoundary")
 
 
 from .circuit_breaker_state import CircuitState
+
+_ERROR_BOUNDARY_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ConnectionError,
+    LookupError,
+    TypeError,
+    ValueError,
+    PermissionError,
+)
 
 
 class CircuitBreaker:
@@ -155,7 +166,7 @@ def error_boundary(
                 result = await func(*args, **kwargs)
                 breaker.record_success()
                 return result
-            except Exception as e:
+            except _ERROR_BOUNDARY_RECOVERABLE_ERRORS as e:
                 record_degradation('error_boundary', e)
                 breaker.record_failure(e)
                 logger.warning("Error in boundary [%s]: %s", breaker_name, e)
@@ -174,7 +185,7 @@ def error_boundary(
                 result = func(*args, **kwargs)
                 breaker.record_success()
                 return result
-            except Exception as e:
+            except _ERROR_BOUNDARY_RECOVERABLE_ERRORS as e:
                 record_degradation('error_boundary', e)
                 breaker.record_failure(e)
                 logger.warning("Error in boundary [%s]: %s", breaker_name, e)
@@ -232,7 +243,7 @@ async def wrap_phase(
         breaker.record_success()
         return result if result is not None else state
 
-    except Exception as e:
+    except _ERROR_BOUNDARY_RECOVERABLE_ERRORS as e:
         record_degradation('error_boundary', e)
         breaker.record_failure(e)
         _clear_failed_user_facing_response_state(phase_name, state, e)

@@ -30,6 +30,17 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ClosedLoop")
 
+_CLOSED_LOOP_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 
 def _finite_float_or_none(value: Any) -> float | None:
     try:
@@ -446,7 +457,7 @@ class OutputReceptor:
                 severity="warning",
                 stage="output_receptor_injection_task",
             )
-        except Exception as exc:
+        except _CLOSED_LOOP_RECOVERABLE_ERRORS as exc:
             _emit_closed_loop_fault(
                 exc,
                 action="recorded failed output feedback injection task for repair visibility",
@@ -961,7 +972,7 @@ class ClosedCausalLoop:
         """Run a synchronous blocking task safely in a thread pool and route any errors to our fault reporter."""
         try:
             await asyncio.to_thread(func)
-        except Exception as exc:
+        except _CLOSED_LOOP_RECOVERABLE_ERRORS as exc:
             _emit_closed_loop_fault(
                 exc,
                 action=action,

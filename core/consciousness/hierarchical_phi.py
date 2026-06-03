@@ -60,6 +60,16 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.HierarchicalPhi")
 
+_HIERARCHICAL_PHI_RECOVERABLE_ERRORS = (
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 # ── MLX availability (opportunistic) ───────────────────────────────────────────
 try:
     import mlx.core as mx  # noqa: F401
@@ -716,7 +726,7 @@ class HierarchicalPhi:
                     r = f.result(timeout=10.0)
                     if r is not None:
                         results.append(r)
-                except Exception as exc:
+                except _HIERARCHICAL_PHI_RECOVERABLE_ERRORS as exc:
                     record_degradation('hierarchical_phi', exc)
                     logger.warning("HierarchicalPhi subsystem job failed: %s", exc)
 

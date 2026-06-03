@@ -17,6 +17,17 @@ from core.state.aura_state import _origin_is_user_anchored
 
 logger = logging.getLogger("Aura.ExecutiveClosure")
 
+_EXECUTIVE_CLOSURE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 
 def _record_closure_degradation(exc: BaseException, action: str) -> None:
     try:
@@ -821,7 +832,7 @@ class ExecutiveClosureEngine:
             mods = getattr(state.cognition, "modifiers", {}) or {}
             if mods.get("task_completed") or mods.get("response_completed_task"):
                 return True
-        except Exception as exc:
+        except _EXECUTIVE_CLOSURE_RECOVERABLE_ERRORS as exc:
             _record_closure_degradation(exc, action="task completion modifier read failed")
             logger.debug("Task completion modifier read failed: %s", exc)
 
@@ -832,7 +843,7 @@ class ExecutiveClosureEngine:
                 if not active and self._commitment:
                     # Don't instantly release; allow the response phase to finish.
                     return self._commitment.age_s(time.time()) > self._commitment.min_hold_s
-        except Exception as exc:
+        except _EXECUTIVE_CLOSURE_RECOVERABLE_ERRORS as exc:
             _record_closure_degradation(exc, action="task commitment verifier read failed")
             logger.debug("Task commitment verifier read failed: %s", exc)
 

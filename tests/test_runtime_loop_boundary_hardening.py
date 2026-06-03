@@ -20,6 +20,12 @@ def _content_item(title: str):
     )
 
 
+def _raise_for_boundary_test(exc: BaseException):
+    if type(exc).__name__:
+        raise exc
+    return None
+
+
 @pytest.mark.asyncio
 async def test_model_manager_evict_loop_stops_at_capacity(monkeypatch):
     from core.utils import model_manager
@@ -114,6 +120,80 @@ def test_runtime_loop_sources_have_explicit_boundaries() -> None:
         source = Path(source_path).read_text(encoding="utf-8")
         for forbidden in forbidden_fragments:
             assert forbidden not in source
+
+
+def test_runtime_exception_boundaries_do_not_use_broad_catches() -> None:
+    source_expectations = {
+        "core/affect/affective_circumplex.py": ["except Exception", "except BaseException"],
+        "core/agency/agency_core.py": ["except Exception", "except BaseException"],
+        "core/consciousness/closed_loop.py": ["except Exception", "except BaseException"],
+        "core/consciousness/executive_closure.py": ["except Exception", "except BaseException"],
+        "core/consciousness/hierarchical_phi.py": ["except Exception", "except BaseException"],
+        "core/morphogenesis/cell.py": ["except Exception", "except BaseException"],
+        "core/phases/response_generation.py": ["except Exception", "except BaseException"],
+        "core/resilience/error_boundary.py": ["except Exception", "except BaseException"],
+        "core/resilience/phenomenal_error_map.py": ["except Exception", "except BaseException"],
+        "core/skills/base_skill.py": ["except Exception", "except BaseException"],
+        "core/soma/resilience_engine.py": ["except Exception", "except BaseException"],
+        "main_daemon.py": ["except Exception", "except BaseException"],
+    }
+
+    for source_path, forbidden_fragments in source_expectations.items():
+        source = Path(source_path).read_text(encoding="utf-8")
+        for forbidden in forbidden_fragments:
+            assert forbidden not in source
+
+
+@pytest.mark.asyncio
+async def test_error_boundary_preserves_invariant_failures() -> None:
+    from core.resilience.error_boundary import error_boundary
+
+    @error_boundary(name="unit-runtime-error", fallback_value="fallback")
+    async def recoverable_failure():
+        return _raise_for_boundary_test(RuntimeError("runtime dependency unavailable"))
+
+    @error_boundary(name="unit-invariant-error", fallback_value="fallback")
+    async def invariant_failure():
+        return _raise_for_boundary_test(AssertionError("invariant broken"))
+
+    assert await recoverable_failure() == "fallback"
+    with pytest.raises(AssertionError, match="invariant broken"):
+        await invariant_failure()
+
+
+@pytest.mark.asyncio
+async def test_phenomenal_error_map_preserves_invariant_failures() -> None:
+    from core.resilience.phenomenal_error_map import PhenomenalRaise, phenomenal
+
+    @phenomenal()
+    async def recoverable_failure():
+        return _raise_for_boundary_test(RuntimeError("network offline"))
+
+    @phenomenal()
+    async def invariant_failure():
+        return _raise_for_boundary_test(AssertionError("phenomenal invariant broken"))
+
+    with pytest.raises(PhenomenalRaise):
+        await recoverable_failure()
+    with pytest.raises(AssertionError, match="phenomenal invariant broken"):
+        await invariant_failure()
+
+
+@pytest.mark.asyncio
+async def test_closed_loop_thread_task_preserves_invariant_failures() -> None:
+    from core.consciousness.closed_loop import ClosedCausalLoop
+
+    loop = ClosedCausalLoop()
+
+    def invariant_failure():
+        return _raise_for_boundary_test(AssertionError("closed-loop invariant broken"))
+
+    with pytest.raises(AssertionError, match="closed-loop invariant broken"):
+        await loop._safe_run_thread_task(
+            invariant_failure,
+            action="unit test invariant escape",
+            stage="unit_test",
+        )
 
 
 def test_evolution_orchestrator_does_not_swallow_invariant_failures() -> None:

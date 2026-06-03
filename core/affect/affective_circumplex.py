@@ -27,6 +27,17 @@ from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("Aura.AffectiveCircumplex")
 
+_AFFECTIVE_CIRCUMPLEX_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 # LLM parameter ranges
 _TEMP_MIN      = 0.50   # Very deliberate / exact
 _TEMP_BASE     = 0.72   # Default conversational
@@ -331,7 +342,7 @@ class AffectiveCircumplex:
             if affect and hasattr(affect, "markers"):
                 feel = getattr(affect.markers, "duration_feel", "flowing")
                 temporal_note = f" Time feels {feel}."
-        except Exception as _exc:
+        except _AFFECTIVE_CIRCUMPLEX_RECOVERABLE_ERRORS as _exc:
             record_degradation('affective_circumplex', _exc)
             logger.debug("Failed to fetch duration feel: %s", _exc)
 

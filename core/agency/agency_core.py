@@ -686,7 +686,7 @@ class AgencyCore:
             from core.consciousness.coordinator import get_consciousness_coordinator
             await get_consciousness_coordinator()
             logger.info("🧠 Unified consciousness initialized and wired through agency core")
-        except Exception as e:
+        except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action="consciousness coordinator initialization skipped")
             logger.debug("Consciousness coordinator initialization failed: %s", e)
         
@@ -1113,7 +1113,7 @@ class AgencyCore:
                 person_key=getattr(self, "current_user_key", None),
             )
             return state
-        except Exception as e:
+        except _AGENCY_BOUNDARY_ERRORS as e:
             logger.debug("Blocking phenomenal pulse failed: %s", e)
             return None
 

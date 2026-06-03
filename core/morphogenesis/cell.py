@@ -7,7 +7,7 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .field import MorphogenField
 from .types import (
@@ -25,6 +25,16 @@ from .types import (
 logger = logging.getLogger("Aura.Morphogenesis.Cell")
 
 CellHandler = Callable[["MorphogenCell", List[MorphogenSignal], Dict[str, float]], Any]
+
+_CELL_HANDLER_RECOVERABLE_ERRORS = (
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass
@@ -242,7 +252,7 @@ class MorphogenCell:
                 error = "handler_timeout"
                 self.state.last_error = error
                 actions.append({"kind": "handler_timeout", "timeout_s": self.manifest.timeout_s})
-            except Exception as exc:
+            except _CELL_HANDLER_RECOVERABLE_ERRORS as exc:
                 record_degradation('cell', exc)
                 success = False
                 error = f"{type(exc).__name__}: {exc}"

@@ -23,6 +23,18 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("Skills")
 
+_SKILL_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    LookupError,
+    sqlite3.Error,
+    TypeError,
+    ValueError,
+)
+
 
 def _record_skill_degradation(
     exc: BaseException,
@@ -259,7 +271,7 @@ class BaseSkill(ABC):
                 last_err = e
                 logger.warning("🔒 Skill '%s' permission denied: %s", self.name, e)
 
-            except Exception as e:
+            except _SKILL_RECOVERABLE_ERRORS as e:
                 _record_skill_degradation(e, action="retried or failed skill execution after database/os/runtime error")
                 error_class = self._classify_error(e)
                 last_err = e

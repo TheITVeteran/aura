@@ -463,7 +463,7 @@ class ResponseGenerationPhase(BasePhase):
                             try:
                                 content = json.loads(f'"{content_match.group(1)}"')
                                 logger.info("🛡️ [HARDENING] DELIBERATE mode validation recovered content from JSON-like response using regex.")
-                            except Exception:
+                            except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
                                 content = response_text
                         else:
                             content = response_text

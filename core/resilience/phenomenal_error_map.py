@@ -33,14 +33,26 @@ from core.runtime.errors import record_degradation
 import asyncio
 import functools
 import logging
-import re
 import time
 import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Pattern, Tuple, Type
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("Aura.PhenomenalErrorMap")
+
+_PHENOMENAL_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ConnectionError,
+    LookupError,
+    TypeError,
+    ValueError,
+    PermissionError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +299,7 @@ def phenomenal(*, log_traceback: bool = True):
                 raise
             except asyncio.CancelledError:
                 raise
-            except BaseException as exc:
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 envelope = build_envelope(exc, correlation_id=kwargs.get("_correlation_id"))
                 if log_traceback:
                     logger.warning(
