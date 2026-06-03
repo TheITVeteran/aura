@@ -32,10 +32,6 @@ agency receipts so external reviewers can reconstruct the lineage of
 every code change.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import asyncio
 import json
@@ -48,10 +44,12 @@ import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
 
 logger = logging.getLogger("Aura.SelfModSafePipeline")
@@ -62,7 +60,7 @@ _LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _LEDGER_DIR / "pipeline.jsonl"
 
 
-class Stage(str, Enum):
+class Stage(StrEnum):
     PROPOSAL = "proposal"
     SANDBOX_PATCH = "sandbox_patch"
     GENERATED_TESTS = "generated_tests"
@@ -83,16 +81,16 @@ class PipelineProposal:
     file_path: str
     before_source: str
     after_source: str
-    diff_explanation: Optional[str] = None
-    rollback_plan: Optional[str] = None
-    will_receipt_id: Optional[str] = None
+    diff_explanation: str | None = None
+    rollback_plan: str | None = None
+    will_receipt_id: str | None = None
     started_at: float = field(default_factory=time.time)
-    stages_completed: List[str] = field(default_factory=list)
-    blocked_at: Optional[str] = None
-    blocked_reason: Optional[str] = None
+    stages_completed: list[str] = field(default_factory=list)
+    blocked_at: str | None = None
+    blocked_reason: str | None = None
 
 
-def _record(p: PipelineProposal, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
+def _record(p: PipelineProposal, event: str, payload: dict[str, Any] | None = None) -> None:
     try:
         with open(_LEDGER_PATH, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({
@@ -105,9 +103,9 @@ def _record(p: PipelineProposal, event: str, payload: Optional[Dict[str, Any]] =
             fh.flush()
             try:
                 os.fsync(fh.fileno())
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("self-mod pipeline ledger fsync failed: %s", exc)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('safe_pipeline', exc)
         logger.warning("self-mod pipeline ledger append failed: %s", exc)
 
@@ -118,6 +116,8 @@ def _record(p: PipelineProposal, event: str, payload: Optional[Dict[str, Any]] =
 class SafePipeline:
     SHADOW_TIMEOUT_S = 30.0
     SHADOW_MEM_MB = 512
+    POST_DEPLOY_MONITOR_S = 60.0
+    POST_DEPLOY_POLL_S = 2.0
 
     async def run(
         self,
@@ -220,18 +220,18 @@ class SafePipeline:
 
             # 8. APPROVAL
             try:
+                from core.ethics.conscience import Verdict, get_conscience
                 from core.governance.will_client import WillClient, WillRequest
                 from core.will import ActionDomain
-                from core.ethics.conscience import get_conscience, Verdict as CV
                 conscience_decision = get_conscience().evaluate(
                     action="self_modify",
                     domain="self_modification",
                     intent=intent,
                     context={"file": file_path, "diff": proposal.diff_explanation},
                 )
-                if conscience_decision.verdict == CV.REFUSE:
+                if conscience_decision.verdict == Verdict.REFUSE:
                     return self._block(proposal, Stage.APPROVAL, f"conscience_refused:{conscience_decision.rule_id}")
-                if conscience_decision.verdict == CV.REQUIRE_FRESH_USER_AUTH:
+                if conscience_decision.verdict == Verdict.REQUIRE_FRESH_USER_AUTH:
                     return self._block(proposal, Stage.APPROVAL, "require_fresh_user_auth")
                 wd = await WillClient().decide_async(
                     WillRequest(
@@ -262,8 +262,15 @@ class SafePipeline:
         finally:
             try:
                 shutil.rmtree(sandbox, ignore_errors=True)
-            except (OSError, IOError):
-                pass  # no-op: intentional
+            except OSError as exc:
+                record_degradation(
+                    "safe_pipeline",
+                    exc,
+                    severity="warning",
+                    action="recorded self-modification sandbox cleanup failure",
+                    extra={"sandbox": str(sandbox)},
+                )
+                logger.debug("self-mod pipeline sandbox cleanup failed: %s", exc)
 
     # ─── helpers ────────────────────────────────────────────────────────
 
@@ -288,7 +295,7 @@ class SafePipeline:
             "print('AST_OK', len(names))\n"
         )
 
-    async def _run_shadow(self, sandbox_file: Path) -> (bool, str):
+    async def _run_shadow(self, sandbox_file: Path) -> tuple[bool, str]:
         # Run a tiny Python subprocess with -B (no bytecode cache) and
         # ulimit-style caps where available. macOS lacks setrlimit for
         # mem in some cases, so we use a wall-clock timeout as the
@@ -303,7 +310,7 @@ class SafePipeline:
             )
             try:
                 out, err = await asyncio.wait_for(proc.communicate(), timeout=self.SHADOW_TIMEOUT_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 return False, f"shadow_timeout>{self.SHADOW_TIMEOUT_S}s"
             if proc.returncode != 0:
@@ -319,41 +326,189 @@ class SafePipeline:
         diff = list(difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="", n=2))
         return "\n".join(diff[:200])
 
+    @staticmethod
+    def _guardian_health_snapshot(guardian: Any) -> tuple[bool, dict[str, Any]]:
+        if guardian is None:
+            return False, {
+                "status": "stability_guardian_unavailable",
+                "source": "service_container",
+                "required_probe_missing": True,
+            }
+
+        try:
+            latest_report = None
+            latest_fn = getattr(guardian, "get_latest_report", None)
+            if callable(latest_fn):
+                latest_report = latest_fn()
+
+            if latest_report is not None:
+                if isinstance(latest_report, dict):
+                    health_value = latest_report.get("overall_healthy", latest_report.get("healthy"))
+                    if health_value is None:
+                        return False, {
+                            "status": "malformed_latest_report",
+                            "source": "get_latest_report",
+                            "report_keys": sorted(str(key) for key in latest_report.keys())[:20],
+                        }
+                    healthy = bool(health_value)
+                    checks = latest_report.get("checks", [])
+                    return healthy, {
+                        "status": "healthy" if healthy else "degraded",
+                        "source": "get_latest_report",
+                        "overall_healthy": healthy,
+                        "timestamp": latest_report.get("timestamp"),
+                        "check_count": len(checks) if isinstance(checks, list) else None,
+                    }
+
+                health_value = getattr(latest_report, "overall_healthy", None)
+                if health_value is None:
+                    return False, {
+                        "status": "malformed_latest_report",
+                        "source": "get_latest_report_object",
+                        "report_type": type(latest_report).__name__,
+                    }
+                healthy = bool(health_value)
+                return healthy, {
+                    "status": "healthy" if healthy else "degraded",
+                    "source": "get_latest_report_object",
+                    "overall_healthy": healthy,
+                    "timestamp": getattr(latest_report, "timestamp", None),
+                }
+
+            history = getattr(guardian, "_report_history", None)
+            if history:
+                report = history[-1]
+                health_value = getattr(report, "overall_healthy", None)
+                if health_value is not None:
+                    healthy = bool(health_value)
+                    return healthy, {
+                        "status": "healthy" if healthy else "degraded",
+                        "source": "_report_history",
+                        "overall_healthy": healthy,
+                        "timestamp": getattr(report, "timestamp", None),
+                    }
+
+            summary_fn = getattr(guardian, "get_health_summary", None)
+            if callable(summary_fn):
+                summary = summary_fn()
+                if isinstance(summary, dict):
+                    health_value = summary.get("healthy", summary.get("overall_healthy"))
+                    status = str(summary.get("status", "unknown"))
+                    if health_value is None:
+                        return False, {
+                            "status": "malformed_health_summary",
+                            "source": "get_health_summary",
+                            "summary_status": status,
+                        }
+                    required_probe_missing = bool(summary.get("required_probe_missing")) or status in {
+                        "initializing",
+                        "unavailable",
+                    }
+                    healthy = bool(health_value) and not required_probe_missing
+                    return healthy, {
+                        "status": status,
+                        "source": "get_health_summary",
+                        "healthy": healthy,
+                        "reported_healthy": bool(health_value),
+                        "required_probe_missing": required_probe_missing,
+                        "active_issue_count": len(summary.get("active_issues", []) or []),
+                    }
+
+            return False, {
+                "status": "no_stability_report",
+                "source": "stability_guardian",
+                "required_probe_missing": True,
+            }
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "safe_pipeline",
+                exc,
+                severity="warning",
+                action="marked post-deploy monitor unhealthy after StabilityGuardian read failed",
+            )
+            return False, {
+                "status": "monitor_exception",
+                "source": "stability_guardian",
+                "error": str(exc),
+            }
+
+    def _rollback_after_deploy(
+        self,
+        proposal: PipelineProposal,
+        target: Path,
+        before_source: str,
+        *,
+        reason: str,
+        detail: dict[str, Any],
+    ) -> None:
+        proposal.blocked_at = Stage.POST_DEPLOY_MONITOR.value
+        proposal.blocked_reason = reason
+        try:
+            atomic_write_text(target, before_source, encoding="utf-8")
+            _record(proposal, "rolled_back", {"reason": reason, "monitor": detail})
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            proposal.blocked_reason = f"{reason}; rollback_failed:{exc}"
+            record_degradation(
+                "safe_pipeline",
+                exc,
+                severity="critical",
+                action="post-deploy rollback failed after unhealthy self-modification monitor",
+                extra={"target": str(target), "reason": reason, "monitor": detail},
+            )
+            _record(proposal, "rollback_failed", {"reason": reason, "error": str(exc), "monitor": detail})
+
     async def _post_deploy_monitor(self, proposal: PipelineProposal, target: Path, before_source: str) -> None:
-        # Watch StabilityGuardian for 60 seconds. If anything goes red,
-        # roll back to the stem-cell snapshot.
+        # Watch StabilityGuardian after a live write. Missing or optimistic
+        # health evidence is not enough for self-modification promotion.
         try:
             from core.container import ServiceContainer
             guardian = ServiceContainer.get("stability_guardian", default=None)
-        except (ImportError, AttributeError, RuntimeError):
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "safe_pipeline",
+                exc,
+                severity="warning",
+                action="marked post-deploy monitor unhealthy because StabilityGuardian lookup failed",
+            )
             guardian = None
 
-        deadline = time.time() + 60.0
-        regression = False
-        while time.time() < deadline:
-            try:
-                if guardian is not None and hasattr(guardian, "last_report"):
-                    r = guardian.last_report
-                    if r is not None and not getattr(r, "overall_healthy", True):
-                        regression = True
-                        break
-            except (RuntimeError, AttributeError, TypeError):
-                pass  # no-op: intentional
-            await asyncio.sleep(2.0)
+        deadline = time.monotonic() + max(0.0, float(self.POST_DEPLOY_MONITOR_S))
+        healthy_samples: list[dict[str, Any]] = []
+        last_detail: dict[str, Any] = {}
+        waitable_statuses = {"initializing", "no_stability_report"}
 
-        if regression:
-            try:
-                atomic_write_text(target, before_source, encoding="utf-8")
-                _record(proposal, "rolled_back", {"reason": "regression_after_deploy"})
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('safe_pipeline', exc)
-                _record(proposal, "rollback_failed", {"error": str(exc)})
-        else:
-            _record(proposal, "post_deploy_clean")
+        while True:
+            healthy, detail = self._guardian_health_snapshot(guardian)
+            last_detail = detail
+            status = str(detail.get("status", "unknown"))
+            if healthy:
+                healthy_samples.append(detail)
+            elif status in waitable_statuses and time.monotonic() < deadline:
+                await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), deadline - time.monotonic())))
+                continue
+            else:
+                self._rollback_after_deploy(
+                    proposal,
+                    target,
+                    before_source,
+                    reason=f"post_deploy_health:{status}",
+                    detail=detail,
+                )
+                return
+
+            if time.monotonic() >= deadline:
+                _record(
+                    proposal,
+                    "post_deploy_clean",
+                    {"healthy_sample_count": len(healthy_samples), "last_monitor": last_detail},
+                )
+                break
+
+            await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), deadline - time.monotonic())))
         proposal.stages_completed.append(Stage.POST_DEPLOY_MONITOR.value)
 
 
-_PIPELINE: Optional[SafePipeline] = None
+_PIPELINE: SafePipeline | None = None
 
 
 def get_pipeline() -> SafePipeline:
