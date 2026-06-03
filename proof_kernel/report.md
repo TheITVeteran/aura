@@ -1,8 +1,9 @@
-# Aura Consciousness Proof Report
+# Aura Operational Cognition Kernel Report
 
-## Honest Claim
-This report shows a measurable consciousness-inspired architecture with causal hidden state.
-It does not prove subjective experience from the outside.
+## Evidence-Limited Claim
+This report shows measurable operational telemetry from a consciousness-inspired architecture with causal hidden state.
+It does not prove subjective experience, sentience, personhood, or private qualia from the outside.
+Names such as vitality and curiosity are functional control-state labels, not metaphysical evidence.
 
 ## Global Workspace
 - Ticks: 12
@@ -33,13 +34,13 @@ Recent stream (10 events):
 - Most unpredictable dimension: attentional_focus
 
 ## Homeostasis
-- Will to live: 0.829
+- Vitality proxy: 0.829
 - Integrity: 0.851
-- Curiosity: 0.648
+- Curiosity control state: 0.648
 
 ## Structural Opacity
 - Measurements: 12
-- Last opacity: 0.0175
-- Last causal depth: 0.3633
+- Last opacity: 0.0178
+- Last causal depth: 0.3685
 - Status: criterion_not_met (the metric is still informative even when the threshold is not crossed)
 - Specious present norm: 1.2434

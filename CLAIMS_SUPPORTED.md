@@ -49,10 +49,11 @@ This document lists the scientifically defensible, evidence-backed engineering c
 
 ## 7. Sandboxed Self-Modification
 * **Classification**: `locally demonstrated`
-* **Definition**: Synthesis of functional patches to local skill definitions, executed within a strict static checking and unit-test validation sandbox before being applied to the running execution space.
+* **Definition**: Synthesis of functional patches to local skill definitions, queued through a strict static-checking, branch-aware, and unit-test validation sandbox before any source promotion. Foreground runtime mutation is proposal-only by default.
 * **Code / Evidence Path**:
   - Mutation safety analyzer: [core/self_modification/mutation_safety.py](file:///Users/bryan/.aura/live-source/core/self_modification/mutation_safety.py)
-  - Modification sandbox: Skill mutation automated tests.
+  - Safe promotion pipeline: [core/self_modification/safe_modification.py](file:///Users/bryan/.aura/live-source/core/self_modification/safe_modification.py)
+  - Modification sandbox: Skill mutation and supervised-promotion automated tests.
 
 ## 8. Operational Volition
 * **Classification**: `causally demonstrated`

@@ -86,4 +86,4 @@ def test_report_generation_contains_all_sections() -> None:
     if not ("self_prediction" in report): raise RuntimeError('Assertion failed')
     if not ("homeostasis" in report): raise RuntimeError('Assertion failed')
     if not ("structural_opacity" in report): raise RuntimeError('Assertion failed')
-    if not ("Aura Consciousness Proof Report" in markdown): raise RuntimeError('Assertion failed')
+    if not ("Aura Operational Cognition Kernel Report" in markdown): raise RuntimeError('Assertion failed')

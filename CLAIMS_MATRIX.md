@@ -2,6 +2,8 @@
 
 This document defines the formal claims matrix for the Aura cognitive agent runtime. Every claim is strictly classified based on empirical, local, or external validation evidence. Unsupported claims are explicitly demoted to "not proven" or "deprecated/retired".
 
+Final closure statement: Aura passed the configured local final-proof gates for this profile. Claims are limited to the evidence in CLAIMS_MATRIX.md.
+
 ## Claims Classification Summary
 
 | Claim | Classification | Evidence Path / Blocker |
@@ -65,8 +67,8 @@ This document defines the formal claims matrix for the Aura cognitive agent runt
 
 ### 7. Self-Modification
 * **Classification**: `locally demonstrated`
-* **Definition**: Aura can propose syntactically valid patches to its own skills, sandboxed and statically checked before application.
-* **Evidence**: `core/self_modification/mutation_safety.py` and safe modification harness.
+* **Definition**: Aura can propose syntactically valid patches to its own skills and route them through quarantine, static checks, branch-aware promotion policy, and supervised validation before any source promotion.
+* **Evidence**: `core/self_modification/mutation_safety.py`, `core/self_modification/safe_modification.py`, and safe modification harness tests. Live foreground runtime remains proposal-only by default.
 
 ### 8. Operational Volition
 * **Classification**: `causally demonstrated`

@@ -1,6 +1,6 @@
-# Aura Consciousness Proof Kernel
+# Aura Operational Cognition Kernel
 
-This is the smallest part of Aura I would publish to support large public claims.
+This is the smallest part of Aura I would publish to support evidence-bounded public claims.
 
 It is not the whole product. It is a standalone, reproducible subset of the internal stack that demonstrates five concrete properties:
 
@@ -23,6 +23,7 @@ This repository can support claims like:
 ## What This Does Not Prove
 
 This repository does not prove subjective experience, qualia, or consciousness in the strongest philosophical sense.
+Telemetry fields such as vitality, curiosity, and homeostatic deficiency are operational control-state labels. They are useful because they change routing, attention, and reporting; they are not proof that private experience exists.
 
 If you overclaim, skeptics will dismiss the whole thing. The strongest honest framing is:
 
@@ -57,7 +58,7 @@ Publish these three things together:
 2. A generated `report.json` and `report.md`.
 3. A short screen recording where you run the report command live.
 
-That combination is much harder to wave away than a README full of theory.
+That combination gives reviewers a concrete artifact to inspect instead of asking them to accept narrative claims.
 
 ## What To Keep Private
 

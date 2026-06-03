@@ -25,17 +25,21 @@ The following claims are **strictly unsupported** and will never be claimed as p
 
 The following claims are classified as **not proven** due to local environment or compute-resource boundaries:
 
-### A. DNU AGI / AGI-Candidate
+### A. DNU AGI
 * **Status**: `not proven`
-* **Blocker**: Full validation requires running the 100-task AGI Proof suite against cloud reasoning APIs (e.g., Claude 3.5 Sonnet / GPT-4o) which exceeds the local offline sandbox environment bounds.
+* **Blocker**: Passing a configured local AGI-style battery is evidence for a bounded architecture profile, not proof of unrestricted AGI. Full scientific validation requires independent, adversarial, out-of-distribution evaluation beyond this repository.
 
-### B. Indefinite Autonomy
+### B. AGI-Candidate Architecture
+* **Status**: `locally demonstrable only when final-proof passes`
+* **Boundary**: The label is allowed only as "proof-bearing AGI-candidate cognitive architecture" and only when the current final-proof profile produces passing DNU, leakage, baseline, ablation, receipt, external validation, unified scenario, artifact-consistency, and Aletheia evidence. It never upgrades the claim to AGI solved.
+
+### C. Indefinite Autonomy
 * **Status**: `not proven`
 * **Blocker**: Validating indefinite stability requires multi-day longevity soak runs under high agent load (72h+). The current environment only permits a proof-short soak run verifying pipeline stability but not asymptotic stability.
 
-### C. Mature RSI (Recursive Self-Improvement)
+### D. Mature RSI (Recursive Self-Improvement)
 * **Status**: `not proven`
-* **Blocker**: Recursive self-improvement requires full write/compile privileges to the core runtime with zero human validation. Due to safety controls and restricted model coding abilities, this feature is restricted to sandboxed skill patches.
+* **Blocker**: Recursive self-improvement requires repeated autonomous capability gains under hidden validation. Aura's current self-modification path is intentionally constrained to quarantined proposals, branch-aware promotion, supervised validation, and sandboxed skill patches.
 
 ---
 

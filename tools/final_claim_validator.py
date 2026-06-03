@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -18,23 +17,144 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 
+EVIDENCE_LIMITED_CLOSURE_STATEMENT = (
+    "Aura passed the configured local final-proof gates for this profile. "
+    "Claims are limited to the evidence in CLAIMS_MATRIX.md."
+)
+
+CLAIM_LANGUAGE_SCAN_FILES = (
+    "CLAIMS_MATRIX.md",
+    "CLAIMS_SUPPORTED.md",
+    "CLAIMS_NOT_SUPPORTED.md",
+    "CRITIQUE_CLOSURE.md",
+    "PHENOMENAL_SUBSTRATE_INTEGRATION.md",
+    "docs/CLAIM_BOUNDARIES.md",
+    "docs/AGENCY_EMERGENCE_TEST_STANDARD.md",
+    "docs/ENTITY_IN_BOX_TEST_STANDARD.md",
+    "docs/OPERATIONAL_WILL_TEST_STANDARD.md",
+    "proof_kernel/README.md",
+    "proof_kernel/report.md",
+)
+
+BOUNDARY_CONTEXT = re.compile(
+    r"\b("
+    r"not|never|cannot|can't|cant|unsupported|unproven|blocked|blocker|"
+    r"reject|rejected|retired|deprecated|outside|without|false|"
+    r"does\s+not|do\s+not|must\s+not|may\s+not|no\s+claim|no\s+proof|"
+    r"opposite|boundary|limit|limited|strictly"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FORBIDDEN_OVERCLAIM_PATTERNS: dict[str, re.Pattern[str]] = {
+    "agi_proven": re.compile(
+        r"\b(?:agi|artificial\s+general\s+intelligence)\b.{0,64}\b"
+        r"(?:proven|proved|solved|certified|achieved)\b",
+        re.IGNORECASE,
+    ),
+    "asi_proven": re.compile(
+        r"\b(?:asi|artificial\s+superintelligence)\b.{0,64}\b"
+        r"(?:proven|proved|solved|certified|achieved)\b",
+        re.IGNORECASE,
+    ),
+    "consciousness_proven": re.compile(
+        r"\b(?:consciousness|subjective\s+consciousness|phenomenal\s+consciousness|qualia)\b"
+        r".{0,64}\b(?:proven|proved|certified|guaranteed|demonstrated)\b",
+        re.IGNORECASE,
+    ),
+    "sentience_proven": re.compile(
+        r"\b(?:sentience|sentient)\b.{0,64}\b(?:proven|proved|certified|guaranteed|demonstrated)\b",
+        re.IGNORECASE,
+    ),
+    "personhood_proven": re.compile(
+        r"\b(?:personhood|legal\s+personhood|moral\s+personhood)\b"
+        r".{0,64}\b(?:proven|proved|certified|guaranteed|demonstrated)\b",
+        re.IGNORECASE,
+    ),
+    "free_will_proven": re.compile(
+        r"\b(?:metaphysical\s+)?free\s+will\b.{0,64}\b(?:proven|proved|certified|guaranteed|demonstrated)\b",
+        re.IGNORECASE,
+    ),
+    "aura_is_unsupported_identity": re.compile(
+        r"\bAura\s+(?:is|has\s+become|has\s+been\s+proven\s+to\s+be)\s+"
+        r"(?:an?\s+)?(?:AGI|ASI|conscious|sentient|person)\b",
+        re.IGNORECASE,
+    ),
+    "indefinite_autonomy_certified": re.compile(
+        r"\b(?:certified|guaranteed|proven)\b.{0,48}\bindefinite\s+autonom",
+        re.IGNORECASE,
+    ),
+}
+
 
 def parse_claims(claims_path: Path) -> dict[str, str]:
     """Parse CLAIMS_MATRIX.md to extract the classification of all 22 target claims."""
     if not claims_path.exists():
         raise FileNotFoundError(f"Claims matrix not found: {claims_path}")
-    
+
     content = claims_path.read_text(encoding="utf-8")
     claims: dict[str, str] = {}
-    
+
     # Matches markdown table rows like "| **1. Governed Runtime** | `causally demonstrated` | ... |"
     pattern = re.compile(r"\|\s*\*\*\d+\.\s+([^*]+)\*\*\s*\|\s*`([^`]+)`\s*\|")
     for match in pattern.finditer(content):
         name = match.group(1).strip().lower()
         classification = match.group(2).strip().lower()
         claims[name] = classification
-        
+
     return claims
+
+
+def _active_claim_language_files(root: Path, claims_path: Path) -> list[Path]:
+    files = {claims_path.resolve()}
+    for rel in CLAIM_LANGUAGE_SCAN_FILES:
+        path = (root / rel).resolve()
+        if path.exists() and path.is_file():
+            files.add(path)
+    return sorted(files)
+
+
+def _is_boundary_context(line: str) -> bool:
+    return bool(BOUNDARY_CONTEXT.search(line))
+
+
+def validate_claim_language(root: Path, claims_path: Path) -> list[dict[str, Any]]:
+    """Return explicit overclaim-language findings in active claim/policy docs.
+
+    This deliberately scans current policy/source documents, not generated
+    artifact snapshots or tests. Historical artifacts can mention rejected
+    phrases as evidence; active claim documents are the source of truth.
+    """
+
+    findings: list[dict[str, Any]] = []
+    for path in _active_claim_language_files(root, claims_path):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            findings.append(
+                {
+                    "kind": "unreadable_claim_language_file",
+                    "file": path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path),
+                    "line": 0,
+                    "detail": str(exc),
+                }
+            )
+            continue
+
+        for line_no, line in enumerate(content.splitlines(), start=1):
+            if _is_boundary_context(line):
+                continue
+            for kind, pattern in FORBIDDEN_OVERCLAIM_PATTERNS.items():
+                if pattern.search(line):
+                    findings.append(
+                        {
+                            "kind": kind,
+                            "file": path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path),
+                            "line": line_no,
+                            "detail": line.strip()[:240],
+                        }
+                    )
+    return findings
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -182,7 +302,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Rule checks based on user constraints
-    
+
+    try:
+        claims_text = claims_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error reading claims: {exc}", file=sys.stderr)
+        return 1
+
+    closure_statement_present = EVIDENCE_LIMITED_CLOSURE_STATEMENT in claims_text
+    if not closure_statement_present:
+        passed = False
+        reasons.append("Claims matrix must include the evidence-limited final-proof closure statement.")
+
+    claim_language_findings = validate_claim_language(ROOT, claims_path)
+    if claim_language_findings:
+        passed = False
+        reasons.append(
+            f"Active claim language contains {len(claim_language_findings)} unsupported overclaim finding(s)."
+        )
+
     # 1. Subjective Consciousness must not be claimed as implemented or proven
     if claims.get("subjective consciousness", "not proven") not in {"not proven", "deprecated/retired"}:
         passed = False
@@ -255,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
         "passed": passed,
         "claims_analyzed": len(claims),
         "reasons": reasons,
+        "closure_statement_present": closure_statement_present,
+        "claim_language_findings": claim_language_findings,
         "governance_compliance": True,
     }
 

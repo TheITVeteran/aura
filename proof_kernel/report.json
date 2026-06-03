@@ -16,14 +16,14 @@
     "tick": 12,
     "last_winner": "social_signal",
     "last_content": "Cycle 12: track socially relevant external cues",
-    "last_priority": 0.281,
+    "last_priority": 0.282,
     "pending_candidates": 0,
     "inhibited_sources": [],
     "broadcast_history_len": 12,
-    "ignition_level": 0.469,
+    "ignition_level": 0.47,
     "ignited": false,
     "ignition_count": 1,
-    "phi": 0.3633
+    "phi": 0.3685
   },
   "temporal_binding": {
     "total_events": 12,
@@ -66,13 +66,13 @@
   },
   "structural_opacity": {
     "measurement_count": 12,
-    "last_opacity": 0.01745112624247254,
-    "last_causal_depth": 0.36325161009678925,
-    "last_predictability": 0.9825488737575274,
+    "last_opacity": 0.01776319956380715,
+    "last_causal_depth": 0.36852596406169313,
+    "last_predictability": 0.9822368004361929,
     "status": {
-      "avg_opacity_index": 0.017,
-      "avg_causal_depth": 0.3705,
-      "avg_exterior_predictability": 0.983,
+      "avg_opacity_index": 0.0173,
+      "avg_causal_depth": 0.3678,
+      "avg_exterior_predictability": 0.9827,
       "criterion_met_fraction": 0.0,
       "measurements": 12,
       "status": "criterion_not_met"

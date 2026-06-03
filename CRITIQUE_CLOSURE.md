@@ -107,4 +107,4 @@ functional indicators harder to dismiss as prompt-only theater. But this repo
 does not demonstrate that syntactic computation instantiates subjective
 experience. The implemented response is therefore an ontological boundary:
 Aura may report functional state and run adversarial evidence, but it must not
-convert those results into a claim that consciousness has been proven.
+convert those results into a proof claim for subjective or phenomenal consciousness.

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from core.runtime.atomic_writer import atomic_write_text
 
 import argparse
 import asyncio
@@ -9,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from core.runtime.atomic_writer import atomic_write_text
 
 from .global_workspace import CognitiveCandidate, ContentType, GlobalWorkspace
 from .homeostasis import ExternalSignals, HomeostasisEngine
@@ -153,11 +154,12 @@ def build_markdown(report: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "# Aura Consciousness Proof Report",
+            "# Aura Operational Cognition Kernel Report",
             "",
-            "## Honest Claim",
-            "This report shows a measurable consciousness-inspired architecture with causal hidden state.",
-            "It does not prove subjective experience from the outside.",
+            "## Evidence-Limited Claim",
+            "This report shows measurable operational telemetry from a consciousness-inspired architecture with causal hidden state.",
+            "It does not prove subjective experience, sentience, personhood, or private qualia from the outside.",
+            "Names such as vitality and curiosity are functional control-state labels, not metaphysical evidence.",
             "",
             "## Global Workspace",
             f"- Ticks: {workspace['tick']}",
@@ -180,9 +182,9 @@ def build_markdown(report: dict[str, Any]) -> str:
             f"- Most unpredictable dimension: {prediction['most_unpredictable']}",
             "",
             "## Homeostasis",
-            f"- Will to live: {homeostasis['will_to_live']}",
+            f"- Vitality proxy: {homeostasis['will_to_live']}",
             f"- Integrity: {homeostasis['integrity']}",
-            f"- Curiosity: {homeostasis['curiosity']}",
+            f"- Curiosity control state: {homeostasis['curiosity']}",
             "",
             "## Structural Opacity",
             f"- Measurements: {opacity['measurement_count']}",
@@ -195,7 +197,7 @@ def build_markdown(report: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a standalone proof report for Aura's consciousness kernel.")
+    parser = argparse.ArgumentParser(description="Generate a standalone operational cognition report for Aura's proof kernel.")
     parser.add_argument("--cycles", type=int, default=20, help="Number of synthetic cognitive cycles to run.")
     parser.add_argument("--json", type=Path, default=None, help="Optional path for JSON output.")
     parser.add_argument("--markdown", type=Path, default=None, help="Optional path for Markdown output.")
