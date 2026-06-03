@@ -21,6 +21,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
 HAS_UNIX = os.name == "posix"
@@ -262,7 +263,7 @@ class SecureSandbox:
             if sys.platform == "darwin" and self.security_level != SecurityLevel.PRIVILEGED:
                 profile_path = self.workdir / ".sandbox_profile.sb"
                 workdir_literal = self._sandbox_profile_literal(self.workdir)
-                profile_path.write_text(f'''(version 1)
+                atomic_write_text(profile_path, f'''(version 1)
 (deny default)
 (allow process-exec*)
 (allow process-fork)

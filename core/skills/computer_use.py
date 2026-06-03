@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.skills._pyautogui_runtime import get_pyautogui
 from core.skills.base_skill import BaseSkill
@@ -400,7 +401,7 @@ class ComputerUseSkill(BaseSkill):
         if path.exists() and not overwrite:
             return {"ok": False, "error": f"Refusing to overwrite existing file: {path}"}
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content, encoding="utf-8")
         return {
             "ok": True,
             "action": "write_text_file",
