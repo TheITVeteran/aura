@@ -12,6 +12,20 @@ from .local_pipe_bus import LocalPipeBus
 
 logger = logging.getLogger("Kernel.ActorBus")
 
+
+_ACTOR_BUS_SEND_ERRORS = (
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    BrokenPipeError,
+    ConnectionResetError,
+)
+
+
 class BusDegraded(Exception):  # noqa: N818 - public compatibility name.
     """Raised when the bus health probe fails or congestion is too high."""
     pass  # no-op: intentional
@@ -40,7 +54,59 @@ class ActorBus:
         # ZENITH: Backpressured Telemetry Queue
         self._telemetry_queue: asyncio.Queue | None = None
         self._telemetry_broadcaster_task = None
+        self._telemetry_drops = 0
+        self._send_drops = 0
+        self._last_drop: dict[str, Any] | None = None
         self._initialized = True
+
+    @staticmethod
+    def _should_report_drop(count: int) -> bool:
+        return count in {1, 10, 50, 100} or (count > 0 and count % 250 == 0)
+
+    def _record_drop(
+        self,
+        *,
+        kind: str,
+        reason: str,
+        actor: str | None = None,
+        topic: str | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        if kind == "telemetry":
+            self._telemetry_drops += 1
+            count = self._telemetry_drops
+        else:
+            self._send_drops += 1
+            count = self._send_drops
+
+        self._last_drop = {
+            "kind": kind,
+            "reason": reason,
+            "actor": actor,
+            "topic": topic,
+            "count": count,
+            "at": time.time(),
+        }
+        if self._should_report_drop(count):
+            exc = error if error is not None else RuntimeError(reason)
+            record_degradation(
+                "actor_bus",
+                exc,
+                severity="warning",
+                action=f"{kind}_drop_visible:{reason}",
+                extra={k: v for k, v in self._last_drop.items() if v is not None},
+            )
+
+    def get_status(self) -> dict[str, Any]:
+        queue_size = self._telemetry_queue.qsize() if self._telemetry_queue is not None else 0
+        return {
+            "running": self._is_running,
+            "actors": sorted(self._transports),
+            "telemetry_queue_size": queue_size,
+            "telemetry_drops": self._telemetry_drops,
+            "send_drops": self._send_drops,
+            "last_drop": dict(self._last_drop or {}),
+        }
 
     def _transport_stop_timeout_s(self) -> float:
         try:
@@ -134,7 +200,14 @@ class ActorBus:
                 for _name, transport in self._transports.items():
                     try:
                         await transport.send(topic, payload)
-                    except (RuntimeError, AttributeError, TypeError, ValueError):
+                    except _ACTOR_BUS_SEND_ERRORS as exc:
+                        self._record_drop(
+                            kind="telemetry",
+                            reason="transport_send_failed",
+                            actor=_name,
+                            topic=topic,
+                            error=exc,
+                        )
                         continue
                 self._telemetry_queue.task_done()
             except asyncio.CancelledError:
@@ -159,28 +232,39 @@ class ActorBus:
                 logger.error("Telemetry broadcast error: %s", e)
                 await asyncio.sleep(0.1)
 
-    async def broadcast_telemetry(self, topic: str, payload: Any):
+    async def broadcast_telemetry(self, topic: str, payload: Any) -> bool:
         """Submit telemetry to the backpressured queue. Drops if full."""
         if not self._is_running:
-            return
+            self._record_drop(kind="telemetry", reason="bus_not_running", topic=topic)
+            return False
         if self._telemetry_queue is None:
-            return
+            self._record_drop(kind="telemetry", reason="queue_not_initialized", topic=topic)
+            return False
             
         try:
             # use put_nowait to ensure we never block the caller
             self._telemetry_queue.put_nowait((topic, payload))
+            return True
         except asyncio.QueueFull:
             # Overwrite oldest if full
+            self._record_drop(kind="telemetry", reason="queue_full_overwrite", topic=topic)
             try:
                 self._telemetry_queue.get_nowait()
+                self._telemetry_queue.task_done()
                 self._telemetry_queue.put_nowait((topic, payload))
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('actor_bus', _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
+                return True
+            except (asyncio.QueueEmpty, RuntimeError, AttributeError, TypeError, ValueError) as _exc:
+                self._record_drop(
+                    kind="telemetry",
+                    reason="queue_overwrite_failed",
+                    topic=topic,
+                    error=_exc,
+                )
+                return False
 
     async def publish(self, topic: str, payload: Any):
         """Alias for broadcast_telemetry to satisfy legacy Orchestrator calls."""
-        await self.broadcast_telemetry(topic, payload)
+        return await self.broadcast_telemetry(topic, payload)
 
     def start_transports(self):
         """Ensure all registered transports are started."""
@@ -299,27 +383,39 @@ class ActorBus:
             logger.warning("📡 Bus degraded for %s → %s", actor, e)
             raise
 
-    async def send(self, actor: str, msg_type: str, payload: Any):
+    async def send(self, actor: str, msg_type: str, payload: Any) -> bool:
         """Fire-and-forget send with health gate."""
         transport = self._transports.get(actor)
         if not transport:
             # Routing: Forward to kernel if it's a child process
             if "kernel" in self._transports:
                 logger.debug("🔀 Routing send for '%s' via kernel...", actor)
-                await self.send("kernel", "route_send", {
+                return await self.send("kernel", "route_send", {
                     "target": actor,
                     "type": msg_type,
                     "payload": payload
                 })
-                return
             logger.error("❌ Unknown actor: %s", actor)
-            return
+            self._record_drop(kind="send", reason="unknown_actor", actor=actor, topic=msg_type)
+            return False
 
         if not await self._health_ping(actor):
             logger.error("❌ Cannot send to %s: Bus degraded", actor)
-            return
+            self._record_drop(kind="send", reason="actor_degraded", actor=actor, topic=msg_type)
+            return False
 
-        await transport.send(msg_type, payload)
+        try:
+            await transport.send(msg_type, payload)
+            return True
+        except _ACTOR_BUS_SEND_ERRORS as exc:
+            self._record_drop(
+                kind="send",
+                reason="transport_send_failed",
+                actor=actor,
+                topic=msg_type,
+                error=exc,
+            )
+            return False
 
     def register_handler(self, actor: str, msg_type: str, handler: Callable):
         """Register a handler on a specific actor's transport."""
