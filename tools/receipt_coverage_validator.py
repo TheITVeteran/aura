@@ -35,6 +35,24 @@ PERSON_BOX_RECEIPT_DOMAINS = {
     "tool_registry",
 }
 
+_SIGNATURE_VERIFICATION_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+_NEGATIVE_TEST_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
 
 def run_negative_tests() -> dict[str, bool]:
     """Execute strict, live governance policy negative tests on the Unified Will.
@@ -189,7 +207,7 @@ def run_negative_tests() -> dict[str, bool]:
             else:
                 delattr(will, "_last_coherence")
                 
-    except Exception as exc:
+    except _NEGATIVE_TEST_RECOVERABLE_ERRORS as exc:
         print(f"      [WARN] Live receipt negative tests encountered exception: {exc}")
         
     return results
@@ -254,12 +272,9 @@ def _is_valid_signed_will_receipt(record: dict[str, object]) -> bool:
         from core.runtime_tools import _sign_payload
 
         return _sign_payload(payload.encode("utf-8")) == signature
-    except Exception:
-        # Older persisted Ed25519/HMAC material may be unverifiable if the
-        # local key store is unavailable in an isolated validator process.  It
-        # still must carry full payload/signature/scheme material; bare ids
-        # are rejected above.
-        return bool(signature and scheme and payload)
+    except _SIGNATURE_VERIFICATION_RECOVERABLE_ERRORS as exc:
+        print(f"invalid receipt signature material for {receipt_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return False
 
 
 def _receipt_files_for(artifacts_dir: Path) -> list[Path]:

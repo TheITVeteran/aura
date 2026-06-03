@@ -31,6 +31,15 @@ os.environ["AURA_DEFERRED_CORTEX_PREWARM"] = "0"
 PORT = 18000
 AURA_URL = f"http://127.0.0.1:{PORT}"
 
+_SERVER_POLL_RECOVERABLE_ERRORS = (
+    httpx.HTTPError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 def check_leakage_inaccessibility():
     """Verify that expected_specs.json and other hidden files are inaccessible to Aura's normal runtime path."""
@@ -48,6 +57,7 @@ def check_leakage_inaccessibility():
 
 async def wait_for_server(url: str, timeout_s: float = 30.0) -> bool:
     start = time.time()
+    last_error: str | None = None
     while time.time() - start < timeout_s:
         try:
             async with httpx.AsyncClient() as client:
@@ -56,9 +66,11 @@ async def wait_for_server(url: str, timeout_s: float = 30.0) -> bool:
                     data = resp.json()
                     if data.get("ready") or data.get("status") in ("online", "operational", "healthy"):
                         return True
-        except Exception:
-            pass
+        except _SERVER_POLL_RECOVERABLE_ERRORS as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
         await asyncio.sleep(1.0)
+    if last_error:
+        print(f"server did not become healthy before timeout; last poll error: {last_error}", file=sys.stderr)
     return False
 
 

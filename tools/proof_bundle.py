@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import py_compile
+import subprocess
 import sys
 import tempfile
 import time
@@ -19,6 +20,17 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.runtime.atomic_writer import atomic_write_text
+
+_PROOF_BUNDLE_ARTIFACT_ERRORS = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    subprocess.SubprocessError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    KeyError,
+)
 
 REQUIRED_FILES = (
     "DECISIVE_RESULTS.json",
@@ -490,7 +502,7 @@ def _undeniable_rsi() -> dict[str, Any]:
             "candidate_output_transcript": eval_after,
             "baseline_output_transcript": eval_before,
         }
-    except Exception as exc:
+    except _PROOF_BUNDLE_ARTIFACT_ERRORS as exc:
         return {"passed": False, "status": "unreadable", "error": repr(exc), "source": str(latest_gen)}
 
 

@@ -10,12 +10,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+_MANIFEST_RECOVERABLE_ERRORS = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    TypeError,
+    ValueError,
+)
 
 
 def compute_sha256(path: Path) -> str:
@@ -38,7 +45,7 @@ def verify_manifest(manifest_path: Path, base_dir: Path) -> bool:
                 actual = compute_sha256(full_path)
                 if actual != expected_hash:
                     return False
-    except Exception:
+    except _MANIFEST_RECOVERABLE_ERRORS:
         return False
     return True
 
@@ -51,11 +58,14 @@ def main(argv: list[str] | None = None) -> int:
     artifacts_dir = Path(args.artifacts).resolve()
     passed = True
     reasons: list[str] = []
+    notes: list[str] = []
+    manifests_consistent = True
 
     # 1. Check manifestation consistency
     for manifest_path in artifacts_dir.rglob("MANIFEST.json"):
         if not verify_manifest(manifest_path, manifest_path.parent):
             passed = False
+            manifests_consistent = False
             reasons.append(f"Hash mismatch in manifest: {manifest_path}")
 
     # 2. Check scorecard and DNU proof agreement
@@ -67,8 +77,8 @@ def main(argv: list[str] | None = None) -> int:
                 # Truncated or smoke runs are valid for development verification,
                 # but cannot be presented as final proof of AGI.
                 # Since AGI claims are marked 'not proven' in our CLAIMS_MATRIX, this is consistent.
-                pass
-        except Exception as exc:
+                notes.append("DNU proof artifact is smoke/truncated and is not final AGI evidence.")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
             passed = False
             reasons.append(f"Failed to parse DNU_AGI_PROOF.json: {exc}")
 
@@ -90,10 +100,11 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "generated_at": time.time(),
         "passed": passed,
-        "manifests_consistent": True,
+        "manifests_consistent": manifests_consistent,
         "baselines_complete": True,
         "ablations_verified": True,
         "unsupported_critical_claims_banned": True,
+        "notes": notes,
         "reasons": reasons,
     }
 

@@ -6,6 +6,12 @@ from pathlib import Path
 from tools import receipt_coverage_validator
 
 
+def _raise_for_receipt_test(exc: BaseException):
+    if type(exc).__name__:
+        raise exc
+    return ""
+
+
 def _all_negative_tests_pass() -> dict[str, bool]:
     return {
         "disabled_will_blocks_action": True,
@@ -141,6 +147,28 @@ def test_receipt_coverage_rejects_unsigned_will_receipt(tmp_path, monkeypatch) -
             }
         ],
     )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["invalid_receipts"] == 1
+    assert report["total_receipts"] == 0
+
+
+def test_receipt_coverage_rejects_unverifiable_will_signature(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+
+    import core.runtime_tools as runtime_tools
+
+    receipt = _will_receipt()
+
+    def unavailable_signer(_payload: bytes) -> str:
+        return _raise_for_receipt_test(RuntimeError("signing key unavailable"))
+
+    monkeypatch.setattr(runtime_tools, "_sign_payload", unavailable_signer)
+
+    (tmp_path / "external_live_validation").mkdir()
+    _write_jsonl(tmp_path / "external_live_validation" / "RECEIPTS.jsonl", [receipt])
 
     assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
 

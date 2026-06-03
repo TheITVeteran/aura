@@ -21,6 +21,16 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_ARCHITECTURE_MAP_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    TypeError,
+    ValueError,
+    KeyError,
+)
+
 
 @dataclass
 class Check:
@@ -91,7 +101,7 @@ def _architecture_map_smoke() -> tuple[bool, str]:
         if missing:
             detail += f"; missing surfaces: {', '.join(missing)}"
         return passed, detail
-    except Exception as exc:
+    except _ARCHITECTURE_MAP_RECOVERABLE_ERRORS as exc:
         return False, f"{type(exc).__name__}: {exc}"
 
 
