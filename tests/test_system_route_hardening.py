@@ -20,6 +20,56 @@ def test_conversation_lane_resilient_helper_contains_legacy_override_failure(mon
     assert "legacy lane collector exploded" in lane["last_failure_reason"]
 
 
+def test_stability_details_mark_missing_guardian_unhealthy(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(
+        system_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready", "runtime_identity_ok": True},
+    )
+
+    details = system_routes._collect_stability_details()
+
+    assert details["healthy"] is False
+    assert details["status"] == "unavailable"
+    assert details["active_issues"][0]["name"] == "stability_guardian"
+
+
+def test_stability_details_do_not_default_missing_report_field_to_healthy(monkeypatch):
+    from interface.routes import system as system_routes
+
+    class Guardian:
+        def get_latest_report(self):
+            return {
+                "checks": [{"name": "probe", "message": "missing boolean"}],
+                "memory_pct": 12.0,
+                "cpu_pct": 3.0,
+            }
+
+    monkeypatch.setattr(
+        system_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: Guardian() if name == "stability_guardian" else default),
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready", "runtime_identity_ok": True},
+    )
+
+    details = system_routes._collect_stability_details()
+
+    assert details["healthy"] is False
+    assert details["status"] == "degraded"
+    assert details["active_issues"][0]["name"] == "probe"
+
+
 @pytest.mark.asyncio
 async def test_telemetry_stream_emits_idle_heartbeat_and_unsubscribes(monkeypatch):
     from interface.routes import system as system_routes

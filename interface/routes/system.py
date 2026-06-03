@@ -243,17 +243,27 @@ def _get_runtime_state_safe() -> dict[str, Any]:
 def _collect_stability_details() -> dict[str, Any]:
     details: dict[str, Any] = {
         "status": "unknown",
-        "healthy": True,
+        "healthy": False,
         "active_issues": [],
     }
     try:
         guardian = ServiceContainer.get("stability_guardian", default=None)
-        if guardian and hasattr(guardian, "get_latest_report"):
+        if guardian is None:
+            details["status"] = "unavailable"
+            details["active_issues"].append(
+                {
+                    "name": "stability_guardian",
+                    "message": "StabilityGuardian is not registered.",
+                    "severity": "warning",
+                    "action_taken": "withhold healthy status until guardian is online",
+                }
+            )
+        elif hasattr(guardian, "get_latest_report"):
             report = guardian.get_latest_report() or {}
             checks = report.get("checks", []) if isinstance(report, dict) else []
             active_issues = []
             for check in checks:
-                if not bool(check.get("healthy", True)):
+                if not bool(check.get("healthy", False)):
                     active_issues.append(
                         {
                             "name": check.get("name", "unknown"),
@@ -262,11 +272,30 @@ def _collect_stability_details() -> dict[str, Any]:
                             "action_taken": check.get("action_taken"),
                         }
                     )
-            details["healthy"] = bool(report.get("overall_healthy", True))
-            details["status"] = "healthy" if details["healthy"] else "degraded"
-            details["active_issues"] = active_issues
-            details["memory_pct"] = report.get("memory_pct")
-            details["cpu_pct"] = report.get("cpu_pct")
+            if report:
+                details["healthy"] = bool(report.get("overall_healthy", False))
+                details["status"] = "healthy" if details["healthy"] else "degraded"
+                details["active_issues"] = active_issues
+                details["memory_pct"] = report.get("memory_pct")
+                details["cpu_pct"] = report.get("cpu_pct")
+            elif hasattr(guardian, "get_health_summary"):
+                summary = guardian.get_health_summary()
+                if isinstance(summary, dict):
+                    details["healthy"] = bool(summary.get("healthy", False))
+                    details["status"] = str(summary.get("status") or "unknown")
+                    details["active_issues"] = list(summary.get("active_issues") or [])
+                    if details["status"] == "initializing":
+                        details["healthy"] = False
+            else:
+                details["status"] = "no_report"
+                details["active_issues"] = [
+                    {
+                        "name": "stability_report",
+                        "message": "StabilityGuardian has not produced a health report.",
+                        "severity": "warning",
+                        "action_taken": "withhold healthy status until probes run",
+                    }
+                ]
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation('system', exc)
         logger.debug("Stability detail collection failed: %s", exc)
@@ -306,7 +335,7 @@ def _collect_stability_details() -> dict[str, Any]:
         record_degradation('system', exc)
         logger.debug("Conversation lane stability detail merge failed: %s", exc)
     if details.get("status") == "unknown":
-        details["status"] = "healthy" if bool(details.get("healthy", True)) else "degraded"
+        details["status"] = "healthy" if bool(details.get("healthy", False)) else "degraded"
     return details
 
 
