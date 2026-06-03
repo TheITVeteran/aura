@@ -131,6 +131,58 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
     assert calls[0][2]["origin"] == "desktop_ui"
 
 
+@pytest.mark.asyncio
+async def test_desktop_task_uses_cognitive_engine_structured_plan_before_fallback(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return {"ok": True, "summary": f"{params['action']} ok"}
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    cognitive_plan = {
+        "steps": [
+            {"action": "open_app", "target": "TextEdit", "reason": "Use the requested writing app."},
+            {
+                "action": "write_text_file",
+                "target": {"path": "Aura Drafts/general_plan.txt", "content": "planned body"},
+            },
+        ]
+    }
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Use the desktop to create an arbitrary local draft artifact.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "cognitive_reply": f"Plan:\n```json\n{json.dumps(cognitive_plan)}\n```",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["steps_requested"] == 2
+    assert [call[1]["action"] for call in calls] == ["open_app", "write_text_file"]
+    assert calls[0][1]["target"] == "TextEdit"
+    assert json.loads(calls[1][1]["target"])["content"] == "planned body"
+
+
+def test_desktop_task_extracts_generic_named_app_mentions():
+    assert DesktopTaskSkill._generic_open_app_mentions("Open TextEdit application and create a draft.") == [
+        "TextEdit"
+    ]
+
+
 def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypatch):
     from core.capability_engine import CapabilityEngine, SkillMetadata
 

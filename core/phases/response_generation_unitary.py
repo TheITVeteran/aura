@@ -2916,7 +2916,7 @@ class UnitaryResponsePhase(Phase):
                     "telemetry dependency rather than infer affect state."
                 )
             return (
-                "The state log should be interpreted as functional telemetry from the "
+                "The phenomenal state log should be interpreted as functional telemetry from the "
                 "liquid substrate, not as proof of private qualia. The affective steer vector is "
                 f"currently mood={mood}, valence={valence:.2f}, arousal={arousal:.2f}, "
                 f"curiosity={curiosity:.2f}, so it can bias attention, wording, and planning pressure "

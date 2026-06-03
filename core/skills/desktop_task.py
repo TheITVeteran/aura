@@ -161,6 +161,85 @@ class DesktopTaskSkill(BaseSkill):
             "canonical computer-use gateway."
         )
 
+    @classmethod
+    def _steps_from_payload(cls, payload: Any) -> list[DesktopTaskStep]:
+        if isinstance(payload, dict):
+            payload = payload.get("steps")
+        if not isinstance(payload, list):
+            return []
+        steps: list[DesktopTaskStep] = []
+        for item in payload[:20]:
+            try:
+                steps.append(item if isinstance(item, DesktopTaskStep) else DesktopTaskStep(**dict(item)))
+            except (TypeError, ValueError):
+                continue
+        return steps
+
+    @classmethod
+    def _steps_from_plan_text(cls, text: str) -> list[DesktopTaskStep]:
+        source = str(text or "").strip()
+        if not source:
+            return []
+        candidates: list[str] = []
+        candidates.extend(
+            match.group(1).strip()
+            for match in re.finditer(r"```(?:json)?\s*(.*?)```", source, flags=re.IGNORECASE | re.DOTALL)
+        )
+        for open_char, close_char in (("{", "}"), ("[", "]")):
+            start = source.find(open_char)
+            end = source.rfind(close_char)
+            if start >= 0 and end > start:
+                candidates.append(source[start : end + 1])
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            steps = cls._steps_from_payload(parsed)
+            if steps:
+                return steps
+        return []
+
+    @classmethod
+    def _steps_from_context(cls, context: dict[str, Any] | None) -> list[DesktopTaskStep]:
+        context = context or {}
+        for key in ("desktop_task_steps", "desktop_task_plan"):
+            steps = cls._steps_from_payload(context.get(key))
+            if steps:
+                return steps
+            steps = cls._steps_from_plan_text(str(context.get(key) or ""))
+            if steps:
+                return steps
+        for key in ("cognitive_reply", "draft_response", "response"):
+            steps = cls._steps_from_plan_text(str(context.get(key) or ""))
+            if steps:
+                return steps
+        return []
+
+    @staticmethod
+    def _generic_open_app_mentions(objective: str) -> list[str]:
+        text = str(objective or "")
+        apps: list[str] = []
+        patterns = (
+            r"\bopen\s+(?:up\s+)?(?:my\s+|the\s+)?([A-Za-z][A-Za-z0-9 &._-]{1,60}?)\s+(?:app|application)\b",
+            r"\blaunch\s+(?:my\s+|the\s+)?([A-Za-z][A-Za-z0-9 &._-]{1,60}?)\b",
+        )
+        stopwords = {"a", "an", "the", "my", "new"}
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ._-")
+                if not candidate or candidate.lower() in stopwords:
+                    continue
+                if candidate.lower() == "notes":
+                    candidate = "Notes"
+                elif candidate.lower() == "chrome":
+                    candidate = "Google Chrome"
+                elif candidate.lower() == "browser":
+                    candidate = "Safari"
+                if candidate not in apps:
+                    apps.append(candidate)
+        return apps[:4]
+
     def _derive_steps_from_objective(
         self,
         objective: str,
@@ -189,7 +268,12 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
 
-        for app in self._extract_apps(text):
+        apps = self._extract_apps(text)
+        for app in self._generic_open_app_mentions(text):
+            if app not in apps:
+                apps.append(app)
+
+        for app in apps[:4]:
             steps.append(
                 DesktopTaskStep(
                     action="open_app",
@@ -280,7 +364,11 @@ class DesktopTaskSkill(BaseSkill):
         failures: list[dict[str, Any]] = []
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
 
-        steps = list(params.steps) or self._derive_steps_from_objective(objective, context)
+        steps = list(params.steps)
+        if not steps:
+            steps = self._steps_from_context(context)
+        if not steps:
+            steps = self._derive_steps_from_objective(objective, context)
 
         for index, step in enumerate(steps, start=1):
             target = step.target

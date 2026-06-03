@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -131,8 +133,7 @@ async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatc
 
 
 def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
-    from interface.routes import privacy
-    from interface.routes import system
+    from interface.routes import privacy, system
 
     class State:
         name = "LISTENING"
@@ -202,3 +203,144 @@ def test_sensory_capabilities_require_capture_and_stt() -> None:
     assert SensoryCapabilityFlags.from_boot_status(
         {"sounddevice": False, "faster_whisper": True}
     ).hearing_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_voice_bridge_prefers_cognitive_engine_over_orchestrator(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.voice.voice_bridge import VoiceConversationBridge
+
+    calls: list[dict[str, object]] = []
+
+    class CognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "engine": "cognitive",
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "origin": origin,
+                    "foreground_request": kwargs.get("foreground_request"),
+                }
+            )
+            return SimpleNamespace(content="Voice reply from CognitiveEngine.", mode=mode)
+
+    class Orchestrator:
+        async def process_user_input(self, *_args, **_kwargs):
+            calls.append({"engine": "orchestrator"})
+            raise AssertionError("voice should prefer CognitiveEngine when it is available")
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: CognitiveEngine() if name == "cognitive_engine" else default),
+    )
+
+    bridge = VoiceConversationBridge(Orchestrator(), None)
+    response = await bridge.process_voice_input("Hey Aura, are you there?")
+
+    assert response == "Voice reply from CognitiveEngine."
+    assert calls == [
+        {
+            "engine": "cognitive",
+            "objective": "are you there?",
+            "context": {
+                "route": "voice_desktop",
+                "source": "voice",
+                "origin": "voice",
+                "foreground_request": True,
+                "user_facing": True,
+            },
+            "origin": "voice",
+            "foreground_request": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.voice.voice_bridge import VoiceConversationBridge
+
+    calls: list[dict[str, object]] = []
+
+    class CognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append({"engine": "cognitive", "objective": objective})
+            return SimpleNamespace(
+                content="Timestamped Aura summary from the cognitive engine.",
+                mode=mode,
+            )
+
+    class CapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append(
+                {
+                    "engine": "capability",
+                    "skill_name": skill_name,
+                    "params": dict(params),
+                    "context": dict(context or {}),
+                }
+            )
+            return {
+                "ok": True,
+                "summary": "Desktop task completed 4/4 governed computer-use steps.",
+                "steps_requested": 4,
+                "steps_completed": 4,
+            }
+
+    def get_service(name, default=None):
+        if name == "cognitive_engine":
+            return CognitiveEngine()
+        if name == "capability_engine":
+            return CapabilityEngine()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(get_service))
+
+    bridge = VoiceConversationBridge(SimpleNamespace(), None)
+    response = await bridge.process_voice_input(
+        "Hey Aura, can you open Notes, write a timestamped summary, and save it as a PDF in a folder?"
+    )
+
+    assert response == "Desktop task completed 4/4 governed computer-use steps."
+    assert calls[0] == {
+        "engine": "cognitive",
+        "objective": "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?",
+    }
+    assert calls[1]["engine"] == "capability"
+    assert calls[1]["skill_name"] == "desktop_task"
+    assert calls[1]["params"] == {
+        "objective": "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?",
+        "steps": [],
+    }
+    assert calls[1]["context"]["route"] == "voice.desktop_objective"
+    assert calls[1]["context"]["origin"] == "voice"
+    assert calls[1]["context"]["foreground_request"] is True
+    assert calls[1]["context"]["desktop_task_document_body"] == "Timestamped Aura summary from the cognitive engine."
+
+
+@pytest.mark.asyncio
+async def test_voice_bridge_reports_capability_lookup_failure_without_legacy_claim(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.voice.voice_bridge import VoiceConversationBridge
+
+    class CognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            return SimpleNamespace(content="Cognitive plan body.")
+
+    def get_service(name, default=None):
+        if name == "cognitive_engine":
+            return CognitiveEngine()
+        if name == "capability_engine":
+            raise RuntimeError("container locked")
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(get_service))
+
+    bridge = VoiceConversationBridge(SimpleNamespace(), None)
+    response = await bridge.process_voice_input("Hey Aura, open Notes and save a PDF.")
+
+    assert "governed desktop control" in response
+    assert "capability_engine_unavailable" in response
+    assert "did not complete" in response

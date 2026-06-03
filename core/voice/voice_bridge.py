@@ -1,13 +1,55 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-from typing import Optional, AsyncGenerator
-import asyncio
+import re
+from collections.abc import AsyncGenerator
+from typing import Any
+
+from core.container import ServiceContainer
 from core.event_bus import get_event_bus
-from core.utils.exceptions import capture_and_log
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.VoiceBridge")
+
+
+_WAKE_PREFIX_RE = re.compile(r"^\s*(?:hey|hi|okay|ok)?\s*aura[\s,;:.-]*", re.IGNORECASE)
+_DESKTOP_ACTION_TERMS = (
+    "attach",
+    "browse",
+    "click",
+    "create",
+    "download",
+    "export",
+    "find",
+    "google",
+    "insert",
+    "look up",
+    "move",
+    "open",
+    "pdf",
+    "save",
+    "search",
+    "show me",
+    "tab",
+    "timestamp",
+    "type",
+    "write",
+)
+_DESKTOP_SURFACE_TERMS = (
+    "app",
+    "browser",
+    "chrome",
+    "desktop",
+    "finder",
+    "folder",
+    "google",
+    "notes",
+    "pdf",
+    "safari",
+    "screen",
+    "tab",
+)
+
 
 class VoiceConversationBridge:
     """
@@ -21,7 +63,147 @@ class VoiceConversationBridge:
         self._orch = orchestrator
         self._engine = conversation_engine
         self._bus = get_event_bus()
-        self._active_utterance_task: Optional[asyncio.Task] = None
+        self._active_utterance_task: asyncio.Task | None = None
+
+    @staticmethod
+    def _normalize_voice_text(text: str) -> str:
+        cleaned = _WAKE_PREFIX_RE.sub("", str(text or "").strip()).strip()
+        return cleaned or str(text or "").strip()
+
+    @staticmethod
+    def _thought_to_text(thought: Any) -> str:
+        content = getattr(thought, "content", None)
+        if content is None and isinstance(thought, dict):
+            content = thought.get("content") or thought.get("response")
+        return str(content if content is not None else thought or "").strip()
+
+    @staticmethod
+    def _looks_like_desktop_objective(text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        if not any(term in lowered for term in _DESKTOP_ACTION_TERMS):
+            return False
+        if not any(term in lowered for term in _DESKTOP_SURFACE_TERMS):
+            return False
+        try:
+            from core.phases.action_intent import detect_action_intent
+
+            intent = detect_action_intent(text)
+            if bool(getattr(intent, "should_execute", False)):
+                return True
+            if bool(getattr(intent, "has_action_request", False)) and re.search(
+                r"\b(?:can|could|will|would)\s+you\b",
+                lowered,
+            ):
+                return True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("voice_bridge", exc)
+            logger.debug("Voice desktop objective detection degraded: %s", exc)
+        return bool(
+            re.search(
+                r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look up)\b",
+                lowered,
+            )
+        )
+
+    async def _run_cognitive_engine(self, text: str) -> str | None:
+        try:
+            engine = ServiceContainer.get("cognitive_engine", default=None)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("voice_bridge", exc)
+            logger.warning("Voice Bridge CognitiveEngine lookup failed: %s", exc)
+            engine = None
+        if engine is None and hasattr(self._engine, "think"):
+            engine = self._engine
+        if engine is None or not hasattr(engine, "think"):
+            return None
+        try:
+            from core.brain.cognitive_engine import ThinkingMode
+
+            thought = await engine.think(
+                text,
+                context={
+                    "route": "voice_desktop",
+                    "source": "voice",
+                    "origin": "voice",
+                    "foreground_request": True,
+                    "user_facing": True,
+                },
+                mode=ThinkingMode.FAST,
+                origin="voice",
+                foreground_request=True,
+                is_background=False,
+                priority=True,
+            )
+            reply = self._thought_to_text(thought)
+            return reply or None
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_degradation("voice_bridge", exc)
+            logger.warning("Voice Bridge CognitiveEngine path failed: %s", exc)
+            return None
+
+    async def _execute_desktop_objective(self, text: str, cognitive_reply: str) -> dict[str, Any] | None:
+        if not self._looks_like_desktop_objective(text):
+            return None
+        try:
+            engine = ServiceContainer.get("capability_engine", default=None)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("voice_bridge", exc)
+            logger.warning("Voice desktop capability lookup failed: %s", exc)
+            engine = None
+        if engine is None or not hasattr(engine, "execute"):
+            return {
+                "ok": False,
+                "status": "capability_engine_unavailable",
+                "error": "Voice desktop objective requires the governed capability engine.",
+            }
+        context = {
+            "origin": "voice",
+            "source": "voice",
+            "route": "voice.desktop_objective",
+            "objective": text[:500],
+            "message": text[:500],
+            "foreground_request": True,
+            "user_explicitly_authorized": True,
+            "user_requested_action": True,
+            "desktop_task_document_body": cognitive_reply,
+            "cognitive_reply": cognitive_reply,
+        }
+        result = await engine.execute(
+            "desktop_task",
+            {"objective": text, "steps": []},
+            context=context,
+        )
+        if isinstance(result, dict):
+            return result
+        return {"ok": bool(result), "result": result}
+
+    async def _process_voice_input(self, text: str) -> str | None:
+        normalized = self._normalize_voice_text(text)
+        reply = await self._run_cognitive_engine(normalized)
+        if reply:
+            desktop_result = await self._execute_desktop_objective(normalized, reply)
+            if desktop_result is not None:
+                completed = int(desktop_result.get("steps_completed") or 0)
+                requested = int(desktop_result.get("steps_requested") or 0)
+                if desktop_result.get("ok"):
+                    summary = str(desktop_result.get("summary") or "").strip()
+                    return (
+                        summary
+                        or f"I completed the spoken desktop task through governed desktop control ({completed}/{requested} steps)."
+                    )
+                status = str(desktop_result.get("status") or desktop_result.get("error") or "desktop_task_failed")
+                return (
+                    "I routed that spoken request through CognitiveEngine and governed desktop control, "
+                    f"but it did not complete: {status}. Completed {completed}/{requested} steps."
+                )
+            return reply
+
+        if self._orch and hasattr(self._orch, "process_user_input"):
+            response = await self._orch.process_user_input(normalized, origin="voice")
+            return str(response or "").strip() or None
+        return None
         
     async def process_voice_input(self, text: str):
         """
@@ -36,7 +218,8 @@ class VoiceConversationBridge:
             
         # 2. Process through the full cognitive pipeline
         self._active_utterance_task = get_task_tracker().create_task(
-            self._orch.process_user_input(text, origin="voice")
+            self._process_voice_input(text),
+            name="voice_bridge.process_voice_input",
         )
         
         try:
@@ -56,9 +239,6 @@ class VoiceConversationBridge:
         streaming buffer for low-latency response.
         Chunks tokens into speakable clauses before sending to the engine.
         """
-        import re
-        from core.container import ServiceContainer
-        
         voice_engine = ServiceContainer.get("voice_presence", default=None)
         if not voice_engine:
             logger.debug("VoiceBridge: No voice presence engine found. Dropping stream.")
