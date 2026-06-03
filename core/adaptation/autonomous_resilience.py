@@ -12,9 +12,6 @@ The goal is to make her dramatically better at surfacing risk honestly,
 preempting common failures, and turning repair proposals into validated action.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import ast
 import asyncio
@@ -23,9 +20,12 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.AutonomousResilience")
 
@@ -71,16 +71,16 @@ class ResilienceFinding:
     severity: str
     subsystem: str
     message: str
-    file_path: Optional[str] = None
-    line: Optional[int] = None
+    file_path: str | None = None
+    line: int | None = None
     can_auto_patch: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def score(self) -> float:
         return _score_for_severity(self.severity)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "kind": self.kind,
             "severity": self.severity,
@@ -114,10 +114,10 @@ class StaticFaultAuditor:
     def audit_codebase(
         self,
         *,
-        paths: Optional[Sequence[str | Path]] = None,
+        paths: Sequence[str | Path] | None = None,
         limit: int = 64,
-    ) -> List[ResilienceFinding]:
-        findings: List[ResilienceFinding] = []
+    ) -> list[ResilienceFinding]:
+        findings: list[ResilienceFinding] = []
         target_paths: Iterable[Path]
         if paths:
             target_paths = [self._resolve_path(path) for path in paths]
@@ -139,7 +139,7 @@ class StaticFaultAuditor:
         findings.sort(key=lambda item: item.score, reverse=True)
         return findings[:limit]
 
-    def audit_file(self, path: str | Path) -> List[ResilienceFinding]:
+    def audit_file(self, path: str | Path) -> list[ResilienceFinding]:
         resolved = self._resolve_path(path)
         try:
             source = resolved.read_text(encoding="utf-8")
@@ -148,7 +148,7 @@ class StaticFaultAuditor:
         tree = ast.parse(source, filename=str(resolved))
         parents = self._parent_map(tree)
         rel_path = self._relative_path(resolved)
-        findings: List[ResilienceFinding] = []
+        findings: list[ResilienceFinding] = []
 
         for node in ast.walk(tree):
             if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
@@ -164,9 +164,9 @@ class StaticFaultAuditor:
         self,
         node: ast.AsyncFunctionDef,
         rel_path: str,
-    ) -> List[ResilienceFinding]:
-        findings: List[ResilienceFinding] = []
-        has_await_cache: Dict[int, bool] = {}
+    ) -> list[ResilienceFinding]:
+        findings: list[ResilienceFinding] = []
+        has_await_cache: dict[int, bool] = {}
 
         for subnode in ast.walk(node):
             if isinstance(subnode, ast.Call):
@@ -209,8 +209,8 @@ class StaticFaultAuditor:
         self,
         node: ast.BinOp,
         rel_path: str,
-        parents: Dict[ast.AST, ast.AST],
-    ) -> Optional[ResilienceFinding]:
+        parents: dict[ast.AST, ast.AST],
+    ) -> ResilienceFinding | None:
         right = node.right
         operator = {
             ast.Div: "/",
@@ -258,7 +258,7 @@ class StaticFaultAuditor:
         return None
 
     @staticmethod
-    def _call_name(node: ast.Call) -> Tuple[str, str] | None:
+    def _call_name(node: ast.Call) -> tuple[str, str] | None:
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             return node.func.value.id, node.func.attr
         return None
@@ -272,15 +272,15 @@ class StaticFaultAuditor:
         return any(isinstance(child, ast.Await) for child in ast.walk(node))
 
     @staticmethod
-    def _parent_map(tree: ast.AST) -> Dict[ast.AST, ast.AST]:
-        parents: Dict[ast.AST, ast.AST] = {}
+    def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+        parents: dict[ast.AST, ast.AST] = {}
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
                 parents[child] = parent
         return parents
 
     @staticmethod
-    def _enclosing_function_name(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> str:
+    def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
         current = node
         while current in parents:
             current = parents[current]
@@ -318,10 +318,10 @@ class IntegrationAuditor:
     ):
         self._service_resolver = service_resolver
         self._container_cls = container_cls
-        self._auto_wired_repairs: set[Tuple[str, str]] = set()
+        self._auto_wired_repairs: set[tuple[str, str]] = set()
 
-    def audit_service_graph(self) -> Dict[str, Any]:
-        findings: List[ResilienceFinding] = []
+    def audit_service_graph(self) -> dict[str, Any]:
+        findings: list[ResilienceFinding] = []
         registry = getattr(self._container_cls, "_services", {}) or {}
         registered_names = set(registry.keys())
         aliases = getattr(self._container_cls, "_aliases", {}) or {}
@@ -351,7 +351,7 @@ class IntegrationAuditor:
             ],
         }
 
-    def auto_wire_autopoiesis(self) -> Dict[str, Any]:
+    def auto_wire_autopoiesis(self) -> dict[str, Any]:
         autopoiesis = self._service_resolver("autopoiesis")
         if autopoiesis is None:
             return {
@@ -360,8 +360,8 @@ class IntegrationAuditor:
                 "notes": ["autopoiesis unavailable"],
             }
 
-        health_added: List[str] = []
-        repair_added: List[str] = []
+        health_added: list[str] = []
+        repair_added: list[str] = []
         registry = getattr(self._container_cls, "_services", {}) or {}
 
         try:
@@ -418,7 +418,7 @@ class IntegrationAuditor:
         }
 
     @staticmethod
-    def _health_probe_for(instance: Any) -> Optional[Callable[[], float]]:
+    def _health_probe_for(instance: Any) -> Callable[[], float] | None:
         if hasattr(instance, "health_score") and callable(instance.health_score):
             return lambda instance=instance: _clamp01(float(instance.health_score()))
 
@@ -452,8 +452,8 @@ class IntegrationAuditor:
         return None
 
     @staticmethod
-    def _repair_handlers_for(instance: Any) -> Dict[str, Callable[[], Any]]:
-        handlers: Dict[str, Callable[[], Any]] = {}
+    def _repair_handlers_for(instance: Any) -> dict[str, Callable[[], Any]]:
+        handlers: dict[str, Callable[[], Any]] = {}
 
         def _wrap(method_name: str) -> Callable[[], Any]:
             method = getattr(instance, method_name)
@@ -486,8 +486,8 @@ class RuntimeWatchdogAuditor:
     def __init__(self, *, service_resolver: Callable[[str], Any]):
         self._service_resolver = service_resolver
 
-    def audit(self) -> Dict[str, Any]:
-        findings: List[ResilienceFinding] = []
+    def audit(self) -> dict[str, Any]:
+        findings: list[ResilienceFinding] = []
 
         lock_snapshot = self._lock_watchdog_snapshot()
         if lock_snapshot["active_count"] > 0:
@@ -538,7 +538,7 @@ class RuntimeWatchdogAuditor:
             )
 
         stability = self._stability_snapshot()
-        if not stability.get("healthy", True):
+        if stability.get("healthy") is not True:
             findings.append(
                 ResilienceFinding(
                     kind="stability_degraded",
@@ -558,7 +558,7 @@ class RuntimeWatchdogAuditor:
             "stability": stability,
         }
 
-    def _lock_watchdog_snapshot(self) -> Dict[str, Any]:
+    def _lock_watchdog_snapshot(self) -> dict[str, Any]:
         try:
             lock_watchdog = self._service_resolver("lock_watchdog")
             if lock_watchdog is None:
@@ -575,7 +575,7 @@ class RuntimeWatchdogAuditor:
                 "error": str(exc),
             }
 
-    def _task_tracker_stats(self) -> Dict[str, Any]:
+    def _task_tracker_stats(self) -> dict[str, Any]:
         try:
             from core.utils.task_tracker import get_task_tracker
 
@@ -602,13 +602,19 @@ class RuntimeWatchdogAuditor:
                     unsupervised += 1
         except RuntimeError:
             unsupervised = 0
-        except (RuntimeError, AttributeError, TypeError):
-            pass  # no-op: intentional
+        except (AttributeError, TypeError) as exc:
+            record_degradation(
+                "autonomous_resilience",
+                exc,
+                severity="warning",
+                action="reported zero unsupervised tasks after task introspection failed",
+            )
+            logger.debug("Task introspection failed during resilience audit: %s", exc)
 
         stats["unsupervised_active"] = unsupervised
         return stats
 
-    def _stability_snapshot(self) -> Dict[str, Any]:
+    def _stability_snapshot(self) -> dict[str, Any]:
         guardian = self._service_resolver("stability_guardian")
         if guardian is None:
             return {
@@ -620,13 +626,23 @@ class RuntimeWatchdogAuditor:
         history = getattr(guardian, "_report_history", None)
         if history:
             report = history[-1]
+            health_value = getattr(report, "overall_healthy", None)
+            if health_value is None:
+                return {
+                    "healthy": False,
+                    "status": "malformed_report",
+                    "message": "stability guardian latest report is missing overall_healthy",
+                    "required_probe_missing": True,
+                }
+            unhealthy_checks = [
+                c.message
+                for c in getattr(report, "checks", [])
+                if getattr(c, "healthy", None) is not True
+            ]
             return {
-                "healthy": bool(getattr(report, "overall_healthy", True)),
-                "status": "healthy" if bool(getattr(report, "overall_healthy", True)) else "degraded",
-                "message": "; ".join(
-                    c.message for c in getattr(report, "checks", []) if not getattr(c, "healthy", True)
-                )
-                or "healthy",
+                "healthy": bool(health_value),
+                "status": "healthy" if bool(health_value) else "degraded",
+                "message": "; ".join(unhealthy_checks) or ("healthy" if bool(health_value) else "degraded"),
             }
         summary_fn = getattr(guardian, "get_health_summary", None)
         if callable(summary_fn):
@@ -680,8 +696,8 @@ class SecurityImmuneAuditor:
             self._barrier = None
             self._injection_patterns = ()
 
-    def scan_text(self, text: str) -> Dict[str, Any]:
-        findings: List[ResilienceFinding] = []
+    def scan_text(self, text: str) -> dict[str, Any]:
+        findings: list[ResilienceFinding] = []
         if not str(text or "").strip():
             return {
                 "findings": [],
@@ -723,7 +739,7 @@ class SecurityImmuneAuditor:
                 )
             )
 
-        deduped: Dict[Tuple[str, str], ResilienceFinding] = {}
+        deduped: dict[tuple[str, str], ResilienceFinding] = {}
         for finding in findings:
             deduped[(finding.kind, finding.message)] = finding
         ordered = sorted(deduped.values(), key=lambda item: item.score, reverse=True)
@@ -753,8 +769,8 @@ class VerifierGuidedRepairPipeline:
         *,
         error_signature: str,
         stack_trace: str,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         context = context or {}
         target = self._locate_target(stack_trace, context=context)
         if target is None:
@@ -845,9 +861,9 @@ class VerifierGuidedRepairPipeline:
         self,
         stack_trace: str,
         *,
-        context: Dict[str, Any],
-    ) -> Optional[Tuple[str, int]]:
-        candidates: List[Tuple[str, int]] = []
+        context: dict[str, Any],
+    ) -> tuple[str, int] | None:
+        candidates: list[tuple[str, int]] = []
         for match in self._TRACEBACK_RE.finditer(str(stack_trace or "")):
             raw_path = Path(match.group(1)).expanduser()
             line_number = int(match.group(2))
@@ -873,7 +889,7 @@ class VerifierGuidedRepairPipeline:
                 if candidate.is_absolute():
                     candidate = candidate.resolve().relative_to(self.base_dir)
                 candidates.insert(0, (str(candidate), int(context["line_number"])))
-            except (OSError, IOError):
+            except OSError:
                 pass  # no-op: intentional
 
         if not candidates:
@@ -881,7 +897,7 @@ class VerifierGuidedRepairPipeline:
         return candidates[0]
 
     @staticmethod
-    def _diagnosis_for(error_signature: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _diagnosis_for(error_signature: str, context: dict[str, Any]) -> dict[str, Any]:
         error_lower = str(error_signature or "").lower()
         if "zerodivision" in error_lower:
             root_cause = "A divisor reached zero without a guard"
@@ -923,7 +939,7 @@ class AutonomousResilienceMesh:
         self,
         *,
         base_dir: str | Path,
-        service_resolver: Optional[Callable[[str], Any]] = None,
+        service_resolver: Callable[[str], Any] | None = None,
         container_cls: Any = None,
         code_scan_interval_s: float = 300.0,
         auto_wire_interval_s: float = 90.0,
@@ -946,16 +962,16 @@ class AutonomousResilienceMesh:
         self._auto_wire_interval_s = float(auto_wire_interval_s)
         self._last_code_scan = 0.0
         self._last_auto_wire = 0.0
-        self._last_report: Dict[str, Any] = {}
-        self._last_static_findings: List[Dict[str, Any]] = []
+        self._last_report: dict[str, Any] = {}
+        self._last_static_findings: list[dict[str, Any]] = []
 
     async def tick(
         self,
         *,
         user_text: str = "",
-        state_snapshot: Optional[Dict[str, Any]] = None,
+        state_snapshot: dict[str, Any] | None = None,
         force_code_scan: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         state_snapshot = state_snapshot or {}
         now = time.time()
 
@@ -1021,7 +1037,7 @@ class AutonomousResilienceMesh:
         self,
         artifact: Any,
         antigen: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         context = dict(getattr(antigen, "context", {}) or {})
         context.setdefault("component", getattr(artifact, "component", "unknown"))
         return await self.patch_pipeline.attempt_repair(
@@ -1030,7 +1046,7 @@ class AutonomousResilienceMesh:
             context=context,
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return dict(self._last_report or {})
 
     @staticmethod
@@ -1047,12 +1063,12 @@ class AutonomousResilienceMesh:
     def _build_immune_events(
         self,
         *,
-        security_report: Dict[str, Any],
-        runtime_report: Dict[str, Any],
-        static_report: Dict[str, Any],
-        service_report: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        events: List[Dict[str, Any]] = []
+        security_report: dict[str, Any],
+        runtime_report: dict[str, Any],
+        static_report: dict[str, Any],
+        service_report: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
         for section_name, section in (
             ("security", security_report),
             ("runtime", runtime_report),
@@ -1095,7 +1111,7 @@ class AutonomousResilienceMesh:
         return events[:6]
 
 
-_autonomous_resilience_singleton: Optional[AutonomousResilienceMesh] = None
+_autonomous_resilience_singleton: AutonomousResilienceMesh | None = None
 
 
 def get_autonomous_resilience_mesh() -> AutonomousResilienceMesh:

@@ -126,15 +126,15 @@ class AutonomousCognitiveEngine:
             if guardian and hasattr(guardian, "get_health_summary"):
                 summary = guardian.get_health_summary()
                 # If system is not healthy, we are in safe mode
-                return not summary.get("healthy", True)
+                return summary.get("healthy") is not True
         except BRAIN_RECOVERABLE_ERRORS as _e:
             _record_brain_degradation(
                 _e,
-                action="assumed safe mode inactive after stability guardian lookup failed",
-                severity="debug",
+                action="entered safe mode after stability guardian lookup failed",
+                severity="warning",
             )
             logger.debug('Ignored Exception in autonomous_brain_integration.py: %s', _e)
-        return False
+        return True
 
     def _init_tiers(self):
         """Standardizes Aura's managed multi-tier local runtime hierarchy.

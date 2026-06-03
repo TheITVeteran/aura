@@ -504,6 +504,28 @@ async def test_stability_guardian_surfaces_runtime_hygiene_findings(service_cont
     assert result.action_taken == "gc.collect()"
 
 
+@pytest.mark.asyncio
+async def test_stability_guardian_rejects_runtime_hygiene_report_without_health_evidence(service_container):
+    service_container.register_instance(
+        "runtime_hygiene",
+        SimpleNamespace(
+            audit=lambda: {
+                "critical": False,
+                "issues": ["runtime hygiene did not emit healthy"],
+                "repair_actions": [],
+            }
+        ),
+        required=False,
+    )
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+
+    result = await guardian._check_runtime_hygiene()
+
+    assert result.healthy is False
+    assert result.severity == "warning"
+    assert "runtime hygiene did not emit healthy" in result.message
+
+
 def test_stability_guardian_treats_slow_user_facing_ticks_as_info():
     guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
     now = time.time()

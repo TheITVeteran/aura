@@ -123,6 +123,27 @@ def test_runtime_watchdog_marks_stability_guardian_without_report_unhealthy():
     assert snapshot["required_probe_missing"] is True
 
 
+def test_runtime_watchdog_marks_malformed_stability_report_unhealthy():
+    guardian = SimpleNamespace(
+        _report_history=[
+            SimpleNamespace(
+                checks=[
+                    SimpleNamespace(name="kernel", healthy=True, message="ok"),
+                ]
+            )
+        ],
+    )
+    auditor = RuntimeWatchdogAuditor(
+        service_resolver=lambda name: guardian if name == "stability_guardian" else None
+    )
+
+    snapshot = auditor._stability_snapshot()
+
+    assert snapshot["healthy"] is False
+    assert snapshot["status"] == "malformed_report"
+    assert snapshot["required_probe_missing"] is True
+
+
 class _CodeRepairStub:
     def __init__(self):
         self.calls = []

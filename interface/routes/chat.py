@@ -3112,9 +3112,15 @@ def _build_self_diagnostic_reply(user_message: str) -> str:
         guardian = ServiceContainer.get("stability_guardian", default=None)
         if guardian and hasattr(guardian, "get_latest_report"):
             report = guardian.get_latest_report() or {}
-            stability_status = "healthy" if bool(report.get("overall_healthy", True)) else "degraded"
+            if report.get("overall_healthy") is True:
+                stability_status = "healthy"
+            elif report:
+                stability_status = "degraded"
+            else:
+                stability_status = "initializing"
+                issues.append("StabilityGuardian has not produced a health report yet")
             for check in report.get("checks", []) or []:
-                if not bool(check.get("healthy", True)):
+                if check.get("healthy") is not True:
                     message = str(check.get("message") or check.get("name") or "unknown issue").strip()
                     if message:
                         issues.append(message[:160])

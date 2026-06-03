@@ -401,16 +401,34 @@ def _sample_from_container() -> ViabilitySample:
                 interactions = 1
         guardian = ServiceContainer.get("stability_guardian", default=None)
         if guardian is not None:
-            r = getattr(guardian, "last_report", None)
-            if r is not None:
-                try:
-                    from core.runtime.ablation_policy import service_intentionally_lesioned
-                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-                    service_intentionally_lesioned = lambda _name: False
+            try:
+                from core.runtime.ablation_policy import service_intentionally_lesioned
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                def service_intentionally_lesioned(_name: str) -> bool:
+                    return False
+
+            report = None
+            get_latest_report = getattr(guardian, "get_latest_report", None)
+            if callable(get_latest_report):
+                report = get_latest_report()
+            if report is None:
+                report = getattr(guardian, "last_report", None)
+
+            if isinstance(report, dict):
+                checks = report.get("checks", []) or []
+                for check in checks:
+                    if not isinstance(check, dict):
+                        continue
+                    name = str(check.get("name", ""))
+                    if check.get("healthy") is not True and not service_intentionally_lesioned(name):
+                        broken += 1
+                if report.get("overall_healthy") is False and broken == 0:
+                    broken = 1
+            elif report is not None:
                 broken = sum(
                     1
-                    for c in getattr(r, "checks", [])
-                    if not getattr(c, "healthy", True)
+                    for c in getattr(report, "checks", [])
+                    if getattr(c, "healthy", None) is not True
                     and not service_intentionally_lesioned(getattr(c, "name", ""))
                 )
         goal_engine = ServiceContainer.get("goal_engine", default=None) or ServiceContainer.get("goals", default=None)

@@ -1,10 +1,8 @@
 from __future__ import annotations
-import inspect
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import gc
+import inspect
 import json
 import logging
 import os
@@ -12,9 +10,12 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 try:
     import psutil
@@ -33,10 +34,10 @@ class HealthCheckResult:
     healthy:    bool
     message:    str
     severity:   str = "info"    # "info", "warning", "error", "critical"
-    action_taken: Optional[str] = None
+    action_taken: str | None = None
     timestamp:  float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "name":         self.name,
             "healthy":      self.healthy,
@@ -51,14 +52,14 @@ class HealthCheckResult:
 class SystemHealthReport:
     timestamp:     float
     overall_healthy: bool
-    checks:        List[HealthCheckResult]
+    checks:        list[HealthCheckResult]
     memory_pct:    float
     cpu_pct:       float
     task_count:    int
     tick_rate_hz:  float
     mean_tick_ms:  float
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "timestamp":      self.timestamp,
             "overall_healthy": self.overall_healthy,
@@ -110,7 +111,7 @@ class StabilityGuardian:
     EVENT_LOOP_LAG_DUMP_COOLDOWN_S = 60.0
 
     @staticmethod
-    def _memory_thresholds() -> Tuple[float, float]:
+    def _memory_thresholds() -> tuple[float, float]:
         if not _HAS_PSUTIL:
             return StabilityGuardian.MEMORY_WARNING_PCT, StabilityGuardian.MEMORY_CRITICAL_PCT
         try:
@@ -131,14 +132,14 @@ class StabilityGuardian:
     def __init__(self, orchestrator: Any):
         self.orchestrator   = orchestrator
         self._running       = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._report_history: deque = deque(maxlen=100)
-        self._tick_samples:   Deque[Dict[str, Any]] = deque(maxlen=60)
-        self._tick_times:     Deque[Tuple[Any, ...]] = deque(maxlen=60)   # (timestamp, duration_ms[, priority_tick])
-        self._loop_lag_samples: Deque[Tuple[float, float]] = deque(maxlen=60)
+        self._tick_samples:   deque[dict[str, Any]] = deque(maxlen=60)
+        self._tick_times:     deque[tuple[Any, ...]] = deque(maxlen=60)   # (timestamp, duration_ms[, priority_tick])
+        self._loop_lag_samples: deque[tuple[float, float]] = deque(maxlen=60)
         self._last_tick_at:   float = time.time()
-        self._extra_checks:   List[Callable] = []
-        self._last_repair_at: Dict[str, float] = {}
+        self._extra_checks:   list[Callable] = []
+        self._last_repair_at: dict[str, float] = {}
 
         try:
             from core.config import config
@@ -265,7 +266,7 @@ class StabilityGuardian:
                 self._tick_times.append((now, duration_ms, priority_tick))
         self._last_tick_at = now
 
-    def _recent_tick_samples(self, now: Optional[float] = None, window_s: float = 300.0) -> List[Dict[str, Any]]:
+    def _recent_tick_samples(self, now: float | None = None, window_s: float = 300.0) -> list[dict[str, Any]]:
         current_time = now or time.time()
         samples = [
             sample
@@ -275,7 +276,7 @@ class StabilityGuardian:
         if samples:
             return samples
 
-        legacy_samples: List[Dict[str, Any]] = []
+        legacy_samples: list[dict[str, Any]] = []
         for item in self._tick_times:
             try:
                 timestamp = float(item[0])
@@ -297,9 +298,9 @@ class StabilityGuardian:
 
     def _recent_tick_entries(
         self,
-        now: Optional[float] = None,
+        now: float | None = None,
         window_s: float = 300.0,
-    ) -> List[Tuple[float, float, bool]]:
+    ) -> list[tuple[float, float, bool]]:
         """Return (timestamp, duration_ms, priority_tick) triples.
 
         Prefers the rich `_tick_samples` store so origin-aware call sites still
@@ -316,14 +317,14 @@ class StabilityGuardian:
             for sample in samples
         ]
 
-    def _recent_tick_durations(self, now: Optional[float] = None, window_s: float = 300.0) -> List[float]:
+    def _recent_tick_durations(self, now: float | None = None, window_s: float = 300.0) -> list[float]:
         return [
             float(sample.get("duration_ms", 0.0) or 0.0)
             for sample in self._recent_tick_samples(now, window_s)
             if float(sample.get("duration_ms", 0.0) or 0.0) > 0.0
         ]
 
-    def _recent_loop_lags(self, now: Optional[float] = None, window_s: float = 300.0) -> List[float]:
+    def _recent_loop_lags(self, now: float | None = None, window_s: float = 300.0) -> list[float]:
         current_time = now or time.time()
         return [
             lag_ms
@@ -626,7 +627,7 @@ class StabilityGuardian:
             )
             thread_map = {thread.ident: thread for thread in threading.enumerate() if thread.ident is not None}
             main_ident = threading.main_thread().ident
-            main_block: Optional[str] = None
+            main_block: str | None = None
             blocks: list[str] = []
             for thread_id, frame in sys._current_frames().items():
                 stack = "".join(traceback.format_stack(frame))
@@ -1105,7 +1106,7 @@ class StabilityGuardian:
                 return HealthCheckResult("runtime_hygiene", True, "Runtime hygiene not registered yet", "info")
 
             report = hygiene.audit()
-            if report.get("healthy", True):
+            if report.get("healthy") is True:
                 tasks = report.get("tasks", {})
                 threads = report.get("threads", {})
                 processes = report.get("processes", {})
@@ -1136,12 +1137,12 @@ class StabilityGuardian:
 
     async def _check_background_tasks(self) -> HealthCheckResult:
         """Verify critical named background tasks are still running."""
-        CRITICAL_TASKS = {
+        critical_tasks = {
             "aura.research_cycle",
         }
         tasks          = asyncio.all_tasks()
         running_names  = {t.get_name() for t in tasks if not t.done()}
-        missing        = CRITICAL_TASKS - running_names
+        missing        = critical_tasks - running_names
         # Some may not exist yet at boot
         startup_tasks  = {"aura.research_cycle"}  # OK to be missing early on
         real_missing   = missing - startup_tasks
@@ -1177,12 +1178,12 @@ class StabilityGuardian:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def get_latest_report(self) -> Optional[Dict]:
+    def get_latest_report(self) -> dict | None:
         if not self._report_history:
             return None
         return self._report_history[-1].to_dict()
 
-    def get_health_summary(self) -> Dict:
+    def get_health_summary(self) -> dict:
         """Compatible with a /health API endpoint."""
         if not self._report_history:
             return {

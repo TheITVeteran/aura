@@ -436,6 +436,28 @@ def test_viability_ignores_will_authority_ablation_aliases(monkeypatch):
     assert _sample_from_container().broken_subsystems == 0
 
 
+def test_viability_counts_missing_stability_check_health_as_broken(monkeypatch):
+    from core.container import ServiceContainer
+    from core.organism.viability import _sample_from_container
+
+    class Guardian:
+        def get_latest_report(self):
+            return {
+                "overall_healthy": True,
+                "checks": [
+                    {"name": "Memory Facade"},
+                ],
+            }
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(lambda cls, name, default=None: Guardian() if name == "stability_guardian" else default),
+    )
+
+    assert _sample_from_container().broken_subsystems == 1
+
+
 def test_viability_tick_filters_transient_cpu_only_pressure(monkeypatch):
     from core.organism.viability import ViabilityEngine, ViabilitySample, ViabilityState
 

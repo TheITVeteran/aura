@@ -766,8 +766,8 @@ def test_generic_reply_detector_flags_live_tool_prompt_artifact():
 
 
 def test_grounded_authority_reply_includes_observability_note(monkeypatch):
-    from interface.routes import chat as chat_route
     import core.consciousness.authority_audit as audit_mod
+    from interface.routes import chat as chat_route
 
     class DummyAuthority:
         def get_status(self):
@@ -897,8 +897,8 @@ async def test_grounded_traceability_reply_resolves_referential_followup(tmp_pat
 
 
 def test_grounded_internal_state_reply_uses_live_voice_snapshot(monkeypatch):
-    from interface.routes import chat as chat_route
     import core.consciousness.self_report as self_report_mod
+    from interface.routes import chat as chat_route
 
     class DummyClosure:
         def get_status(self):
@@ -945,9 +945,9 @@ def test_grounded_internal_state_reply_uses_live_voice_snapshot(monkeypatch):
 
 
 def test_unitary_response_compact_prompt_uses_live_voice_snapshot(monkeypatch):
+    import core.voice.substrate_voice_engine as voice_mod
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.state.aura_state import AuraState
-    import core.voice.substrate_voice_engine as voice_mod
 
     state = AuraState.default()
     state.cognition.current_objective = "the live substrate panel"
@@ -1422,6 +1422,32 @@ def test_self_diagnostic_reflex_reports_runtime_status(monkeypatch):
     assert "2 pathways / 3 live links" in reply
 
 
+def test_self_diagnostic_reflex_does_not_report_missing_stability_as_healthy(monkeypatch):
+    from interface.routes import chat as chat_route
+
+    class DummyGuardian:
+        def get_latest_report(self):
+            return None
+
+    def fake_get(name, default=None):
+        if name == "stability_guardian":
+            return DummyGuardian()
+        return default
+
+    monkeypatch.setattr(chat_route.ServiceContainer, "get", staticmethod(fake_get))
+    monkeypatch.setattr(
+        chat_route,
+        "_collect_conversation_lane_status",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+
+    reply = chat_route._build_self_diagnostic_reply("Run a self-diag and tell me what you find.")
+
+    assert "stability is initializing" in reply
+    assert "StabilityGuardian has not produced a health report yet" in reply
+    assert "stability is healthy" not in reply
+
+
 def test_first_person_anchor_detects_self_anchored_replies():
     from interface.routes.chat import _has_first_person_anchor
 
@@ -1511,7 +1537,7 @@ def test_turn_analysis_marks_repo_read_as_skill():
 
 @pytest.mark.asyncio
 async def test_intent_router_uses_governed_deterministic_turn_analysis():
-    from core.cognitive.router import IntentRouter, Intent
+    from core.cognitive.router import Intent, IntentRouter
 
     router = IntentRouter()
     router.llm = None
@@ -2088,8 +2114,8 @@ def test_repo_probe_request_detects_dependency_reads():
 
 
 def test_repo_probe_reads_first_non_comment_dependency_line(tmp_path, monkeypatch):
-    from interface.routes import chat as chat_route
     from core import demo_support
+    from interface.routes import chat as chat_route
 
     sample = tmp_path / "requirements_hardened.txt"
     sample.write_text(
@@ -2109,8 +2135,8 @@ def test_repo_probe_reads_first_non_comment_dependency_line(tmp_path, monkeypatc
 
 
 def test_repo_probe_counts_lines(tmp_path, monkeypatch):
-    from interface.routes import chat as chat_route
     from core import demo_support
+    from interface.routes import chat as chat_route
 
     sample = tmp_path / "sample.txt"
     sample.write_text("one\ntwo\nthree\n", encoding="utf-8")
@@ -2294,9 +2320,9 @@ def test_unitary_live_self_reflection_repair_answers_relational_preference():
 
 
 def test_aura_expression_frame_falls_back_to_state_repository(monkeypatch):
-    from interface.routes import chat as chat_route
-    from core.state.aura_state import AuraState
     from core.runtime import service_access
+    from core.state.aura_state import AuraState
+    from interface.routes import chat as chat_route
 
     state = AuraState.default()
     state.affect.dominant_emotion = "curious"

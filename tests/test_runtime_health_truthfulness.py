@@ -133,3 +133,37 @@ def test_stability_guardian_initializing_summary_is_not_healthy():
     assert summary["healthy"] is False
     assert summary["active_issues"]
     assert "no stability report yet" in summary["message"]
+
+
+def test_autonomous_brain_enters_safe_mode_when_stability_health_is_unknown(monkeypatch):
+    from core.brain.llm.autonomous_brain_integration import AutonomousCognitiveEngine
+    from core.container import ServiceContainer
+
+    class GuardianWithoutHealth:
+        def get_health_summary(self):
+            return {"status": "initializing"}
+
+    def fake_get(cls, name, default=None):
+        if name == "stability_guardian":
+            return GuardianWithoutHealth()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    engine = AutonomousCognitiveEngine.__new__(AutonomousCognitiveEngine)
+
+    assert engine._is_safe_mode() is True
+
+
+def test_autonomous_brain_enters_safe_mode_when_stability_lookup_fails(monkeypatch):
+    from core.brain.llm.autonomous_brain_integration import AutonomousCognitiveEngine
+    from core.container import ServiceContainer
+
+    def fake_get(cls, name, default=None):
+        if name == "stability_guardian":
+            raise RuntimeError("container unavailable")
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    engine = AutonomousCognitiveEngine.__new__(AutonomousCognitiveEngine)
+
+    assert engine._is_safe_mode() is True
