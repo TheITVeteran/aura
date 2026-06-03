@@ -477,14 +477,17 @@ class SafePipeline:
         last_detail: dict[str, Any] = {}
         waitable_statuses = {"initializing", "no_stability_report"}
 
-        while True:
+        first_sample = True
+        while first_sample or time.monotonic() <= deadline:
+            first_sample = False
             healthy, detail = self._guardian_health_snapshot(guardian)
             last_detail = detail
             status = str(detail.get("status", "unknown"))
+            remaining_s = deadline - time.monotonic()
             if healthy:
                 healthy_samples.append(detail)
-            elif status in waitable_statuses and time.monotonic() < deadline:
-                await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), deadline - time.monotonic())))
+            elif status in waitable_statuses and remaining_s > 0.0:
+                await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), remaining_s)))
                 continue
             else:
                 self._rollback_after_deploy(
@@ -496,7 +499,8 @@ class SafePipeline:
                 )
                 return
 
-            if time.monotonic() >= deadline:
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.0:
                 _record(
                     proposal,
                     "post_deploy_clean",
@@ -504,7 +508,19 @@ class SafePipeline:
                 )
                 break
 
-            await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), deadline - time.monotonic())))
+            await asyncio.sleep(max(0.0, min(float(self.POST_DEPLOY_POLL_S), remaining_s)))
+        if not healthy_samples:
+            self._rollback_after_deploy(
+                proposal,
+                target,
+                before_source,
+                reason=f"post_deploy_health:{last_detail.get('status', 'no_healthy_evidence')}",
+                detail=last_detail or {
+                    "status": "no_healthy_evidence",
+                    "source": "post_deploy_monitor",
+                },
+            )
+            return
         proposal.stages_completed.append(Stage.POST_DEPLOY_MONITOR.value)
 
 

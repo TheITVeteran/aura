@@ -4010,8 +4010,8 @@ def _build_live_conversation_repair(
     if free_energy is not None:
         try:
             details.append(f"Free energy is {float(free_energy):.3f}.")
-        except (TypeError, ValueError):
-            pass  # no-op: intentional
+        except (TypeError, ValueError) as exc:
+            logger.debug("Live conversation repair ignored non-numeric free_energy: %s", exc)
 
     detail_text = " ".join(details).strip() or fallback
     return f"{prefix} {detail_text}".strip()

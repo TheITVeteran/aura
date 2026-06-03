@@ -8,14 +8,16 @@ reliably and reports the remaining hardware constraints explicitly.
 """
 from __future__ import annotations
 
+import atexit
 import os
 import platform
 import shutil
 import signal
 import time
-import atexit
 from dataclasses import dataclass, field
 from typing import Any
+
+from core.runtime.errors import record_degradation
 
 _ENABLED_VALUES = {"1", "true", "yes", "on", "enabled"}
 _DISABLED_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -225,8 +227,13 @@ def _register_shutdown_hooks(controller: MacKeepAwakeController) -> None:
         from core.container import ServiceContainer
 
         ServiceContainer.register_instance("keep_awake_controller", controller, required=False)
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "keep_awake",
+            exc,
+            severity="warning",
+            action="keep-awake controller could not register in ServiceContainer",
+        )
     try:
         from core.runtime.shutdown_coordinator import get_shutdown_coordinator
 
@@ -236,8 +243,13 @@ def _register_shutdown_hooks(controller: MacKeepAwakeController) -> None:
             name="keep_awake_controller",
             timeout=4.0,
         )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "keep_awake",
+            exc,
+            severity="warning",
+            action="keep-awake controller could not register shutdown hook",
+        )
     atexit.register(controller.stop)
     _shutdown_hooks_registered = True
 

@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import gc
@@ -13,8 +11,9 @@ import time
 import tracemalloc
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 try:
@@ -60,7 +59,7 @@ def _env_int(name: str, default: int, *, low: int, high: int) -> int:
     return max(low, min(high, value))
 
 
-def _process_cmdline(proc: Any) -> List[str]:
+def _process_cmdline(proc: Any) -> list[str]:
     try:
         return [str(part) for part in (proc.cmdline() or [])]
     except _PROCESS_INTROSPECTION_ERRORS:
@@ -109,12 +108,12 @@ class ThreadRecord:
     daemon: bool
     source: str
     created_at: float = field(default_factory=time.monotonic)
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
-    ident: Optional[int] = None
-    exception: Optional[str] = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    ident: int | None = None
+    exception: str | None = None
 
-    def age_s(self, now: Optional[float] = None) -> float:
+    def age_s(self, now: float | None = None) -> float:
         current_time = now if now is not None else time.monotonic()
         origin = self.started_at or self.created_at
         return max(0.0, current_time - origin)
@@ -128,11 +127,11 @@ class ProcessRecord:
     source: str
     command: str
     created_at: float = field(default_factory=time.monotonic)
-    pid: Optional[int] = None
-    exit_code: Optional[int] = None
-    finished_at: Optional[float] = None
+    pid: int | None = None
+    exit_code: int | None = None
+    finished_at: float | None = None
 
-    def age_s(self, now: Optional[float] = None) -> float:
+    def age_s(self, now: float | None = None) -> float:
         current_time = now if now is not None else time.monotonic()
         return max(0.0, current_time - self.created_at)
 
@@ -142,11 +141,11 @@ class RuntimeHygieneManager:
 
     def __init__(self):
         self._running = False
-        self._thread_records: Dict[int, ThreadRecord] = {}
-        self._thread_refs: Dict[int, threading.Thread] = {}
-        self._process_records: Dict[int, ProcessRecord] = {}
-        self._process_refs: Dict[int, Any] = {}
-        self._samples: Deque[MemorySample] = deque(maxlen=36)
+        self._thread_records: dict[int, ThreadRecord] = {}
+        self._thread_refs: dict[int, threading.Thread] = {}
+        self._process_records: dict[int, ProcessRecord] = {}
+        self._process_refs: dict[int, Any] = {}
+        self._samples: deque[MemorySample] = deque(maxlen=36)
         self._task_tracker = get_task_tracker()
         self._last_gc_at = 0.0
 
@@ -187,7 +186,7 @@ class RuntimeHygieneManager:
 
         self._proc = psutil.Process(os.getpid()) if _HAS_PSUTIL else None
 
-    async def start(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         if self._running:
             target_loop = loop
             if target_loop is not None:
@@ -264,7 +263,7 @@ class RuntimeHygieneManager:
         self._samples.append(sample)
         return sample
 
-    def audit(self) -> Dict[str, Any]:
+    def audit(self) -> dict[str, Any]:
         sample = self.capture_sample()
         self._adopt_active_child_processes()
         self._refresh_thread_records()
@@ -276,8 +275,8 @@ class RuntimeHygieneManager:
         process_summary = self._process_summary()
         memory_summary = self._memory_summary()
 
-        repair_actions: List[str] = []
-        issues: List[str] = []
+        repair_actions: list[str] = []
+        issues: list[str] = []
         critical = False
 
         # Stale tasks and non-daemon threads are expected for long-lived components
@@ -315,7 +314,7 @@ class RuntimeHygieneManager:
         }
         return summary
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         report = self.audit()
         report["running"] = self._running
         return report
@@ -495,7 +494,7 @@ class RuntimeHygieneManager:
                 record.finished_at = time.monotonic()
 
         thread.run = _wrapped_run
-        setattr(thread, "_aura_runtime_hygiene_wrapped", True)
+        thread._aura_runtime_hygiene_wrapped = True
 
     def _register_subprocess(self, proc: subprocess.Popen, *, args: tuple, kwargs: dict) -> None:
         command = kwargs.get("args")
@@ -584,12 +583,12 @@ class RuntimeHygieneManager:
                 if not alive or status == "zombie":
                     record.finished_at = record.finished_at or now
 
-    def _thread_summary(self) -> Dict[str, Any]:
+    def _thread_summary(self) -> dict[str, Any]:
         now = time.monotonic()
         active = 0
         active_non_daemon = 0
         stale_non_daemon = 0
-        sample: List[Dict[str, Any]] = []
+        sample: list[dict[str, Any]] = []
         for record in self._thread_records.values():
             if record.finished_at is not None:
                 continue
@@ -612,7 +611,7 @@ class RuntimeHygieneManager:
             "sample": sample[:5],
         }
 
-    def _process_summary(self) -> Dict[str, Any]:
+    def _process_summary(self) -> dict[str, Any]:
         active_registered = 0
         active_subprocesses = 0
         active_multiprocessing = 0
@@ -624,8 +623,14 @@ class RuntimeHygieneManager:
             if getattr(record, "pid", None):
                 try:
                     active_registered_pids.add(int(record.pid))
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "runtime_hygiene",
+                        exc,
+                        severity="warning",
+                        action="ignored malformed registered process pid during hygiene summary",
+                    )
+                    logger.debug("RuntimeHygiene: malformed registered pid %r: %s", record.pid, exc)
             if record.kind == "subprocess":
                 active_subprocesses += 1
             elif record.kind == "multiprocessing":
@@ -651,7 +656,7 @@ class RuntimeHygieneManager:
             "rogue_child_processes": max(0, rogue_children),
         }
 
-    def _memory_summary(self) -> Dict[str, Any]:
+    def _memory_summary(self) -> dict[str, Any]:
         if len(self._samples) < self.memory_growth_window:
             latest = self._samples[-1] if self._samples else None
             return {
@@ -691,8 +696,8 @@ class RuntimeHygieneManager:
             "delta_mb": round(delta_mb, 1),
         }
 
-    def _active_local_model_activity(self) -> List[str]:
-        active: List[str] = []
+    def _active_local_model_activity(self) -> list[str]:
+        active: list[str] = []
         now = time.time()
         registries = (
             ("core.brain.llm.mlx_client", "_CLIENTS"),
@@ -766,8 +771,14 @@ class RuntimeHygieneManager:
                                     asyncio.to_thread(proc.wait, 0.2),
                                     timeout=0.3,
                                 )
-                            except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired):
-                                pass
+                            except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired) as exc:
+                                record_degradation(
+                                    "runtime_hygiene",
+                                    exc,
+                                    severity="warning",
+                                    action="subprocess did not confirm exit after kill",
+                                )
+                                logger.debug("RuntimeHygiene: subprocess kill wait failed: %s", exc)
                 except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: subprocess cleanup failed: %s", exc)
@@ -783,8 +794,14 @@ class RuntimeHygieneManager:
                             proc.kill()
                             try:
                                 await asyncio.wait_for(asyncio.to_thread(proc.join, 0.2), timeout=0.3)
-                            except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
-                                pass
+                            except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError) as exc:
+                                record_degradation(
+                                    "runtime_hygiene",
+                                    exc,
+                                    severity="warning",
+                                    action="multiprocessing child did not confirm exit after kill",
+                                )
+                                logger.debug("RuntimeHygiene: multiprocessing kill join failed: %s", exc)
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: multiprocessing cleanup failed: %s", exc)
@@ -805,8 +822,14 @@ class RuntimeHygieneManager:
                                         asyncio.to_thread(proc.wait, 0.2),
                                         timeout=0.3,
                                     )
-                                except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
-                                    pass
+                                except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError) as exc:
+                                    record_degradation(
+                                        "runtime_hygiene",
+                                        exc,
+                                        severity="warning",
+                                        action="psutil child did not confirm exit after kill",
+                                    )
+                                    logger.debug("RuntimeHygiene: psutil kill wait failed: %s", exc)
                 except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                     record_degradation('runtime_hygiene', exc)
                     logger.debug("RuntimeHygiene: psutil child cleanup failed: %s", exc)
@@ -903,7 +926,7 @@ class RuntimeHygieneManager:
         thread.join(timeout_s)
 
 
-_runtime_hygiene: Optional[RuntimeHygieneManager] = None
+_runtime_hygiene: RuntimeHygieneManager | None = None
 
 
 def get_runtime_hygiene() -> RuntimeHygieneManager:
