@@ -325,6 +325,7 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
     assert calls[0]["origin"] == "user"
     assert calls[0]["context"]["route"] == "desktop_chat"
     assert calls[0]["context"]["source"] == "chat_api"
+    assert calls[0]["context"]["cognitive_engine_required"] is False
     assert calls[0]["kwargs"]["foreground_request"] is True
     assert calls[0]["kwargs"]["is_background"] is False
     assert not any("kernel_interface" in call for call in calls)
@@ -410,6 +411,7 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
     assert calls
     assert calls[0]["context"]["route"] == "desktop_chat"
     assert calls[0]["context"]["source"] == "desktop_ui"
+    assert calls[0]["context"]["cognitive_engine_required"] is True
     assert not any("kernel_interface" in call for call in calls)
 
 
@@ -532,6 +534,7 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
     assert b"desktop_objective_completed" in response.body
     assert cognitive_calls
     assert cognitive_calls[0]["context"]["source"] == "desktop_ui"
+    assert cognitive_calls[0]["context"]["cognitive_engine_required"] is True
     assert skill_calls == [
         {
             "skill_name": "desktop_task",

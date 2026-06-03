@@ -896,6 +896,7 @@ async def websocket_endpoint(ws: WebSocket):
                                     timeout_s=300.0,
                                     lane=chat_routes._collect_conversation_lane_status(),
                                     source="desktop_websocket",
+                                    require_engine=True,
                                 )
                                 if not reply:
                                     await ws_ref.send_text(json.dumps({

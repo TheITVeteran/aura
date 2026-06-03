@@ -38,4 +38,17 @@ def test_websocket_chat_uses_desktop_cognitive_engine_trace_metadata():
 
     assert 'origin="desktop-ui"' in source
     assert 'source="desktop_websocket"' in source
+    assert "require_engine=True" in source
     assert "desktop WebSocket chat path requires CognitiveEngine" in source
+
+
+def test_cognitive_engine_turn_required_contract_has_no_kernel_fallback_language():
+    from interface.routes import chat
+
+    signature = inspect.signature(chat._run_cognitive_engine_chat_turn)
+    source = inspect.getsource(chat._run_cognitive_engine_chat_turn)
+
+    assert "require_engine" in signature.parameters
+    assert "cognitive_engine_required" in source
+    assert "required caller must fail closed" in source
+    assert "falling back to kernel lane" not in source

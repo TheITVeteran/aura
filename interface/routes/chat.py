@@ -1131,18 +1131,20 @@ async def _run_cognitive_engine_chat_turn(
     timeout_s: float | None = None,
     lane: dict[str, Any] | None = None,
     source: str = "chat_api",
+    require_engine: bool = False,
 ) -> str | None:
     """Run a live desktop/user chat turn through CognitiveEngine.
 
-    The HTTP and WebSocket desktop surfaces call this before falling back to
-    KernelInterface so the UI uses the same causal cognitive path as the live
-    runtime instead of a thinner transport-specific lane.
+    The HTTP and WebSocket desktop surfaces mark this path as required so the
+    UI uses the same causal cognitive path as the live runtime. When required,
+    absence, timeout, or unreliable output returns ``None`` and the caller must
+    fail closed instead of silently routing to a thinner lane.
     
     Now with:
     - Persistent connection pooling
     - Automatic retry with exponential backoff
     - Health monitoring
-    - Graceful fallback support
+    - Strict fail-closed support for CognitiveEngine-required callers
     """
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
@@ -1157,6 +1159,7 @@ async def _run_cognitive_engine_chat_turn(
         "visible_user_message": visible[:1000],
         "foreground_request": True,
         "user_facing": True,
+        "cognitive_engine_required": bool(require_engine),
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
             "question_parts": int(getattr(shape, "question_parts", 0) or 0),
@@ -1167,6 +1170,11 @@ async def _run_cognitive_engine_chat_turn(
         },
     }
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
+    no_reply_action = (
+        "required caller must fail closed"
+        if require_engine
+        else "caller may use its configured non-desktop lane"
+    )
     
     # Use connection pool with retry logic. Acquisition is part of the live
     # CognitiveEngine path; if it fails, return no reply so desktop callers
@@ -1202,7 +1210,8 @@ async def _run_cognitive_engine_chat_turn(
         
         if thought is None:
             logger.warning(
-                "CognitiveEngine desktop chat turn exhausted retries; falling back to kernel lane."
+                "CognitiveEngine desktop chat turn exhausted retries; %s.",
+                no_reply_action,
             )
             return None
             
@@ -1212,13 +1221,14 @@ async def _run_cognitive_engine_chat_turn(
             min_age_s=min(90.0, max(45.0, timeout_s * 0.5)),
         )
         logger.warning(
-            "CognitiveEngine desktop chat turn timed out after %.1fs; falling back to kernel lane.",
+            "CognitiveEngine desktop chat turn timed out after %.1fs; %s.",
             timeout_s,
+            no_reply_action,
         )
         return None
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
-        logger.warning("CognitiveEngine desktop chat turn failed; falling back to kernel lane: %s", exc)
+        logger.warning("CognitiveEngine desktop chat turn failed; %s: %s", no_reply_action, exc)
         return None
 
     content = getattr(thought, "content", None)
@@ -5392,6 +5402,7 @@ async def api_chat_regenerate(
                 timeout_s=cognitive_budget,
                 lane=dict(lane or {}),
                 source="desktop_ui_regenerate" if desktop_requires_cognitive_engine else "chat_regenerate",
+                require_engine=desktop_requires_cognitive_engine,
             )
 
         if desktop_requires_cognitive_engine and not reply_text:
@@ -6444,6 +6455,7 @@ async def api_chat(
                     timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
                     source="desktop_ui" if desktop_requires_cognitive_engine else "chat_api",
+                    require_engine=desktop_requires_cognitive_engine,
                 )
                 if reply_text:
                     reply_source = "cognitive_engine"
