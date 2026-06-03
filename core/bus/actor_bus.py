@@ -1,14 +1,18 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
+import os
 import time
-from typing import Any, Dict, Optional, Callable
-from .local_pipe_bus import LocalPipeBus
+from collections.abc import Callable
+from typing import Any
+
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+
+from .local_pipe_bus import LocalPipeBus
 
 logger = logging.getLogger("Kernel.ActorBus")
 
-class BusDegraded(Exception):
+class BusDegraded(Exception):  # noqa: N818 - public compatibility name.
     """Raised when the bus health probe fails or congestion is too high."""
     pass  # no-op: intentional
 
@@ -20,23 +24,30 @@ class ActorBus:
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(ActorBus, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
     
     def __init__(self):
         if getattr(self, "_initialized", False):
             return
-        self._transports: Dict[str, LocalPipeBus] = {}
-        self._last_health_check: Dict[str, float] = {}
+        self._transports: dict[str, LocalPipeBus] = {}
+        self._last_health_check: dict[str, float] = {}
         self._health_timeout = 0.1  # 100ms spec
         self._high_water_mark = 50  # Max pending requests before degradation
         self._is_running = False
         
         # ZENITH: Backpressured Telemetry Queue
-        self._telemetry_queue: Optional[asyncio.Queue] = None
+        self._telemetry_queue: asyncio.Queue | None = None
         self._telemetry_broadcaster_task = None
         self._initialized = True
+
+    def _transport_stop_timeout_s(self) -> float:
+        try:
+            value = float(os.getenv("AURA_ACTOR_BUS_STOP_TIMEOUT_S", "1.5") or 1.5)
+        except (TypeError, ValueError):
+            value = 1.5
+        return min(10.0, max(0.25, value))
 
     def add_actor(self, name: str, connection: Any, is_child: bool = False):
         """Register and start a new actor transport."""
@@ -120,7 +131,7 @@ class ActorBus:
                     continue
                 topic, payload = await self._telemetry_queue.get()
                 # Broadcast to all transports that handle telemetry
-                for name, transport in self._transports.items():
+                for _name, transport in self._transports.items():
                     try:
                         await transport.send(topic, payload)
                     except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -173,7 +184,7 @@ class ActorBus:
 
     def start_transports(self):
         """Ensure all registered transports are started."""
-        for name, transport in self._transports.items():
+        for _name, transport in self._transports.items():
             transport.start()
 
     async def stop(self):
@@ -189,8 +200,31 @@ class ActorBus:
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('actor_bus', e)
                 logger.debug("ActorBus telemetry shutdown failed: %s", e)
-        for name, transport in self._transports.items():
-            await transport.stop()
+        transports = list(self._transports.items())
+        timeout_s = self._transport_stop_timeout_s()
+
+        async def _stop_transport(actor_name: str, transport: LocalPipeBus) -> None:
+            try:
+                await asyncio.wait_for(transport.stop(), timeout=timeout_s)
+            except TimeoutError as exc:
+                record_degradation(
+                    'actor_bus',
+                    exc,
+                    action=(
+                        "bounded ActorBus shutdown timed out for one actor transport; "
+                        "continuing shutdown of remaining transports"
+                    ),
+                    extra={"actor": actor_name, "timeout_s": timeout_s},
+                )
+                logger.warning("ActorBus transport stop timed out for %s", actor_name)
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                record_degradation('actor_bus', e)
+                logger.debug("ActorBus transport shutdown failed for %s: %s", actor_name, e)
+
+        if transports:
+            await asyncio.gather(
+                *(_stop_transport(name, transport) for name, transport in transports)
+            )
         self._transports.clear()
         self._last_health_check.clear()
         LocalPipeBus.shutdown_executor()
@@ -223,7 +257,13 @@ class ActorBus:
             
         return True
 
-    async def request(self, actor: str, msg_type: str, payload: Any, timeout: float = 5.0) -> Any:
+    async def request(  # noqa: ASYNC109 - timeout is part of the public bus API.
+        self,
+        actor: str,
+        msg_type: str,
+        payload: Any,
+        timeout: float = 5.0,  # noqa: ASYNC109
+    ) -> Any:
         """Send a request with sub-100ms health gating."""
         transport = self._transports.get(actor)
         if not transport:
@@ -255,7 +295,7 @@ class ActorBus:
                 
             return result
             
-        except (asyncio.TimeoutError, BusDegraded, BrokenPipeError, ConnectionResetError) as e:
+        except (TimeoutError, BusDegraded, BrokenPipeError, ConnectionResetError) as e:
             logger.warning("📡 Bus degraded for %s → %s", actor, e)
             raise
 

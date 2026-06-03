@@ -1662,6 +1662,54 @@ async def test_local_pipe_bus_pending_requests_cancel_cleanly_on_shutdown():
 
 
 @pytest.mark.asyncio
+async def test_local_pipe_bus_request_admission_blocks_before_future_growth():
+    bus = LocalPipeBus(start_reader=False)
+    existing = asyncio.get_running_loop().create_future()
+    bus._max_pending_requests = 1
+    bus._pending_requests["existing"] = existing
+
+    try:
+        with pytest.raises(asyncio.TimeoutError, match="pending request limit"):
+            await bus._request_local("echo", {"payload": True}, timeout=0.1)
+
+        assert list(bus._pending_requests) == ["existing"]
+        assert existing.done() is False
+    finally:
+        existing.cancel()
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_actor_bus_stop_bounds_transport_shutdown_concurrently(monkeypatch):
+    await ActorBus.reset_singleton()
+    monkeypatch.setenv("AURA_ACTOR_BUS_STOP_TIMEOUT_S", "1.0")
+    bus = ActorBus()
+    bus._is_running = True
+    started = []
+
+    class _SlowTransport:
+        def __init__(self, name):
+            self.name = name
+
+        async def stop(self):
+            started.append(self.name)
+            await asyncio.sleep(0.1)
+
+    bus._transports = {
+        "alpha": _SlowTransport("alpha"),
+        "beta": _SlowTransport("beta"),
+    }
+
+    start = time.monotonic()
+    await bus.stop()
+    elapsed = time.monotonic() - start
+
+    assert sorted(started) == ["alpha", "beta"]
+    assert elapsed < 0.18
+    assert bus._transports == {}
+
+
+@pytest.mark.asyncio
 async def test_state_repository_initialize_tracks_owner_consumer_task(monkeypatch, tmp_path):
     repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=True)
     repo._current = AuraState()
@@ -7048,6 +7096,7 @@ def test_abstraction_validator_validation_scores_transfer():
 
 def test_server_log_queue_proof_mode_buffers_only_warnings(monkeypatch):
     import logging
+
     import interface.server as server
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")

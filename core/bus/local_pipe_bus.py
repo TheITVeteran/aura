@@ -1,16 +1,18 @@
-from core.runtime.errors import record_degradation
-import json
-import uuid
-import logging
 import asyncio
-import time
-import os
+import json
+import logging
 import multiprocessing
 import multiprocessing.connection
+import os
+import time
+import uuid
 import weakref
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any
+
 from core.bus.shared_mem_bus import SharedMemoryTransport
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.LocalPipeBus")
@@ -36,6 +38,7 @@ class LocalPipeBus:
     _LIVE_BUSES: "weakref.WeakSet[LocalPipeBus]" = weakref.WeakSet()
     _SHM_OFFLOAD_THRESHOLD_BYTES = 8 * 1024
     _SHM_SEGMENT_RETENTION_SECONDS = 20.0
+    _DEFAULT_MAX_PENDING_REQUESTS = 64
 
     @staticmethod
     def _is_connection_pair(connection: Any) -> bool:
@@ -47,8 +50,8 @@ class LocalPipeBus:
             bus._shutdown_executor()
 
     def __init__(self, is_child: bool = False, 
-                 read_conn: Optional[multiprocessing.connection.Connection] = None, 
-                 write_conn: Optional[multiprocessing.connection.Connection] = None,
+                 read_conn: multiprocessing.connection.Connection | None = None,
+                 write_conn: multiprocessing.connection.Connection | None = None,
                  start_reader: bool = True,
                  connection: Any = None):
         self.is_child = is_child
@@ -78,22 +81,31 @@ class LocalPipeBus:
                 self.read_conn = p_read
                 self.write_conn = p_write
 
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._executor: Optional[ThreadPoolExecutor] = None
-        self._reader_task: Optional[asyncio.Task] = None
-        self._dispatcher_task: Optional[asyncio.Task] = None
-        self._dispatch_queue: Optional[asyncio.Queue] = None
-        self._handlers: Dict[str, Callable] = {}
-        self._pending_requests: Dict[str, asyncio.Future] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._reader_task: asyncio.Task | None = None
+        self._dispatcher_task: asyncio.Task | None = None
+        self._dispatch_queue: asyncio.Queue | None = None
+        self._handlers: dict[str, Callable] = {}
+        self._pending_requests: dict[str, asyncio.Future] = {}
         self._is_running = False
-        self._activity_callback: Optional[Callable[[], None]] = None
+        self._activity_callback: Callable[[], None] | None = None
         self._pipe_broken = False
         self._write_timeout_count = 0
         self._write_suppressed_until = 0.0
-        self._write_lock: Optional[asyncio.Lock] = None
+        self._write_lock: asyncio.Lock | None = None
         self._write_backpressure_drops = 0
-        self._outbound_shm_segments: Dict[str, Tuple[SharedMemoryTransport, float]] = {}
+        self._max_pending_requests = self._pending_request_limit()
+        self._outbound_shm_segments: dict[str, tuple[SharedMemoryTransport, float]] = {}
         self._LIVE_BUSES.add(self)
+
+    @classmethod
+    def _pending_request_limit(cls) -> int:
+        try:
+            value = int(os.getenv("AURA_PIPE_MAX_PENDING_REQUESTS", str(cls._DEFAULT_MAX_PENDING_REQUESTS)))
+        except (TypeError, ValueError):
+            value = cls._DEFAULT_MAX_PENDING_REQUESTS
+        return min(1024, max(1, value))
 
     def _fire_and_forget_write_timeout_s(self) -> float:
         try:
@@ -155,7 +167,7 @@ class LocalPipeBus:
                 loop.run_in_executor(self._get_executor(), self.write_conn.send, raw_msg),
                 timeout=float(timeout_s),
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             logger.warning("⏳ Pipe write timed out in %s after %.1fs.", context, timeout_s)
             raise TimeoutError(f"pipe write timed out in {context}") from exc
         finally:
@@ -225,7 +237,7 @@ class LocalPipeBus:
         bridged = asyncio.run_coroutine_threadsafe(factory(), target_loop)
         return await asyncio.wrap_future(bridged)
 
-    def _safe_close_connection(self, conn: Optional[multiprocessing.connection.Connection]) -> None:
+    def _safe_close_connection(self, conn: multiprocessing.connection.Connection | None) -> None:
         if conn is None:
             return
         try:
@@ -265,19 +277,19 @@ class LocalPipeBus:
             self._reader_task.cancel()
             try:
                 await asyncio.wait_for(self._reader_task, timeout=1.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass # Normal during shutdown
-            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+            except (RuntimeError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Error during stop: %s", e)
         if self._dispatcher_task:
             self._dispatcher_task.cancel()
             try:
                 await asyncio.wait_for(self._dispatcher_task, timeout=1.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 logger.debug("Suppressed bare exception")
                 pass  # no-op: intentional
-            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+            except (RuntimeError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Dispatcher stop error: %s", e)
         self._cleanup_expired_shm_segments(force=True)
@@ -353,7 +365,7 @@ class LocalPipeBus:
             logger.warning("⚠️ SHM offload failed, falling back to Pipe: %s", e)
             return payload
 
-    async def send(self, msg_type: str, payload: Any, trace_id: Optional[str] = None):
+    async def send(self, msg_type: str, payload: Any, trace_id: str | None = None):
         try:
             await self._run_on_transport_loop(
                 "send",
@@ -363,10 +375,9 @@ class LocalPipeBus:
             if self._is_running:
                 logger.error("❌ Unexpected error in bus send: %s", e)
 
-    async def _send_local(self, msg_type: str, payload: Any, trace_id: Optional[str] = None):
+    async def _send_local(self, msg_type: str, payload: Any, trace_id: str | None = None):
         """Send a fire-and-forget message."""
         trace_id = trace_id or str(uuid.uuid4())
-        loop = asyncio.get_running_loop()
         msg = {
             "type": msg_type,
             "payload": payload,
@@ -412,7 +423,7 @@ class LocalPipeBus:
             )
             self._write_timeout_count = 0
             self._write_backpressure_drops = 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._write_timeout_count += 1
             suppress_for_s = self._pipe_suppression_window_s()
             self._write_suppressed_until = time.monotonic() + suppress_for_s
@@ -453,14 +464,38 @@ class LocalPipeBus:
             if self._is_running:
                 logger.error("❌ Unexpected error in bus send: %s", e)
 
-    async def request(self, msg_type: str, payload: Any, timeout: float = 5.0) -> Any:
+    async def request(  # noqa: ASYNC109 - timeout is part of the public bus API.
+        self,
+        msg_type: str,
+        payload: Any,
+        timeout: float = 5.0,  # noqa: ASYNC109
+    ) -> Any:
         return await self._run_on_transport_loop(
             "request",
             lambda: self._request_local(msg_type, payload, timeout=timeout),
         )
 
-    async def _request_local(self, msg_type: str, payload: Any, timeout: float = 5.0) -> Any:
+    async def _request_local(  # noqa: ASYNC109 - mirrors public request timeout API.
+        self,
+        msg_type: str,
+        payload: Any,
+        timeout: float = 5.0,  # noqa: ASYNC109
+    ) -> Any:
         """Send a request and wait for a response."""
+        if self.write_conn.closed or getattr(self, "_pipe_broken", False):
+            raise BrokenPipeError("Connection is closed")
+        pending_count = len(self._pending_requests)
+        if pending_count >= self._max_pending_requests:
+            logger.warning(
+                "📡 LocalPipeBus request admission blocked: pending=%d max=%d msg_type=%s",
+                pending_count,
+                self._max_pending_requests,
+                msg_type,
+            )
+            raise TimeoutError(
+                f"LocalPipeBus pending request limit reached ({pending_count}/{self._max_pending_requests})"
+            )
+
         request_id = str(uuid.uuid4())
         trace_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
@@ -491,7 +526,7 @@ class LocalPipeBus:
                 context=f"request:{msg_type}",
             )
             return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending_requests.pop(request_id, None)
             logger.warning("⏳ Bus request timed out: %s", msg_type)
             raise
@@ -550,7 +585,7 @@ class LocalPipeBus:
                         # Actually, for a single read, we should detach.
                         shm.close()
                         logger.debug("📥 Resolved SHM payload: %s", shm_name)
-                    except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+                    except (RuntimeError, TimeoutError, AttributeError) as e:
                         record_degradation('local_pipe_bus', e)
                         logger.error("❌ Failed to resolve SHM payload %s: %s", shm_name, e)
                         if msg.get("is_request") and "request_id" in msg:
@@ -586,7 +621,7 @@ class LocalPipeBus:
                             self._dispatch_queue.put((handler, msg)),
                             timeout=1.0,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("📡 Bus dispatch queue saturated. Dropping %s.", msg_type)
                         if msg.get("is_request") and "request_id" in msg:
                             err_resp = {
@@ -607,11 +642,11 @@ class LocalPipeBus:
                 logger.info("🔌 Bus connection closed by peer.")
                 self._cancel_pending_requests(cancel=True)
                 break
-            except (BrokenPipeError, OSError) as e:
+            except (BrokenPipeError, ConnectionResetError) as e:
                 logger.error("🛑 Bus read error: %s", e)
                 self._cancel_pending_requests(e)
                 break
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except OSError as e:
                 record_degradation('local_pipe_bus', e)
                 logger.exception("❌ Error in Bus read loop: %s", e)
                 
@@ -659,9 +694,9 @@ class LocalPipeBus:
                     
                 await asyncio.sleep(1.0)
 
-    def _cancel_pending_requests(self, exception: Optional[Exception] = None, cancel: bool = False):
+    def _cancel_pending_requests(self, exception: Exception | None = None, cancel: bool = False):
         """[GENESIS FIX] Ensure all awaiting requests are rejected immediately if the pipe dies."""
-        for req_id, future in list(self._pending_requests.items()):
+        for _req_id, future in list(self._pending_requests.items()):
             if future.done():
                 continue
             if cancel or exception is None:
@@ -670,7 +705,7 @@ class LocalPipeBus:
                 future.set_exception(exception)
         self._pending_requests.clear()
 
-    async def _handle_message(self, handler: Callable, msg: Dict):
+    async def _handle_message(self, handler: Callable, msg: dict):
         """Wrap handler execution and handle responses."""
         try:
             result = handler(msg.get("payload"), msg.get("trace_id"))
