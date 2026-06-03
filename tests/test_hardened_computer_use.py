@@ -1,6 +1,7 @@
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -211,6 +212,26 @@ async def test_computer_use_missing_permission_guard_fails_closed(monkeypatch):
         for record in tracker.recent(subsystem="computer_use")
     )
     tracker.reset()
+
+
+@pytest.mark.asyncio
+async def test_computer_use_create_folder_uses_allowed_artifact_roots(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+    monkeypatch.setattr(skill, "_allowed_desktop_roots", lambda: [tmp_path])
+
+    target = tmp_path / "Aura Journal"
+    result = await skill.execute(
+        {
+            "action": "create_folder",
+            "target": json.dumps({"path": str(target)}),
+        },
+        {},
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "create_folder"
+    assert Path(result["path"]) == target
+    assert target.is_dir()
 
 
 @pytest.mark.asyncio

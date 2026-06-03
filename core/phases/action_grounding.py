@@ -22,14 +22,14 @@ to encode hallucinated actions as truth.
 """
 from __future__ import annotations
 
-
-import logging
 import json
+import logging
 import re
 import sqlite3
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ _MARKER_RE = re.compile(
 # actually ran. These only fire the "unverified" audit path — they do not
 # edit the user-visible text, because the user is the one demanding
 # grounding evidence.
-_ACTION_CLAIM_PATTERNS: Tuple[re.Pattern[str], ...] = (
+_ACTION_CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bI\s+(just\s+)?(?:opened|launched|started)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9 _.-]+?)(?:\.| app| application)?\b", re.I),
     re.compile(r"\bI\s+(?:just\s+)?(?:typed|wrote|entered)\s+['\"`]", re.I),
     re.compile(r"\bI\s+(?:just\s+)?(?:clicked|pressed)\s+", re.I),
@@ -59,7 +59,7 @@ _ACTION_CLAIM_PATTERNS: Tuple[re.Pattern[str], ...] = (
 )
 
 
-DEFAULT_SKILL_PARAMS: Dict[str, Dict[str, Any]] = {
+DEFAULT_SKILL_PARAMS: dict[str, dict[str, Any]] = {
     "computer_use": {"action": "read_screen_text"},
     "desktop_task": {"objective": "", "steps": []},
     "web_search": {"query": ""},
@@ -73,8 +73,8 @@ class GroundingResult:
     """Result of grounding a single response."""
 
     grounded_text: str
-    marker_hits: List[Dict[str, Any]] = field(default_factory=list)
-    claims_without_receipts: List[str] = field(default_factory=list)
+    marker_hits: list[dict[str, Any]] = field(default_factory=list)
+    claims_without_receipts: list[str] = field(default_factory=list)
     dispatched: int = 0
     dispatched_ok: int = 0
     replaced: int = 0
@@ -83,7 +83,7 @@ class GroundingResult:
     def had_markers(self) -> bool:
         return bool(self.marker_hits)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "grounded_text": self.grounded_text,
             "marker_hits": list(self.marker_hits),
@@ -98,10 +98,10 @@ class GroundingResult:
 async def ground_response(
     response: str,
     *,
-    context: Optional[Dict[str, Any]] = None,
+    context: dict[str, Any] | None = None,
     capability_engine: Any = None,
-    skill_receipts: Optional[Iterable[Dict[str, Any]]] = None,
-    audit_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    skill_receipts: Iterable[dict[str, Any]] | None = None,
+    audit_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> GroundingResult:
     """Parse action markers, dispatch real skills, rewrite the response.
 
@@ -112,7 +112,7 @@ async def ground_response(
     the honesty guarantee intact in test environments.
     """
     context = context or {}
-    receipts: List[Dict[str, Any]] = list(skill_receipts or [])
+    receipts: list[dict[str, Any]] = list(skill_receipts or [])
     text = str(response or "")
     result = GroundingResult(grounded_text=text)
 
@@ -133,7 +133,7 @@ async def ground_response(
             tail = (match.group(3) or "").strip()
             if marker_args and not tail:
                 tail = f"({marker_args})"
-            hit: Dict[str, Any] = {
+            hit: dict[str, Any] = {
                 "skill": skill_name,
                 "marker_args": marker_args,
                 "tail": tail,
@@ -156,6 +156,9 @@ async def ground_response(
                         "summary": str(skill_result.get("summary") or skill_result.get("result") or "")[:240],
                         "error": str(skill_result.get("error") or "")[:240],
                     }
+                    hit["ok"] = ok
+                    hit["summary"] = hit["result"]["summary"]
+                    hit["error"] = hit["result"]["error"]
                     if ok:
                         hit["status"] = "executed"
                         hit["replaced"] = True
@@ -208,7 +211,7 @@ async def ground_response(
     return result
 
 
-def receipts_from_context(context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def receipts_from_context(context: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Extract any skill receipts the pipeline already recorded."""
     if not context:
         return []
@@ -223,8 +226,8 @@ def receipts_from_context(context: Optional[Dict[str, Any]]) -> List[Dict[str, A
 def check_unverified_action_claims(
     response: str,
     *,
-    skill_receipts: Iterable[Dict[str, Any]] = (),
-) -> List[str]:
+    skill_receipts: Iterable[dict[str, Any]] = (),
+) -> list[str]:
     """Return every hallucinated-action phrase that lacks a matching receipt.
 
     This is the memory/belief gate: code that writes "I took action X" to
@@ -242,8 +245,8 @@ def check_unverified_action_claims(
 def _params_for_skill(
     skill_name: str,
     tail: str,
-    context: Dict[str, Any],
-) -> Dict[str, Any]:
+    context: dict[str, Any],
+) -> dict[str, Any]:
     defaults = DEFAULT_SKILL_PARAMS.get(skill_name, {}).copy()
     if not tail:
         return defaults
@@ -256,7 +259,7 @@ def _params_for_skill(
             defaults.setdefault("action", "read_screen_text")
         elif any(k in lower for k in ("type ", "write ", "compose")):
             defaults["action"] = "type"
-            defaults["text"] = tail
+            defaults["target"] = tail
         elif "open" in lower:
             defaults["action"] = "open_app"
             defaults["target"] = tail.split("open", 1)[-1].strip(": ")
@@ -266,14 +269,7 @@ def _params_for_skill(
         if isinstance(parsed, list):
             defaults["steps"] = parsed
         elif tail:
-            defaults["steps"] = [
-                {
-                    "action": "read_screen_text",
-                    "target": "",
-                    "reason": "Inspect current desktop before planning further actions.",
-                    "expect": "Current foreground UI text is returned.",
-                }
-            ]
+            defaults["steps"] = []
     if skill_name == "web_search":
         query = tail.strip().strip(":").strip()
         if query:
@@ -329,14 +325,14 @@ def _unverified_text(skill_name: str, tail: str) -> str:
     )
 
 
-def _success_text(skill_name: str, result: Dict[str, Any], tail: str) -> str:
+def _success_text(skill_name: str, result: dict[str, Any], tail: str) -> str:
     summary = str(result.get("summary") or result.get("result") or "").strip()
     if summary:
         return summary
     return f"`{skill_name}` completed."
 
 
-def _failure_text(skill_name: str, result: Dict[str, Any]) -> str:
+def _failure_text(skill_name: str, result: dict[str, Any]) -> str:
     err = str(result.get("error") or result.get("status") or "unknown failure").strip()
     return (
         f"(I attempted to run `{skill_name}` but it did not complete: {err}. "
@@ -345,15 +341,15 @@ def _failure_text(skill_name: str, result: Dict[str, Any]) -> str:
 
 
 def _unverified_claims(
-    text: str, skill_receipts: List[Dict[str, Any]]
-) -> List[str]:
+    text: str, skill_receipts: list[dict[str, Any]]
+) -> list[str]:
     receipt_skills = {str(r.get("skill") or "").lower() for r in skill_receipts}
     lowered = text.lower()
     if receipt_skills:
         # If any receipts exist, only flag claims for different categories.
         if "computer_use" in receipt_skills or "os_manipulation" in receipt_skills:
             return []
-    flagged: List[str] = []
+    flagged: list[str] = []
     for pattern in _ACTION_CLAIM_PATTERNS:
         for match in pattern.finditer(lowered):
             flagged.append(match.group(0))

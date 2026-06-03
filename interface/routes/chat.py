@@ -4579,6 +4579,7 @@ async def _execute_governed_live_skill(
     params: dict[str, Any],
     *,
     objective: str,
+    extra_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run live-proof actions through the agency receipt path, never raw IO."""
     context = {
@@ -4590,6 +4591,13 @@ async def _execute_governed_live_skill(
         "user_explicitly_authorized": True,
         "user_requested_action": True,
     }
+    if extra_context:
+        context.update(dict(extra_context))
+        context["objective"] = objective[:500]
+        context["message"] = objective[:500]
+        context["foreground_request"] = True
+        context["user_explicitly_authorized"] = True
+        context["user_requested_action"] = True
     engine = ServiceContainer.get("capability_engine", default=None)
 
     async def _execute_capability(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -4676,6 +4684,126 @@ async def _execute_governed_live_skill(
     result["authority_receipt_id"] = getattr(receipt, "authority_receipt", None)
     result["execution_receipt"] = getattr(receipt, "execution_receipt", None)
     return result
+
+
+_DESKTOP_OBJECTIVE_ACTION_TERMS = (
+    "attach",
+    "browse",
+    "click",
+    "create",
+    "download",
+    "export",
+    "find",
+    "google",
+    "insert",
+    "look up",
+    "move",
+    "open",
+    "pdf",
+    "save",
+    "search",
+    "show me",
+    "tab",
+    "timestamp",
+    "type",
+    "write",
+)
+
+_DESKTOP_OBJECTIVE_SURFACE_TERMS = (
+    "app",
+    "browser",
+    "chrome",
+    "desktop",
+    "finder",
+    "folder",
+    "google",
+    "notes",
+    "pdf",
+    "safari",
+    "screen",
+    "tab",
+)
+
+
+def _looks_like_desktop_objective(user_message: str) -> bool:
+    """Identify desktop-control requests that should execute after Cognition."""
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    if not any(term in text for term in _DESKTOP_OBJECTIVE_ACTION_TERMS):
+        return False
+    if not any(term in text for term in _DESKTOP_OBJECTIVE_SURFACE_TERMS):
+        return False
+    try:
+        from core.phases.action_intent import detect_action_intent
+
+        intent = detect_action_intent(user_message)
+        if bool(getattr(intent, "should_execute", False)):
+            return True
+        if bool(getattr(intent, "has_action_request", False)) and re.search(
+            r"\b(?:can|could|will|would)\s+you\b", text
+        ):
+            return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat_desktop_objective_intent", exc)
+        logger.debug("Desktop objective intent detection failed: %s", exc)
+    return bool(
+        re.search(r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look up)\b", text)
+    )
+
+
+async def _execute_desktop_objective_from_chat(
+    user_message: str,
+    *,
+    cognitive_reply: str,
+) -> dict[str, Any] | None:
+    """Execute a desktop objective through the generic desktop_task skill.
+
+    This is the live desktop counterpart to proof runners: the UI request is
+    first answered/planned by CognitiveEngine, then the actual consequential
+    work is performed through Authority/Capability/desktop_task/computer_use.
+    """
+    if not _looks_like_desktop_objective(user_message):
+        return None
+
+    objective = str(user_message or "").strip()
+    result = await _execute_governed_live_skill(
+        "desktop_task",
+        {"objective": objective, "steps": []},
+        objective=objective,
+        extra_context={
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "route": "chat.desktop_objective",
+            "desktop_task_document_body": str(cognitive_reply or "").strip(),
+            "cognitive_reply": str(cognitive_reply or "").strip(),
+        },
+    )
+    if not isinstance(result, dict):
+        return {"ok": bool(result), "result": result, "status": "desktop_objective_unknown"}
+
+    status = "desktop_objective_completed" if result.get("ok") else "desktop_objective_failed"
+    completed = int(result.get("steps_completed") or 0)
+    requested = int(result.get("steps_requested") or 0)
+    summary = str(result.get("summary") or "").strip()
+    if result.get("ok"):
+        response = (
+            f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
+            f"Completed {completed}/{requested} governed desktop steps."
+        )
+    else:
+        error = str(result.get("error") or result.get("status") or "desktop task failed").strip()
+        response = (
+            "I routed this through CognitiveEngine and the governed desktop task lane, "
+            f"but it did not complete: {error}. Completed {completed}/{requested} steps. "
+            "I am not claiming the desktop action finished."
+        )
+    return {
+        "ok": bool(result.get("ok")),
+        "status": status,
+        "response": response,
+        "result": result,
+    }
 
 
 async def _write_live_proof_file(path: str, content: str, *, objective: str) -> dict[str, Any]:
@@ -6363,6 +6491,17 @@ async def api_chat(
                 },
                 status_code=503,
             )
+
+        if desktop_requires_cognitive_engine and reply_text:
+            desktop_objective = await _execute_desktop_objective_from_chat(
+                _semantic_user_message,
+                cognitive_reply=reply_text,
+            )
+            if desktop_objective:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
+                    status=str(desktop_objective.get("status") or "desktop_objective"),
+                )
 
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
         from core.kernel.kernel_interface import KernelInterface

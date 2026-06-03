@@ -414,6 +414,156 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_surface_executes_governed_desktop_objective_after_cognition(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    cognitive_calls = []
+    skill_calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            cognitive_calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
+                    "This is the body I would place into the desktop artifact."
+                ),
+                mode=mode,
+            )
+
+    class _FakePool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return True
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            raise AssertionError("desktop objective should not fall through to KernelInterface")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "desktop-objective"
+
+    async def _fake_complete_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
+        skill_calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "summary": "Desktop task completed 5/5 governed computer-use steps.",
+            "steps_requested": 5,
+            "steps_completed": 5,
+        }
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FakePool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Can you open my Notes app, write a timestamped summary, save it as a PDF "
+                "in a new folder titled Aura's Journal, and search for a robot image?"
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"desktop_objective_completed" in response.body
+    assert cognitive_calls
+    assert cognitive_calls[0]["context"]["source"] == "desktop_ui"
+    assert skill_calls == [
+        {
+            "skill_name": "desktop_task",
+            "params": {
+                "objective": (
+                    "Can you open my Notes app, write a timestamped summary, save it as a PDF "
+                    "in a new folder titled Aura's Journal, and search for a robot image?"
+                ),
+                "steps": [],
+            },
+            "objective": (
+                "Can you open my Notes app, write a timestamped summary, save it as a PDF "
+                "in a new folder titled Aura's Journal, and search for a robot image?"
+            ),
+            "extra_context": {
+                "origin": "desktop_ui",
+                "source": "desktop_ui",
+                "route": "chat.desktop_objective",
+                "desktop_task_document_body": (
+                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
+                    "This is the body I would place into the desktop artifact."
+                ),
+                "cognitive_reply": (
+                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
+                    "This is the body I would place into the desktop artifact."
+                ),
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_kernel_fallback(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

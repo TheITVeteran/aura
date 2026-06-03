@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -82,6 +81,54 @@ async def test_desktop_task_stops_on_first_failed_step(monkeypatch):
     assert result["steps_completed"] == 0
     assert len(calls) == 1
     assert result["failures"][0]["action"] == "click"
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return {"ok": True, "summary": f"{params['action']} ok"}
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": (
+                "Open Notes, write a timestamped summary, save it as a PDF in a new "
+                "folder titled Aura's Journal, and search for an image of a robot."
+            ),
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_task_document_body": "Aura summary body from CognitiveEngine.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["steps_requested"] >= 5
+    actions = [call[1]["action"] for call in calls]
+    assert actions[:2] == ["create_folder", "open_app"]
+    assert "open_url" in actions
+    assert "write_text_file" in actions
+    assert "render_text_pdf" in actions
+    folder_payload = json.loads(calls[0][1]["target"])
+    assert folder_payload["path"] == "Aura's Journal"
+    pdf_payload = json.loads(calls[-1][1]["target"])
+    assert pdf_payload["path"].endswith(".pdf")
+    assert "Aura summary body from CognitiveEngine." in pdf_payload["body"]
+    assert calls[0][2]["route"] == "desktop_task.computer_use"
+    assert calls[0][2]["origin"] == "desktop_ui"
 
 
 def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypatch):

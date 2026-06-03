@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
@@ -10,6 +9,7 @@ import subprocess
 import time
 import urllib.parse
 import webbrowser
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -67,7 +67,7 @@ class ComputerUseParams(BaseModel):
         description=(
             "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file"
+            "render_text_pdf|move_file|create_folder"
         ),
     )
     target: str = Field(
@@ -189,7 +189,7 @@ class ComputerUseSkill(BaseSkill):
                     guard.check_permission(permission_type, force=True),
                     timeout=self.PERMISSION_CHECK_TIMEOUT_S,
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 _record_computer_use_degradation(
                     exc,
                     action="returned bounded permission timeout instead of hanging desktop capability",
@@ -406,6 +406,20 @@ class ComputerUseSkill(BaseSkill):
             "action": "write_text_file",
             "path": str(path),
             "bytes": path.stat().st_size,
+        }
+
+    def _create_folder(self, target: str) -> dict[str, Any]:
+        payload = self._target_json(target)
+        path = self._resolve_allowed_desktop_path(payload.get("path"))
+        existed = path.exists()
+        if existed and not path.is_dir():
+            return {"ok": False, "error": f"Path exists and is not a folder: {path}"}
+        path.mkdir(parents=True, exist_ok=True)
+        return {
+            "ok": True,
+            "action": "create_folder",
+            "path": str(path),
+            "existed": existed,
         }
 
     def _move_file(self, target: str) -> dict[str, Any]:
@@ -959,6 +973,9 @@ end tell
 
             elif action == "write_text_file":
                 return await asyncio.to_thread(self._write_text_file, params.target)
+
+            elif action == "create_folder":
+                return await asyncio.to_thread(self._create_folder, params.target)
 
             elif action == "render_text_pdf":
                 return await asyncio.to_thread(self._render_text_pdf, params.target)

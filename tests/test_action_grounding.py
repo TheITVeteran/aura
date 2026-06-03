@@ -6,9 +6,8 @@ caught, executed, or explicitly labelled as unverified.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -18,11 +17,9 @@ from core.phases.action_grounding import (
     receipts_from_context,
 )
 from core.phases.action_intent import (
-    ActionIntent,
     apply_intent_to_context,
     detect_action_intent,
 )
-
 
 # ---------------------------------------------------------------------------
 # Marker parser
@@ -33,9 +30,9 @@ class _StubCapabilityEngine:
     def __init__(self, ok: bool = True, summary: str = "Did the thing.") -> None:
         self.ok = ok
         self.summary = summary
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    async def execute(self, name: str, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, name: str, params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         self.calls.append({"name": name, "params": dict(params), "context": dict(context)})
         return {"ok": self.ok, "summary": self.summary, "error": "" if self.ok else "denied"}
 
@@ -49,6 +46,8 @@ async def test_marker_gets_executed_and_replaced_on_success():
     assert result.had_markers is True
     assert result.dispatched == 1
     assert result.dispatched_ok == 1
+    assert result.marker_hits[0]["ok"] is True
+    assert result.marker_hits[0]["summary"] == "Notes opened and the text was typed."
     assert "Notes opened and the text was typed." in result.grounded_text
     # The fabricated suffix must be gone — the real summary replaces the whole marker line.
     assert "[SKILL_RESULT:computer_use]" not in result.grounded_text
@@ -127,6 +126,22 @@ async def test_structured_computer_use_marker_dispatches_json_payload():
     assert "Clipboard set." in result.grounded_text
 
 
+@pytest.mark.asyncio
+async def test_freeform_computer_use_type_marker_uses_target_schema():
+    engine = _StubCapabilityEngine(ok=True, summary="Typed text.")
+    text = "[ACTION:computer_use] type the timestamped summary into Notes"
+
+    result = await ground_response(text, capability_engine=engine)
+
+    assert result.dispatched == 1
+    assert engine.calls[0]["name"] == "computer_use"
+    assert engine.calls[0]["params"]["action"] == "type"
+    assert "target" in engine.calls[0]["params"]
+    assert "text" not in engine.calls[0]["params"]
+    assert "timestamped summary" in engine.calls[0]["params"]["target"]
+    assert "Typed text." in result.grounded_text
+
+
 def test_unverified_action_claim_detector():
     hallucinated = (
         "I just opened Notes. I typed 'hi'. I clicked the send button. "
@@ -167,7 +182,7 @@ def test_question_without_permission_is_not_should_execute():
 
 
 def test_apply_intent_stamps_context():
-    ctx: Dict[str, object] = {}
+    ctx: dict[str, object] = {}
     apply_intent_to_context("Please open Notes and type hello", ctx)
     assert ctx.get("user_granted_permission") is True
     assert ctx.get("user_explicit_action_request") is True
