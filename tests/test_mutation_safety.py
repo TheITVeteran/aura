@@ -61,6 +61,23 @@ def test_runtime_exception(evaluator):
     assert "ZeroDivisionError" in diag.traceback_text
 
 
+def test_custom_runtime_exception_still_gets_typed(evaluator):
+    diag = evaluator.evaluate(
+        textwrap.dedent(
+            """
+            class CandidateSpecificFailure(Exception):
+                pass
+
+            raise CandidateSpecificFailure("candidate escaped explicit classes")
+            """
+        )
+    )
+    assert diag.outcome is MutationOutcome.RUNTIME_EXCEPTION
+    assert diag.quarantine_path is not None
+    assert "CandidateSpecificFailure" in diag.traceback_text
+    assert diag.extra.get("uncaught") is True
+
+
 def test_assertion_fail_in_module_body(evaluator):
     diag = evaluator.evaluate("assert 1 == 2, 'nope'\n")
     assert diag.outcome is MutationOutcome.ASSERTION_FAIL

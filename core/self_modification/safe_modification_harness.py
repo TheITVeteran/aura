@@ -27,7 +27,6 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger("SelfModification.SafeHarness")
 
@@ -192,10 +191,19 @@ class SafeModificationHarness:
         test_files: list[str] = []
 
         for fpath in changed_files:
+            path = Path(fpath)
+            if (
+                path.suffix == ".py"
+                and len(path.parts) >= 2
+                and path.parts[0] == "tests"
+                and path.name.startswith("test_")
+            ):
+                test_files.append(fpath)
+
             # Find related test files
-            base = Path(fpath).stem
+            base = path.stem
             test_candidates = [
-                f"tests/{'/'.join(Path(fpath).parts[:-1])}/test_{base}.py",
+                f"tests/{'/'.join(path.parts[:-1])}/test_{base}.py",
                 f"tests/test_{base}.py",
             ]
             for tc in test_candidates:
@@ -203,7 +211,12 @@ class SafeModificationHarness:
                     test_files.append(tc)
 
         if not test_files:
-            return True, []  # No tests to run — pass
+            preview = ", ".join(changed_files[:5])
+            if len(changed_files) > 5:
+                preview += ", ..."
+            return False, [f"no related pytest files found for self-modification patch: {preview}"]
+
+        test_files = sorted(set(test_files))
 
         try:
             env = dict(os.environ)
@@ -225,8 +238,11 @@ class SafeModificationHarness:
             errors.append("pytest timed out (60s)")
             return False, errors
         except FileNotFoundError:
-            # pytest not available
-            return True, []
+            errors.append("pytest executable not available for self-modification harness")
+            return False, errors
+        except (subprocess.SubprocessError, OSError) as e:
+            errors.append(f"pytest subprocess failed: {e}")
+            return False, errors
 
         return True, []
 

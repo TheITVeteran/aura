@@ -38,7 +38,6 @@ import ast
 import json
 import os
 import resource
-import shutil
 import signal
 import subprocess
 import sys
@@ -115,10 +114,55 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
     EXIT_ASSERTION_FAIL = 13
     EXIT_RUNTIME_EXCEPTION = 14
 
+    _COMPILE_RECOVERABLE = (
+        MemoryError,
+        RecursionError,
+        SyntaxError,
+        SystemError,
+        TypeError,
+        ValueError,
+    )
+    _RUNTIME_RECOVERABLE = (
+        ArithmeticError,
+        AttributeError,
+        BufferError,
+        EOFError,
+        LookupError,
+        MemoryError,
+        NameError,
+        OSError,
+        ReferenceError,
+        RuntimeError,
+        StopAsyncIteration,
+        StopIteration,
+        SystemError,
+        TypeError,
+        ValueError,
+        Warning,
+    )
+
     def _emit(outcome, *, traceback_text="", extra=None):
         payload = {"outcome": outcome, "traceback": traceback_text, "extra": extra or {}}
         sys.stdout.write("__MUTATION_RESULT__:" + json.dumps(payload) + "\\n")
         sys.stdout.flush()
+
+    def _emit_uncaught(exc_type, exc, tb):
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+        if issubclass(exc_type, (ImportError, ModuleNotFoundError)):
+            outcome = "import_fail"
+        elif issubclass(exc_type, AssertionError):
+            outcome = "assertion_fail"
+        else:
+            outcome = "runtime_exception"
+        _emit(
+            outcome,
+            traceback_text="".join(traceback.format_exception(exc_type, exc, tb)),
+            extra={"uncaught": True, "exception_type": getattr(exc_type, "__name__", str(exc_type))},
+        )
+
+    sys.excepthook = _emit_uncaught
 
     def _run(source_path, test_path):
         try:
@@ -133,7 +177,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
         except SyntaxError as e:
             _emit("compile_fail", traceback_text=traceback.format_exc(), extra={"err": str(e)})
             sys.exit(EXIT_COMPILE_FAIL)
-        except Exception:
+        except _COMPILE_RECOVERABLE:
             _emit("compile_fail", traceback_text=traceback.format_exc())
             sys.exit(EXIT_COMPILE_FAIL)
 
@@ -147,7 +191,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
         except AssertionError:
             _emit("assertion_fail", traceback_text=traceback.format_exc())
             sys.exit(EXIT_ASSERTION_FAIL)
-        except Exception:
+        except _RUNTIME_RECOVERABLE:
             _emit("runtime_exception", traceback_text=traceback.format_exc())
             sys.exit(EXIT_RUNTIME_EXCEPTION)
 
@@ -173,7 +217,7 @@ _BOOTSTRAP_SOURCE = textwrap.dedent(
             except AssertionError:
                 _emit("assertion_fail", traceback_text=traceback.format_exc())
                 sys.exit(EXIT_ASSERTION_FAIL)
-            except Exception:
+            except _RUNTIME_RECOVERABLE:
                 _emit("runtime_exception", traceback_text=traceback.format_exc())
                 sys.exit(EXIT_RUNTIME_EXCEPTION)
 
