@@ -1,5 +1,5 @@
-from importlib.metadata import version
 import importlib.util
+from importlib.metadata import version
 
 from packaging.version import Version
 
@@ -41,3 +41,34 @@ def test_voice_engine_exposes_installed_tts_backends(tmp_path):
     assert status["coqui_tts_available"] is True
     assert status["piper_tts_available"] is True
     assert status["pyttsx3_available"] is True
+
+
+def test_voice_output_skill_resolves_project_venv_piper(monkeypatch, tmp_path):
+    import core.skills.voice_output as voice_output
+
+    venv_bin = tmp_path / "bin"
+    venv_bin.mkdir()
+    fake_python = venv_bin / "python"
+    fake_piper = venv_bin / "piper"
+    fake_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_piper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    fake_piper.chmod(0o755)
+
+    calls = []
+
+    class Gateway:
+        def run(self, command, **_kwargs):
+            calls.append(command)
+            return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.delenv("AURA_PIPER_BIN", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(voice_output.sys, "executable", str(fake_python))
+    monkeypatch.setattr(voice_output, "get_subprocess_gateway", lambda: Gateway())
+
+    skill = voice_output.VoiceOutputSkill()
+
+    assert skill._check_piper() is True
+    assert skill._piper_command == str(fake_piper)
+    assert calls == [[str(fake_piper), "--help"]]

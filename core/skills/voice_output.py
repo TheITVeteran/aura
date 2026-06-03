@@ -16,8 +16,8 @@ This closes the "voice output" gap in the senses polish layer.
 import asyncio
 import logging
 import os
+import shutil
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,23 @@ _VOICE_RECOVERABLE_ERRORS = (
     OSError,
     TimeoutError,
 )
+
+
+def _resolve_piper_command() -> str | None:
+    """Resolve Piper from explicit config, PATH, or Aura's bundled venv."""
+    candidates: list[str | None] = [
+        os.environ.get("AURA_PIPER_BIN"),
+        shutil.which("piper"),
+        str(Path(sys.executable).with_name("piper")),
+        str(Path(__file__).resolve().parents[2] / ".venv" / "bin" / "piper"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if path.exists() and os.access(path, os.X_OK):
+            return str(path)
+    return None
 
 
 def _record_voice_degradation(
@@ -113,6 +130,7 @@ class VoiceOutputSkill(BaseSkill):
         super().__init__()
         self._piper_available = False
         self._piper_checked = False
+        self._piper_command: str | None = None
         self._output_dir = Path(config.paths.data_dir) / "voice_output"
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._max_text_chars = 10000
@@ -133,16 +151,23 @@ class VoiceOutputSkill(BaseSkill):
         if self._piper_checked:
             return self._piper_available
         self._piper_checked = True
+        command = _resolve_piper_command()
+        if command is None:
+            self._piper_available = False
+            self._piper_command = None
+            return self._piper_available
         try:
             result = get_subprocess_gateway().run(
-                ["piper", "--help"],
+                [command, "--help"],
                 timeout=5,
                 read_only=True,
                 source="voice_output_piper_probe",
             )
             self._piper_available = result.returncode == 0
+            self._piper_command = command if self._piper_available else None
         except _VOICE_RECOVERABLE_ERRORS:
             self._piper_available = False
+            self._piper_command = None
         return self._piper_available
 
     def _apply_emotion(
@@ -267,7 +292,7 @@ class VoiceOutputSkill(BaseSkill):
                 "path": str(output_path),
                 "played": params.play_audio,
                 "url": f"/data/voice_output/{output_path.name}",
-                "summary": f"Speech synthesized via sovereign engine.",
+                "summary": "Speech synthesized via sovereign engine.",
             }
 
         except _VOICE_RECOVERABLE_ERRORS as exc:
@@ -295,7 +320,7 @@ class VoiceOutputSkill(BaseSkill):
         try:
             # Piper reads from stdin, writes to file
             process = await asyncio.create_subprocess_exec(
-                "piper",
+                self._piper_command or _resolve_piper_command() or "piper",
                 "--model", voice,
                 "--output_file", str(output_path),
                 "--length_scale", str(1.0 / rate),
@@ -457,7 +482,7 @@ class VoiceOutputSkill(BaseSkill):
 
     async def _play_audio(self, path: Path) -> None:
         """Play an audio file using the system player."""
-        if not path.exists():
+        if not await asyncio.to_thread(path.exists):
             return
 
         try:
