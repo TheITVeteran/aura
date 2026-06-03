@@ -19,10 +19,37 @@ already exist across core/self_modification, core/learning, core/affect,
 core/agi, core/consciousness, core/resilience, and core/evolution.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-from core.utils.task_tracker import get_task_tracker
+import asyncio
+import importlib.util
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+from core.container import ServiceContainer
+from core.exceptions import ContainerError
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
+
+logger = logging.getLogger("Aura.Evolution")
+
+_EVOLUTION_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    ImportError,
+    LookupError,
+    TimeoutError,
+    ContainerError,
+    json.JSONDecodeError,
+)
 
 
 def _record_evolution_degradation(
@@ -35,21 +62,7 @@ def _record_evolution_degradation(
     record_degradation("evolution_orchestrator", exc, severity=severity, action=action)
 
 
-import asyncio
-import json
-import logging
-import time
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-from core.container import ServiceContainer
-
-logger = logging.getLogger("Aura.Evolution")
-
-
-class EvolutionAxis(str, Enum):
+class EvolutionAxis(StrEnum):
     SELF_AWARENESS = "self_awareness"
     ETHICS = "ethics"
     LEARNING = "learning"
@@ -65,14 +78,14 @@ class AxisState:
     """Progress along a single evolutionary axis."""
     level: float = 0.0          # 0.0 → 1.0 (normalized maturity)
     last_evaluated: float = 0.0
-    milestones: List[str] = field(default_factory=list)
-    blockers: List[str] = field(default_factory=list)
+    milestones: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
 
 
 @dataclass
 class EvolutionSnapshot:
     """Full snapshot of Aura's evolutionary state."""
-    axes: Dict[str, AxisState] = field(default_factory=dict)
+    axes: dict[str, AxisState] = field(default_factory=dict)
     overall_progress: float = 0.0
     phase_label: str = "Nascent"
     last_tick: float = 0.0
@@ -109,7 +122,7 @@ class EvolutionOrchestrator:
     def __init__(self) -> None:
         self._snapshot = EvolutionSnapshot()
         self._stop = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._load()
         logger.info("🧬 EvolutionOrchestrator initialized — phase: %s (%.1f%%)",
                      self._snapshot.phase_label,
@@ -117,7 +130,7 @@ class EvolutionOrchestrator:
 
     # ── Public API ──────────────────────────────────────────────────────
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         return {
             "phase": self._snapshot.phase_label,
             "overall_progress": round(self._snapshot.overall_progress, 3),
@@ -173,7 +186,7 @@ class EvolutionOrchestrator:
                         ax.milestones.append(m)
                         logger.info("🏆 [EVOLUTION] %s milestone: %s", axis.value, m)
                 ax.blockers = blockers
-            except Exception as exc:
+            except _EVOLUTION_RECOVERABLE_ERRORS as exc:
                 _record_evolution_degradation(
                     exc,
                     action=f"skipped evolution evaluation for axis {axis.value}",
@@ -195,7 +208,7 @@ class EvolutionOrchestrator:
             ladder = ServiceContainer.get("growth_ladder", default=None)
             if ladder:
                 await ladder.evaluate_advancement()
-        except Exception as exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as exc:
             _record_evolution_degradation(exc, action="skipped growth ladder advancement evaluation")
             logger.debug("Growth ladder eval skipped: %s", exc)
 
@@ -205,7 +218,7 @@ class EvolutionOrchestrator:
     # ── Axis Evaluators ─────────────────────────────────────────────────
     # Each returns (level: float, milestones: list, blockers: list)
 
-    async def _eval_self_awareness(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_self_awareness(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1  # Base: we exist
 
@@ -245,7 +258,7 @@ class EvolutionOrchestrator:
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_ethics(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_ethics(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -276,17 +289,21 @@ class EvolutionOrchestrator:
                 level += 0.1
                 milestones.append("active_ethical_filtering")
 
-        # Refusal engine
         try:
-            from core.autonomy.genuine_refusal import RefusalEngine
+            refusal_available = importlib.util.find_spec("core.autonomy.genuine_refusal") is not None
+        except _EVOLUTION_RECOVERABLE_ERRORS as exc:
+            _record_evolution_degradation(exc, action="continued ethics evaluation after refusal engine lookup failed")
+            refusal_available = False
+
+        if refusal_available:
             level += 0.1
             milestones.append("genuine_refusal_available")
-        except ImportError:
+        else:
             blockers.append("refusal_engine_missing")
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_learning(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_learning(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -323,7 +340,7 @@ class EvolutionOrchestrator:
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_collaboration(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_collaboration(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -357,13 +374,13 @@ class EvolutionOrchestrator:
             if voice:
                 level += 0.15
                 milestones.append("voice_communication_active")
-        except Exception as _exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as _exc:
             _record_evolution_degradation(_exc, action="continued collaboration evaluation after voice engine check failed")
             logger.debug("Suppressed Exception: %s", _exc)
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_embodiment(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_embodiment(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -396,7 +413,7 @@ class EvolutionOrchestrator:
                 if "sovereign_browser" in cap.skills:
                     level += 0.1
                     milestones.append("web_access_active")
-        except Exception as _exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as _exc:
             _record_evolution_degradation(_exc, action="continued embodiment evaluation after capability engine skill check failed")
             logger.debug("Suppressed Exception: %s", _exc)
 
@@ -408,7 +425,7 @@ class EvolutionOrchestrator:
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_resilience(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_resilience(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -449,7 +466,7 @@ class EvolutionOrchestrator:
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_emotional_cognitive(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_emotional_cognitive(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -483,17 +500,24 @@ class EvolutionOrchestrator:
             level += 0.15
             milestones.append("global_workspace_active")
 
-        # Cognitive flexibility (multiple thinking modes)
         try:
-            from core.brain.cognitive_engine import ThinkingMode
+            cognitive_engine_available = importlib.util.find_spec("core.brain.cognitive_engine") is not None
+        except _EVOLUTION_RECOVERABLE_ERRORS as exc:
+            _record_evolution_degradation(
+                exc,
+                action="continued emotional-cognitive evaluation after cognitive engine lookup failed",
+            )
+            cognitive_engine_available = False
+
+        if cognitive_engine_available:
             level += 0.1
             milestones.append("multi_mode_cognition")
-        except ImportError:
+        else:
             blockers.append("cognitive_engine unavailable")
 
         return min(level, 1.0), milestones, blockers
 
-    async def _eval_exploration(self) -> Tuple[float, List[str], List[str]]:
+    async def _eval_exploration(self) -> tuple[float, list[str], list[str]]:
         milestones, blockers = [], []
         level = 0.1
 
@@ -546,7 +570,7 @@ class EvolutionOrchestrator:
                         milestones=ax_data.get("milestones", []),
                         blockers=ax_data.get("blockers", []),
                     )
-        except Exception as exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as exc:
             _record_evolution_degradation(exc, action="continued with fresh evolution snapshot after state file load failed")
             logger.debug("Evolution state load failed: %s", exc)
 
@@ -569,7 +593,7 @@ class EvolutionOrchestrator:
                 },
             }
             atomic_write_text(self._STATE_FILE, json.dumps(data, indent=2))
-        except Exception as exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as exc:
             _record_evolution_degradation(exc, action="continued execution without saving evolution snapshot", severity="error")
             logger.debug("Evolution state save failed: %s", exc)
 
@@ -585,19 +609,19 @@ class EvolutionOrchestrator:
                     self._snapshot.phase_label,
                     self._snapshot.overall_progress * 100,
                 )
-            except Exception as exc:
+            except _EVOLUTION_RECOVERABLE_ERRORS as exc:
                 _record_evolution_degradation(exc, action="skipped current evolution loop tick", severity="error")
                 logger.error("Evolution tick failed: %s", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._TICK_INTERVAL)
                 break  # stop was set
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # normal tick interval
 
 
 # ── Singleton ───────────────────────────────────────────────────────────────
 
-_instance: Optional[EvolutionOrchestrator] = None
+_instance: EvolutionOrchestrator | None = None
 
 
 def get_evolution_orchestrator() -> EvolutionOrchestrator:
@@ -608,7 +632,7 @@ def get_evolution_orchestrator() -> EvolutionOrchestrator:
             ServiceContainer.register_instance(
                 "evolution_orchestrator", _instance, required=False
             )
-        except Exception as _exc:
+        except _EVOLUTION_RECOVERABLE_ERRORS as _exc:
             _record_evolution_degradation(_exc, action="continued evolution without registering orchestrator instance in container", severity="error")
             logger.debug("Suppressed Exception: %s", _exc)
     return _instance

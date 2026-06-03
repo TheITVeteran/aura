@@ -1,17 +1,24 @@
-import os
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.brain.homeostatic_modulator import (
     HomeostaticModulator,
-    SubstrateLogitProjection,
     InferenceModulation,
+    SubstrateLogitProjection,
 )
 from core.container import ServiceContainer
+
+
+def test_homeostatic_modulator_source_uses_typed_recoverable_errors():
+    source = Path("core/brain/homeostatic_modulator.py").read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "_HOMEOSTATIC_RECOVERABLE_ERRORS" in source
 
 
 @pytest.fixture
@@ -199,7 +206,7 @@ def test_modulator_projection_stress_test(temp_project_dir):
     proj = SubstrateLogitProjection(substrate_dim=32, save_path=str(save_path))
 
     # Stress test: run Hebbian learning 10,000 times with random inputs and verify stability
-    for i in range(1000):
+    for _i in range(1000):
         state = np.random.uniform(-1.0, 1.0, 32).astype(np.float32)
         tokens = list(np.random.randint(1, 100, 5))
         coherence = float(np.random.uniform(-1.0, 1.0))
@@ -209,7 +216,7 @@ def test_modulator_projection_stress_test(temp_project_dir):
         )
 
     # Verify that all weight vectors remain within clipped range [-1, 1]
-    for tid, w in proj.weights.items():
+    for _tid, w in proj.weights.items():
         assert np.all(w >= -1.0)
         assert np.all(w <= 1.0)
         assert not np.any(np.isnan(w))

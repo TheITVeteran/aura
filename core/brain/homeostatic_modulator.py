@@ -10,17 +10,33 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Brain.HomeostaticModulator")
+
+_HOMEOSTATIC_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    ImportError,
+    LookupError,
+    TimeoutError,
+    json.JSONDecodeError,
+)
+
+
+def _record_homeostatic_degradation(exc: BaseException, *, action: str, severity: str = "warning") -> None:
+    record_degradation("homeostatic_modulator", exc, severity=severity, action=action)
 
 
 @dataclass
@@ -30,10 +46,10 @@ class InferenceModulation:
     temperature: float
     top_p: float
     repetition_penalty: float
-    logit_bias: Dict[int, float]
+    logit_bias: dict[int, float]
     head_weights: np.ndarray
     urgency: float
-    source_snapshot: Dict[str, Any] = field(default_factory=dict)
+    source_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 class SubstrateLogitProjection:
@@ -47,28 +63,32 @@ class SubstrateLogitProjection:
     def __init__(self, substrate_dim: int = 512, save_path: str | None = None) -> None:
         self.substrate_dim = substrate_dim
         # Map: token_id -> np.ndarray of shape (substrate_dim,) containing association weights
-        self.weights: Dict[int, np.ndarray] = {}
+        self.weights: dict[int, np.ndarray] = {}
         self._lock = threading.Lock()
-        
+
         if save_path:
             self.save_path = Path(save_path)
         else:
             try:
                 from core.config import config as aura_config
                 self.save_path = aura_config.paths.data_dir / "substrate_logit_projection.json"
-            except Exception:
+            except _HOMEOSTATIC_RECOVERABLE_ERRORS as exc:
+                _record_homeostatic_degradation(
+                    exc,
+                    action="used local projection path after Aura config lookup failed",
+                )
                 self.save_path = Path("data/substrate_logit_projection.json")
 
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
         self.load()
 
-    def get_biases(self, substrate_state: np.ndarray) -> Dict[int, float]:
+    def get_biases(self, substrate_state: np.ndarray) -> dict[int, float]:
         """Compute logit biases for all tokens based on the current substrate state."""
         with self._lock:
             if not self.weights or len(substrate_state) == 0:
                 return {}
 
-            biases: Dict[int, float] = {}
+            biases: dict[int, float] = {}
             # Resize substrate state to match weights dimensions if necessary
             state = substrate_state
             if len(state) != self.substrate_dim:
@@ -126,13 +146,13 @@ class SubstrateLogitProjection:
             for token_id in token_ids:
                 if token_id not in self.weights:
                     self.weights[token_id] = np.zeros(self.substrate_dim, dtype=np.float32)
-                
+
                 # Hebbian weight update: dW = lr * reward * state
                 self.weights[token_id] += lr * reward * state
-                
+
                 # Weight decay/regularization to prevent unbounded growth
                 self.weights[token_id] *= 0.98
-                
+
                 # Clip weight vector for stability
                 self.weights[token_id] = np.clip(self.weights[token_id], -1.0, 1.0)
 
@@ -156,7 +176,12 @@ class SubstrateLogitProjection:
             try:
                 atomic_write_text(self.save_path, json.dumps(payload, indent=2), encoding="utf-8")
                 logger.debug("Persisted SubstrateLogitProjection to: %s", self.save_path)
-            except Exception as exc:
+            except _HOMEOSTATIC_RECOVERABLE_ERRORS as exc:
+                _record_homeostatic_degradation(
+                    exc,
+                    action="continued without persisting substrate logit projection",
+                    severity="error",
+                )
                 logger.error("Failed to save SubstrateLogitProjection: %s", exc)
 
     def load(self) -> None:
@@ -176,7 +201,7 @@ class SubstrateLogitProjection:
                 )
                 return
             weights_raw = payload.get("weights", {})
-            weights: Dict[int, np.ndarray] = {}
+            weights: dict[int, np.ndarray] = {}
             for tid, raw_weight in weights_raw.items():
                 weight = np.asarray(raw_weight, dtype=np.float32)
                 if len(weight) != expected_dim:
@@ -192,7 +217,11 @@ class SubstrateLogitProjection:
             with self._lock:
                 self.weights = weights
             logger.info("Loaded SubstrateLogitProjection from: %s", self.save_path)
-        except Exception as exc:
+        except _HOMEOSTATIC_RECOVERABLE_ERRORS as exc:
+            _record_homeostatic_degradation(
+                exc,
+                action="continued with empty substrate logit projection after load failed",
+            )
             logger.error("Failed to load SubstrateLogitProjection: %s", exc)
 
 

@@ -8,15 +8,29 @@ the FreeEnergyEngine, LiquidSubstrate, and trains the logit projection.
 from __future__ import annotations
 
 import logging
-import math
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
 from core.brain.homeostatic_modulator import InferenceModulation
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Brain.InferenceFeedback")
+
+_FEEDBACK_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    LookupError,
+    TimeoutError,
+)
+
+
+def _record_feedback_degradation(exc: BaseException, *, action: str, severity: str = "warning") -> None:
+    record_degradation("inference_feedback", exc, severity=severity, action=action)
 
 
 class InferenceFeedbackLoop:
@@ -42,11 +56,11 @@ class InferenceFeedbackLoop:
     def process_output(
         self,
         output_text: str,
-        token_ids: List[int],
-        logprobs: List[float] | None,
+        token_ids: list[int],
+        logprobs: list[float] | None,
         modulation: InferenceModulation,
         modulator_projection: Any
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Process completed LLM response and update the homeostatic engines.
 
         Args:
@@ -92,10 +106,10 @@ class InferenceFeedbackLoop:
         # Perform lexical analysis on output_text to estimate output valence
         clean_text = re.sub(r"[^\w\s]", "", output_text.lower())
         tokens = set(clean_text.split())
-        
+
         pos_hits = sum(1 for tok in tokens if tok in self.VALENCE_WORDS_POS)
         neg_hits = sum(1 for tok in tokens if tok in self.VALENCE_WORDS_NEG)
-        
+
         # Output valence in [-1.0, 1.0]
         output_valence = 0.0
         total_hits = pos_hits + neg_hits
@@ -109,7 +123,7 @@ class InferenceFeedbackLoop:
         coherence = 1.0 - abs(valence - output_valence)
         # Shift to range [-1.0, 1.0]
         coherence = (coherence * 2.0) - 1.0
-        
+
         # Scale coherence bounds
         coherence = float(np.clip(coherence, -1.0, 1.0))
 
@@ -121,14 +135,22 @@ class InferenceFeedbackLoop:
                 fe_surprise = float(np.clip(surprise / 3.0, 0.0, 1.0))
                 free_energy_engine.accept_surprise_signal(fe_surprise)
                 logger.debug("Injected surprise signal %.4f into FreeEnergyEngine", fe_surprise)
-            except Exception as exc:
+            except _FEEDBACK_RECOVERABLE_ERRORS as exc:
+                _record_feedback_degradation(
+                    exc,
+                    action="continued response after free-energy feedback injection failed",
+                )
                 logger.error("Failed to inject surprise into FreeEnergyEngine: %s", exc)
 
         # 4. Feed Surprise and Coherence back into Liquid Substrate
         if substrate:
             try:
                 substrate.accept_inference_feedback(surprise=surprise, coherence=coherence)
-            except Exception as exc:
+            except _FEEDBACK_RECOVERABLE_ERRORS as exc:
+                _record_feedback_degradation(
+                    exc,
+                    action="continued response after liquid substrate feedback injection failed",
+                )
                 logger.error("Failed to inject feedback into LiquidSubstrate: %s", exc)
 
         # 4b. Feed Surprise and Coherence back into PrecisionEngine (FHN oscillator)
@@ -137,7 +159,11 @@ class InferenceFeedbackLoop:
             try:
                 precision_engine.accept_inference_feedback(surprise=surprise, coherence=coherence)
                 logger.debug("Injected feedback into PrecisionEngine: surprise=%.3f, coherence=%.3f", surprise, coherence)
-            except Exception as exc:
+            except _FEEDBACK_RECOVERABLE_ERRORS as exc:
+                _record_feedback_degradation(
+                    exc,
+                    action="continued response after precision engine feedback injection failed",
+                )
                 logger.error("Failed to inject feedback into PrecisionEngine: %s", exc)
 
         # 5. Train Substrate Logit Projection via Hebbian Step

@@ -109,6 +109,32 @@ def test_runtime_loop_sources_have_explicit_boundaries() -> None:
             assert forbidden not in source
 
 
+def test_evolution_orchestrator_does_not_swallow_invariant_failures() -> None:
+    source = Path("core/evolution/evolution_orchestrator.py").read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "_EVOLUTION_RECOVERABLE_ERRORS" in source
+
+
+@pytest.mark.asyncio
+async def test_evolution_orchestrator_invariant_failure_escapes(monkeypatch, tmp_path) -> None:
+    from core.evolution.evolution_orchestrator import EvolutionOrchestrator
+
+    monkeypatch.setattr(EvolutionOrchestrator, "_STATE_FILE", tmp_path / "evolution_state.json")
+    orchestrator = EvolutionOrchestrator()
+    calls: list[str] = []
+
+    async def invariant_failure():
+        calls.append("called")
+        raise AssertionError("evolution invariant broken")
+
+    monkeypatch.setattr(orchestrator, "_eval_self_awareness", invariant_failure)
+
+    with pytest.raises(AssertionError, match="evolution invariant broken"):
+        await orchestrator.tick()
+    assert calls == ["called"]
+
+
 def test_research_trigger_payload_is_json_safe(tmp_path) -> None:
     from core.autonomy import research_triggers
 

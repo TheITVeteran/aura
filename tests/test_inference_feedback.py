@@ -1,10 +1,19 @@
-import numpy as np
-import pytest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core.brain.inference_feedback import InferenceFeedbackLoop
+import numpy as np
+import pytest
+
 from core.brain.homeostatic_modulator import InferenceModulation
+from core.brain.inference_feedback import InferenceFeedbackLoop
 from core.container import ServiceContainer
+
+
+def test_inference_feedback_source_uses_typed_recoverable_errors():
+    source = Path("core/brain/inference_feedback.py").read_text(encoding="utf-8")
+
+    assert "except Exception" not in source
+    assert "_FEEDBACK_RECOVERABLE_ERRORS" in source
 
 
 @pytest.fixture
@@ -140,6 +149,27 @@ def test_engine_feedback_injection(base_modulation):
         mock_substrate.accept_inference_feedback.assert_called_once()
         # Verify precision engine received feedback
         mock_precision.accept_inference_feedback.assert_called_once()
+
+
+def test_feedback_injection_surfaces_invariant_failures(base_modulation):
+    loop = InferenceFeedbackLoop(substrate_dim=5)
+    mock_free_energy = MagicMock()
+    mock_free_energy.accept_surprise_signal.side_effect = AssertionError("feedback invariant broken")
+
+    def service_lookup(name, default=None):
+        if name == "free_energy_engine":
+            return mock_free_energy
+        return default
+
+    with patch.object(ServiceContainer, "get", side_effect=service_lookup):
+        with pytest.raises(AssertionError, match="feedback invariant broken"):
+            loop.process_output(
+                output_text="success resolved",
+                token_ids=[1, 2],
+                logprobs=[-0.1, -0.1],
+                modulation=base_modulation,
+                modulator_projection=None,
+            )
 
 
 def test_hebbian_projection_updates(base_modulation):
