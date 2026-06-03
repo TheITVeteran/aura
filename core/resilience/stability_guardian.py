@@ -1185,7 +1185,20 @@ class StabilityGuardian:
     def get_health_summary(self) -> Dict:
         """Compatible with a /health API endpoint."""
         if not self._report_history:
-            return {"status": "initializing", "healthy": True}
+            return {
+                "status": "initializing",
+                "healthy": False,
+                "checks": {},
+                "active_issues": [
+                    {
+                        "name": "stability_report",
+                        "message": "StabilityGuardian has not produced a health report yet.",
+                        "severity": "warning",
+                        "action_taken": "withhold healthy status until probes run",
+                    }
+                ],
+                "message": "no stability report yet",
+            }
         r = self._report_history[-1]
         active_issues = [
             {

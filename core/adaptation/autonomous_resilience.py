@@ -611,18 +611,52 @@ class RuntimeWatchdogAuditor:
     def _stability_snapshot(self) -> Dict[str, Any]:
         guardian = self._service_resolver("stability_guardian")
         if guardian is None:
-            return {"healthy": True, "message": "stability guardian unavailable"}
+            return {
+                "healthy": False,
+                "status": "unavailable",
+                "message": "stability guardian unavailable",
+                "required_probe_missing": True,
+            }
         history = getattr(guardian, "_report_history", None)
         if history:
             report = history[-1]
             return {
                 "healthy": bool(getattr(report, "overall_healthy", True)),
+                "status": "healthy" if bool(getattr(report, "overall_healthy", True)) else "degraded",
                 "message": "; ".join(
                     c.message for c in getattr(report, "checks", []) if not getattr(c, "healthy", True)
                 )
                 or "healthy",
             }
-        return {"healthy": True, "message": "no recent report"}
+        summary_fn = getattr(guardian, "get_health_summary", None)
+        if callable(summary_fn):
+            try:
+                summary = dict(summary_fn())
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation('autonomous_resilience', exc)
+                return {
+                    "healthy": False,
+                    "status": "unknown",
+                    "message": f"stability guardian summary unavailable: {exc}",
+                    "required_probe_missing": True,
+                }
+            healthy = bool(summary.get("healthy", False))
+            status = str(summary.get("status") or ("healthy" if healthy else "unknown"))
+            if status == "initializing":
+                healthy = False
+            return {
+                "healthy": healthy,
+                "status": status,
+                "message": str(summary.get("message") or status),
+                "active_issues": summary.get("active_issues", []),
+                "required_probe_missing": not healthy and status in {"initializing", "unknown"},
+            }
+        return {
+            "healthy": False,
+            "status": "no_report",
+            "message": "stability guardian has no recent report",
+            "required_probe_missing": True,
+        }
 
 
 class SecurityImmuneAuditor:

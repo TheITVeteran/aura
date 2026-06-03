@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from core.adaptation.autonomous_resilience import (
     IntegrationAuditor,
+    RuntimeWatchdogAuditor,
     StaticFaultAuditor,
     VerifierGuidedRepairPipeline,
 )
@@ -90,6 +91,36 @@ def test_integration_auditor_finds_dependency_gaps_and_auto_wires():
     assert autopoiesis._health_fns["demo_service"]() == 1.0
     assert ("clear_cache", "demo_service") in autopoiesis.handlers
     assert ("restart", "demo_service") in autopoiesis.handlers
+
+
+def test_runtime_watchdog_marks_missing_stability_guardian_unhealthy():
+    auditor = RuntimeWatchdogAuditor(service_resolver=lambda _name: None)
+
+    snapshot = auditor._stability_snapshot()
+
+    assert snapshot["healthy"] is False
+    assert snapshot["status"] == "unavailable"
+    assert snapshot["required_probe_missing"] is True
+
+
+def test_runtime_watchdog_marks_stability_guardian_without_report_unhealthy():
+    guardian = SimpleNamespace(
+        _report_history=[],
+        get_health_summary=lambda: {
+            "status": "initializing",
+            "healthy": True,
+            "message": "legacy optimistic startup",
+        },
+    )
+    auditor = RuntimeWatchdogAuditor(
+        service_resolver=lambda name: guardian if name == "stability_guardian" else None
+    )
+
+    snapshot = auditor._stability_snapshot()
+
+    assert snapshot["healthy"] is False
+    assert snapshot["status"] == "initializing"
+    assert snapshot["required_probe_missing"] is True
 
 
 class _CodeRepairStub:

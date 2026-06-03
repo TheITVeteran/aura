@@ -120,3 +120,16 @@ def test_dnu_runtime_health_blockers_reject_unhealthy_snapshots():
     )
     assert any("runtime health status" in item for item in blockers)
     assert any("inference" in item for item in blockers)
+
+
+def test_stability_guardian_initializing_summary_is_not_healthy():
+    from core.resilience.stability_guardian import StabilityGuardian
+
+    guardian = StabilityGuardian(SimpleNamespace(start_time=0.0))
+
+    summary = guardian.get_health_summary()
+
+    assert summary["status"] == "initializing"
+    assert summary["healthy"] is False
+    assert summary["active_issues"]
+    assert "no stability report yet" in summary["message"]
