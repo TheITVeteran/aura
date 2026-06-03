@@ -29,6 +29,15 @@ from core.learning.autonomous_rsi import AutonomousSuccessorEngine
 RUNTIME_LOG = ROOT / "artifacts" / "rsi_frozen_generations" / "cortex_32b_runtime.log"
 LOCK_PATH = ROOT / "artifacts" / "rsi_frozen_generations" / ".generate_undeniable_rsi.lock"
 
+_RUNTIME_DISCOVERY_RECOVERABLE_ERRORS = (
+    httpx.HTTPError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 class LiveRuntimeRouter:
     """Minimal OpenAI-compatible router for the live 32B local runtime."""
@@ -94,7 +103,8 @@ async def discover_runtime_model(runtime_url: str) -> str:
         if isinstance(first, dict):
             return str(first.get("id") or first.get("model") or first.get("name") or "").strip()
         return str(first).strip()
-    except Exception:
+    except _RUNTIME_DISCOVERY_RECOVERABLE_ERRORS as exc:
+        print(f"runtime model discovery failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return ""
 
 

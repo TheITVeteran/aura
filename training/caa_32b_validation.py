@@ -12,13 +12,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+_VECTOR_LOAD_RECOVERABLE_ERRORS = (
+    OSError,
+    EOFError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass(frozen=True)
@@ -33,8 +40,10 @@ class CAA32BValidator:
     def __init__(self, vectors_dir: str | Path = "training/vectors", model_path: str = "mlx-community/Qwen2.5-32B-Instruct-4bit") -> None:
         self.vectors_dir = Path(vectors_dir)
         self.model_path = str(model_path)
+        self._vector_load_errors: list[dict[str, str]] = []
 
     def run(self, behavioral_results: str | Path | None = None) -> dict[str, Any]:
+        self._vector_load_errors = []
         vectors = self._load_vectors()
         activation_vectors = [v for v in vectors if v.layer >= 0]
         fallback_vectors = [v for v in vectors if v.layer < 0]
@@ -56,6 +65,7 @@ class CAA32BValidator:
             "behavioral_ab": behavioral,
             "prompt_controls": prompt_controls,
             "pass_conditions": pass_conditions,
+            "vector_load_errors": self._vector_load_errors,
             "passed": all(item["passed"] for item in pass_conditions.values()),
         }
 
@@ -66,7 +76,14 @@ class CAA32BValidator:
         for path in sorted([*self.vectors_dir.glob("*.npy"), *self.vectors_dir.glob("*.npz")]):
             try:
                 arr = self._read_array(path)
-            except Exception:
+            except _VECTOR_LOAD_RECOVERABLE_ERRORS as exc:
+                self._vector_load_errors.append(
+                    {
+                        "path": str(path),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
                 continue
             if arr is None or arr.size == 0:
                 continue

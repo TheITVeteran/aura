@@ -36,6 +36,13 @@ TRAINING_CONFIG_PATH = ADAPTER_PATH / "training_config.json"
 TOTAL_ITERS_FALLBACK = 90153
 SAVE_RE = re.compile(r"Iter (\d+): Saved adapter weights .*?/([0-9]+_adapters\.safetensors)")
 RESUME_RE = re.compile(r"--- Resume from ([^,]+), (\d+) iters")
+_TRAINING_CONFIG_RECOVERABLE_ERRORS = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    TypeError,
+    ValueError,
+)
 
 
 def _load_total_iterations() -> int:
@@ -44,7 +51,12 @@ def _load_total_iterations() -> int:
 
     try:
         config = json.loads(TRAINING_CONFIG_PATH.read_text())
-    except Exception:
+    except _TRAINING_CONFIG_RECOVERABLE_ERRORS as exc:
+        print(
+            f"warning: failed to read training config {TRAINING_CONFIG_PATH}: "
+            f"{type(exc).__name__}: {exc}; using fallback total iterations",
+            file=sys.stderr,
+        )
         return TOTAL_ITERS_FALLBACK
 
     total = config.get("total_iterations")

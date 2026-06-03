@@ -6,17 +6,18 @@ Production-ready integration manager with fault tolerance and monitoring.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Dict, Any, Callable, List, Tuple
+from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
 from pathlib import Path
+import importlib
 import importlib.util
+import inspect
+import json
 import sys
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import asyncio
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Configure structured logging
 logger = logging.getLogger("Aura.Integration")
@@ -57,6 +58,20 @@ class IntegrationError(Exception):
         super().__init__(f"{component}: {message}")
 
 
+_INTEGRATION_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    FutureTimeoutError,
+    OSError,
+    LookupError,
+    TypeError,
+    ValueError,
+    IntegrationError,
+)
+
+
 @dataclass
 class IntegrationStep:
     """Represents a single integration step"""
@@ -88,7 +103,7 @@ def retry_on_failure(max_retries: int = 3, delay: float = 1.0):
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
-                except Exception as e:
+                except _INTEGRATION_RECOVERABLE_ERRORS as e:
                     last_exception = e
                     if attempt < max_retries - 1:
                         sleep_time = delay * (2 ** attempt)  # Exponential backoff
@@ -148,36 +163,6 @@ class IntegrationManager:
         
     def _resolve_execution_order(self) -> List[str]:
         """Topological sort for dependency resolution"""
-        from collections import deque
-        
-        in_degree = {node: 0 for node in self.dependency_graph}
-        for node in self.dependency_graph:
-            for dep in self.dependency_graph[node]:
-                # Only count deps that are in the graph
-                if dep in in_degree:
-                    in_degree[node] += 1
-        
-        queue = deque([node for node in in_degree if in_degree[node] == 0])
-        execution_order = []
-        
-        while queue:
-            node = queue.popleft()
-            execution_order.append(node)
-            
-            # Find nodes that depend on this node
-            # (Dependency graph is stored as "X depends on [Y, Z]")
-            # So we check if 'node' is in anyone's dependency list
-            for dependent in self.dependency_graph:
-                if node in self.dependency_graph[dependent]:
-                     # This logic was slightly flawed in original proposal
-                     # because resolving 'dep' means we satisfy the requirement for 'dependent'
-                     # Re-implementing standard Kahn's algorithm correctly
-                     pass
-
-        # Since dependency_graph is Adjacency List where Key -> Dependencies
-        # We need to find nodes that rely on the completed 'node'
-        # Actually simplest way is iteratively find nodes with 0 unsatisfied deps
-        
         ordered = []
         pending = set(self.dependency_graph.keys())
         completed = set()
@@ -206,39 +191,72 @@ class IntegrationManager:
                 pending.remove(n)
                 
         return ordered
+
+    def _load_step_callable(self, step: IntegrationStep) -> Callable[..., Any]:
+        """Load the configured integration callable from a file or module name."""
+        if step.module_path == "__main__":
+            module = sys.modules.get("__main__")
+            if module is None:
+                raise IntegrationError("__main__ module is unavailable", step.name)
+        else:
+            candidate = Path(step.module_path)
+            if not candidate.exists():
+                candidate = Path(__file__).resolve().parent.parent / step.module_path
+
+            if candidate.exists():
+                module_name = f"aura_integration_{step.name}_{abs(hash(str(candidate.resolve())))}"
+                spec = importlib.util.spec_from_file_location(module_name, candidate)
+                if spec is None or spec.loader is None:
+                    raise IntegrationError(f"Cannot import module from {candidate}", step.name)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+            else:
+                module_name = step.module_path.removesuffix(".py").replace("/", ".")
+                module = importlib.import_module(module_name)
+
+        func = getattr(module, step.function_name, None)
+        if not callable(func):
+            raise IntegrationError(
+                f"Function {step.function_name!r} not found in {step.module_path!r}",
+                step.name,
+            )
+        return func
+
+    @staticmethod
+    def _invoke_step_callable(func: Callable[..., Any], orchestrator: Any) -> Any:
+        signature = inspect.signature(func)
+        if not signature.parameters:
+            return func()
+        return func(orchestrator)
+
+    @staticmethod
+    def _json_safe_result(result: Any) -> Any:
+        try:
+            json.dumps(result)
+            return result
+        except (TypeError, ValueError):
+            return repr(result)
     
     @retry_on_failure(max_retries=3)
     def execute_step(self, step: IntegrationStep, orchestrator: Any) -> IntegrationResult:
         """Execute a single integration step with timeout and retry"""
         start_time = datetime.now()
-        
-        try:
-            # Dynamic module import with timeout
-            # In production, we assume modules are importable via sys.path
-            # For this context, we will mock the execution if file doesn't exist
-            # to prevent crashing the refactor demonstration
-            
-            # Simulated execution for demo purposes if files are missing
-            if not Path(step.module_path).exists() and not step.module_path.startswith("__"):
-                 logger.warning(f"Module {step.module_path} not found. Simulating success for refactor.")
-                 return IntegrationResult(
-                    step_name=step.name,
-                    status=IntegrationStatus.COMPLETED,
-                    duration_seconds=0.1,
-                    metadata={"simulated": True}
-                )
 
-            # Real execution logic would go here
-            # module = self._import_module_with_timeout(...)
-            
+        try:
+            func = self._load_step_callable(step)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._invoke_step_callable, func, orchestrator)
+                result = future.result(timeout=max(0.1, float(step.timeout_seconds)))
+
             return IntegrationResult(
                 step_name=step.name,
                 status=IntegrationStatus.COMPLETED,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
-                metadata={"result": "Executed"}
+                metadata={"result": self._json_safe_result(result)}
             )
-            
-        except Exception as e:
+
+        except _INTEGRATION_RECOVERABLE_ERRORS as e:
             return IntegrationResult(
                 step_name=step.name,
                 status=IntegrationStatus.FAILED,
@@ -344,17 +362,15 @@ def apply_all_fixes(orchestrator: Any) -> bool:
             logger.error("❌ INTEGRATION FAILED")
             return False
             
-    except Exception as e:
+    except _INTEGRATION_RECOVERABLE_ERRORS as e:
         logger.error(f"\n❌ Master integration failed: {e}", exc_info=True)
         return False
 
 # Main execution for testing
 if __name__ == "__main__":
-    # Mock orchestrator for testing
-    class MockOrchestrator:
-        pass
-    
-    try:
-        apply_all_fixes(MockOrchestrator())
-    except Exception as e:  # Non-critical, fallback handled
-        pass  # Intentional silent fallback
+    class CliOrchestrator:
+        """Minimal CLI orchestrator marker for direct integration diagnostics."""
+
+        source = "integration_cli"
+
+    sys.exit(0 if apply_all_fixes(CliOrchestrator()) else 1)
