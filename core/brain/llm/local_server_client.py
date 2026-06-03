@@ -111,17 +111,16 @@ async def _thread_lock_context(
     loop = asyncio.get_running_loop()
     deadline = None if timeout is None else loop.time() + max(0.0, float(timeout))
     acquired = False
-    while True:
+    while not acquired:
         acquired = bool(lock.acquire(False))
-        if acquired:
-            break
-        if deadline is not None:
-            remaining = deadline - loop.time()
-            if remaining <= 0.0:
-                break
-            await asyncio.sleep(min(0.05, remaining))
-        else:
-            await asyncio.sleep(0.05)
+        if not acquired:
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0.0:
+                    break
+                await asyncio.sleep(min(0.05, remaining))
+            else:
+                await asyncio.sleep(0.05)
     if not acquired:
         raise TimeoutError(f"{label}_timeout")
     try:

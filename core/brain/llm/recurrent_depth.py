@@ -47,6 +47,9 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.RecurrentDepth")
 
+_DEFAULT_MAX_RECURRENT_LOOPS = 4
+_ABSOLUTE_MAX_RECURRENT_LOOPS = 8
+
 
 # ── Model-profile default configurations ─────────────────────────────────
 # Maps model depth heuristics to default loop counts.
@@ -106,6 +109,40 @@ def _parse_loop_count(raw: str, *, env_name: str) -> int:
     return loops
 
 
+def _max_recurrent_loops() -> int:
+    raw = os.environ.get("AURA_RECURRENT_MAX_LOOPS")
+    if raw is None:
+        return _DEFAULT_MAX_RECURRENT_LOOPS
+    loops = _parse_loop_count(raw, env_name="AURA_RECURRENT_MAX_LOOPS")
+    if loops < 1:
+        raise RuntimeError("AURA_RECURRENT_MAX_LOOPS must be >= 1")
+    if loops > _ABSOLUTE_MAX_RECURRENT_LOOPS:
+        raise RuntimeError(
+            "AURA_RECURRENT_MAX_LOOPS must be <= "
+            f"{_ABSOLUTE_MAX_RECURRENT_LOOPS}, got {loops}"
+        )
+    return loops
+
+
+def _validate_configured_loop_count(loops: int, *, source: str) -> int:
+    maximum = _max_recurrent_loops()
+    if loops > maximum:
+        raise RuntimeError(
+            f"{source} requests {loops} recurrent loops, above safe maximum "
+            f"{maximum}. Increase AURA_RECURRENT_MAX_LOOPS only for supervised "
+            "diagnostics."
+        )
+    return loops
+
+
+def _coerce_runtime_loop_count(value: object, *, default: int, maximum: int) -> int:
+    try:
+        loops = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        loops = default
+    return max(1, min(loops, max(1, maximum)))
+
+
 def _parse_fraction(raw: str, *, env_name: str, minimum: float, maximum: float) -> float:
     try:
         value = float(raw)
@@ -131,6 +168,7 @@ def _clear_recurrent_depth_attrs(inner) -> None:
         "_recurrent_depth_original_class",
         "_recurrent_depth_config",
         "_recurrent_depth_patch_scope",
+        "_recurrent_depth_runtime_loops",
     ):
         if hasattr(inner, attr):
             delattr(inner, attr)
@@ -266,6 +304,8 @@ def apply_recurrent_depth(
     Returns:
         True if patch was applied, False if model structure not recognized.
     """
+    n_loops = _validate_configured_loop_count(int(n_loops), source="n_loops")
+
     try:
         import mlx.core  # noqa: F401
     except ImportError:
@@ -333,10 +373,11 @@ def apply_recurrent_depth(
         Prelude → [Recurrent × N with cache save/restore] → Coda
         """
         runtime_loops = getattr(self, "_recurrent_depth_runtime_loops", n_loops)
-        try:
-            effective_loops = max(1, int(runtime_loops))
-        except (TypeError, ValueError):
-            effective_loops = n_loops
+        effective_loops = _coerce_runtime_loop_count(
+            runtime_loops,
+            default=n_loops,
+            maximum=n_loops,
+        )
         # ── Embedding ────────────────────────────────────────────
         if input_embeddings is not None:
             h = input_embeddings
@@ -481,7 +522,7 @@ def resolve_loops_for_model(model) -> int:
         if n == 0:
             # Explicitly disabled
             return 0
-        return n
+        return _validate_configured_loop_count(n, source="AURA_RECURRENT_LOOPS")
 
     # Auto-detect based on model size
     inner = getattr(model, "model", None)
@@ -499,7 +540,7 @@ def resolve_loops_for_model(model) -> int:
         n = _parse_loop_count(raw_loops, env_name=env_name)
         if n == 0:
             return 0
-        return n
+        return _validate_configured_loop_count(n, source=env_name)
     defaults = _get_model_profile_defaults(num_layers)
     return defaults[0]  # n_loops
 

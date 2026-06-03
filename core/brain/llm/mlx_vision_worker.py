@@ -1,11 +1,9 @@
 import multiprocessing as mp
 import time
 import os
-import sys
 import logging
 import queue
 import threading
-from typing import Any
 
 logger = logging.getLogger("MLXVisionWorker")
 
@@ -47,7 +45,7 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
     heartbeat.start()
     
     try:
-        import mlx.core as mx
+        import mlx.core  # noqa: F401
         from mlx_vlm import load, generate
         from mlx_vlm.utils import load_config
         
@@ -62,11 +60,13 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
         res_q.put({"status": "error", "action": "init", "message": str(e)})
         return
         
-    while True:
+    worker_active = True
+    while worker_active:
         try:
             job = req_q.get()
             if job is None:
-                break
+                worker_active = False
+                continue
                 
             action = job.get("action")
             if action == "see":
@@ -76,8 +76,6 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
                 temp = job.get("temp", 0.0)
                 
                 try:
-                    # In mlx_vlm, we can use get_message_json from utils
-                    from mlx_vlm.utils import get_message_json
                     from mlx_vlm.prompt_utils import apply_chat_template
                     
                     # mlx_vlm accepts plain text prompts and handles image insertion.

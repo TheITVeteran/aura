@@ -1506,7 +1506,8 @@ def _mlx_worker_loop(
             prompt_cache_budget,
         )
 
-    while True:
+    worker_active = True
+    while worker_active:
         try:
             try:
                 job = request_queue.get()
@@ -1517,7 +1518,8 @@ def _mlx_worker_loop(
                 logger.info("🛑 [WORKER] Request queue closed; exiting quietly (%s).", queue_exc)
                 break
             if job is None:
-                break
+                worker_active = False
+                continue
 
             action = job.get("action")
             if action == "generate":

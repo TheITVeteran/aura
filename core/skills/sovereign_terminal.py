@@ -2,11 +2,9 @@ from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import os
-import shlex
-import shutil
 import platform
+import shlex
 import subprocess
-from pathlib import Path
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -117,7 +115,7 @@ class SovereignTerminalSkill(BaseSkill):
             async def read_stream(stream, chunks_list):
                 interactive_prompts = [b"password:", b"y/n", b"yes/no", b"enter ", b"continue?"]
                 try:
-                    while True:
+                    while stream is not None and not stream.at_eof():
                         line = await stream.read(4096)
                         if not line:
                             break

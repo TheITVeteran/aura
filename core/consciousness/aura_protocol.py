@@ -350,7 +350,8 @@ class AuraProtocolServer:
         logger.debug("AuraProtocol: connection from %s", peer)
 
         try:
-            while True:
+            connection_open = True
+            while connection_open:
                 # Read 4-byte length header
                 header = await reader.readexactly(_HEADER_SIZE)
                 length = struct.unpack(_HEADER_FMT, header)[0]
@@ -362,7 +363,8 @@ class AuraProtocolServer:
                         peer,
                     )
                     self._messages_rejected += 1
-                    break
+                    connection_open = False
+                    continue
 
                 # Read the payload
                 payload = await reader.readexactly(length)

@@ -97,6 +97,20 @@ def test_recurrent_depth_invalid_env_fails_as_runtime_error(monkeypatch):
         resolve_loops_for_model(_Model())
 
 
+def test_recurrent_depth_rejects_unbounded_loop_override(monkeypatch):
+    class _Inner:
+        layers = [object()] * 64
+
+    class _Model:
+        model = _Inner()
+
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "20")
+    monkeypatch.delenv("AURA_RECURRENT_LOOPS", raising=False)
+
+    with pytest.raises(RuntimeError, match="above safe maximum"):
+        resolve_loops_for_model(_Model())
+
+
 def test_recurrent_depth_rejects_unsafe_fraction_override(monkeypatch):
     import core.brain.llm.recurrent_depth as rd
 
@@ -230,3 +244,97 @@ def test_recurrent_forward_executes_middle_block_multiple_times(monkeypatch):
     assert all(layer.calls == 1 for layer in model.model.layers[:12])
     assert all(layer.calls == 2 for layer in model.model.layers[12:52])
     assert all(layer.calls == 1 for layer in model.model.layers[52:])
+
+
+def test_recurrent_forward_runtime_override_cannot_exceed_configured_depth(monkeypatch):
+    import core.brain.llm.recurrent_depth as rd
+
+    _install_fake_mlx_modules(monkeypatch)
+    monkeypatch.setattr(rd, "_self_test_cache_snapshot", lambda: None)
+
+    class _Layer:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, h, _mask, _cache):
+            self.calls += 1
+            return h + 1
+
+    class _Inner:
+        def __init__(self):
+            self.layers = [_Layer() for _ in range(64)]
+
+        def embed_tokens(self, inputs):
+            return inputs
+
+        def norm(self, h):
+            return h
+
+        def __call__(self, inputs, cache=None, input_embeddings=None):
+            return inputs
+
+    class _Model:
+        def __init__(self):
+            self.model = _Inner()
+
+    model = _Model()
+
+    assert rd.apply_recurrent_depth(
+        model,
+        n_loops=2,
+        prelude_frac=0.20,
+        coda_frac=0.20,
+        residual_alpha=0.0,
+    ) is True
+
+    model.model._recurrent_depth_runtime_loops = 999
+    model.model(1, cache=[None] * 64)
+
+    assert all(layer.calls == 2 for layer in model.model.layers[12:52])
+
+
+def test_recurrent_forward_runtime_override_can_reduce_depth(monkeypatch):
+    import core.brain.llm.recurrent_depth as rd
+
+    _install_fake_mlx_modules(monkeypatch)
+    monkeypatch.setattr(rd, "_self_test_cache_snapshot", lambda: None)
+
+    class _Layer:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, h, _mask, _cache):
+            self.calls += 1
+            return h + 1
+
+    class _Inner:
+        def __init__(self):
+            self.layers = [_Layer() for _ in range(64)]
+
+        def embed_tokens(self, inputs):
+            return inputs
+
+        def norm(self, h):
+            return h
+
+        def __call__(self, inputs, cache=None, input_embeddings=None):
+            return inputs
+
+    class _Model:
+        def __init__(self):
+            self.model = _Inner()
+
+    model = _Model()
+
+    assert rd.apply_recurrent_depth(
+        model,
+        n_loops=2,
+        prelude_frac=0.20,
+        coda_frac=0.20,
+        residual_alpha=0.0,
+    ) is True
+
+    model.model._recurrent_depth_runtime_loops = 1
+    model.model(1, cache=[None] * 64)
+
+    assert all(layer.calls == 1 for layer in model.model.layers[12:52])

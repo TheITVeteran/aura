@@ -230,7 +230,8 @@ class ConsciousnessAuditSuite:
             task.cancel()
 
         async def _loop():
-            while True:
+            running = True
+            while running:
                 try:
                     await asyncio.sleep(interval_minutes * 60)
                     report = await self.run()
@@ -239,7 +240,7 @@ class ConsciousnessAuditSuite:
                         report.consciousness_index, report.phi,
                     )
                 except asyncio.CancelledError:
-                    break
+                    running = False
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('unified_audit', e)
                     logger.error("Scheduled audit failed: %s", e)

@@ -496,11 +496,13 @@ class NucleusManager(LLMProvider):
         # Run in executor to avoid blocking the loop
         asyncio.create_task(asyncio.to_thread(_thread_worker))
 
-        while True:
+        stream_open = True
+        while stream_open:
             chunk = await queue.get()
             if chunk is None:
-                break
-            yield chunk
+                stream_open = False
+            else:
+                yield chunk
 
     def _resolve_temperature(self, kwargs: dict[str, Any], *, model_type: str, phase: str) -> float:
         temp = kwargs.get("temp", kwargs.get("temperature"))
