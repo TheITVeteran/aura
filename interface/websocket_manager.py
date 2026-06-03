@@ -59,19 +59,30 @@ def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
 def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
     """Return a heartbeat that cannot be mistaken for transport-only health."""
     try:
-        from core.runtime.health_contract import required_probe_status, runtime_health_report
+        from core.runtime.health_contract import (
+            REQUIRED_HEALTH_PROBE_GROUPS,
+            required_probe_groups_pass,
+            required_probe_status,
+            runtime_health_report,
+        )
 
         report = runtime_health_report()
         required = required_probe_status(report)
-        healthy = bool(report.get("healthy", False)) and bool(required.get("all_passed", False))
+        healthy = bool(report.get("healthy", False)) and required_probe_groups_pass(required)
         blockers = []
         if not healthy:
             blockers.append("runtime_required_probes")
-            blockers.extend(
-                f"probe:{name}"
-                for name, probe in required.items()
-                if isinstance(probe, dict) and not bool(probe.get("ok", False))
-            )
+            for name, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
+                probe = required.get(name)
+                if not isinstance(probe, dict) or not bool(probe.get("ok", False)):
+                    blockers.append(f"probe:{name}")
+                    continue
+                components = probe.get("components")
+                if not isinstance(components, dict):
+                    blockers.append(f"probe:{name}")
+                    continue
+                if any(components.get(component) is not True for component in expected_components):
+                    blockers.append(f"probe:{name}")
         return {
             "type": kind,
             "timestamp": time.time(),
@@ -308,7 +319,7 @@ class WebSocketManager:
                         except ValueError as exc:
                             record_degradation('websocket_manager', exc)
                             logger.warning("WS queue task accounting failed: %s", exc)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     try:
                         await websocket.send_json(runtime_heartbeat_payload("heartbeat"))
                     except _WEBSOCKET_DELIVERY_ERRORS as exc:

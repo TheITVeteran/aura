@@ -93,20 +93,23 @@ def test_boot_health_reports_booting_when_orchestrator_missing():
     assert "orchestrator" in payload["blockers"]
 
 
-def test_boot_health_allows_gui_proxy_mode():
+def test_boot_health_proxy_mode_cannot_impersonate_runtime_health():
     payload, status_code = build_boot_health_snapshot(
         None,
         {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"},
         is_gui_proxy=True,
     )
 
-    assert status_code == 200
-    assert payload["status"] == "ready"
-    assert payload["status_message"] == "Aura proxy is ready."
-    assert payload["ready"] is True
+    assert status_code == 503
+    assert payload["status"] == "not_ready"
+    assert payload["status_message"] == "Aura proxy is alive; canonical runtime is not ready."
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is False
     assert payload["mode"] == "gui_proxy"
-    assert payload["boot_phase"] == "proxy_ready"
-    assert payload["progress"] == 100
+    assert payload["boot_phase"] == "proxy_transport_only"
+    assert payload["checks"]["runtime_required_probes"] is False
+    assert payload["required_probes"]["all_passed"] is False
+    assert "runtime_required_probes" in payload["blockers"]
 
 
 def test_boot_health_separates_system_ready_from_conversation_ready():

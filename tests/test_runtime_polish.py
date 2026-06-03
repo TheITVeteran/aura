@@ -133,6 +133,46 @@ def test_websocket_runtime_heartbeat_requires_runtime_probe_groups(monkeypatch):
     assert "probe:inference" in payload["blockers"]
 
 
+def test_websocket_runtime_heartbeat_rejects_forged_all_passed(monkeypatch):
+    from core.runtime import health_contract as health_contract_module
+    from interface.websocket_manager import runtime_heartbeat_payload
+
+    monkeypatch.setattr(
+        health_contract_module,
+        "runtime_health_report",
+        lambda: {"healthy": True, "status": "healthy"},
+    )
+    monkeypatch.setattr(
+        health_contract_module,
+        "required_probe_status",
+        lambda _report: {
+            "all_passed": True,
+            "kernel": {"ok": True, "components": {"kernel_interface": True}},
+            "inference": {
+                "ok": True,
+                "components": {"inference_gate": True, "llm_router": True},
+            },
+            "memory": {"ok": True, "components": {"state_repository": True}},
+            "scheduler": {"ok": True, "components": {"scheduler": True}},
+            "tool_governance": {
+                "ok": True,
+                "components": {
+                    "unified_will": True,
+                    "authority_gateway": True,
+                    "capability_engine": True,
+                },
+            },
+        },
+    )
+
+    payload = runtime_heartbeat_payload("ping")
+
+    assert payload["type"] == "ping"
+    assert payload["healthy"] is False
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "probe:memory" in payload["blockers"]
+
+
 def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
@@ -403,8 +443,7 @@ def test_event_bus_threadsafe_publish_failure_is_recorded():
 
 
 def test_background_policy_blocks_when_foreground_probe_fails(monkeypatch):
-    from core.runtime import background_policy
-    from core.runtime import foreground_guard
+    from core.runtime import background_policy, foreground_guard
 
     monkeypatch.setattr(
         foreground_guard,
@@ -426,8 +465,7 @@ def test_background_policy_blocks_when_foreground_probe_fails(monkeypatch):
 
 
 def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
-    from core.runtime import background_policy
-    from core.runtime import foreground_guard
+    from core.runtime import background_policy, foreground_guard
 
     monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "")
     monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
@@ -453,8 +491,8 @@ def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
 @pytest.mark.asyncio
 async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(monkeypatch):
     from core import initiative_synthesis as synthesis_module
-    from core.agency.initiative_arbiter import ScoredInitiative
     from core import will as will_module
+    from core.agency.initiative_arbiter import ScoredInitiative
 
     synth = synthesis_module.InitiativeSynthesizer()
     synth.submit("inspect runtime drift", "test_source", urgency=0.9)

@@ -347,7 +347,7 @@ def _service_probe_ok(service: dict[str, Any] | None) -> bool:
         return False
     if not bool(service.get("present", False)):
         return False
-    return str(service.get("liveness", "") or "") != "failed"
+    return str(service.get("liveness", "") or "") == "ok"
 
 
 def _required_probe_status_from_services(
@@ -369,6 +369,29 @@ def _required_probe_status_from_services(
         if isinstance(value, dict)
     )
     return probes
+
+
+def required_probe_groups_pass(required_probes: Any) -> bool:
+    """Return True only when every canonical readiness group explicitly passes.
+
+    This is stricter than trusting ``all_passed`` because heartbeat consumers
+    must fail closed on malformed, partial, or transport-only payloads.
+    """
+    if not isinstance(required_probes, dict):
+        return False
+    if not bool(required_probes.get("all_passed", False)):
+        return False
+    for group_name, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
+        group = required_probes.get(group_name)
+        if not isinstance(group, dict) or not bool(group.get("ok", False)):
+            return False
+        components = group.get("components")
+        if not isinstance(components, dict):
+            return False
+        for component in expected_components:
+            if components.get(component) is not True:
+                return False
+    return True
 
 
 def required_probe_status(report: dict[str, Any]) -> dict[str, Any]:

@@ -6,7 +6,11 @@ from typing import Any
 
 from core.brain.llm.model_registry import PRIMARY_ENDPOINT
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
-from core.runtime.health_contract import evaluate_health, required_probe_status
+from core.runtime.health_contract import (
+    evaluate_health,
+    required_probe_groups_pass,
+    required_probe_status,
+)
 from core.version import VERSION, version_string
 
 _BOOT_STATUS_RECOVERABLE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
@@ -88,6 +92,7 @@ def _boot_progress_for_phase(boot_phase: str) -> int:
         "conversation_failed": 92,
         "kernel_ready": 100,
         "proxy_ready": 100,
+        "proxy_transport_only": 24,
     }
     return mapping.get(normalized, 8)
 
@@ -109,6 +114,8 @@ def _boot_status_message(
 
     if normalized == "proxy_ready":
         return "Aura proxy is ready."
+    if normalized == "proxy_transport_only":
+        return "Aura proxy is alive; canonical runtime is not ready."
     if normalized == "kernel_ready":
         if (
             not conversation_ready
@@ -176,29 +183,11 @@ def build_boot_health_snapshot(
             healthy = False
             health_check_error = str(exc)
 
-    if is_gui_proxy:
-        runtime_contract = {
-            "status": "proxy",
-            "healthy": True,
-            "operational": True,
-            "status_code": 200,
-            "failures": {"critical": [], "important": [], "optional": []},
-            "tier_summary": {},
-        }
-    else:
-        runtime_contract = _runtime_contract_snapshot()
+    runtime_contract = _runtime_contract_snapshot()
     runtime_contract_operational = bool(runtime_contract.get("operational", False))
     runtime_contract_healthy = bool(runtime_contract.get("healthy", False))
     runtime_required_probes = required_probe_status(runtime_contract)
-    if is_gui_proxy:
-        runtime_required_probes = {
-            "all_passed": True,
-            "proxy": {
-                "ok": True,
-                "components": {"gui_proxy": True},
-            },
-        }
-    runtime_required_probes_ok = bool(runtime_required_probes.get("all_passed", False))
+    runtime_required_probes_ok = required_probe_groups_pass(runtime_required_probes)
     critical_contract_failures = _contract_failure_keys(runtime_contract, "critical")
     important_contract_failures = _contract_failure_keys(runtime_contract, "important")
 
@@ -223,12 +212,28 @@ def build_boot_health_snapshot(
             runtime_fresh = (now - float(heartbeat_tick)) <= 120.0
 
     if is_gui_proxy:
-        system_ready = True
-        conversation_ready = True
-        boot_phase = "proxy_ready"
-        status_text = "ready"
-        http_status = 200
-        blockers: list[str] = []
+        blockers = []
+        if not runtime_integrity_ok:
+            blockers.append("runtime_integrity")
+        if not runtime_contract_operational:
+            blockers.append("runtime_contract")
+            blockers.extend(f"critical:{key}" for key in critical_contract_failures)
+        if not runtime_required_probes_ok:
+            blockers.append("runtime_required_probes")
+            blockers.extend(
+                f"probe:{name}"
+                for name, probe in runtime_required_probes.items()
+                if isinstance(probe, dict) and not bool(probe.get("ok", False))
+            )
+        system_ready = (
+            runtime_integrity_ok
+            and runtime_contract_operational
+            and runtime_required_probes_ok
+        )
+        conversation_ready = system_ready
+        boot_phase = "proxy_ready" if system_ready else "proxy_transport_only"
+        status_text = "ready" if system_ready else "not_ready"
+        http_status = 200 if system_ready else 503
     else:
         blockers = []
         if orchestrator is None:

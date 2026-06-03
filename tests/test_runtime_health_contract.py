@@ -7,14 +7,20 @@ from types import SimpleNamespace
 import pytest
 
 from core.container import ServiceContainer
-from core.health.system_health import get_full_health_report, get_health_v2, get_runtime_health_contract
+from core.health.system_health import (
+    get_full_health_report,
+    get_health_v2,
+    get_runtime_health_contract,
+)
 from core.runtime.health_contract import (
     HEALTH_CONTRACT_VERSION,
+    REQUIRED_HEALTH_PROBE_GROUPS,
     RUNTIME_CONTRACT,
     HealthLevel,
     ServiceRequirement,
     ServiceTier,
     evaluate_health,
+    required_probe_groups_pass,
     required_probe_status,
     runtime_health_report,
 )
@@ -294,3 +300,40 @@ def test_runtime_contract_rejects_deferred_inference_as_healthy():
     assert report["failures"]["critical"][0]["container_key"] == "inference_gate"
     assert report["failures"]["critical"][0]["error"] == "is_inference_ready() returned False"
     assert probes["inference"]["ok"] is False
+
+
+def test_required_probe_groups_require_explicit_liveness_ok():
+    services = [
+        {
+            "container_key": component,
+            "present": True,
+            "liveness": "not_configured",
+        }
+        for components in REQUIRED_HEALTH_PROBE_GROUPS.values()
+        for component in components
+    ]
+
+    probes = required_probe_status({"services": services})
+
+    assert probes["all_passed"] is False
+    assert all(
+        probe["ok"] is False
+        for group, probe in probes.items()
+        if group != "all_passed"
+    )
+    assert required_probe_groups_pass(probes) is False
+
+
+def test_required_probe_groups_reject_partial_or_forged_payloads():
+    forged = {
+        "all_passed": True,
+        "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        "inference": {
+            "ok": True,
+            "components": {"inference_gate": True, "llm_router": True},
+        },
+        "memory": {"ok": True, "components": {"state_repository": True, "memory_facade": True}},
+        "scheduler": {"ok": True, "components": {"scheduler": True}},
+    }
+
+    assert required_probe_groups_pass(forged) is False
