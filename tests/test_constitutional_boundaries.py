@@ -79,12 +79,12 @@ async def test_autonomous_self_modification_rejects_unsafe_code_patch_calls():
 
 @pytest.mark.asyncio
 async def test_autonomous_self_modification_queues_code_patch_after_will_approval(monkeypatch):
+    import core.will as will_module
     from core.autonomy.self_modification import (
         AutonomousSelfModification,
         ModificationProposal,
         ProposalOutcome,
     )
-    import core.will as will_module
 
     receipts = []
     events = []
@@ -136,12 +136,12 @@ async def test_autonomous_self_modification_queues_code_patch_after_will_approva
 
 @pytest.mark.asyncio
 async def test_autonomous_self_modification_refuses_runtime_apply_without_audit_log(monkeypatch):
+    import core.will as will_module
     from core.autonomy.self_modification import (
         AutonomousSelfModification,
         ModificationProposal,
         ProposalOutcome,
     )
-    import core.will as will_module
 
     receipts = []
     events = []
@@ -203,3 +203,71 @@ async def test_autonomous_self_modification_refuses_runtime_apply_without_audit_
     assert apply_called is False
     assert receipts == [receipt]
     assert events == [("self_modification.refused", receipt)]
+
+
+@pytest.mark.asyncio
+async def test_autonomous_self_modification_queues_value_changes_even_with_runtime_flag(monkeypatch):
+    import core.will as will_module
+    from core.autonomy.self_modification import (
+        AutonomousSelfModification,
+        ModificationProposal,
+        ProposalOutcome,
+    )
+
+    events = []
+    apply_called = False
+
+    class _Decision:
+        receipt_id = "will-runtime-queued"
+        reason = "approved for staged evaluation"
+
+        def is_approved(self):
+            return True
+
+    class _Will:
+        def decide(self, **_kwargs):
+            return _Decision()
+
+    async def _apply_must_not_run(self, proposal):
+        nonlocal apply_called
+        apply_called = True
+        return "should not happen"
+
+    monkeypatch.setenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", "1")
+    monkeypatch.setattr(will_module, "get_will", lambda: _Will())
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_audit_log_ready",
+        staticmethod(lambda: (True, "audit log writable")),
+    )
+    monkeypatch.setattr(AutonomousSelfModification, "_record_receipt", lambda self, receipt: None)
+    monkeypatch.setattr(AutonomousSelfModification, "_apply", _apply_must_not_run)
+    monkeypatch.setattr(
+        AutonomousSelfModification,
+        "_publish_event",
+        lambda self, topic, receipt: events.append((topic, receipt)),
+    )
+
+    engine = AutonomousSelfModification.__new__(AutonomousSelfModification)
+    engine._pending = []
+    engine._receipts = []
+    proposal = ModificationProposal(
+        proposal_id="p-value",
+        target_path="core/affect/heartstone_values.py",
+        description="adjust bounded value",
+        diff_summary="sets curiosity drive",
+        changes={
+            "type": "value_adjustment",
+            "target_system": "heartstone",
+            "new_values": {"curiosity": 0.7},
+        },
+        source="test",
+    )
+
+    receipt = await engine.propose(proposal)
+
+    assert receipt.outcome == ProposalOutcome.QUEUED_FOR_PIPELINE
+    assert "SafeSelfModification quarantine" in receipt.simulation_result
+    assert apply_called is False
+    assert engine._pending == [proposal]
+    assert events == [("self_modification.queued", receipt)]

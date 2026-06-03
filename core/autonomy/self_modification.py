@@ -8,7 +8,7 @@ Process:
   2. Classify the target -- PROTECTED modules are rejected outright
   3. Simulate consequences (dry-run import, basic risk scoring)
   4. Route to Unified Will for PROCEED / REFUSE
-  5. If approved, apply the change and log a receipt
+  5. If approved, queue the change for the SafeSelfModification pipeline
   6. All proposals (accepted and rejected) go to the audit log
 
 PROTECTED (never modifiable):
@@ -18,7 +18,7 @@ PROTECTED (never modifiable):
   - core/constitution.py        (constitutional alignment)
   - core/identity/heartstone.py (sacred vows)
 
-MODIFIABLE (with Will authorization):
+MODIFIABLE (with Will authorization and queued promotion):
   - Drive weights               (heartstone_values, drive_engine)
   - Response strategies          (pipeline/, brain/, conversation/)
   - Skill implementations       (skills/, skill_management/)
@@ -99,6 +99,17 @@ _BANNED_CODE_CALLS = {
 def _runtime_self_modification_enabled() -> bool:
     raw = os.getenv(_RUNTIME_SELF_MODIFICATION_ENV, "")
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _live_runtime_application_enabled() -> bool:
+    """Live in-process mutation is intentionally disabled.
+
+    The legacy runtime flag is still read by older callers, but it no longer
+    authorizes direct value/config mutation in the foreground runtime. Approved
+    proposals are queued for the SafeSelfModification quarantine/promotion path
+    so the running process is never patched under itself.
+    """
+    return False
 
 
 def _call_name(node: ast.AST) -> str:
@@ -353,36 +364,6 @@ class AutonomousSelfModification:
             )
             return receipt
 
-        # 4. Queue code patches, and block all live mutation unless the
-        # operator explicitly enabled runtime self-modification promotion.
-        change_type = str((proposal.changes or {}).get("type", "unknown"))
-        if change_type == "code_patch" or not _runtime_self_modification_enabled():
-            queue_reason = (
-                "Code patch requires SafeSelfModification quarantine and promotion pipeline"
-                if change_type == "code_patch"
-                else f"Runtime application disabled; set {_RUNTIME_SELF_MODIFICATION_ENV}=1"
-            )
-            receipt = ModificationReceipt(
-                proposal_id=proposal.proposal_id,
-                target_path=proposal.target_path,
-                description=proposal.description,
-                diff_summary=proposal.diff_summary,
-                source=proposal.source,
-                outcome=ProposalOutcome.QUEUED_FOR_PIPELINE,
-                zone=zone.value,
-                will_receipt_id=decision.receipt_id,
-                will_reason=decision.reason,
-                simulation_result=f"{sim_detail}; queued: {queue_reason}",
-            )
-            self._record_receipt(receipt)
-            logger.warning(
-                "QUEUED self-modification instead of live-applying: %s (%s)",
-                proposal.target_path,
-                queue_reason,
-            )
-            self._publish_event("self_modification.queued", receipt)
-            return receipt
-
         audit_ok, audit_detail = self._audit_log_ready()
         if not audit_ok:
             receipt = ModificationReceipt(
@@ -405,30 +386,33 @@ class AutonomousSelfModification:
             self._publish_event("self_modification.refused", receipt)
             return receipt
 
-        # 5. Apply the runtime-only modification.
-        apply_detail = await self._apply(proposal)
-
+        # 4. Queue every approved change for the audited promotion pipeline.
+        # Runtime value/config mutation used to be allowed behind an env flag;
+        # keeping that path live made foreground behavior harder to reason about.
+        change_type = str((proposal.changes or {}).get("type", "unknown"))
         receipt = ModificationReceipt(
             proposal_id=proposal.proposal_id,
             target_path=proposal.target_path,
             description=proposal.description,
             diff_summary=proposal.diff_summary,
             source=proposal.source,
-            outcome=ProposalOutcome.APPROVED,
+            outcome=ProposalOutcome.QUEUED_FOR_PIPELINE,
             zone=zone.value,
             will_receipt_id=decision.receipt_id,
             will_reason=decision.reason,
-            simulation_result=f"{sim_detail}; applied: {apply_detail}",
+            simulation_result=(
+                f"{sim_detail}; queued: {change_type} requires SafeSelfModification "
+                "quarantine, tests, receipts, and promotion"
+            ),
         )
         self._record_receipt(receipt)
-        logger.info(
-            "APPROVED: %s -> %s (will: %s)",
-            proposal.target_path, proposal.description[:60], decision.receipt_id,
+        self._queue_proposal(proposal)
+        logger.warning(
+            "QUEUED self-modification instead of live-applying: %s (%s)",
+            proposal.target_path,
+            change_type,
         )
-
-        # Publish event
-        self._publish_event("self_modification.applied", receipt)
-
+        self._publish_event("self_modification.queued", receipt)
         return receipt
 
     # ── Simulation ──────────────────────────────────────────────────────
@@ -598,6 +582,14 @@ class AutonomousSelfModification:
         except (ImportError, AttributeError, RuntimeError):
             pass  # no-op: intentional
 
+    def _queue_proposal(self, proposal: ModificationProposal) -> None:
+        """Store an approved proposal for external audited promotion."""
+        if not hasattr(self, "_pending"):
+            self._pending = []
+        self._pending.append(proposal)
+        if len(self._pending) > self._MAX_PENDING:
+            self._pending = self._pending[-self._MAX_PENDING:]
+
     # ── Public API ──────────────────────────────────────────────────────
 
     def get_recent_receipts(self, n: int = 20) -> list[dict[str, Any]]:
@@ -620,6 +612,8 @@ class AutonomousSelfModification:
             "refused": refused,
             "approval_rate": round(approved / max(1, len(self._receipts)), 4),
             "pending": len(self._pending),
+            "live_runtime_application_enabled": _live_runtime_application_enabled(),
+            "legacy_runtime_flag_set": _runtime_self_modification_enabled(),
         }
 
     @staticmethod

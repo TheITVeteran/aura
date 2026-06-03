@@ -27,6 +27,8 @@ from .mutation_tiers import MutationTier, classify_mutation_path
 
 logger = logging.getLogger("SelfModification.SafeModification")
 
+_SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
+
 
 @dataclass
 class ModificationRecord:
@@ -701,6 +703,20 @@ class SafeSelfModification:
             logger.debug("Failed to emit proposal event: %s", e)
 
     @staticmethod
+    def _supervised_no_git_promotion_allowed(supervised: bool) -> bool:
+        """Return True only for explicit supervised promotion without git.
+
+        Normal autonomous promotion requires a clean git branch so the repair
+        has a rollback point and a reviewable artifact. Test harnesses and
+        operator-driven repairs may still run without a branch, but only with
+        the same supervised override used by the higher-level engine.
+        """
+        if not supervised:
+            return False
+        raw = os.getenv(_SUPERVISED_SELF_MODIFICATION_ENV, "")
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
     def _file_hash(path: Path) -> str:
         """SHA-256 hash of a file for integrity verification."""
         h = hashlib.sha256()
@@ -713,6 +729,8 @@ class SafeSelfModification:
         self,
         fix,  # CodeFix object
         test_results: dict[str, Any],
+        *,
+        supervised: bool = False,
     ) -> tuple[bool, str]:
         """Apply a validated fix with full safety protocol.
 
@@ -763,7 +781,7 @@ class SafeSelfModification:
         # the target's repo-relative path. Reusing only target_path.name can
         # cross-contaminate same-name modules from different packages.
         stage_token = hashlib.sha256(
-            f"{target_rel}:{time.time_ns()}".encode("utf-8")
+            f"{target_rel}:{time.time_ns()}".encode()
         ).hexdigest()[:16]
         staging_file = self.staging_dir / stage_token / target_rel
         staging_file.parent.mkdir(parents=True, exist_ok=True)
@@ -777,7 +795,19 @@ class SafeSelfModification:
         if branch_created:
             logger.info("✓ Stage 2: Branch created (%s)", branch_name)
         else:
-            logger.info("  Stage 2: No git branch (git unavailable)")
+            if not self._supervised_no_git_promotion_allowed(supervised):
+                self.stats["blocked_by_policy"] += 1
+                reason = (
+                    "clean git branch required before source promotion; "
+                    f"use {_SUPERVISED_SELF_MODIFICATION_ENV}=1 only for explicit "
+                    "operator-supervised no-branch promotion"
+                )
+                logger.warning("Modification blocked by branch policy: %s", reason)
+                self._emit_proposal_event(fix, "BLOCKED", reason)
+                return False, f"Blocked: {reason}"
+            logger.warning(
+                "Stage 2: No git branch; continuing only under supervised operator override."
+            )
 
         # Stage 3: Apply the fix to QUARANTINE first (v52)
         try:

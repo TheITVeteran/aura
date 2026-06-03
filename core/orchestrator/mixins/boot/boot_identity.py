@@ -110,7 +110,8 @@ class BootIdentityMixin:
             elif config.security.auto_fix_enabled and modifier:
                 logger.info(
                     "🧬 Self-Modification Engine registered in proposal-only mode; "
-                    "runtime patch promotion requires AURA_ALLOW_RUNTIME_SELF_MODIFICATION=1."
+                    "source promotion requires quarantine validation, a clean git branch, "
+                    "and explicit supervised override for no-branch repair."
                 )
         except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with disabled self-modification engine", severity="error")

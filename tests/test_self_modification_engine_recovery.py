@@ -442,6 +442,120 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
     assert target.read_text(encoding="utf-8") == "value = 1\n"
 
 
+@pytest.mark.asyncio
+async def test_safe_modification_blocks_no_branch_promotion_without_supervision(tmp_path):
+    target = tmp_path / "core" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+    safe_mod.staging_dir = tmp_path / ".aura-staging"
+    safe_mod.staging_dir.mkdir()
+    safe_mod.stats = {
+        "total_attempts": 0,
+        "successful": 0,
+        "failed": 0,
+        "rolled_back": 0,
+        "blocked_by_policy": 0,
+    }
+    safe_mod.event_bus = None
+    safe_mod.backup = SimpleNamespace(create_backup=lambda *_args, **_kwargs: "backup-id")
+    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
+    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.modification_log = tmp_path / "modifications.jsonl"
+
+    safe_mod._run_full_test_suite = AsyncMock(
+        side_effect=AssertionError("branch policy must block before suite execution")
+    )
+
+    fix = SimpleNamespace(
+        target_file="core/example.py",
+        target_line=1,
+        original_code="value = 1\n",
+        fixed_code="value = 2\n",
+        explanation="raise value",
+        risk_level=1,
+        lines_changed=1,
+    )
+
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {
+            "success": True,
+            "syntax_test": True,
+            "import_test": True,
+            "integrity_check": True,
+            "unit_tests": True,
+        },
+    )
+
+    assert success is False
+    assert "clean git branch required" in message
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+@pytest.mark.asyncio
+async def test_safe_modification_allows_supervised_no_branch_promotion(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", "1")
+    target = tmp_path / "core" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    class Backup:
+        def create_backup(self, _path):
+            return "backup-id"
+
+        def restore_backup(self, _backup_id):
+            target.write_text("value = 1\n", encoding="utf-8")
+            return True
+
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+    safe_mod.staging_dir = tmp_path / ".aura-staging"
+    safe_mod.staging_dir.mkdir()
+    safe_mod.stats = {
+        "total_attempts": 0,
+        "successful": 0,
+        "failed": 0,
+        "rolled_back": 0,
+        "blocked_by_policy": 0,
+    }
+    safe_mod.event_bus = None
+    safe_mod.backup = Backup()
+    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
+    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_full_test_suite = AsyncMock(return_value=True)
+
+    fix = SimpleNamespace(
+        target_file="core/example.py",
+        target_line=1,
+        original_code="value = 1\n",
+        fixed_code="value = 2\n",
+        explanation="raise value",
+        risk_level=1,
+        lines_changed=1,
+    )
+
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {
+            "success": True,
+            "syntax_test": True,
+            "import_test": True,
+            "integrity_check": True,
+            "unit_tests": True,
+        },
+        supervised=True,
+    )
+
+    assert (success, message) == (True, "Fix applied successfully")
+    assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+
 def test_safe_modification_static_validation_excludes_generated_artifacts(tmp_path):
     safe_mod = SafeSelfModification.__new__(SafeSelfModification)
     safe_mod.code_base = tmp_path

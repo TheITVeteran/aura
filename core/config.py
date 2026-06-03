@@ -3,20 +3,20 @@ Hardened Configuration System for Aura.
 2026 Standards: Pydantic Settings V2, Strict Validation, and Mycelial Observability.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import json
 import logging
 import os
 import sys
 import threading
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar, Optional, Union, List, Dict, Any
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from core.runtime.errors import record_degradation
 
 try:
     import yaml
@@ -26,7 +26,7 @@ except ImportError:
 logger = logging.getLogger("Aura.Config")
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     DEV = "dev"
     STAGING = "staging"
     PROD = "prod"
@@ -51,7 +51,7 @@ class Paths(BaseModel):
     ISSUE #78: Note that @property fields are intentionally excluded from Pydantic serialization.
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    _runtime_home_cache: ClassVar[Optional[Path]] = None
+    _runtime_home_cache: ClassVar[Path | None] = None
 
     home_dir: Path = Field(default_factory=lambda: Path.home().expanduser().resolve() / ".aura")
 
@@ -133,9 +133,10 @@ class SecurityConfig(BaseModel):
       repo defaults to ``"owner_autonomous"`` to match the intended single-owner,
       self-directed operating mode for this workspace.
     - ``internal_only_mode``: When True, blocks all external network access.
-    - ``auto_fix_enabled``: Requests self-repair capability. Runtime source-code
-      promotion still requires explicit ``AURA_ALLOW_RUNTIME_SELF_MODIFICATION=1``
-      and the safe modification pipeline; otherwise repairs stay proposal-only.
+    - ``auto_fix_enabled``: Requests self-repair capability. Live runtime
+      mutation is proposal-only by default. Source-code promotion requires the
+      SafeSelfModification quarantine pipeline, a clean git branch, validated
+      evidence, and explicit supervised override for any no-branch promotion.
     - ``aura_full_autonomy``: Enables autonomous initiative generation
       (background goals, boredom impulses, self-directed exploration).
       When False, Aura only acts in response to user messages.
@@ -303,7 +304,7 @@ class RedisConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     provider: str = "local_runtime"
-    api_key: Optional[str] = None
+    api_key: str | None = None
     
     # Tri-Cameral Architecture (Phase 16) — Tuned for M5 Pro 64 GB
     # Tier 1: Brainstem (Heartbeat, telemetry, background tasks)
@@ -324,14 +325,14 @@ class LLMConfig(BaseModel):
     
     # Cloud API Keys
     # ISSUE #70 - resolved env lookup inside Pydantic by moving to model_validator
-    gemini_api_key: Optional[str] = None
+    gemini_api_key: str | None = None
 
     vision_model: str = "Qwen2.5-32B-Instruct-8bit"  # Use cortex-aligned model for vision
     whisper_model: str = "small.en"
     embedding_model: str = "nomic-embed-text"
-    local_cortex_path: Optional[str] = None
-    local_solver_path: Optional[str] = None
-    local_brainstem_path: Optional[str] = None
+    local_cortex_path: str | None = None
+    local_solver_path: str | None = None
+    local_brainstem_path: str | None = None
 
     @property
     def model(self) -> str:
@@ -342,15 +343,15 @@ class LLMConfig(BaseModel):
         return self.fast_max_tokens
 
     @property
-    def mlx_model_path(self) -> Optional[str]:
+    def mlx_model_path(self) -> str | None:
         return self.local_cortex_path
 
     @property
-    def mlx_deep_model_path(self) -> Optional[str]:
+    def mlx_deep_model_path(self) -> str | None:
         return self.local_solver_path
 
     @property
-    def mlx_brainstem_path(self) -> Optional[str]:
+    def mlx_brainstem_path(self) -> str | None:
         return self.local_brainstem_path
 
 
@@ -405,7 +406,7 @@ class AuraConfig(BaseSettings):
 
     env: Environment = Environment.DEV
     version: str = Field(default="unknown")
-    api_token: Optional[str] = Field(default=None)
+    api_token: str | None = Field(default=None)
     
     # Feature flags
     features: FeatureToggles = Field(default_factory=FeatureToggles)
@@ -436,7 +437,7 @@ class AuraConfig(BaseSettings):
     # Use module-level instance at the end of the file instead.
 
     @model_validator(mode='after')
-    def setup_infrastructure(self) -> 'AuraConfig':
+    def setup_infrastructure(self) -> AuraConfig:
         # 1. Set Version
         try:
             from core.version import VERSION
@@ -513,7 +514,7 @@ class AuraConfig(BaseSettings):
             logger.error("config_save_failed: %s", e)
 
 # Singleton implementation
-_config: Optional[AuraConfig] = None
+_config: AuraConfig | None = None
 _config_lock = threading.RLock()
 
 def get_config() -> AuraConfig:
