@@ -892,10 +892,10 @@ async def websocket_endpoint(ws: WebSocket):
                                 reply = await chat_routes._run_cognitive_engine_chat_turn(
                                     user_content,
                                     visible_user_message=user_content,
-                                    origin="user",
+                                    origin="desktop-ui",
                                     timeout_s=300.0,
                                     lane=chat_routes._collect_conversation_lane_status(),
-                                    source="websocket",
+                                    source="desktop_websocket",
                                 )
                                 if not reply:
                                     await ws_ref.send_text(json.dumps({

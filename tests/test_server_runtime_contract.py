@@ -31,3 +31,11 @@ def test_websocket_timeout_path_does_not_direct_generate_raw_fallback():
 
     assert "gate.generate(" not in source
     assert "instead of fabricating a recovered answer" in source
+
+
+def test_websocket_chat_uses_desktop_cognitive_engine_trace_metadata():
+    source = inspect.getsource(server.websocket_endpoint)
+
+    assert 'origin="desktop-ui"' in source
+    assert 'source="desktop_websocket"' in source
+    assert "desktop WebSocket chat path requires CognitiveEngine" in source
