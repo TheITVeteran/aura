@@ -4535,6 +4535,9 @@ def _is_live_runtime_proof_request(user_message: str) -> bool:
 def _classify_live_runtime_proof(user_message: str) -> str | None:
     text = _normalize_user_message(user_message)
     is_live_proof = _is_live_runtime_proof_request(text)
+    if not is_live_proof:
+        return None
+
     desktop_chain_terms = (
         ("calculator" in text or "equation" in text)
         and ("notes" in text or "note" in text)
@@ -4547,8 +4550,6 @@ def _classify_live_runtime_proof(user_message: str) -> str | None:
         return "snake"
     if "glass arithmetic" in text and any(token in text for token in ("novel", "invent", "stay with", "limitation", "example", "rules")):
         return "novel_topic"
-    if not is_live_proof:
-        return None
     if "snake" in text or "playable" in text or "game" in text:
         return "snake"
     if "calculator" in text or "mac app" in text or "desktop" in text or "computer_use" in text:

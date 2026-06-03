@@ -124,9 +124,14 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
     assert "render_text_pdf" in actions
     folder_payload = json.loads(calls[0][1]["target"])
     assert folder_payload["path"] == "Aura's Journal"
+    open_urls = [call[1]["target"] for call in calls if call[1]["action"] == "open_url"]
+    assert any(url.startswith("https://duckduckgo.com/?q=") for url in open_urls)
+    assert any("iax=images" in url for url in open_urls)
     pdf_payload = json.loads(calls[-1][1]["target"])
     assert pdf_payload["path"].endswith(".pdf")
     assert "Aura summary body from CognitiveEngine." in pdf_payload["body"]
+    assert "Image search opened:" in pdf_payload["body"]
+    assert "No local image insertion is claimed" in pdf_payload["body"]
     assert calls[0][2]["route"] == "desktop_task.computer_use"
     assert calls[0][2]["origin"] == "desktop_ui"
 

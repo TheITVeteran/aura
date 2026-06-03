@@ -200,6 +200,13 @@ class VoiceConversationBridge:
                 )
             return reply
 
+        if self._looks_like_desktop_objective(normalized):
+            return (
+                "The spoken desktop request required CognitiveEngine before governed desktop control, "
+                "but the live cognitive path did not produce an acceptable reply. I am not using the "
+                "legacy voice fallback to claim or attempt desktop work."
+            )
+
         if self._orch and hasattr(self._orch, "process_user_input"):
             response = await self._orch.process_user_input(normalized, origin="voice")
             return str(response or "").strip() or None

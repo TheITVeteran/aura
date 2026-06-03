@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import urllib.parse
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -125,6 +126,32 @@ class DesktopTaskSkill(BaseSkill):
         return ""
 
     @staticmethod
+    def _search_url(query: str, *, images: bool = False) -> str:
+        encoded = urllib.parse.quote_plus(str(query or "").strip())
+        if not encoded:
+            return ""
+        if images:
+            return f"https://duckduckgo.com/?q={encoded}&iax=images&ia=images"
+        return f"https://duckduckgo.com/?q={encoded}"
+
+    @staticmethod
+    def _extract_image_query(objective: str) -> str:
+        text = str(objective or "").strip()
+        patterns = (
+            r"\b(?:image|picture|photo|illustration)\s+of\s+([^.;\n]+)",
+            r"\b(?:find|search|look\s+up)\s+(?:an?\s+)?(?:image|picture|photo|illustration)\s+(?:of\s+)?([^.;\n]+)",
+            r"\b([^.;\n]{2,120}?)\s+(?:image|picture|photo|illustration)\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                query = re.sub(r"\b(?:and|then|also)\b.*$", "", match.group(1), flags=re.IGNORECASE)
+                query = query.strip(" ,")
+                if query:
+                    return query[:240]
+        return ""
+
+    @staticmethod
     def _extract_apps(objective: str) -> list[str]:
         text = str(objective or "").lower()
         apps: list[str] = []
@@ -160,6 +187,29 @@ class DesktopTaskSkill(BaseSkill):
             "It records the requested objective and the actions Aura attempted through her "
             "canonical computer-use gateway."
         )
+
+    @classmethod
+    def _document_body_with_references(
+        cls,
+        objective: str,
+        context: dict[str, Any] | None,
+        *,
+        image_query: str = "",
+        image_search_url: str = "",
+        search_url: str = "",
+    ) -> str:
+        body = cls._document_body(objective, context)
+        references: list[str] = []
+        if search_url:
+            references.append(f"Search opened: {search_url}")
+        if image_query and image_search_url:
+            references.append(
+                f"Image request: {image_query}\nImage search opened: {image_search_url}\n"
+                "No local image insertion is claimed unless a later governed receipt shows an image file was downloaded or embedded."
+            )
+        if not references:
+            return body
+        return f"{body.rstrip()}\n\nArtifact references:\n" + "\n".join(f"- {item}" for item in references)
 
     @classmethod
     def _steps_from_payload(cls, payload: Any) -> list[DesktopTaskStep]:
@@ -257,6 +307,8 @@ class DesktopTaskSkill(BaseSkill):
         )
         wants_pdf = "pdf" in lowered or wants_document
         wants_search = any(token in lowered for token in ("search", "look up", "google", "news", "article"))
+        image_query = self._extract_image_query(text)
+        wants_image = bool(image_query) or any(token in lowered for token in ("image", "picture", "photo", "illustration"))
 
         if wants_folder or wants_document:
             steps.append(
@@ -284,18 +336,35 @@ class DesktopTaskSkill(BaseSkill):
             )
 
         query = self._extract_search_query(text)
+        search_url = self._search_url(query) if query else ""
         if wants_search and query:
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
-                    target=query,
+                    target=search_url,
                     reason="Open a browser/search tab for the requested live research topic.",
                     expect="Default browser accepts the search URL.",
                 )
             )
+        image_search_url = self._search_url(image_query or text, images=True) if wants_image else ""
+        if image_search_url and image_search_url != search_url:
+            steps.append(
+                DesktopTaskStep(
+                    action="open_url",
+                    target=image_search_url,
+                    reason="Open an image-search surface for the requested visual reference.",
+                    expect="Default browser accepts the image search URL.",
+                )
+            )
 
         if wants_document:
-            body = self._document_body(text, context)
+            body = self._document_body_with_references(
+                text,
+                context,
+                image_query=image_query,
+                image_search_url=image_search_url,
+                search_url=search_url,
+            )
             filename_stem = self._safe_filename("aura_journal_entry" if "journal" in lowered else "aura_desktop_summary")
             text_path = f"{folder_path}/{filename_stem}.txt"
             steps.append(

@@ -344,3 +344,25 @@ async def test_voice_bridge_reports_capability_lookup_failure_without_legacy_cla
     assert "governed desktop control" in response
     assert "capability_engine_unavailable" in response
     assert "did not complete" in response
+
+
+@pytest.mark.asyncio
+async def test_spoken_desktop_objective_requires_cognitive_engine(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.voice.voice_bridge import VoiceConversationBridge
+
+    legacy_calls: list[str] = []
+
+    class Orchestrator:
+        async def process_user_input(self, *_args, **_kwargs):
+            legacy_calls.append("legacy")
+            return "legacy claimed it opened Notes"
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    bridge = VoiceConversationBridge(Orchestrator(), None)
+    response = await bridge.process_voice_input("Hey Aura, open Notes and save a PDF.")
+
+    assert "required CognitiveEngine" in response
+    assert "legacy voice fallback" in response
+    assert legacy_calls == []

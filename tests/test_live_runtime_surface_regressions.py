@@ -741,14 +741,20 @@ def test_terminal_monitor_ignores_background_phase_timeouts():
     assert monitor._classify_error(entry) is None
 
 
-def test_chat_live_proof_classifier_catches_plain_snake_and_glass_prompts():
+def test_chat_live_proof_classifier_requires_explicit_proof_intent():
     from interface.routes.chat import _build_glass_arithmetic_reply, _classify_live_runtime_proof
 
     assert _classify_live_runtime_proof(
         "Create a simple game of Snake and save it as artifacts/live_runtime/generated/live_snake.html"
-    ) == "snake"
+    ) is None
     assert _classify_live_runtime_proof(
         "Stay with glass arithmetic. Add one limitation and connect it to the example you just gave."
+    ) is None
+    assert _classify_live_runtime_proof(
+        "Run a live proof: create a simple game of Snake and save it as artifacts/live_runtime/generated/live_snake.html"
+    ) == "snake"
+    assert _classify_live_runtime_proof(
+        "Live runtime proof: stay with glass arithmetic. Add one limitation and connect it to the example you just gave."
     ) == "novel_topic"
     assert "14'" in _build_glass_arithmetic_reply(
         "Stay with glass arithmetic. Add one limitation and connect it to the example you just gave."
@@ -820,7 +826,10 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
 
     response = await chat_module.api_chat(
         chat_module.ChatRequest(
-            message="Create a simple game of Snake and save it as artifacts/live_runtime/generated/live_snake.html"
+            message=(
+                "Run a live proof: create a simple game of Snake and save it as "
+                "artifacts/live_runtime/generated/live_snake.html"
+            )
         ),
         SimpleNamespace(headers={}, client=None, cookies={}),
         None,
