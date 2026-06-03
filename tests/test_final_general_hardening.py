@@ -24,7 +24,7 @@ from core.environment.policy.candidate_generator import CandidateGenerator
 from core.environments.terminal_grid.state_compiler import TerminalGridStateCompiler
 from core.learning.formalizer import KnowledgeFormalizer
 from core.runtime.concurrency_health import ConcurrencyHealthMonitor
-from core.runtime.proof_kernel_bridge import start_proof_kernel_bridge
+from core.runtime.proof_kernel_bridge import ProofKernelBridge, start_proof_kernel_bridge
 
 
 class _GeneralScriptedAdapter:
@@ -411,3 +411,20 @@ async def test_proof_kernel_bridge_runs_over_live_runtime_evidence():
     assert status["active"] is True
     assert "live runtime evidence is sampled" in status["claim_scope"]["supports"]
     assert "proof of subjective experience" in status["claim_scope"]["does_not_support"]
+
+
+@pytest.mark.asyncio
+async def test_proof_kernel_bridge_reports_inactive_when_kernel_unavailable(monkeypatch):
+    bridge = ProofKernelBridge()
+    monkeypatch.setattr(
+        bridge,
+        "_load_kernel",
+        lambda: (_ for _ in ()).throw(ImportError("proof kernel missing")),
+    )
+
+    snapshot = await bridge.sample()
+
+    assert snapshot.active is False
+    assert snapshot.proof_metrics == {}
+    assert any("ImportError" in error for error in snapshot.errors)
+    assert "proof of subjective experience" in snapshot.claim_scope["does_not_support"]

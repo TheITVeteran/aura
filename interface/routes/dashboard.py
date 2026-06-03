@@ -1,8 +1,8 @@
 """interface/routes/dashboard.py
 ─────────────────────────────────
 Live evidence dashboard. The single endpoint a skeptic uses to inspect
-Aura's inner life *without trusting her words*. Every value is read
-directly from the substrate, not from generated text.
+Aura's operational cognitive state without trusting generated self-report.
+Every value is read directly from runtime services, not from generated text.
 
 Endpoints:
 
@@ -11,7 +11,7 @@ Endpoints:
   GET /dashboard/projects     — self-originated projects ledger view
   GET /dashboard/tokens       — active capability tokens (count + scopes)
   GET /dashboard/relationships — relationship dossiers (anonymized fields)
-  GET /dashboard/integration   — phi / GWT / HOT / qualia
+  GET /dashboard/integration   — functional integration metrics
   GET /dashboard/viability    — viability state machine + transitions
   GET /dashboard/world        — world-bridge channel permissions
   GET /dashboard/conscience   — recent conscience violations (read-only)
@@ -137,7 +137,7 @@ async def snapshot(_: None = Depends(_require_internal)) -> JSONResponse:
         _record_dashboard_issue(exc, "Capability token snapshot unavailable: %s")
         payload["capability_tokens"] = []
 
-    # Phi / GWT / HOT / qualia
+    # Functional integration metrics: phi/GWT/HOT-style proxies where available.
     payload["integration"] = _safe(_collect_integration) or {}
 
     # System / runtime

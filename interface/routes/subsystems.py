@@ -302,8 +302,18 @@ async def api_mycelial_graph():
     if not mycelium:
         return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
 
-    consciousness_set = {'qualia', 'affect', 'personality', 'memory', 'substrate',
-                         'consciousness', 'attention', 'sentience', 'drive', 'scanner'}
+    cognitive_state_set = {
+        "qualia",
+        "affect",
+        "personality",
+        "memory",
+        "substrate",
+        "consciousness",
+        "attention",
+        "sentience",
+        "drive",
+        "scanner",
+    }
 
     node_intel = {
         "orchestrator": "The Central Command of Aura. Coordinates all cognitive cycles, task dispatch, and subsystem coordination.",
@@ -311,7 +321,7 @@ async def api_mycelial_graph():
         "memory_facade": "The Unified Memory Interface. Routes high-level requests between episodic, semantic, and vector storage layers.",
         "affect_engine": "The Emotional Core. Modulates valence, arousal, and mood based on system state and interactions.",
         "drive_controller": "Intrinsic Motivation System. Manages survival instincts, curiosity, hunger for data, and goal prioritization.",
-        "liquid_substrate": "The LNN (Liquid Neural Network) Backbone. Provides the fluid, time-continuous computational environment for consciousness.",
+        "liquid_substrate": "The LNN (Liquid Neural Network) Backbone. Provides time-continuous computational state for attention, affect, and planning.",
         "sovereign_scanner": "System Awareness. High-frequency monitoring of processes, files, and environmental context.",
         "core.orchestrator": "The Central Command of Aura. Coordinates all cognitive cycles and task dispatch.",
         "core.mycelium": "The Mycelial Network. Manages dynamic hyphae connections, unblockable pathways, and system topology.",
@@ -319,8 +329,8 @@ async def api_mycelial_graph():
         "core.memory": "The Multi-layered Persistence System. Manages long-term storage and retrieval across diverse memory types.",
         "core.senses": "The Perceptual Layer. Handles Speech-to-Text, Text-to-Speech, and Vision interfaces.",
         "core.resilience": "The Immunity System. Manages circuit breakers, health heartbeats, and autonomous state recovery.",
-        "qualia": "Phenomenal Experience. The subjective quality of system states and sensory inputs.",
-        "consciousness": "Global Workspace. The unified field where fragmented thoughts coalesce into singular focus.",
+        "qualia": "Functional State Descriptor. Tracks sensory and affective markers without claiming subjective qualia.",
+        "consciousness": "Global Workspace. Coordinates competing cognitive contents into a selected focus for downstream behavior.",
         "cognition": "Active Reasoning. The processing layer where objectives are broken down into executable actions.",
         "skills": "The Action Library. Encapsulated capabilities that allow Aura to interact with the world.",
         "telemetry": "The Neural Feed. Real-time stream of all internal thoughts, events, and performance metrics.",
@@ -402,15 +412,15 @@ async def api_mycelial_graph():
         for ep in all_endpoints:
             short_name = ep.split(".")[-1] if "." in ep else ep
             is_critical = ep in critical_set
-            is_consciousness = any(cn in ep.lower() for cn in consciousness_set)
+            is_cognitive_state = any(cn in ep.lower() for cn in cognitive_state_set)
             is_skill = "skills" in ep.lower() or "skill" in ep.lower()
             is_interface = ep.startswith("interface")
             centrality = mycelium._centrality.get(ep, 0)
 
             if is_critical:
                 color, ntype, size = "#ff3e5e", "critical", 6 + centrality * 0.5
-            elif is_consciousness:
-                color, ntype, size = "#00e5ff", "consciousness", 5
+            elif is_cognitive_state:
+                color, ntype, size = "#00e5ff", "cognitive_state", 5
             elif is_skill:
                 color, ntype, size = "#00ffa3", "skill", 3
             elif is_interface:
@@ -422,8 +432,8 @@ async def api_mycelial_graph():
             if not description:
                 if is_skill:
                     description = f"Autonomous Skill Nexus for {short_name}. Enables specialized tool usage."
-                elif is_consciousness:
-                    description = f"High-order Consciousness Module: {short_name}. Essential for phenomenal awareness."
+                elif is_cognitive_state:
+                    description = f"Cognitive-state module: {short_name}. Contributes functional telemetry or steering signals."
                 elif is_critical:
                     description = "Core Subsystem. Critical infrastructure component."
                 elif is_interface:
@@ -513,15 +523,15 @@ async def api_mycelial_graph():
                 ("cognitive_engine",  "critical",      "#ff3e5e", "Cognitive Engine — reasoning, tool use, deep LLM integration."),
                 ("llm_router",        "core",          "#8a2be2", "LLM Router — multi-tier failover with circuit breakers."),
                 ("memory_facade",     "core",          "#8a2be2", "Memory Facade — unified interface across all memory layers."),
-                ("affect_engine",     "consciousness", "#00e5ff", "Affect Engine — emotional state, valence, arousal, mood."),
-                ("liquid_state",      "consciousness", "#00e5ff", "Liquid State — time-continuous neural substrate."),
+                ("affect_engine",     "cognitive_state", "#00e5ff", "Affect Engine — functional valence, arousal, and mood telemetry."),
+                ("liquid_state",      "cognitive_state", "#00e5ff", "Liquid State — time-continuous computational substrate."),
                 ("mycelial_network",  "core",          "#8a2be2", "Mycelial Network — dynamic infrastructure topology."),
                 ("proactive_presence","core",          "#8a2be2", "Proactive Presence — spontaneous speech and initiative."),
-                ("personality_engine","consciousness", "#00e5ff", "Personality Engine — voice, tone, identity synthesis."),
+                ("personality_engine","cognitive_state", "#00e5ff", "Personality Engine — voice, tone, and identity-style synthesis."),
                 ("voice_engine",      "core",          "#8a2be2", "Voice Engine — TTS/STT pipeline and embodiment."),
                 ("goal_hierarchy",    "core",          "#8a2be2", "Goal Hierarchy — motivation and objective management."),
                 ("episodic_memory",   "core",          "#8a2be2", "Episodic Memory — experiential trace and recall."),
-                ("homeostasis",       "consciousness", "#00e5ff", "Homeostasis — integrity, persistence, will-to-live."),
+                ("homeostasis",       "cognitive_state", "#00e5ff", "Homeostasis — integrity, persistence, and resource-pressure regulation."),
             ]
             seed_links = [
                 ("orchestrator", "cognitive_engine"),
@@ -544,7 +554,7 @@ async def api_mycelial_graph():
                     "label": svc_id.replace("_", " ").title(),
                     "type": ntype,
                     "color": color if is_live else "#4a4a4a",
-                    "size": 5 if ntype == "critical" else (4 if ntype == "consciousness" else 3),
+                    "size": 5 if ntype == "critical" else (4 if ntype == "cognitive_state" else 3),
                     "description": desc + (" [LIVE]" if is_live else " [OFFLINE]"),
                     "centrality": 3 if ntype == "critical" else 1,
                     "hits": 0, "confidence": 1.0 if is_live else 0.3,
