@@ -1130,6 +1130,23 @@ class MemoryFacade:
                 return await _perform_add_memory()
         return await _perform_add_memory()
 
+    async def remember(
+        self,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        **metadata_fields: Any,
+    ) -> bool:
+        """Canonical compatibility entry point for memory writes.
+
+        Older runtime paths and skills call ``remember()`` while newer paths call
+        ``add_memory()``. Keeping this method on the facade ensures those writes
+        still pass through the same governance, provenance, unity deferral, and
+        backend routing implemented by ``add_memory()``.
+        """
+        payload = dict(metadata or {})
+        payload.update(metadata_fields)
+        return await self.add_memory(content, payload)
+
     async def query_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Compatibility API for legacy narrative/semantic recall callers."""
         filter_key, filter_value, semantic_query = self._parse_memory_query(query)

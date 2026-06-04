@@ -123,7 +123,4 @@ class TestSubstrateNoDuplicateMethods:
     @pytest.mark.asyncio
     async def test_async_wrapper_calls_sync(self, substrate):
         """The async wrapper should successfully call the sync underlying logic without error."""
-        try:
-            await substrate._update_qualia_metrics(dt=0.1)
-        except Exception as e:
-            pytest.fail(f"_update_qualia_metrics failed: {e}")
+        await substrate._update_qualia_metrics(dt=0.1)

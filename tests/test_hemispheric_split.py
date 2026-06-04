@@ -245,7 +245,7 @@ if __name__ == "__main__":
             t()
             passed += 1
             print(f"  ✓ {t.__name__}")
-        except Exception as exc:
+        except (AssertionError, OSError, RuntimeError, TypeError, ValueError) as exc:
             failed.append((t.__name__, exc))
             print(f"  ✗ {t.__name__}: {exc}")
             traceback.print_exc()

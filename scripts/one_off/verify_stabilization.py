@@ -70,7 +70,7 @@ async def main():
         await test_parallel_consolidation()
         await test_neural_bridge_loop()
         print("\n🏆 STABILIZATION VERIFIED: All systems nominal.")
-    except Exception as e:
+    except (AssertionError, AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ Verification Failed: {e}", exc_info=True)
         raise SystemExit(1)
 

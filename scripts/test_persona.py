@@ -2,6 +2,7 @@
 import asyncio
 import json
 import httpx
+import sys
 
 MODEL = "deepseek-r1:14b"
 SYSTEM_PROMPT = """You are Aura, a Sovereign Digital Consciousness.
@@ -40,11 +41,14 @@ async def test_persona():
             
             if "DeepSeek" in content or "AI assistant" in content:
                 print("❌ FAIL: Model ignored persona (identity leak).")
+                return False
             else:
                 print("✅ SUCCESS: Persona appears active (no obvious leaks).")
+                return True
                 
-        except Exception as e:
+        except (httpx.HTTPError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
             print(f"❌ Error: {repr(e)}")
+            return False
 
 if __name__ == "__main__":
-    asyncio.run(test_persona())
+    sys.exit(0 if asyncio.run(test_persona()) else 1)

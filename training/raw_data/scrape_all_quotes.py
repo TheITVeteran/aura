@@ -41,7 +41,7 @@ def fetch_wikiquote(title):
                     return data['parse']['text']['*']
             except json.JSONDecodeError:
                 print(f"  [!] Invalid JSON returned for {title}")
-    except Exception as e:
+    except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as e:
         print(f"Error fetching {title}: {e}")
     return None
 

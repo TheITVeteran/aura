@@ -223,7 +223,7 @@ async def main():
         except asyncio.TimeoutError:
             print(f"  ❌ TIMEOUT after 180s", flush=True)
             failures += 1
-        except Exception as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             print(f"  ❌ ERROR: {type(exc).__name__}: {exc}", flush=True)
             failures += 1
 

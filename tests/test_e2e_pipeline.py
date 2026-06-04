@@ -196,7 +196,7 @@ class TestPipeline:
                         )
                         # Use the result as the next input
                         state = result
-                    except Exception as exc:
+                    except (ImportError, OSError, RuntimeError, TimeoutError) as exc:
                         # Some phases may fail due to missing services (LLM, etc.)
                         # in test mode; that is acceptable as long as they do not
                         # return None silently.

@@ -72,7 +72,7 @@ async def run_chaos():
         await test_llm_guards()
         await test_metrics_collection()
         logger.info("🎉 ALL CHAOS TESTS PASSED")
-    except Exception as e:
+    except (AssertionError, ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error("❌ CHAOS TEST FAILED: %s", e)
         raise SystemExit(1)
 

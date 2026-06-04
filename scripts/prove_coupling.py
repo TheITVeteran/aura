@@ -26,7 +26,7 @@ def analyze_coupling():
                 data = json.loads(line)
                 analysis[data["impulse_type"]].append(data)
                 total_events += 1
-    except Exception as e:
+    except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError) as e:
         print(f"Error reading logs: {e}")
         return
 

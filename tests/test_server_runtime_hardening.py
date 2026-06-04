@@ -822,7 +822,7 @@ async def test_local_pipe_bus_request_bridges_foreign_event_loops():
 
         try:
             asyncio.run(_run())
-        except Exception as exc:
+        except (AssertionError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             outcome["error"] = exc
 
     try:

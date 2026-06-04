@@ -598,7 +598,7 @@ def main():
             all_ripley = [q for q in data if q.get("source") == "RIPLEY_CORNELL"]
             random.seed(42)
             ripley_quotes = random.sample(all_ripley, min(ripley_cap, len(all_ripley)))
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
         print(f"Error loading ripley quotes: {e}")
 
     total_quotes = compiled + ripley_quotes

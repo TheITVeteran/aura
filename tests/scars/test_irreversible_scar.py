@@ -25,7 +25,7 @@ import pytest
 def test_scar_module_available_or_receipt_log_is_load_bearing():
     try:
         from core.memory.scar_formation import BehavioralScar, ScarDomain  # type: ignore
-    except Exception:
+    except ImportError:
         BehavioralScar = None
         ScarDomain = None
 

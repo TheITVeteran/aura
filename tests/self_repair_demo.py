@@ -139,7 +139,7 @@ def _run_demo(tmp: Path) -> Dict[str, Any]:
     try:
         ast.parse(template)
         ast_ok = True
-    except Exception:
+    except SyntaxError:
         ast_ok = False
     steps.append(RepairStep(
         name="5_ast_validate",

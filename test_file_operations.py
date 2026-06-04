@@ -11,6 +11,15 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+FILE_OPERATION_TEST_ERRORS = (
+    AssertionError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 async def test_file_operations():
     """Test that file operations actually execute."""
     from core.skills.file_operation import FileOperationSkill, FileOpInput
@@ -83,7 +92,7 @@ if __name__ == "__main__":
         else:
             print("\n❌ File operation tests FAILED")
             sys.exit(1)
-    except Exception as e:
+    except FILE_OPERATION_TEST_ERRORS as e:
         print(f"\n❌ Test error: {e}")
         import traceback
         traceback.print_exc()

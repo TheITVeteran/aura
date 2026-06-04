@@ -87,7 +87,7 @@ async def _run(category: str, name: str, probe: Callable[[], Awaitable[tuple[boo
     t0 = time.perf_counter()
     try:
         ok, evidence = await probe()
-    except Exception as exc:
+    except (AssertionError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
         ok, evidence = False, f"{type(exc).__name__}: {exc}"
     return ProbeResult(category, name, ok, evidence, (time.perf_counter() - t0) * 1000)
 

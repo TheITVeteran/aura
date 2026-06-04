@@ -69,10 +69,11 @@ async def run_proof():
             
         print("\n✅ PROOF COMPLETE. 10/10 Unique messages generated.")
         
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         print(f"❌ PROOF FAILED: {e}")
         import traceback
         traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
     # Ensure we don't hang on exit

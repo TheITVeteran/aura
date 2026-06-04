@@ -1016,6 +1016,11 @@ class UnifiedWill:
                 state = fn()
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
+            if hasattr(state, "__await__"):
+                close = getattr(state, "close", None)
+                if callable(close):
+                    close()
+                continue
             if state is not None:
                 return state
         return None

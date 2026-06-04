@@ -43,7 +43,7 @@ async def main():
                 aura_detected = True
         except BlockingIOError:
             pass
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError) as e:
             print(f"Error receiving: {e}")
 
         # B. Send FAKE pulse to Aura
@@ -64,9 +64,10 @@ async def main():
 
     listen_sock.close()
     broadcast_sock.close()
+    return aura_detected
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        sys.exit(0 if asyncio.run(main()) else 1)
     except KeyboardInterrupt:
         pass

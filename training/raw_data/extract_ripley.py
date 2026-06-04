@@ -42,7 +42,7 @@ print(f"Extracted {len(ripley_quotes)} conversational pairs for Ripley from Corn
 try:
     with open(RAW_DATA_DIR / "verbatim_quotes.json") as f:
         existing_quotes = json.load(f)
-except Exception:
+except (OSError, json.JSONDecodeError, TypeError, ValueError):
     existing_quotes = []
 
 # Merge and save

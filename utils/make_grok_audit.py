@@ -31,7 +31,7 @@ def generate_grok_audit():
                 content.append(code)
                 content.append("\n" + "#" * 40 + "\n")
                 total_source_chars += len(code)
-        except Exception as e:
+        except (OSError, UnicodeError) as e:
             content.append(f"ERROR READING {f}: {e}")
             
     # Join the initial content

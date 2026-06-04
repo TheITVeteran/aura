@@ -37,6 +37,7 @@ async def verify():
             print(f"✅ TITAN-PRIMARY correctly registered at Tier 1 (Model: {model}).")
         else:
             print("❌ TITAN-PRIMARY missing or incorrect tier.")
+            return False
 
         # Check adapter definitions
         tools = brain.adapter.get_tool_definitions()
@@ -44,12 +45,15 @@ async def verify():
             print(f"✅ Mind/Body Connection: {len(tools)} tool definitions synced.")
         else:
             print("❌ Mind/Body Connection: Failed to sync tool definitions.")
+            return False
 
         print("\n🏆 VERIFICATION COMPLETE: INDEPENDENCE MODE READY.")
-    except Exception as e:
+        return True
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:
         print(f"❌ VERIFICATION FAILED: {e}")
         import traceback
         traceback.print_exc()
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(verify())
+    sys.exit(0 if asyncio.run(verify()) else 1)

@@ -49,7 +49,7 @@ def test_fault_pipeline_builds_precise_bug_packet_and_eligible_nameerror_patch(t
 
     try:
         runpy.run_path(str(source_path), run_name="__aura_fault_probe__")
-    except Exception as exc:
+    except NameError as exc:
         from core.self_modification.fault_pipeline import FaultToPatchPipeline
 
         result = FaultToPatchPipeline(tmp_path).diagnose(exc)

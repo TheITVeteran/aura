@@ -125,8 +125,9 @@ async def test_pipe_hotswap():
         resp = await actor_bus.request("echo", "ping", "post-restart")
         logger.info(f"   Post-Restart Ping: {resp}")
         logger.info("✅ SUCCESS: Hot-swap re-bound the IPC pipe.")
-    except Exception as e:
+    except (AssertionError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ FAILURE: Could not communicate after restart: {e}")
+        raise
 
 async def test_shm_atomicity():
     logger.info("🧪 Testing SHM Atomicity (Torn Read Prevention)...")

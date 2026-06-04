@@ -45,7 +45,7 @@ async def verify():
     except TypeError as e:
         print(f"✗ VoiceEngine initialization failed with TypeError: {e}")
         return False
-    except Exception as e:
+    except (ImportError, OSError, RuntimeError, TimeoutError, ValueError) as e:
         # Other errors might occur if hardware/dependencies are missing,
         # but we specifically care about the SmartCircuitBreaker TypeError.
         if "SmartCircuitBreaker" in str(e):

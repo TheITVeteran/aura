@@ -50,7 +50,7 @@ async def verify():
         # but the facade handles None sub-memories gracefully.
         result = await memory.retrieve_unified_context("test query")
         logger.info(f"Call to retrieve_unified_context succeeded. Result length: {len(result)}")
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:
         logger.error(f"FAILURE: call to retrieve_unified_context failed: {e}")
         return False
         

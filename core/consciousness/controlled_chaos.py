@@ -479,11 +479,24 @@ class ChaosEngine:
 # ---------------------------------------------------------------------------
 
 _instance: Optional[ChaosEngine] = None
+_instances_by_dim: Dict[int, ChaosEngine] = {}
 
 
 def get_chaos_engine(config: ChaosConfig | None = None) -> ChaosEngine:
-    """Get or create the module-level ChaosEngine singleton."""
+    """Get or create a module-level ChaosEngine for the requested state dimension."""
     global _instance
-    if _instance is None:
-        _instance = ChaosEngine(config)
-    return _instance
+    if config is None:
+        if _instance is None:
+            _instance = ChaosEngine()
+            _instances_by_dim[_instance.config.state_dim] = _instance
+        return _instance
+
+    requested_dim = int(config.state_dim)
+    engine = _instances_by_dim.get(requested_dim)
+    if engine is None:
+        engine = ChaosEngine(config)
+        _instances_by_dim[requested_dim] = engine
+
+    if _instance is None or _instance.config.state_dim == requested_dim:
+        _instance = engine
+    return engine

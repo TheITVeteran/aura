@@ -95,8 +95,9 @@ async def test_full_system_loop():
         else:
              logger.error("❌ Conversation History mismatch")
 
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.exception(f"❌ Integration Test Failed: {e}")
+        raise
 
     logger.info("🏁 Mind/Body/Language Integration Test Complete.")
 

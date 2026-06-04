@@ -22,7 +22,7 @@ try:
     # We won't start the loop in a non-interactive environment as it might hang,
     # but the creation success is usually enough to prove the dependencies are there.
     # webview.start()
-except Exception as e:
+except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
     print(f"❌ Window creation failed: {e}")
     import traceback
     traceback.print_exc()

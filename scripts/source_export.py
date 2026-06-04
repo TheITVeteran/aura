@@ -68,7 +68,7 @@ def export_source():
                     out.write(content)
                     out.write("\n")
                     count += 1
-                except Exception as e:
+                except (OSError, UnicodeError) as e:
                     print(f"⚠️ Could not read {rel_path}: {e}")
     
     final_size = output_file.stat().st_size / (1024 * 1024)

@@ -17,6 +17,16 @@ from pathlib import Path
 # Add live-source to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+CONSCIOUSNESS_TEST_ERRORS = (
+    AssertionError,
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 async def test_unified_self_creation():
     """Test UnifiedSelf instantiation and state persistence."""
@@ -229,7 +239,7 @@ async def main():
             else:
                 failed += 1
                 print(f"\n❌ {name} test FAILED")
-        except Exception as e:
+        except CONSCIOUSNESS_TEST_ERRORS as e:
             failed += 1
             print(f"\n❌ {name} test FAILED with exception:")
             print(f"   {e}")

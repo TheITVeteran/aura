@@ -3,6 +3,7 @@
 
 import asyncio
 import numpy as np
+import sys
 from RealtimeSTT import AudioToTextRecorder
 
 def test_realtimestt_feed():
@@ -24,11 +25,13 @@ def test_realtimestt_feed():
             print("No direct feed method found. Checking dir...")
             # print(dir(recorder))
             
-    except Exception as e:
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
         print(f"Error: {e}")
+        return False
+    return True
 
 if __name__ == "__main__":
-    test_realtimestt_feed()
+    sys.exit(0 if test_realtimestt_feed() else 1)
 
 
 ##

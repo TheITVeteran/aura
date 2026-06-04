@@ -44,7 +44,7 @@ async def main():
                 print(f"Aura [{elapsed:.1f}s]: {str(resp)[:500]}")
                 lane = response_dict.get("conversation_lane", {}) if isinstance(response_dict, dict) else {}
                 print(f"[Lane info: tier={lane.get('foreground_tier')}, state={lane.get('state')}]")
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                 print(f"ERROR: {exc}")
             await asyncio.sleep(2)
 

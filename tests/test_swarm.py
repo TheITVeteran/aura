@@ -39,8 +39,9 @@ async def main():
         print("\n=== FINAL CONSENSUS ===")
         print(consensus)
         
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         print(f"Error: {e}")
+        raise SystemExit(1) from e
 
 if __name__ == "__main__":
     asyncio.run(main())

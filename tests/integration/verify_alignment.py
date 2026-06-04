@@ -23,7 +23,7 @@ async def test_alignment():
         from core.brain.llm.ollama_client import RobustOllamaClient
         brain.client = RobustOllamaClient()
         print("✓ Ollama Client Injected")
-    except Exception:
+    except (ImportError, RuntimeError, TimeoutError, TypeError, ValueError):
         print("⚠️ Ollama failed")
 
     auditor = AlignmentAuditor(brain)

@@ -81,7 +81,7 @@ async def main():
                     print(f"✅ PASS [Tier: {tier}, Status: {status}]", flush=True)
                     successes += 1
                     
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                 print(f"❌ ERROR: {exc}", flush=True)
                 failures += 1
             await asyncio.sleep(2)

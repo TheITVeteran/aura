@@ -51,7 +51,7 @@ def bundle_codebase(root_dir, output_file, max_size_mb=25):
                 if total_size > max_size_mb * 1024 * 1024:
                     print(f"⚠️ Warning: Bundle size exceeds {max_size_mb}MB. Stopping.")
                     break
-            except Exception as e:
+            except (OSError, UnicodeError) as e:
                 print(f"❌ Failed to read {path}: {e}")
                 
     atomic_write_text(output, "\n".join(bundle_content), encoding='utf-8')

@@ -65,8 +65,9 @@ async def trigger_genesis():
     try:
         # This should now hit TrueEvolutionPhase.execute()
         await kernel.tick(objective)
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ [GENESIS] Tick Failed: {e}", exc_info=True)
+        raise SystemExit(1) from e
     
     logger.info("🧬 [GENESIS] Tick Complete. Check logs for SelfModification.Engine output.")
 

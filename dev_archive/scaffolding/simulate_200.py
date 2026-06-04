@@ -386,7 +386,7 @@ async def main():
                 print(f"❌ FAIL {turn_label}: asyncio.TimeoutError after {elapsed:.1f}s", flush=True)
                 failures += 1
                 results.append({"topic": t_idx+1, "turn": i+1, "verdict": "FAIL", "elapsed": elapsed, "fail_reason": "TimeoutError"})
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 elapsed = time.time() - t0
                 print(f"❌ FAIL {turn_label}: {type(exc).__name__}: {exc}", flush=True)
                 failures += 1

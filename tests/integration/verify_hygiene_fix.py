@@ -63,11 +63,11 @@ async def test_hygiene_fix():
             
     except AttributeError as e:
         print(f"✗ FAILURE: AttributeError still present: {e}")
-    except Exception as e:
+    except (AssertionError, RuntimeError, TypeError, ValueError) as e:
         import traceback
         traceback.print_exc()
         print(f"✗ FAILURE: Unexpected error type: {type(e).__name__}: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(test_hygiene_fix())
-

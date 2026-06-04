@@ -29,10 +29,12 @@ try:
 
 except ImportError as e:
     print(f"❌ ImportError: {e}")
-except Exception as e:
+    raise SystemExit(1) from e
+except (AttributeError, RuntimeError, TypeError, ValueError) as e:
     print(f"❌ Exception: {e}")
     import traceback
     traceback.print_exc()
+    raise SystemExit(1) from e
 
 
 ##

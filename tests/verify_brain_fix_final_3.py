@@ -29,11 +29,8 @@ async def test_memory_injection_and_remember():
     assert hasattr(orchestrator.memory, "remember"), "Memory object must have 'remember' method"
     
     print("[TEST] Calling memory.remember()...")
-    try:
-        await orchestrator.memory.remember("Test memory injection", metadata={"test": True})
-        print("[TEST] memory.remember() succeeded.")
-    except Exception as e:
-        pytest.fail(f"memory.remember() failed with error: {e}")
+    await orchestrator.memory.remember("Test memory injection", metadata={"test": True})
+    print("[TEST] memory.remember() succeeded.")
 
 if __name__ == "__main__":
     asyncio.run(test_memory_injection_and_remember())

@@ -83,7 +83,7 @@ async def test_stack():
         logger.info("✅ COGNITIVE STACK VERIFIED. All systems nominal.")
         return True
 
-    except Exception as e:
+    except (AttributeError, ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ TEST FAILED: {e}")
         import traceback
         traceback.print_exc()

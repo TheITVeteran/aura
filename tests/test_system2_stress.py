@@ -27,11 +27,8 @@ class TestTreeLoRAEdgeCases(unittest.TestCase):
         # We expect a fallback or safe handling, not a crash
         # For our mock, cosine_similarity handles NaNs by returning NaN, which might fail > comparisons.
         # We just test it doesn't throw a fatal exception.
-        try:
-            node_id_nan = self.manager.route_and_adapt(sig_nan, layer_idx=0)
-            self.assertIsNotNone(node_id_nan)
-        except Exception as e:
-            self.fail(f"NaN signature caused an exception: {e}")
+        node_id_nan = self.manager.route_and_adapt(sig_nan, layer_idx=0)
+        self.assertIsNotNone(node_id_nan)
 
     def test_tree_width_explosion_stress(self):
         """Stress test: 1,000 orthogonal tasks to ensure tree handles width scaling."""

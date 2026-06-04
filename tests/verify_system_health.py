@@ -65,7 +65,7 @@ async def verify_health():
         logger.info("\n🏆 TOTAL SYSTEM SYNTHESIS VERIFIED.")
         return True
 
-    except Exception as e:
+    except (AttributeError, ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ SYSTEM HEALTH CHECK FAILED: {e}")
         import traceback
         traceback.print_exc()

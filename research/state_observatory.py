@@ -58,7 +58,7 @@ class StateObservatory:
         try:
             with open(self.current_log_file, "a") as f:
                 f.write(json.dumps(record) + "\n")
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             logger.error("Failed to persist research record: %s", e)
 
     def export_history(self, path: Optional[Path] = None) -> Path:

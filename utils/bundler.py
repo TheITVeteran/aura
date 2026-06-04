@@ -141,7 +141,7 @@ def write_bundle(
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
                 fh.write(text)
-            except Exception as exc:
+            except (OSError, UnicodeError) as exc:
                 fh.write(f"[ERROR reading {rel}: {exc}]\n")
 
     # Checksum the output

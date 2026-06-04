@@ -32,15 +32,17 @@ async def verify():
     try:
         response = await lc.express("Hello", thought)
         logger.info("✅ Dispatch successful. Response: %s", response)
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error("❌ Dispatch failed: %s", e)
+        return False
 
     # 4. Verify Racing is disabled
     # If we check the logs of the router (manually or via intercept), 
     # it should NOT log "🏁 Racing:".
     
     logger.info("🏁 Verification complete.")
+    return True
 
 if __name__ == "__main__":
-    asyncio.run(verify())
-
+    import sys
+    sys.exit(0 if asyncio.run(verify()) else 1)

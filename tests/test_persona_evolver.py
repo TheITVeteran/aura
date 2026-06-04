@@ -33,8 +33,9 @@ async def main():
         
         print("Final Traits:", personality.traits)
         print("Final Emotions:", {k: v.base_level for k, v in personality.emotions.items()})
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:
         print(f"Error: {e}")
+        raise SystemExit(1) from e
 
 if __name__ == "__main__":
     asyncio.run(main())

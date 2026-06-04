@@ -119,7 +119,7 @@ async def verify_health():
         await ServiceContainer.shutdown()
         return False
 
-    except Exception as e:
+    except (AttributeError, ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         logger.error(f"❌ SYSTEM HEALTH CHECK FAILED: {e}")
         import traceback
         traceback.print_exc()

@@ -22,7 +22,7 @@ class DynamicContextBuilder:
 
         # 1. Emotional State (LiquidState)
         try:
-            liquid_state = container.get("liquid_state")
+            liquid_state = container.get("liquid_state", default=None)
             if liquid_state:
                 rich_context["liquid_state"] = liquid_state.get_status()
         except (OSError, ConnectionError, TimeoutError) as e:
@@ -31,7 +31,7 @@ class DynamicContextBuilder:
 
         # 2. User Traits (PersonalityEngine)
         try:
-            personality = container.get("personality_engine")
+            personality = container.get("personality_engine", default=None)
             if personality:
                 rich_context["personality"] = personality.get_emotional_context_for_response()
                 try:
@@ -46,7 +46,7 @@ class DynamicContextBuilder:
 
         # 3. Episodic Memory Retrieval
         try:
-            conv_engine = container.get("conversation_engine")
+            conv_engine = container.get("conversation_engine", default=None)
             if conv_engine and hasattr(conv_engine, "memory"):
                 memories = await conv_engine.memory.retrieve(message, limit=3)
                 if memories:
@@ -60,7 +60,7 @@ class DynamicContextBuilder:
 
         # 4. Semantic Memory Retrieval (Vector Search)
         try:
-            semantic_memory = container.get("vector_memory_engine")
+            semantic_memory = container.get("vector_memory_engine", default=None)
             if semantic_memory and hasattr(semantic_memory, "recall_formatted"):
                 formatted_memories = await semantic_memory.recall_formatted(message, limit=5)
                 if formatted_memories:
@@ -71,7 +71,7 @@ class DynamicContextBuilder:
 
         # 5. Theory of Mind (Intent detection)
         try:
-            tom = container.get("theory_of_mind")
+            tom = container.get("theory_of_mind", default=None)
             if tom:
                 rich_context["user_intent"] = await tom.infer_intent(message, rich_context)
         except (OSError, ConnectionError, TimeoutError) as e:
@@ -81,7 +81,7 @@ class DynamicContextBuilder:
         # 6. Global Workspace Theory — last N competition winners
         # get_context_stream() returns a pre-formatted string; safe to call sync.
         try:
-            gws = container.get("global_workspace")
+            gws = container.get("global_workspace", default=None)
             if gws and hasattr(gws, "get_context_stream"):
                 stream = gws.get_context_stream(n=4)
                 if stream:
@@ -93,7 +93,7 @@ class DynamicContextBuilder:
         # 7. Temporal Binding — autobiographical present-window narrative
         # get_narrative() is async (holds a lock); await it directly.
         try:
-            tb = container.get("temporal_binding")
+            tb = container.get("temporal_binding", default=None)
             if tb and hasattr(tb, "get_narrative"):
                 narrative = await tb.get_narrative()
                 if narrative:
@@ -104,7 +104,7 @@ class DynamicContextBuilder:
 
         # 10. Spiritual Spine — ideological stability
         try:
-            spine = container.get("spine")
+            spine = container.get("spine", default=None)
             if spine and hasattr(spine, "pre_response_check"):
                 check = await spine.pre_response_check(message)
                 if check.has_prior_position or check.conflict_severity > 0.4:
@@ -115,7 +115,7 @@ class DynamicContextBuilder:
 
         # 11. Social Modeling (Ava) — user relationship alignment
         try:
-            ava = container.get("ava")
+            ava = container.get("ava", default=None)
             if ava and hasattr(ava, "get_context_injection"):
                 rich_context["social_context"] = ava.get_context_injection()
         except (OSError, ConnectionError, TimeoutError) as e:

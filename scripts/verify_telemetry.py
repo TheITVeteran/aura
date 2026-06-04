@@ -58,7 +58,7 @@ async def test_telemetry_emission():
     except asyncio.TimeoutError:
         print("❌ Timeout: No telemetry pulse received.")
         raise SystemExit(1)
-    except Exception as e:
+    except (OSError, RuntimeError, TypeError, ValueError) as e:
         print(f"❌ Error during verification: {e}")
         raise SystemExit(1)
 

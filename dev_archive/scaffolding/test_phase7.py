@@ -21,7 +21,7 @@ def test_json_regex():
         data = json.loads(clean)
         assert data["project_name"] == "Test", "JSON parsed incorrectly"
         print("✅ JSON Trailing Comma test passed!")
-    except Exception as e:
+    except (AssertionError, json.JSONDecodeError, TypeError, ValueError) as e:
         print("❌ JSON Regex failed:", e)
 
 # Test Abstraction Engine Increment

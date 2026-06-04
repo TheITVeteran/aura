@@ -295,7 +295,7 @@ class SPHVerifier:
             try:
                 gate_fn = getattr(instance, spec.gate_fn_name)
                 result.current_value = bool(gate_fn())
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 result.notes = f"Runtime check failed: {e}"
 
         # Compute compliance score

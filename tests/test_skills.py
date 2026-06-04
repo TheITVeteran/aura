@@ -40,7 +40,7 @@ def test_capability_engine_registered_skill_constructors_are_instantiable():
         skill_class = getattr(module, meta.class_name)
         try:
             skill_class()
-        except Exception as exc:
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
             failures.append((name, type(exc).__name__, str(exc)))
 
     assert not failures

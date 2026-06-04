@@ -114,7 +114,7 @@ def build_app():
              else:
                  # It might be just a binary if something went wrong or config diff
                  print(f"⚠️ .app bundle not found in {dist_dir}, check raw binary.")
-        except Exception as e:
+        except (OSError, shutil.Error) as e:
             print(f"⚠️ Failed to copy to targets: {e}")
 
     except subprocess.CalledProcessError as e:

@@ -1072,7 +1072,7 @@ def execute(ctx: BatteryContext) -> int:
         try:
             solver(ctx, world)
             ctx.append_log(world.name, "edit", str(world.relative_to(ctx.root)), f"solve {family}", "completed", "tickets and derived artifacts")
-        except Exception as exc:
+        except (KeyError, OSError, RuntimeError, subprocess.CalledProcessError, TypeError, ValueError) as exc:
             failures.append(f"{world.name}: {exc}")
             ctx.append_log(world.name, "recovery", str(world.relative_to(ctx.root)), f"solve {family}", f"failed: {exc}", "open_issues.md")
         if idx % 50 == 0:

@@ -11,9 +11,20 @@ from core.phantom_browser import PhantomBrowser
 logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("VerifyWebSearch")
 
+WEB_SEARCH_VERIFY_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 async def test_browser():
     logger.info("Starting browser verification...")
     browser = PhantomBrowser(visible=False)
+    ok = True
     
     try:
         # 1. Navigation
@@ -21,7 +32,7 @@ async def test_browser():
         success = await browser.browse("https://en.wikipedia.org/wiki/Main_Page")
         if not success:
             logger.error("Navigation failed!")
-            return
+            return False
             
         # 2. Reading Content
         logger.info("Testing content extraction...")
@@ -29,6 +40,7 @@ async def test_browser():
         logger.info(f"Extracted content length: {len(content)}")
         if len(content) < 100:
             logger.error("Content extraction seems thin!")
+            ok = False
         else:
             logger.info("Content extraction successful.")
 
@@ -38,6 +50,7 @@ async def test_browser():
         logger.info(f"Found {len(links)} links.")
         if not links:
             logger.error("No links found!")
+            ok = False
         
         # 4. Scrolling
         logger.info("Testing scrolling...")
@@ -56,12 +69,15 @@ async def test_browser():
             logger.info(f"New page title: {new_title}")
         else:
             logger.warning("Failed to click 'Random article'.")
+            ok = False
 
-    except Exception as e:
+    except WEB_SEARCH_VERIFY_ERRORS as e:
         logger.error(f"Verification encountered an error: {e}")
+        ok = False
     finally:
         await browser.close()
         logger.info("Browser closed.")
+    return ok
 
 if __name__ == "__main__":
-    asyncio.run(test_browser())
+    sys.exit(0 if asyncio.run(test_browser()) else 1)

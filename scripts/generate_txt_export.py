@@ -145,7 +145,7 @@ def generate_txt_export():
             current_content.append(full_entry)
             current_chars += len(full_entry)
             text_files_included += 1
-        except Exception as e:
+        except (OSError, UnicodeError) as e:
             print(f"Skipping {p}: {e}")
 
     # Flush last part

@@ -73,7 +73,7 @@ def build_skill_index() -> Dict[str, Any]:
                                 "timeout_seconds": 30,
                                 "memory_mb_estimate": 256
                             }
-            except Exception as e:
+            except (OSError, SyntaxError, UnicodeError, ValueError) as e:
                 logger.error(f"Failed to index skill {path}: {e}")
                 
     return index
