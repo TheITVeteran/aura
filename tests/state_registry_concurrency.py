@@ -3,12 +3,13 @@ import threading
 import time
 import unittest
 from typing import List
-from core.state_registry import get_registry, UnifiedState
+from core.state_registry import UnifiedState, UnifiedStateRegistry
 
 class TestStateRegistryConcurrency(unittest.TestCase):
     def test_hybrid_concurrency(self):
-        registry = get_registry()
+        registry = UnifiedStateRegistry()
         received_versions: List[int] = []
+        sync_versions: List[int] = []
         lock = threading.Lock()
 
         # 1. Add Async Listener
@@ -21,33 +22,37 @@ class TestStateRegistryConcurrency(unittest.TestCase):
         # 2. Add Sync Listener
         def sync_listener(state: UnifiedState):
             # This will be run in a thread by the dispatcher
-            pass
+            with lock:
+                sync_versions.append(state.version)
         registry.subscribe(sync_listener)
 
         async def run_test():
-            # Start dispatcher
-            registry.ensure_dispatcher()
-            
-            # Update from main loop
-            await registry.update(phi=0.1)
-            
-            # Update from multiple threads
-            def thread_task(val):
-                registry.sync_update(phi=val)
-            
-            threads = []
-            for i in range(10):
-                t = threading.Thread(target=thread_task, args=(i/10.0,))
-                threads.append(t)
-                t.start()
-            
-            for t in threads:
-                t.join()
-                
-            # Allow some time for dispatcher to catch up
-            await asyncio.sleep(0.5)
-            
-            return received_versions
+            try:
+                # Start dispatcher
+                registry.ensure_dispatcher()
+
+                # Update from main loop
+                await registry.update(phi=0.1)
+
+                # Update from multiple threads
+                def thread_task(val):
+                    registry.sync_update(phi=val)
+
+                threads = []
+                for i in range(10):
+                    t = threading.Thread(target=thread_task, args=(i/10.0,))
+                    threads.append(t)
+                    t.start()
+
+                for t in threads:
+                    t.join()
+
+                # Allow some time for dispatcher to catch up
+                await asyncio.sleep(0.5)
+
+                return received_versions
+            finally:
+                await registry.shutdown_dispatcher(clear_listeners=True)
 
         # Run the async test
         loop = asyncio.new_event_loop()
@@ -59,6 +64,7 @@ class TestStateRegistryConcurrency(unittest.TestCase):
         
         # Verify monotonicity and reception
         self.assertGreater(len(versions), 0, "No versions received")
+        self.assertGreater(len(sync_versions), 0, "Sync listener did not receive versions")
         # Since we use a queue, they MUST be in order of submission (roughly)
         # but version numbers are incremented under lock, so they must be unique and increasing.
         for i in range(len(versions) - 1):

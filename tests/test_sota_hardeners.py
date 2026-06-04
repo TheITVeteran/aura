@@ -13,7 +13,7 @@ from research.protocols.resource_quotas import ComputeGovernor, QuotaExceededErr
 # Subclass to satisfy abstract base class methods in LLMProvider
 class MockLocalAgentClient(LocalAgentClient):
     def generate_stream(self, *args, **kwargs):
-        pass
+        return iter(())
 
 
 # 1. TEST REACT PARSER & JSON RECONSTRUCTION

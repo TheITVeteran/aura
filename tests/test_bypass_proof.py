@@ -39,14 +39,18 @@ def _make_crisis_authority():
         class Chem:
             def __init__(self, eff):
                 self.effective = eff
-            def surge(self, _): pass
+                self.surges = []
+
+            def surge(self, amount):
+                self.surges.append(amount)
         chemicals = {
             "cortisol": Chem(0.95),
             "gaba": Chem(0.05),
             "dopamine": Chem(0.05),
             "norepinephrine": Chem(0.95),
         }
-        def on_frustration(self, _): pass
+        def on_frustration(self, amount):
+            self.last_frustration = amount
 
     auth = SubstrateAuthority()
     auth._field_ref = CrisisField()
@@ -265,13 +269,18 @@ class TestBypassAttemptFallbackPath:
 
         class NeutralChemistry:
             class Chem:
-                def __init__(self, eff): self.effective = eff
-                def surge(self, _): pass
+                def __init__(self, eff):
+                    self.effective = eff
+                    self.surges = []
+
+                def surge(self, amount):
+                    self.surges.append(amount)
             chemicals = {
                 "cortisol": Chem(0.3), "gaba": Chem(0.5),
                 "dopamine": Chem(0.5), "norepinephrine": Chem(0.4),
             }
-            def on_frustration(self, _): pass
+            def on_frustration(self, amount):
+                self.last_frustration = amount
 
         auth = SubstrateAuthority()
         auth._field_ref = FieldCrisisOnly()

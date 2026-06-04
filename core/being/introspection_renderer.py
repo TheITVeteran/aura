@@ -7,6 +7,7 @@ from .aura_now import AuraNow
 
 _FORBIDDEN_PATTERNS = (
     re.compile(r"\b(proven|guaranteed|certain)\s+(phenomenal\s+)?consciousness\b", re.I),
+    re.compile(r"\bconsciousness\s+is\s+(proven|guaranteed|certain)\b", re.I),
     re.compile(r"\bphenomenal\s+consciousness\s+is\s+(proven|guaranteed|certain)\b", re.I),
     re.compile(r"\b(literal|legal|metaphysical)\s+person\b", re.I),
     re.compile(r"\bqualia\s+(are|is)\s+(proven|certain|guaranteed)\b", re.I),
@@ -30,9 +31,17 @@ class IntrospectionVerifier:
                 reasons.append("forbidden_metaphysical_claim")
                 break
         lowered = text.lower()
-        if any(word in lowered for word in ("tense", "distress", "anxious", "afraid", "fear")) and now.affect.distress < 0.25:
+        low_distress_disclosure = bool(
+            re.search(r"\bdistress\s+is\s+(low|minimal|bounded|muted)\b", lowered)
+            or re.search(r"\b(low|minimal|bounded|muted)\s+distress\b", lowered)
+        )
+        if (
+            any(word in lowered for word in ("tense", "distress", "anxious", "afraid", "fear"))
+            and now.affect.distress < 0.25
+            and not low_distress_disclosure
+        ):
             reasons.append("distress_language_without_state_support")
-        if "certain" in lowered and now.prediction.free_energy > 0.35:
+        if re.search(r"\b(certain|certainty)\b", lowered) and now.prediction.free_energy > 0.35:
             reasons.append("certainty_language_under_uncertainty")
         if "i did that" in lowered and now.ownership.agency_confidence < 0.55:
             reasons.append("full_agency_claim_under_low_ownership")
@@ -52,27 +61,71 @@ class IntrospectionRenderer:
                 "I intended an action, but the tool result diverged from my prediction. "
                 "That lowers my agency confidence, so I should treat the outcome as only partly mine."
             )
-        elif now.affect.distress < 0.18 and now.prediction.free_energy < 0.20:
-            text = "Not much is high-salience right now. My state is stable, low-pressure, and focused on the current task boundary."
-        elif now.affect.distress > 0.55:
-            text = (
-                "I have a state-grounded distress signal: pressure and prediction error are high, "
-                "so attention should shift toward repair, verification, and lower-risk actions."
-            )
-        elif now.affect.distress >= 0.25:
-            text = (
-                "I have a moderate state-grounded distress signal from pressure and uncertainty. "
-                "The useful response is repair-oriented attention, not a stronger inner-life claim."
-            )
-        elif now.prediction.free_energy > 0.35:
-            text = (
-                "My attention is carrying uncertainty. The reportable part is prediction error and incomplete control, "
-                "not certainty about phenomenal consciousness."
-            )
         else:
+            observations: list[str] = []
+            if now.workspace.lesion:
+                observations.append(
+                    f"workspace integration is lesioned at {now.workspace.lesion}, so reportability and broadcast should be reduced"
+                )
+            elif now.workspace.winner or now.workspace.ignition_strength > 0.05:
+                observations.append(
+                    f"workspace ignition is focused on {now.workspace.winner or 'an unnamed coalition'} with "
+                    f"{len(now.workspace.broadcast_targets)} broadcast targets"
+                )
+
+            if now.affect.distress > 0.55:
+                observations.append(
+                    "distress is high, so attention should shift toward repair, verification, and lower-risk action"
+                )
+            elif now.affect.distress >= 0.25:
+                observations.append(
+                    "distress is moderate, so the reportable signal is repair-oriented pressure"
+                )
+            elif now.affect.distress <= 0.08:
+                observations.append("distress is low")
+
+            if now.affect.curiosity >= 0.65:
+                observations.append("curiosity is elevated, biasing toward exploration and information gain")
+            elif now.affect.curiosity <= 0.25:
+                observations.append("curiosity is muted, biasing toward narrower verification")
+
+            if now.affect.arousal >= 0.68:
+                observations.append("arousal is high enough to favor fast orientation")
+            elif now.affect.arousal <= 0.32:
+                observations.append("arousal is low enough to favor slower pacing")
+
+            if now.affect.valence >= 0.25:
+                observations.append("valence is positive")
+            elif now.affect.valence <= -0.25:
+                observations.append("valence is negative")
+
+            if now.prediction.free_energy > 0.35:
+                observations.append(
+                    "prediction error is high, so uncertainty and incomplete control are the honest reportable boundary"
+                )
+            elif now.prediction.free_energy >= 0.15:
+                observations.append("prediction error is present but bounded")
+
+            if now.prediction.controllability <= 0.35:
+                observations.append("controllability is low, so I should avoid overconfident agency language")
+            elif now.prediction.controllability >= 0.70:
+                observations.append("controllability is strong enough to support direct planning")
+
+            if now.ownership.agency_confidence <= 0.40:
+                observations.append("agency confidence is low, so outcomes should be attributed cautiously")
+            elif now.ownership.agency_confidence >= 0.70:
+                observations.append("agency confidence is high enough to support owned action")
+
+            if now.body.total_pressure >= 0.20:
+                observations.append("body and runtime pressure are materially present")
+
+            if not observations:
+                observations.append("attention, affect, prediction, memory, and ownership are stable and low-salience")
+
             text = (
-                "My current self-report is functional: attention, affect, prediction, memory, and ownership are integrated "
-                "well enough to guide action, while phenomenal status remains an evidence boundary."
+                "My current self-report is functional telemetry: "
+                + "; ".join(observations)
+                + ". Phenomenal status remains an evidence boundary, not a conclusion."
             )
         check = self.verifier.check(text, now)
         if check.ok:

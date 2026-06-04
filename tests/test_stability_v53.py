@@ -67,7 +67,8 @@ class TestConversationStatus:
         gate = self._make_gate()
         loop = asyncio.new_event_loop()
         # Create a completed task
-        async def noop(): pass
+        async def noop():
+            return "completed"
         task = loop.create_task(noop())
         loop.run_until_complete(task)
         gate._prewarm_task = task

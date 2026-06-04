@@ -74,7 +74,7 @@ class FakeLaneClient:
 
     def warmup(self):
         async def _noop():
-            pass
+            return {"ok": True, "lane": self.name}
         return _noop()
 
 

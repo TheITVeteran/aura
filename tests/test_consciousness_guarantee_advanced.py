@@ -1063,9 +1063,19 @@ class TestAdversarialBaselineFailure:
 
         # Fake system: fixed values that don't change
         class FakeNCS:
-            def on_reward(self, m): pass
-            def on_threat(self, m): pass
-            def _metabolic_tick(self): pass
+            def __init__(self):
+                self.events = []
+                self.ticks = 0
+
+            def on_reward(self, m):
+                self.events.append(("reward", m))
+
+            def on_threat(self, m):
+                self.events.append(("threat", m))
+
+            def _metabolic_tick(self):
+                self.ticks += 1
+
             def get_mood_vector(self):
                 return {"valence": 0.0, "arousal": 0.5, "stress": 0.2,
                         "motivation": 0.3, "sociality": 0.2, "calm": 0.3, "wakefulness": 0.3}

@@ -659,6 +659,84 @@ class AuraEventBus:
                 degraded=True,
             )
 
+    def _publish_local_now(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE) -> None:
+        """Deliver a local event synchronously when already on the owning loop.
+
+        ``publish_threadsafe`` is intentionally fire-and-forget. If it is called
+        from the same event loop and schedules ``publish`` as another coroutine,
+        short-lived loops can close before the coroutine gets a turn. This helper
+        keeps local delivery deterministic without blocking on Redis.
+        """
+        if isinstance(data, dict):
+            data = data.copy()
+            data.setdefault("_bus_id", self._bus_id)
+            bounce_count = data.get("_bounce_count", 0)
+            if bounce_count > 5:
+                logger.debug("Dropped event on topic %s - Max bounce depth reached.", topic)
+                return
+            data["_bounce_count"] = bounce_count + 1
+
+        acquired = self._lock.acquire(timeout=5.0)
+        if not acquired:
+            self._record_error(
+                RuntimeError(f"event bus local publish lock timeout for topic {topic!r}"),
+                "EventBus local publish lock timeout for topic '%s': %s",
+                topic,
+                degraded=True,
+            )
+            return
+        try:
+            subscribers = list(self._subscribers.get(topic, []))
+            subscribers.extend(list(self._subscribers.get("*", [])))
+        finally:
+            self._lock.release()
+
+        if not subscribers:
+            return
+
+        with self._seq_lock:
+            self._seq = (self._seq + 1) % 10_000_000
+            sequence = self._seq
+        item = (priority, sequence, {"topic": topic, "data": data})
+        stale_subscribers = []
+        for q, loop in subscribers:
+            try:
+                if loop and loop.is_closed():
+                    stale_subscribers.append((q, loop))
+                    continue
+                self._safe_put_direct(q, item)
+                with self._stats_lock:
+                    self._delivered_count += 1
+            except RuntimeError as e:
+                if "attached to a different loop" in str(e) or "is closed" in str(e):
+                    stale_subscribers.append((q, loop))
+                    logger.debug("EventBus: Removing stale subscriber (loop mismatch) on topic '%s'", topic)
+                else:
+                    self._record_error(
+                        e,
+                        "EventBus delivery failure on topic '%s': %s",
+                        topic,
+                        degraded=True,
+                    )
+            except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+                self._record_error(
+                    e,
+                    "EventBus delivery failure on topic '%s': %s",
+                    topic,
+                    degraded=True,
+                )
+
+        if stale_subscribers:
+            acquired = self._lock.acquire(timeout=2.0)
+            if acquired:
+                try:
+                    for tup in stale_subscribers:
+                        for t_topic in list(self._subscribers.keys()):
+                            self._subscribers[t_topic].discard(tup)
+                    logger.info("EventBus: Removed %d stale subscriber(s).", len(stale_subscribers))
+                finally:
+                    self._lock.release()
+
     def publish_threadsafe(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
         """Safely fire events from background threads to the main asyncio loop."""
         # C-09 FIX: Use run_coroutine_threadsafe for consistent background -> loop transition
@@ -674,6 +752,13 @@ class AuraEventBus:
                 logger.debug('Ignored RuntimeError in event_bus.py: %s', _e)
 
         if target_loop and target_loop.is_running():
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if current_loop is target_loop:
+                self._publish_local_now(topic, data, priority)
+                return
             # Schedule the async publish call on the target loop
             future = asyncio.run_coroutine_threadsafe(self.publish(topic, data, priority), target_loop)
             future.add_done_callback(

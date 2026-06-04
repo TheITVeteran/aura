@@ -32,13 +32,18 @@ def _make_healthy_authority():
 
     class HealthyChem:
         class Chem:
-            def __init__(self, eff): self.effective = eff
-            def surge(self, _): pass
+            def __init__(self, eff):
+                self.effective = eff
+                self.surges = []
+
+            def surge(self, amount):
+                self.surges.append(amount)
         chemicals = {
             "cortisol": Chem(0.3), "gaba": Chem(0.5),
             "dopamine": Chem(0.5), "norepinephrine": Chem(0.4),
         }
-        def on_frustration(self, _): pass
+        def on_frustration(self, amount):
+            self.last_frustration = amount
 
     auth = SubstrateAuthority()
     auth._field_ref = HealthyField()

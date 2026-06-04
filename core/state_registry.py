@@ -81,7 +81,7 @@ class UnifiedStateRegistry:
 
     def ensure_dispatcher(self):
         """Lazy start the dispatcher in the active event loop."""
-        if self._dispatcher_task is None:
+        if self._dispatcher_task is None or self._dispatcher_task.done():
             try:
                 loop = asyncio.get_running_loop()
                 self._dispatcher_task = loop.create_task(self._notification_dispatcher())
@@ -119,6 +119,27 @@ class UnifiedStateRegistry:
                 record_degradation('state_registry', e)
                 logger.error("StateRegistry dispatcher error: %s", e)
                 await asyncio.sleep(0.1)
+
+    async def shutdown_dispatcher(self, *, timeout: float = 1.0, clear_listeners: bool = False) -> None:
+        """Stop the notification dispatcher without leaving event-loop work behind."""
+        task = self._dispatcher_task
+        if task is None:
+            if clear_listeners:
+                self._listeners.clear()
+            return
+
+        if not task.done():
+            self._notify_queue.put(None)
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+            except TimeoutError as exc:
+                record_degradation("state_registry", exc)
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        self._dispatcher_task = None
+        if clear_listeners:
+            self._listeners.clear()
 
     async def update(self, **kwargs):
         """Async update for asyncio-based engines."""

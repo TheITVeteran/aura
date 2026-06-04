@@ -396,10 +396,14 @@ async def lifespan(app: FastAPI):
         logger.debug("EventBridge task already running; skipping redundant spawn.")
 
     logger.info("Aura Server online — %s", version_string("full"))
-    yield  # ← app is live here
-
-    # ── Shutdown ──
-    logger.info("Aura Server shutting down…")
+    try:
+        yield  # ← app is live here
+    finally:
+        # ── Shutdown ──
+        logger.info("Aura Server shutting down…")
+        await _server_task_tracker.shutdown(timeout=2.0)
+        _event_bridge_task = None
+        main_loop = None
 
 
 # ── App ───────────────────────────────────────────────────────

@@ -17,21 +17,25 @@ class DummyOrchestrator(MessageHandlingMixin):
         # Async Lock mock
         self._lock = asyncio.Lock()
         self._last_emitted_fingerprint = ""
+        self.gate_ready_contexts = []
+        self.quiet_window_extensions = []
+        self.telemetry_events = []
         
     def _is_user_facing_origin(self, origin):
         return origin == "user"
         
     async def _ensure_inference_gate_ready(self, context=None):
-        pass
+        self.gate_ready_contexts.append(context)
+        return True
         
     def _get_fingerprint(self, text):
         return text
         
     def _extend_foreground_quiet_window(self, amt):
-        pass
+        self.quiet_window_extensions.append(amt)
         
     def _publish_telemetry(self, data):
-        pass
+        self.telemetry_events.append(data)
         
     def _record_message_in_history(self, message, role):
         self.conversation_history.append({"role": role, "content": message})
@@ -84,4 +88,6 @@ async def test_auto_continuation_triggers(monkeypatch):
     
     assert orchestrator._inference_gate.generate.call_count == 2
     assert response == long_first_part + long_second_part
+    assert orchestrator.gate_ready_contexts
+    assert orchestrator.telemetry_events
     print("\nAuto-continuation successfully concatenated the response!")

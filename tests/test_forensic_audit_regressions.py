@@ -497,7 +497,8 @@ async def test_sensory_gate_run_always_closes_browser_and_bus(monkeypatch):
 
     class FakeBus:
         def __init__(self, *args, **kwargs):
-            pass
+            self.args = args
+            self.kwargs = kwargs
 
         def register_handler(self, *_args, **_kwargs):
             return None

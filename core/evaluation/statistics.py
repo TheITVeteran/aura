@@ -50,10 +50,13 @@ def cohens_d(a: Sequence[float] | np.ndarray, b: Sequence[float] | np.ndarray) -
     y = _as_1d(b)
     if x.size < 2 or y.size < 2:
         return 0.0
+    mean_delta = float(np.mean(x) - np.mean(y))
     pooled_var = ((x.size - 1) * np.var(x, ddof=1) + (y.size - 1) * np.var(y, ddof=1)) / max(1, x.size + y.size - 2)
     if pooled_var <= 1e-12:
-        return 0.0
-    return float((np.mean(x) - np.mean(y)) / math.sqrt(pooled_var))
+        if abs(mean_delta) <= 1e-12:
+            return 0.0
+        return float(math.copysign(min(abs(mean_delta) / 1e-6, 1_000_000.0), mean_delta))
+    return float(mean_delta / math.sqrt(pooled_var))
 
 
 def permutation_test(

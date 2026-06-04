@@ -99,8 +99,10 @@ async def test_computer_use_click_retry_success(monkeypatch):
     monkeypatch.setattr(skill, "_read_screen_text_macos", mock_read_screen)
 
     # Fast forward sleep
+    sleep_calls = []
+
     async def mock_sleep(secs):
-        pass
+        sleep_calls.append(secs)
 
     monkeypatch.setattr(asyncio, "sleep", mock_sleep)
 
@@ -109,6 +111,7 @@ async def test_computer_use_click_retry_success(monkeypatch):
     assert result["attempts"] == 2
     assert result["verification"] == "State shifted."
     assert mock_pyautogui.clicks == 2
+    assert sleep_calls
 
 
 @pytest.mark.asyncio
@@ -143,8 +146,10 @@ async def test_computer_use_type_pre_clicks_and_retries(monkeypatch):
     monkeypatch.setattr(skill, "_read_screen_text_macos", mock_read_screen)
 
     # Fast forward sleep
+    sleep_calls = []
+
     async def mock_sleep(secs):
-        pass
+        sleep_calls.append(secs)
 
     monkeypatch.setattr(asyncio, "sleep", mock_sleep)
 
@@ -154,6 +159,7 @@ async def test_computer_use_type_pre_clicks_and_retries(monkeypatch):
     assert result["verification"] == "Text confirmed on screen or state shifted."
     assert mock_pyautogui.clicks == 1
     assert mock_pyautogui.typed == "Hello World!"
+    assert sleep_calls
 
 
 @pytest.mark.asyncio

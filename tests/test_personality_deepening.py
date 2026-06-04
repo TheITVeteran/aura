@@ -36,7 +36,7 @@ class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
         ServiceContainer.register_instance("identity", mock_identity)
 
     async def asyncTearDown(self):
-        pass
+        ServiceContainer.clear()
 
     async def test_orchestrator_startup_and_personality_update(self):
         """Verify orchestrator starts and updates personality."""

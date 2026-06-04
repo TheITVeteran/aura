@@ -531,7 +531,26 @@ async def test_recover_from_stall(orchestrator):
 
 @pytest.mark.asyncio
 async def test_handle_signal(orchestrator):
-    pass
+    from core.coordinators.lifecycle_coordinator import LifecycleCoordinator
+
+    created = {}
+    coord = LifecycleCoordinator(orchestrator)
+    coord.stop = AsyncMock(return_value=None)
+
+    class _Tracker:
+        def create_task(self, coro, name=None):
+            task = asyncio.create_task(coro, name=name)
+            created["name"] = name
+            created["task"] = task
+            return task
+
+    with patch("core.coordinators.lifecycle_coordinator.get_task_tracker", return_value=_Tracker()):
+        coord.handle_signal(15, None)
+        await asyncio.sleep(0)
+        await created["task"]
+
+    assert created["name"] == "lifecycle.signal_stop.15"
+    coord.stop.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -694,9 +713,19 @@ async def test_process_internal_message(orchestrator):
 
 @pytest.mark.asyncio
 async def test_process_thought(orchestrator):
-    # _process_thought is NOT an attribute. It's likely handle_incoming_message or similar.
-    # Looking at the code, there is no _process_thought. I will remove this test.
-    pass
+    assert not hasattr(orchestrator, "_process_thought")
+
+    async def mock_handler(*args, **kwargs):
+        await orchestrator.reply_queue.put("Canonical message path")
+
+    with patch.object(
+        orchestrator, "_handle_incoming_message", new_callable=AsyncMock
+    ) as mock_handle:
+        mock_handle.side_effect = mock_handler
+        reply = await orchestrator._process_message("Use the current message pipeline")
+
+    assert reply == {"ok": True, "response": "Canonical message path"}
+    mock_handle.assert_awaited_once_with("Use the current message pipeline", origin="user")
 
 
 @pytest.mark.asyncio
@@ -826,7 +855,20 @@ async def test_perform_autonomous_thought_trigger_none(orchestrator):
 
 @pytest.mark.asyncio
 async def test_handle_signal_lite(orchestrator):
-    pass
+    from core.coordinators.lifecycle_coordinator import LifecycleCoordinator
+
+    orchestrator._stop_event = asyncio.Event()
+    orchestrator.status.running = True
+    coord = LifecycleCoordinator(orchestrator)
+
+    with patch(
+        "core.coordinators.lifecycle_coordinator.asyncio.get_running_loop",
+        side_effect=RuntimeError("no running loop"),
+    ):
+        coord.handle_signal(2, None)
+
+    assert orchestrator._stop_event.is_set()
+    assert orchestrator.status.running is False
 
 
 @pytest.mark.asyncio

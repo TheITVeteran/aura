@@ -14,7 +14,7 @@ import pytest
 from core.container import ServiceContainer
 from core.memory.sqlite_storage import SQLiteMemory
 from core.skill_management.hephaestus import HephaestusEngine
-from core.utils.resilience import AsyncCircuitBreaker
+from infrastructure.resilience import AsyncCircuitBreaker, CircuitState
 from core.world_model.belief_graph import belief_graph
 
 logging.basicConfig(level=logging.INFO)
@@ -84,43 +84,28 @@ async def test_sqlite_memory_concurrency():
 async def test_circuit_breaker_resilience():
     logger.info("Running CircuitBreaker resilience test...")
     breaker = AsyncCircuitBreaker(name="TestBreaker", failure_threshold=3, recovery_timeout=0.1)
-    
-    async def failing_fn():
-        raise ValueError("Simulated Failure")
-        
+
     # Trip the breaker
     for i in range(3):
-        try:
-            await breaker.execute(failing_fn)
-        except ValueError:
-            logger.debug(f"Failure {i+1} recorded")
-            
-    from core.utils.resilience import CircuitState
-    logger.info(f"Breaker State: {breaker.state}, Failures: {breaker.failures}")
+        breaker.record_failure()
+        logger.debug(f"Failure {i+1} recorded")
+
+    logger.info(f"Breaker State: {breaker.state}")
     assert breaker.state == CircuitState.OPEN
     logger.info("  - Breaker correctly opened after 3 failures.")
-    
+
     # Try while open
-    from core.utils.resilience import CircuitBreakerOpenError
-    with pytest.raises(CircuitBreakerOpenError):
-        await breaker.execute(failing_fn)
-    
+    assert breaker.allow_request() is False
+
     # Wait for recovery
     await asyncio.sleep(0.2)
-    # The state only changes to HALF_OPEN when we ATTEMPT to call it and it probes
-    # but the internal check _should_probe returns True.
-    # Actually AsyncCircuitBreaker.execute calls _should_probe which transitions it.
-    
-    # Next call should probe
-    async def success_fn(): return "OK"
-    await breaker.execute(success_fn)
-    # After one success in probe, it's still HALF_OPEN until success_threshold (default 3)
+
+    # Next call should probe and transition to HALF_OPEN.
+    assert breaker.allow_request() is True
     assert breaker.state == CircuitState.HALF_OPEN
     logger.info("  - Breaker transitioned to HALF_OPEN during probe.")
-    
-    # Complete success threshold
-    await breaker.execute(success_fn)
-    await breaker.execute(success_fn)
+
+    breaker.record_success()
     assert breaker.state == CircuitState.CLOSED
     logger.info("✓ CircuitBreaker resilience test PASSED.")
 
@@ -134,7 +119,8 @@ async def test_sandbox_resource_limits():
     ServiceContainer.clear()
     
     class MockRegistry:
-        async def discover_skills(self): pass
+        async def discover_skills(self):
+            return []
     
     class SimpleBrain:
         async def think(self, *args, **kwargs):

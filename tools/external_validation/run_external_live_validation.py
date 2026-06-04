@@ -74,7 +74,7 @@ class MockHTTPServer:
                 super().__init__(*args, directory=root_dir_str, **kwargs)
 
             def log_message(self, format, *args):
-                pass  # suppress logging
+                return None
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

@@ -118,11 +118,15 @@ async def test_sovereign_network_discovery_falls_back_without_nmap(monkeypatch):
         raise FileNotFoundError(command)
 
     class FakeWriter:
+        def __init__(self):
+            self.closed = False
+            self.wait_closed_called = False
+
         def close(self):
-            pass
+            self.closed = True
 
         async def wait_closed(self):
-            pass
+            self.wait_closed_called = True
 
     async def fake_open_connection(host, port):
         if host == "192.168.1.2" and port == 8000:

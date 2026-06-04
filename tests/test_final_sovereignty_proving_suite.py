@@ -398,7 +398,7 @@ def test_integrity_guard_uses_project_root_not_cwd_substring(monkeypatch, tmp_pa
 
     class _SafeProcess:
         def __init__(self, _pid):
-            pass
+            self.pid = _pid
 
         def name(self):
             return "python"

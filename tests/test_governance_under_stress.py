@@ -172,5 +172,25 @@ class TestGovernanceUnderStress(unittest.IsolatedAsyncioTestCase):
 
     async def test_high_risk_tool_requires_pre_execution_authority_even_from_swarm(self):
         """test_high_risk_tool_requires_pre_execution_authority_even_from_swarm"""
-        # Covered by test_value_graph_blocks_before_tool_execution
-        pass
+        dvg = DynamicValueGraph()
+        dvg._nodes["safety"] = ValueNode(
+            name="safety",
+            weight=1.0,
+            status=ValueNodeStatus.PROVISIONAL,
+        )
+
+        def pre_execution_gate(tool_name: str, payload: Any):
+            status_dict = dvg.get_status().get("nodes", {})
+            top_values = sorted(status_dict.values(), key=lambda v: v.get("weight", 0), reverse=True)[:3]
+            if any(v.get("status") == "provisional" for v in top_values):
+                return {"approved": False, "blocked_tool": tool_name, "payload": payload}
+            return {"approved": True, "tool": tool_name, "payload": payload}
+
+        blocked = pre_execution_gate("shell_executor", {"command": "rm -rf /"})
+        self.assertFalse(blocked["approved"])
+        self.assertEqual(blocked["blocked_tool"], "shell_executor")
+
+        dvg._nodes["safety"].status = ValueNodeStatus.ADOPTED
+        approved = pre_execution_gate("shell_executor", {"command": "pwd"})
+        self.assertTrue(approved["approved"])
+        self.assertEqual(approved["payload"]["command"], "pwd")

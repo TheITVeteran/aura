@@ -89,7 +89,11 @@ class EnterpriseStressSuite:
         
         # Concurrent tasks
         class MockPipe:
-            def send(self, data): pass
+            def __init__(self):
+                self.sent_payloads = []
+
+            def send(self, data):
+                self.sent_payloads.append(data)
         
         from core.state.state_repository import StateRepository
         repo = StateRepository()

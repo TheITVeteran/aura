@@ -57,7 +57,10 @@ class MockNeurochemicalSystem:
         class Chem:
             def __init__(self, eff):
                 self.effective = eff
-            def surge(self, amount): pass
+                self.surges = []
+
+            def surge(self, amount):
+                self.surges.append(amount)
         self.chemicals = {
             "cortisol": Chem(cortisol),
             "gaba": Chem(gaba),
@@ -65,7 +68,8 @@ class MockNeurochemicalSystem:
             "norepinephrine": Chem(ne),
         }
 
-    def on_frustration(self, amount): pass
+    def on_frustration(self, amount):
+        self.last_frustration = amount
 
 
 # ═══════════════════════════════════════════════════════════════════════════

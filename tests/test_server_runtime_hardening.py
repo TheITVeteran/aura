@@ -1733,7 +1733,8 @@ async def test_state_repository_initialize_tracks_owner_consumer_task(monkeypatc
 
     class _Shm:
         def __init__(self, *args, **kwargs):
-            pass
+            self.args = args
+            self.kwargs = kwargs
 
         async def create(self):
             return None
@@ -3447,7 +3448,7 @@ async def test_cognitive_coordinator_surprise_learning_is_task_tracked(monkeypat
 
     class _ExpectationEngine:
         def __init__(self, _engine):
-            pass
+            self.engine = _engine
 
         async def calculate_surprise(self, *_args, **_kwargs):
             return 0.8

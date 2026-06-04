@@ -259,12 +259,16 @@ class AuraNow:
 
     @property
     def state_hash(self) -> str:
-        return _digest(self.to_report_packet(include_private_hash=True))
+        return _digest(self.to_report_packet(include_private_hash=True, include_timestamp=False))
 
-    def to_report_packet(self, *, include_private_hash: bool = False) -> dict[str, Any]:
+    def to_report_packet(
+        self,
+        *,
+        include_private_hash: bool = False,
+        include_timestamp: bool = True,
+    ) -> dict[str, Any]:
         packet = {
             "tick": self.tick,
-            "timestamp": self.timestamp,
             "field_norm": round(math.sqrt(sum(x * x for x in self.continuous_field)), 4),
             "body": self.body.pressure_vector(),
             "world": asdict(self.world),
@@ -279,6 +283,8 @@ class AuraNow:
             "higher_order": list(self.higher_order),
             "report_boundary": asdict(self.report_boundary),
         }
+        if include_timestamp:
+            packet["timestamp"] = self.timestamp
         if include_private_hash:
             packet["private_residue_hash"] = self.private_residue_hash
         return packet
