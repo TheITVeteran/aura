@@ -56,7 +56,7 @@ def _is_text(path: Path, data: bytes) -> bool:
         from tools.closeout.run_codebase_closeout_audit import _is_probably_text
 
         return bool(_is_probably_text(path, data))
-    except Exception:
+    except (ImportError, AttributeError):
         if b"\0" in data[:8192]:
             return False
         try:

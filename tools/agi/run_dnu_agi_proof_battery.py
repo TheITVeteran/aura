@@ -1801,9 +1801,12 @@ async def run_ablation_suite(runtime, tasks: list[dict], grader_data: dict, serv
                     lesion_verified = False
                 else:
                     services_disabled.add(s_name)
-            except Exception:
-                # Exception means the service cannot be successfully fetched/resolved.
+            except (LookupError, KeyError, AttributeError):
+                # Service-not-found semantics mean the lesion removed the service.
                 services_disabled.add(s_name)
+            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                print(f"  [ERROR] Lesion verification failed while fetching {s_name}: {type(exc).__name__}: {exc}")
+                lesion_verified = False
 
         for task in tasks:
             try:
@@ -1963,7 +1966,7 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
             )
             if _is_non_answer(response_text):
                 raise RuntimeError("live_path_returned_no_answer")
-        except Exception as retry_exc:
+        except _DNU_TASK_ATTEMPT_ERRORS as retry_exc:
             result["status"] = "timeout" if isinstance(retry_exc, asyncio.TimeoutError) else "error"
             result["error"] = f"Retry failed: {type(retry_exc).__name__}: {str(retry_exc)}"
             result["elapsed_s"] = time.time() - t0

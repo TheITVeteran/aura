@@ -29,6 +29,18 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_SCENARIO_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    json.JSONDecodeError,
+)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -47,6 +59,22 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _reset_output_dir(raw_path: str) -> Path:
+    out_dir = Path(raw_path).resolve()
+    if out_dir.exists():
+        for child in sorted(out_dir.rglob("*"), reverse=True):
+            if child.is_file() or child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def _read_url_text(url: str, *, timeout: float = 5.0) -> str:
+    return urlopen(url, timeout=timeout).read().decode("utf-8")
 
 
 def _ast_shape(path: Path) -> dict[str, Any]:
@@ -170,14 +198,7 @@ async def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("AURA_RESEARCH_BOOT_GRACE_S", "7200")
     os.environ.setdefault("AURA_VIABILITY_BOOT_GRACE_S", "7200")
 
-    out_dir = Path(args.out).resolve()
-    if out_dir.exists():
-        for child in sorted(out_dir.rglob("*"), reverse=True):
-            if child.is_file() or child.is_symlink():
-                child.unlink()
-            elif child.is_dir():
-                child.rmdir()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = await asyncio.to_thread(_reset_output_dir, args.out)
 
     trace_path = out_dir / "SCENARIO_TRACE.jsonl"
     receipts_path = out_dir / "RECEIPTS.jsonl"
@@ -359,7 +380,7 @@ async def main(argv: list[str] | None = None) -> int:
             priority=0.9,
         )
         with _local_http_mirror(mirror) as base_url:
-            docs = urlopen(f"{base_url}/docs.html", timeout=5.0).read().decode("utf-8")
+            docs = await asyncio.to_thread(_read_url_text, f"{base_url}/docs.html")
         trace("external_io", net_decision.is_approved() and "addition" in docs.lower())
 
         (repo / "solver.py").write_text("def calculate(a, b):\n    return a - b\n", encoding="utf-8")
@@ -493,7 +514,7 @@ async def main(argv: list[str] | None = None) -> int:
         }
         _write_json(out_dir / "SUMMARY.json", summary)
         return_code = 0 if scenario_passed else 1
-    except Exception as exc:
+    except _SCENARIO_RECOVERABLE_ERRORS as exc:
         trace("scenario_error", False, error=f"{type(exc).__name__}: {exc}")
         _write_json(
             out_dir / "SUMMARY.json",
@@ -510,7 +531,7 @@ async def main(argv: list[str] | None = None) -> int:
             try:
                 await _shutdown_runtime(orchestrator)
                 trace("shutdown", True)
-            except Exception as exc:
+            except _SCENARIO_RECOVERABLE_ERRORS as exc:
                 trace("shutdown", False, error=f"{type(exc).__name__}: {exc}")
 
         files = {}

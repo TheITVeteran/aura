@@ -62,6 +62,17 @@ PROOF_ENV = {
     "AURA_ENABLE_CODE_EDIT": "1",
 }
 _SUBPROCESS_GATEWAY = get_subprocess_gateway()
+_CHILD_BOUNDARY_ERRORS = (
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    ImportError,
+    URLError,
+    json.JSONDecodeError,
+)
 
 
 @dataclass
@@ -125,7 +136,9 @@ def _live_model_probe_worker(
             model_comparison_source=None,
         )
         trace = asyncio.run(gauntlet.execute_live_model_probe(task_id, receipt_id, prompt))
-    except BaseException as exc:  # child boundary must report any failure to parent
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+        raise
+    except _CHILD_BOUNDARY_ERRORS as exc:  # child boundary must report recoverable failure to parent
         trace = {
             "task_id": task_id,
             "receipt_id": receipt_id,
