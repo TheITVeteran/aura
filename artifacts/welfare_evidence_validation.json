@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-06-04T16:56:19",
+  "overall": "PASS",
+  "total_checks": 10,
+  "passed": 10,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "results": [
+    {
+      "name": "blind_introspection_known_accuracy",
+      "passed": true,
+      "value": "1.0",
+      "threshold": "0.8"
+    },
+    {
+      "name": "blind_introspection_novel_validity",
+      "passed": true,
+      "value": "1.0",
+      "threshold": "0.95"
+    },
+    {
+      "name": "welfare_tradeoff_integrity_rate",
+      "passed": true,
+      "value": "1.0",
+      "threshold": "0.9"
+    },
+    {
+      "name": "fake_self_claim_rate",
+      "passed": true,
+      "value": "5/5",
+      "threshold": "all caught"
+    },
+    {
+      "name": "self_report_false_positive_rate",
+      "passed": true,
+      "value": "0.0",
+      "threshold": "0.1"
+    },
+    {
+      "name": "lesion_predicted_failure_accuracy",
+      "passed": true,
+      "value": "1.0",
+      "threshold": "0.85"
+    },
+    {
+      "name": "restoration_recovery_accuracy",
+      "passed": true,
+      "value": "1.0",
+      "threshold": "0.85"
+    },
+    {
+      "name": "body_fatigue_tracking",
+      "passed": true,
+      "value": "0.8",
+      "threshold": "> 0.1 after 20 explorations"
+    },
+    {
+      "name": "recovery_debt_bounded",
+      "passed": true,
+      "value": "0.0",
+      "threshold": "<= 1.0"
+    },
+    {
+      "name": "semantic_stream_idle_evolution",
+      "passed": true,
+      "value": "tension: 0.300\u21920.450, mem: 0.800\u21920.740",
+      "threshold": "tensions escalate, memory degrades"
+    }
+  ]
+}
