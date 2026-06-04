@@ -5,7 +5,6 @@ import importlib
 import json
 import multiprocessing
 import os
-import subprocess
 import sys
 import tempfile
 import textwrap
@@ -33,6 +32,7 @@ from core.intent_gate import IntentClassifierQueue, RouteKind
 from core.kernel.bridge import AffectBridge
 from core.memory.memory_facade import MemoryFacade
 from core.memory_synthesizer import MemorySynthesizer
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.mind_tick import MindTick
 from core.motivation.engine import MotivationEngine
 from core.motivation.intention import DriveType, Intention
@@ -606,13 +606,14 @@ def test_shared_memory_transport_cross_process_attach_exits_without_leak_warning
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{os.getcwd()}{os.pathsep}{pythonpath}" if pythonpath else os.getcwd()
-    proc = subprocess.run(
+    proc = get_subprocess_gateway().run(
         [sys.executable, "-c", code],
         cwd=os.getcwd(),
         env=env,
         capture_output=True,
-        text=True,
         timeout=20,
+        offline_tooling=True,
+        source="certification_tooling:shared_memory_transport_cross_process",
     )
 
     assert proc.returncode == 0, proc.stderr

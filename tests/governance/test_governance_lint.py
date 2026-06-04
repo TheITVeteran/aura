@@ -6,11 +6,12 @@ forbidden-call inserted into a non-allow-listed file is detected.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import textwrap
 import tempfile
 from pathlib import Path
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -19,7 +20,15 @@ REPO = Path(__file__).resolve().parents[2]
 def _run_lint(extra_path: Path | None = None) -> int:
     env = os.environ.copy()
     cmd = [sys.executable, str(REPO / "tools" / "lint_governance.py")]
-    proc = subprocess.run(cmd, cwd=str(REPO), env=env, capture_output=True, text=True)
+    proc = get_subprocess_gateway().run(
+        cmd,
+        cwd=str(REPO),
+        env=env,
+        capture_output=True,
+        timeout=60,
+        offline_tooling=True,
+        source="certification_tooling:test_governance_lint",
+    )
     return proc.returncode
 
 

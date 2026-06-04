@@ -8,13 +8,14 @@ import os
 import sys
 import logging
 import time
-import subprocess
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.sovereign.platform_root import get_platform_root
 from core.mycelium import MycelialNetwork
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("VerifyMetalPersistence")
@@ -39,9 +40,14 @@ async def verify_persistence():
     # 3. Verify MTLCompilerService via ps aux
     def check_service():
         try:
-            out = subprocess.check_output(["ps", "aux"], text=True)
-            return "MTLCompilerService" in out
-        except Exception:
+            result = get_subprocess_gateway().run(
+                ["ps", "aux"],
+                timeout=10,
+                read_only=True,
+                source="certification_tooling:verify_metal_persistence_ps",
+            )
+            return "MTLCompilerService" in result.stdout
+        except (OSError, RuntimeError, TimeoutError, ValueError):
             return False
 
     service_exists = check_service()
@@ -74,7 +80,10 @@ async def verify_persistence():
 
     # 6. Monitor for a few heartbeats
     logger.info("⏳ Monitoring hardware pulses for 30s...")
-    monitor_task = asyncio.create_task(platform.start_monitor())
+    monitor_task = get_task_tracker().create_task(
+        platform.start_monitor(),
+        name="verify_metal_persistence.monitor",
+    )
     
     for i in range(3):
         await asyncio.sleep(10)

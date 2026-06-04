@@ -3,9 +3,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "config" / "aura_enterprise_gate_baseline.json"
@@ -26,7 +27,7 @@ def _run_static_gate(tmp_path: Path) -> dict:
     env = os.environ.copy()
     env.setdefault("AURA_TEST_MODE", "1")
     env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-    proc = subprocess.run(
+    proc = get_subprocess_gateway().run(
         [
             sys.executable,
             str(GATE),
@@ -42,10 +43,9 @@ def _run_static_gate(tmp_path: Path) -> dict:
         ],
         cwd=ROOT,
         env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
         timeout=60,
+        offline_tooling=True,
+        source="certification_tooling:test_enterprise_static_contracts",
     )
     assert proc.returncode == 0, proc.stdout[-4000:]
     return json.loads(report_path.read_text(encoding="utf-8"))

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import sys
 from pathlib import Path
 from dataclasses import dataclass
+from subprocess import TimeoutExpired
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -104,26 +106,31 @@ class LiveAuraHarness:
 
         stdout_file = artifacts / "subprocess_stdout.log"
         stderr_file = artifacts / "subprocess_stderr.log"
-        with open(stdout_file, "w") as out_f, open(stderr_file, "w") as err_f:
-            proc = subprocess.run(
+        with open(stdout_file, "w", encoding="utf-8") as out_f, open(stderr_file, "w", encoding="utf-8") as err_f:
+            proc = get_subprocess_gateway().spawn(
                 args,
                 cwd=repo,
-                text=True,
                 stdout=out_f,
                 stderr=err_f,
-                timeout=timeout_s,
                 env=run_env,
+                offline_tooling=True,
+                source="certification_tooling:agi_live_harness",
             )
+            try:
+                returncode = proc.wait(timeout=timeout_s)
+            except TimeoutExpired:
+                proc.kill()
+                returncode = proc.wait(timeout=10)
 
         stdout_content = stdout_file.read_text(encoding="utf-8", errors="ignore") if stdout_file.exists() else ""
         stderr_content = stderr_file.read_text(encoding="utf-8", errors="ignore") if stderr_file.exists() else ""
 
         return LiveRunResult(
-            ok=proc.returncode == 0,
+            ok=returncode == 0,
             stdout=stdout_content,
             stderr=stderr_content,
             artifacts_dir=artifacts,
-            returncode=proc.returncode,
+            returncode=returncode,
         )
 
     def cleanup(self):
@@ -131,5 +138,5 @@ class LiveAuraHarness:
             if temp_dir.exists():
                 try:
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception:
+                except OSError:
                     pass

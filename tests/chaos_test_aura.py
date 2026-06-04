@@ -3,11 +3,11 @@
 import asyncio
 import logging
 import os
-import subprocess
 import time
 from unittest.mock import AsyncMock
 from core.skill_management.hephaestus import HephaestusEngine
 from core.container import ServiceContainer
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ChaosTest")
@@ -73,11 +73,21 @@ def execute(params, context=None):
     
     # Check if a sleeper process is still alive
     await asyncio.sleep(2)
-    ps = subprocess.run(["ps", "-ef"], capture_output=True, text=True)
+    ps = get_subprocess_gateway().run(
+        ["ps", "-ef"],
+        timeout=10,
+        read_only=True,
+        source="certification_tooling:chaos_test_process_scan",
+    )
     if "time.sleep(60)" in ps.stdout:
         logger.error("❌ FAILURE: Background process survived the sandbox!")
         # Cleanup
-        subprocess.run(["pkill", "-f", "time.sleep(60)"])
+        get_subprocess_gateway().run(
+            ["pkill", "-f", "time.sleep(60)"],
+            timeout=10,
+            offline_tooling=True,
+            source="certification_tooling:chaos_test_cleanup",
+        )
     else:
         logger.info("✅ SUCCESS: No orphaned background processes detected.")
 

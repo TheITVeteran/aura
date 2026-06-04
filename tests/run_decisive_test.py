@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -29,6 +28,7 @@ from core.evaluation.hardware_reality import HardwareRealityAuditor, bryan_m5_64
 from core.evaluation.statistics import mutual_information_permutation_baseline
 from core.evaluation.steering_ab import analyze_steering_ab
 from core.identity.id_rag import IdentityChronicle
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.state.aura_state import AuraState
 
 
@@ -315,12 +315,18 @@ def _resource_stakes() -> dict[str, object]:
 
 def _git_commit() -> str:
     try:
-        return (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True)
-            .strip()
+        result = get_subprocess_gateway().run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            timeout=30,
+            read_only=True,
+            source="certification_tooling:decisive_test_git_commit",
         )
-    except Exception:
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, RuntimeError, TimeoutError, ValueError):
         return "unknown"
+    return "unknown"
 
 
 if __name__ == "__main__":

@@ -8,13 +8,12 @@ the consciousness mesh, authority enforcement, volition agency, etc.).
 
 Exit code 0 iff every harness exits 0.
 """
-from __future__ import annotations
-
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYTHON = str(PROJECT_ROOT / ".venv" / "bin" / "python")
@@ -45,12 +44,13 @@ def run_harness(label: str, script: str) -> HarnessResult:
     print(f"\n========== {label} ==========")
     print(f"  script: {path}")
     t0 = time.monotonic()
-    proc = subprocess.run(
+    proc = get_subprocess_gateway().run(
         [PYTHON, str(path)],
         cwd=str(PROJECT_ROOT),
-        text=True,
         capture_output=True,
-        check=False,
+        timeout=600,
+        offline_tooling=True,
+        source="certification_tooling:live_harness_all",
     )
     elapsed = time.monotonic() - t0
     # Relay the last portion of stdout so the run is self-describing.

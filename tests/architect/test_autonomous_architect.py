@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import json
-import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -35,6 +34,20 @@ from core.architect.rollback_manager import RollbackManager
 from core.architect.semantic_classifier import SemanticClassifier
 from core.architect.shadow_workspace import ShadowWorkspaceManager
 from core.architect.smell_detector import SmellDetector
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def run_repo_command(args: list[str], *, timeout: float = 30.0):
+    return get_subprocess_gateway().run(
+        args,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        timeout=timeout,
+        offline_tooling=True,
+        source="certification_tooling:test_autonomous_architect",
+    )
 
 
 def write(path: Path, text: str) -> None:
@@ -177,12 +190,8 @@ def test_ghost_boot_fails_closed_on_unavailable_boot(tiny_repo: Path) -> None:
 
 
 def test_default_safe_boot_harness_runs_in_aura_repo() -> None:
-    proc = subprocess.run(
+    proc = run_repo_command(
         [sys.executable, "-B", "-m", "core.architect.safe_boot_harness"],
-        cwd=Path(__file__).resolve().parents[2],
-        text=True,
-        capture_output=True,
-        check=False,
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
@@ -364,24 +373,16 @@ def test_post_promotion_monitor_triggers_rollback_on_regression(tiny_repo: Path)
 
 
 def test_cli_audit_runs(tiny_repo: Path) -> None:
-    proc = subprocess.run(
+    proc = run_repo_command(
         [sys.executable, "-m", "core.architect.cli", "--repo", str(tiny_repo), "audit"],
-        cwd=Path(__file__).resolve().parents[2],
-        text=True,
-        capture_output=True,
-        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["graph_metrics"]["files"] >= 3
 
 
 def test_cli_auto_t1_runs_in_temp_repo(tiny_repo: Path) -> None:
-    proc = subprocess.run(
+    proc = run_repo_command(
         [sys.executable, "-m", "core.architect.cli", "--repo", str(tiny_repo), "auto", "--tier-max", "T1"],
-        cwd=Path(__file__).resolve().parents[2],
-        text=True,
-        capture_output=True,
-        check=False,
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
