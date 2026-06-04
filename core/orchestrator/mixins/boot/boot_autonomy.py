@@ -186,8 +186,12 @@ class BootAutonomyMixin:
 
     async def _init_evolution_orchestrator(self):
         """Initialize the Singularity Path Evolution Orchestrator."""
-        if _foreground_only_runtime() or not _env_flag("AURA_ENABLE_EVOLUTION_ORCHESTRATOR", True):
-            logger.info("Evolution Orchestrator disabled for foreground-only boot.")
+        if (
+            _foreground_only_runtime()
+            or _proof_runtime_active()
+            or not _env_flag("AURA_ENABLE_EVOLUTION_ORCHESTRATOR", True)
+        ):
+            logger.info("Evolution Orchestrator disabled for foreground/proof boot.")
             return
         try:
             from core.evolution.evolution_orchestrator import get_evolution_orchestrator
@@ -203,8 +207,8 @@ class BootAutonomyMixin:
 
     async def _init_singularity_loops(self):
         """Initialize the closed-loop evolutionary wiring."""
-        if _foreground_only_runtime():
-            logger.info("Singularity loops disabled for foreground-only boot.")
+        if _foreground_only_runtime() or _proof_runtime_active():
+            logger.info("Singularity loops disabled for foreground/proof boot.")
             return
         if _env_flag("AURA_ENABLE_SINGULARITY_LOOPS", True):
             try:

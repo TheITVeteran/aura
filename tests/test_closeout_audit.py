@@ -9,6 +9,7 @@ from tools.closeout.semantic_review_ledger import (
     append_entries,
     build_arg_parser,
     build_review_entry,
+    main as semantic_review_main,
     record_reviews_from_args,
     summarize_semantic_reviews,
 )
@@ -166,6 +167,30 @@ def test_semantic_review_record_requires_explicit_scope(tmp_path):
 
     with pytest.raises(ValueError, match="requires explicit paths"):
         record_reviews_from_args(args)
+
+
+def test_semantic_review_status_exits_cleanly_when_downstream_pipe_closes(tmp_path, monkeypatch):
+    class BrokenStdout:
+        def __init__(self):
+            self.closed = False
+            self.write_attempts = 0
+
+        def write(self, _text):
+            self.write_attempts += 1
+            raise BrokenPipeError("downstream closed")
+
+        def flush(self):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    stdout = BrokenStdout()
+    monkeypatch.setattr("tools.closeout.semantic_review_ledger.sys.stdout", stdout)
+
+    assert semantic_review_main(["status", "--ledger", str(tmp_path / "ledger.jsonl")]) == 0
+    assert stdout.write_attempts == 1
+    assert stdout.closed is True
 
 
 def test_semantic_review_uses_closeout_text_classification(tmp_path):

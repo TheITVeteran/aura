@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+from core.runtime.background_policy import background_loop_start_reason
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
@@ -191,21 +192,32 @@ class LifecycleCoordinator:
             await self._boot_barrier()
 
             # Start Background Loops
-            if hasattr(orch, 'consciousness') and orch.consciousness:
+            background_start_block = background_loop_start_reason("lifecycle_coordinator")
+            if (
+                not background_start_block
+                and hasattr(orch, 'consciousness')
+                and orch.consciousness
+            ):
                 if hasattr(orch.consciousness, 'start'):
                     res = orch.consciousness.start()
                     if res and hasattr(res, '__await__'): await res
-            if hasattr(orch, 'curiosity') and orch.curiosity:
+            elif background_start_block:
+                logger.info("Consciousness background loop not started: %s", background_start_block)
+            if not background_start_block and hasattr(orch, 'curiosity') and orch.curiosity:
                 if hasattr(orch.curiosity, 'start'):
                     res = orch.curiosity.start()
                     if res and hasattr(res, '__await__'): await res
                 logger.info("✓ Curiosity background loop started")
+            elif background_start_block:
+                logger.info("Curiosity background loop not started: %s", background_start_block)
             # Start Proactive Communication (v4.3)
-            if hasattr(orch, 'proactive_comm') and orch.proactive_comm:
+            if not background_start_block and hasattr(orch, 'proactive_comm') and orch.proactive_comm:
                 if hasattr(orch.proactive_comm, 'start'):
                     res = orch.proactive_comm.start()
                     if res and hasattr(res, '__await__'): await res
                 logger.info("✓ Proactive Communication loop started")
+            elif background_start_block:
+                logger.info("Proactive Communication loop not started: %s", background_start_block)
             # Start Narrative Engine (v11.0)
             if hasattr(orch, 'narrative_engine') and orch.narrative_engine:
                 await orch.narrative_engine.start()
@@ -231,9 +243,11 @@ class LifecycleCoordinator:
             if hasattr(orch, 'instincts') and orch.instincts:
                 await orch.instincts.start()
             # Start Pulse Manager (Proactive Awareness)
-            if orch.pulse_manager:
+            if not background_start_block and orch.pulse_manager:
                 await orch.pulse_manager.start()
                 logger.info("✓ Pulse Manager active (Proactive Awareness)")
+            elif background_start_block:
+                logger.info("Pulse Manager not started: %s", background_start_block)
             # Start Inter-process Event Listeners (H-12)
             tracker.create_task(
                 orch._setup_event_listeners(),

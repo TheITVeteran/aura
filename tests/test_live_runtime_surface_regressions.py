@@ -179,6 +179,114 @@ def test_background_policy_defers_work_during_proof_runs(monkeypatch):
     assert background_activity_reason(None, allow_no_user_anchor=True) == "proof_run_active"
 
 
+def test_background_policy_blocks_loop_starts_during_proof_and_foreground(monkeypatch):
+    from core.runtime.background_policy import background_loop_start_reason
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+
+    assert background_loop_start_reason("joy_social") == "proof_run_active"
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
+
+    assert background_loop_start_reason("joy_social") == "foreground_only_runtime"
+
+
+def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatch):
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    pulse = SubsystemAudit().emit_pulse()
+
+    assert "Runtime: DEGRADED" in pulse
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: FAIL" in pulse
+    assert "Runtime: HEALTHY" not in pulse
+
+
+def test_joy_social_background_tick_does_not_start_during_proof(monkeypatch):
+    from skills.joy_social_integration import JoySocialCoordinator
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    coordinator = JoySocialCoordinator(SimpleNamespace(_last_user_interaction_time=0.0))
+
+    coordinator.start_background_tick(interval=0.01)
+
+    assert coordinator._tick_task is None
+
+
+@pytest.mark.asyncio
+async def test_evolution_orchestrator_loop_does_not_start_during_proof(monkeypatch, tmp_path):
+    from core.evolution.evolution_orchestrator import EvolutionOrchestrator
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setattr(EvolutionOrchestrator, "_STATE_FILE", tmp_path / "evolution_state.json")
+    evolution = EvolutionOrchestrator()
+
+    await evolution.start()
+
+    assert evolution._task is None
+
+
+def test_supervision_tree_reaps_cooperative_actor_without_escalation():
+    from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
+
+    class CooperativeProcess:
+        def __init__(self):
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if timeout and timeout > 0:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    process = CooperativeProcess()
+    tree = SupervisionTree()
+    tree._actors["state_vault"] = ManagedActor(
+        spec=ActorSpec(name="state_vault", entry_point=lambda: None),
+        process=process,
+        pipe=None,
+    )
+
+    tree.stop_actor("state_vault", graceful_timeout=0.1)
+
+    assert process.join_calls == [0.1]
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert tree._actors["state_vault"].process is None
+
+
 def test_dream_coordinator_defers_dream_work_during_proof_runs(monkeypatch):
     from core.maintenance.dream_coordinator import DreamCoordinator
 

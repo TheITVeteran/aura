@@ -328,12 +328,15 @@ class HealthVerdict:
             for tier in (ServiceTier.CRITICAL, ServiceTier.IMPORTANT, ServiceTier.OPTIONAL)
         }
         required_probes = _required_probe_status_from_services(report_services)
+        required_probe_ok = required_probe_groups_pass(required_probes)
+        healthy = self.level == HealthLevel.HEALTHY and required_probe_ok
+        operational = self.is_operational and required_probe_ok
         return {
             "contract_version": HEALTH_CONTRACT_VERSION,
             "status": self.level.value,
-            "healthy": self.level == HealthLevel.HEALTHY,
-            "operational": self.is_operational,
-            "status_code": self.status_code,
+            "healthy": healthy,
+            "operational": operational,
+            "status_code": 200 if operational else 503,
             "timestamp_unix": self.timestamp,
             "required_probes": required_probes,
             "tier_summary": tier_summary,

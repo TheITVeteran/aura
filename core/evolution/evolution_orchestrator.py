@@ -32,6 +32,11 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.exceptions import ContainerError
+from core.runtime.background_policy import (
+    MAINTENANCE_BACKGROUND_POLICY,
+    background_activity_reason,
+    background_loop_start_reason,
+)
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -147,6 +152,10 @@ class EvolutionOrchestrator:
 
     async def start(self) -> None:
         if self._task and not self._task.done():
+            return
+        block_reason = background_loop_start_reason("evolution_orchestrator")
+        if block_reason:
+            logger.info("🧬 Evolution loop not started: %s", block_reason)
             return
         self._stop.clear()
         self._task = get_task_tracker().create_task(self._loop())
@@ -602,13 +611,21 @@ class EvolutionOrchestrator:
     async def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                await self.tick()
-                logger.info(
-                    "🧬 Evolution tick #%d — Phase: %s (%.1f%%)",
-                    self._snapshot.tick_count,
-                    self._snapshot.phase_label,
-                    self._snapshot.overall_progress * 100,
+                block_reason = background_activity_reason(
+                    None,
+                    profile=MAINTENANCE_BACKGROUND_POLICY,
+                    allow_no_user_anchor=True,
                 )
+                if block_reason:
+                    logger.debug("Evolution tick deferred: %s", block_reason)
+                else:
+                    await self.tick()
+                    logger.info(
+                        "🧬 Evolution tick #%d — Phase: %s (%.1f%%)",
+                        self._snapshot.tick_count,
+                        self._snapshot.phase_label,
+                        self._snapshot.overall_progress * 100,
+                    )
             except _EVOLUTION_RECOVERABLE_ERRORS as exc:
                 _record_evolution_degradation(exc, action="skipped current evolution loop tick", severity="error")
                 logger.error("Evolution tick failed: %s", exc)

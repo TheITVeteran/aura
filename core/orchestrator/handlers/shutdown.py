@@ -32,15 +32,15 @@ async def _gracefully_stop_actor_via_bus(
     actor_name: str,
     *,
     stop_budget_s: float = 2.0,
-) -> None:
+) -> bool:
     """Request actor shutdown over the runtime bus before the supervisor kills it."""
     bus = getattr(orch, "_actor_bus", None) or getattr(orch, "actor_bus", None)
     if bus is None:
-        return
+        return False
 
     has_actor = getattr(bus, "has_actor", None)
     if callable(has_actor) and not has_actor(actor_name):
-        return
+        return False
 
     try:
         await asyncio.wait_for(
@@ -58,34 +58,46 @@ async def _gracefully_stop_actor_via_bus(
             action=f"continued shutdown after actor bus was already closed for {actor_name}",
         )
         logger.debug("Actor bus already closed while stopping %s: %s", actor_name, exc)
-        return
+        return False
     except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
         _record_shutdown_degradation(
             exc,
             action=f"continued shutdown after actor bus stop request failed for {actor_name}",
         )
         logger.debug("Graceful stop request failed for %s: %s", actor_name, exc)
-        return
+        return False
 
     supervisor = getattr(orch, "_supervisor_tree", None) or getattr(orch, "supervisor", None)
     is_actor_running = getattr(supervisor, "is_actor_running", None)
     if not callable(is_actor_running):
-        return
+        return True
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + stop_budget_s
     while loop.time() < deadline:
         try:
             if not is_actor_running(actor_name):
-                return
+                return True
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             _record_shutdown_degradation(
                 exc,
                 action=f"continued shutdown after supervisor liveness probe failed for {actor_name}",
             )
             logger.debug("Supervisor liveness probe failed for %s: %s", actor_name, exc)
-            return
+            return True
         await asyncio.sleep(0.05)
+
+    stop_actor = getattr(supervisor, "stop_actor", None)
+    if callable(stop_actor):
+        await asyncio.to_thread(
+            stop_actor,
+            actor_name,
+            graceful_timeout=stop_budget_s,
+            terminate_timeout=1.0,
+            kill_timeout=1.0,
+        )
+        return True
+    return False
 
 
 async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:

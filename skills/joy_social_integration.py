@@ -43,6 +43,11 @@ import logging
 import time
 from typing import Any
 
+from core.runtime.background_policy import (
+    MAINTENANCE_BACKGROUND_POLICY,
+    background_activity_reason,
+    background_loop_start_reason,
+)
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 from skills.hobbies import get_hobby_engine
@@ -92,21 +97,23 @@ class JoySocialCoordinator:
         logger.info("🌟 JoySocialCoordinator initialised")
 
     def _background_autonomy_allowed(self) -> bool:
+        reason = background_activity_reason(
+            self.orchestrator,
+            profile=MAINTENANCE_BACKGROUND_POLICY,
+            min_idle_seconds=self.USER_IDLE_REQUIRED,
+            max_memory_percent=self.MEMORY_PRESSURE_THRESHOLD,
+            allow_no_user_anchor=False,
+        )
+        if reason:
+            return False
+
         now = time.time()
         if (now - self._boot_started_at) < self.BOOT_GRACE_PERIOD:
             return False
-
         if self.orchestrator is not None:
             last_user = getattr(self.orchestrator, "_last_user_interaction_time", 0.0)
             if last_user and (now - last_user) < self.USER_IDLE_REQUIRED:
                 return False
-
-        try:
-            import psutil
-            if psutil.virtual_memory().percent >= self.MEMORY_PRESSURE_THRESHOLD:
-                return False
-        except (ImportError, AttributeError, RuntimeError) as _exc:
-            logger.debug("Suppressed Exception: %s", _exc)
 
         return True
 
@@ -135,6 +142,11 @@ class JoySocialCoordinator:
         Spawn a background asyncio task that drives tick() independently.
         Use this when you cannot patch the orchestrator heartbeat.
         """
+        block_reason = background_loop_start_reason("joy_social")
+        if block_reason:
+            logger.info("JoySocial background tick not started: %s", block_reason)
+            return
+
         if self._tick_task and not self._tick_task.done():
             return  # Already running
 

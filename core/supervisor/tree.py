@@ -195,16 +195,48 @@ class SupervisionTree:
         logger.info("🚀 Actor Started: %s (PID: %s)", name, proc.pid)
         return parent_pipe
 
-    def stop_actor(self, name: str):
-        """Stop an actor and reap its process handle before shutdown returns."""
+    def stop_actor(
+        self,
+        name: str,
+        *,
+        graceful_timeout: float = 0.0,
+        terminate_timeout: float = 1.0,
+        kill_timeout: float = 1.0,
+    ):
+        """Stop an actor and reap its process handle before shutdown returns.
+
+        The caller can first give a cooperative bus-level ``stop`` handler time
+        to exit. If the process is still alive, the supervisor escalates to
+        terminate and finally kill, keeping the old bounded cleanup guarantee
+        without creating hard-kill noise for actors that can stop cleanly.
+        """
         with self._lock:
             actor = self._actors.get(name)
         if actor and actor.process:
             logger.info("🛑 Stopping Actor: %s", name)
+            process = actor.process
             try:
-                actor.process.kill()  # Immediate kill, no graceful shutdown
-                actor.process.join(timeout=1.0)
-                if actor.process.is_alive():
+                if not process.is_alive():
+                    process.join(timeout=0.0)
+                    logger.info("Actor %s already exited; reaped process handle.", name)
+                    return
+
+                if graceful_timeout > 0:
+                    process.join(timeout=max(0.0, graceful_timeout))
+                    if not process.is_alive():
+                        logger.info("Actor %s exited cooperatively.", name)
+                        return
+
+                process.terminate()
+                process.join(timeout=max(0.0, terminate_timeout))
+                if process.is_alive():
+                    logger.warning(
+                        "Actor %s did not exit after terminate within timeout; escalating to kill.",
+                        name,
+                    )
+                    process.kill()
+                    process.join(timeout=max(0.0, kill_timeout))
+                if process.is_alive():
                     logger.warning("Actor %s did not exit after kill within timeout.", name)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('tree', e)

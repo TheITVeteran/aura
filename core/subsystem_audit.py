@@ -196,12 +196,38 @@ class SubsystemAudit:
                 lines.append(f"  ❌ {name}: NEVER SEEN")
         
         required = contract.get("required_probes", {}) if isinstance(contract, dict) else {}
-        required_ok = bool(required.get("all_passed", False))
+        try:
+            from core.runtime.health_contract import required_probe_groups_pass
+
+            required_ok = required_probe_groups_pass(required)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "subsystem_audit",
+                exc,
+                severity="critical",
+                action="health pulse failed closed: required probe validator unavailable",
+                enforce_failure_policy=False,
+            )
+            required_ok = False
         contract_healthy = bool(contract.get("healthy", False)) if isinstance(contract, dict) else False
+        subsystem_ok = bool(health.get("all_ok", False))
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
         probe_status = "PASS" if required_ok else "FAIL"
+        if contract_healthy and required_ok and subsystem_ok:
+            runtime_status = contract_status.upper()
+            subsystem_status = "PASS"
+        elif not required_ok:
+            runtime_status = "CRITICAL"
+            subsystem_status = "FAIL" if not subsystem_ok else "PASS"
+        elif contract_status.lower() in {"dead", "critical"}:
+            runtime_status = contract_status.upper()
+            subsystem_status = "FAIL" if not subsystem_ok else "PASS"
+        else:
+            runtime_status = "DEGRADED"
+            subsystem_status = "FAIL" if not subsystem_ok else "PASS"
         summary = (
-            f"Runtime: {contract_status.upper()} | Required probes: {probe_status} | "
+            f"Runtime: {runtime_status} | Required probes: {probe_status} | "
+            f"Subsystem audit: {subsystem_status} | "
             f"Heartbeats: {active_count}/{len(self.SUBSYSTEMS)} ACTIVE"
         )
         if not contract_healthy or not required_ok:
@@ -218,6 +244,10 @@ class SubsystemAudit:
                             failure.get("error") or failure.get("liveness") or "failed",
                         )
                     )
+        if required_ok and contract_healthy and not subsystem_ok:
+            lines.append(
+                "  ❌ subsystem_audit: required subsystem heartbeat contract not satisfied"
+            )
         if stale_count:
             summary += f" | ⚠️ {stale_count} STALE"
         if degraded_count:

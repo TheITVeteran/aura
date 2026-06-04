@@ -380,7 +380,16 @@ def main(argv: list[str] | None = None) -> int:
         payload = record_reviews_from_args(args)
     else:
         payload = summarize_semantic_reviews(ledger_path=Path(args.ledger))
-    print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    try:
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True, default=str))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        return 0
     return 0
 
 

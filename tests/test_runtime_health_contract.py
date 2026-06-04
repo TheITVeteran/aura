@@ -337,3 +337,25 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
     }
 
     assert required_probe_groups_pass(forged) is False
+
+
+def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+
+    def forged_probe_status(_services):
+        return {
+            "all_passed": True,
+            "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        }
+
+    monkeypatch.setattr(
+        "core.runtime.health_contract._required_probe_status_from_services",
+        forged_probe_status,
+    )
+
+    report = runtime_health_report()
+
+    assert report["status"] == HealthLevel.HEALTHY.value
+    assert report["healthy"] is False
+    assert report["operational"] is False
+    assert report["status_code"] == 503

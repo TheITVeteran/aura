@@ -25,6 +25,66 @@ def _env_float(name: str, default: float) -> float:
         logger.debug("Invalid %s=%r; using %.1f", name, raw, default)
         return float(default)
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def foreground_only_runtime() -> bool:
+    """Return True when Aura should boot only foreground/user-facing loops."""
+
+    return _env_flag("AURA_FOREGROUND_ONLY", False)
+
+
+def background_loop_start_reason(origin: Any = None) -> str:
+    """Explain why a persistent background loop must not start.
+
+    ``background_activity_reason`` gates individual work items. This helper
+    gates loop creation itself for modes where idle autonomy would contaminate
+    proof artifacts or compete with the live user lane.
+    """
+
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        if is_shutdown_requested():
+            return "shutdown_requested"
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background loop start because shutdown probe failed",
+        )
+        logger.warning("Background loop shutdown probe failed: %s", _exc)
+        return "shutdown_probe_unavailable"
+
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        if proof_run_active(origin=origin):
+            return "proof_run_active"
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background loop start because proof-run signal failed",
+        )
+        logger.warning("Background loop proof-run probe failed: %s", _exc)
+        return "proof_signal_unavailable"
+
+    if foreground_only_runtime():
+        return "foreground_only_runtime"
+
+    return ""
+
+
+def background_loop_start_allowed(origin: Any = None) -> bool:
+    return not background_loop_start_reason(origin)
+
+
 _USER_FACING_ORIGIN_TOKENS = frozenset({
     "user",
     "voice",
@@ -255,6 +315,9 @@ def background_activity_reason(
             action="continued background policy evaluation without proof-run signal",
         )
         logger.debug("Proof-run background policy check unavailable: %s", _exc)
+
+    if foreground_only_runtime():
+        return "foreground_only_runtime"
 
     orch = orchestrator
     if orch is not None:
