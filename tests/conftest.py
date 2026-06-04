@@ -1,10 +1,12 @@
 """Shared pytest fixtures for Aura smoke tests."""
 import asyncio
 import builtins
+import contextlib
 import inspect
 import os
 import shutil
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -137,8 +139,8 @@ def service_container():
 @pytest.fixture(autouse=True)
 def _disable_redis_event_bus_for_tests():
     """Keep the test suite local-only so Redis client coroutines don't leak warnings."""
-    from core.config import config
     from core import event_bus as event_bus_module
+    from core.config import config
 
     prev_use_for_events = bool(getattr(config.redis, "use_for_events", False))
     prev_bus_use_redis = bool(getattr(event_bus_module.get_event_bus(), "_use_redis", False))
@@ -247,7 +249,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 @pytest.fixture
 def mock_container(service_container):
     """Full architectural mock registry for Aura tests."""
-    from unittest.mock import MagicMock, AsyncMock, patch
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     from core.container import ServiceContainer
     
     # Mock AgencyBus to allow impulses to pass
@@ -354,11 +357,12 @@ def mock_container(service_container):
 @pytest.fixture
 def orchestrator(mock_container):
     """Hardened RobustOrchestrator fixture with full dependency injection."""
-    from unittest.mock import MagicMock, AsyncMock
-    from core.orchestrator import RobustOrchestrator
-    from core.orchestrator.orchestrator_types import SystemStatus
     import asyncio
     import time
+    from unittest.mock import AsyncMock, MagicMock
+
+    from core.orchestrator import RobustOrchestrator
+    from core.orchestrator.orchestrator_types import SystemStatus
 
     # Initialize instance WITHOUT class patching
     orch = RobustOrchestrator()
@@ -372,10 +376,10 @@ def orchestrator(mock_container):
     orch.status = status_obj
     
     # Ensure queues and locks exist
-    orch.message_queue = getattr(asyncio, 'Queue')()
-    orch.reply_queue = getattr(asyncio, 'Queue')()
-    orch._lock = getattr(asyncio, 'Lock')()
-    orch._history_lock = getattr(asyncio, 'Lock')()
+    orch.message_queue = asyncio.Queue()
+    orch.reply_queue = asyncio.Queue()
+    orch._lock = asyncio.Lock()
+    orch._history_lock = asyncio.Lock()
     
     # Setup core dependencies from container
     for component in ["cognitive_engine", "memory", "capability_engine", 
@@ -387,16 +391,17 @@ def orchestrator(mock_container):
         if component == "mycelium":
             # Mycelium has sync methods like match_hardwired and rooted_flow call
             from unittest.mock import MagicMock
+
             from core.orchestrator.main import AsyncNullContext
             svc = MagicMock()
             svc.rooted_flow.return_value = AsyncNullContext()
             svc.match_hardwired.return_value = None
         elif component == "state_machine":
-             from unittest.mock import MagicMock, AsyncMock
+             from unittest.mock import AsyncMock, MagicMock
              svc = MagicMock()
              svc.execute = AsyncMock()
         elif component == "intent_router":
-             from unittest.mock import MagicMock, AsyncMock
+             from unittest.mock import AsyncMock, MagicMock
              svc = MagicMock()
              svc.classify = AsyncMock(return_value="chitchat")
         elif component == "output_gate":
@@ -415,28 +420,30 @@ def orchestrator(mock_container):
     try:
         yield orch
     finally:
+        status = getattr(orch, "status", None)
+        if status is not None:
+            if hasattr(status, "running"):
+                status.running = False
+            if hasattr(status, "is_processing"):
+                status.is_processing = False
+
+        stop_event = getattr(orch, "_stop_event", None)
+        if stop_event is not None and hasattr(stop_event, "set"):
+            stop_event.set()
+
+        async def _cleanup_tasks():
+            for attr in ("_current_thought_task", "_autonomous_task"):
+                task = getattr(orch, attr, None)
+                if isinstance(task, asyncio.Task) and not task.done():
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await asyncio.wait_for(task, timeout=_CLEANUP_TIMEOUT_S)
+
         try:
-            status = getattr(orch, "status", None)
-            if status is not None:
-                if hasattr(status, "running"):
-                    status.running = False
-                if hasattr(status, "is_processing"):
-                    status.is_processing = False
-
-            stop_event = getattr(orch, "_stop_event", None)
-            if stop_event is not None and hasattr(stop_event, "set"):
-                stop_event.set()
-
-            async def _cleanup_tasks():
-                for attr in ("_current_thought_task", "_autonomous_task"):
-                    task = getattr(orch, attr, None)
-                    if isinstance(task, asyncio.Task) and not task.done():
-                        task.cancel()
-                        try:
-                            await task
-                        except Exception:
-                            pass
-
             asyncio.run(_cleanup_tasks())
-        except Exception:
-            pass
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            warnings.warn(
+                f"mock_orchestrator task cleanup did not complete cleanly: {type(exc).__name__}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )

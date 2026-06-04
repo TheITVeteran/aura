@@ -25,18 +25,33 @@ import asyncio
 import logging
 import os
 import random
+import sys
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from core.utils.task_tracker import get_task_tracker
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.utils.task_tracker import get_task_tracker  # noqa: E402
 
 logger = logging.getLogger("Aura.Chaos")
 
 
 _FAULTS: dict[str, Callable[[], Awaitable[dict[str, Any]]]] = {}
+_FAULT_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+)
 
 
 def register(name: str) -> Callable[[Callable[[], Awaitable[dict[str, Any]]]], Callable[[], Awaitable[dict[str, Any]]]]:
@@ -128,7 +143,7 @@ async def _sever_network() -> dict[str, Any]:
             os.environ.pop("HTTPS_PROXY", None)
         else:
             os.environ["HTTPS_PROXY"] = prev
-    get_task_tracker().create_task(_restore())
+    get_task_tracker().create_task(_restore(), name="chaos.sever_network.restore_proxy")
     return {"kind": "sever_network", "applied": True, "restored_in_s": 45}
 
 
@@ -136,8 +151,9 @@ async def inject_random_fault() -> dict[str, Any]:
     name = random.choice(list(_FAULTS.keys()))
     try:
         out = await _FAULTS[name]()
-    except Exception as exc:
-        return {"kind": name, "applied": False, "error": str(exc)}
+    except _FAULT_RECOVERABLE_ERRORS as exc:
+        logger.warning("Chaos fault %s failed to apply: %s", name, exc, exc_info=True)
+        return {"kind": name, "applied": False, "error": str(exc), "error_type": type(exc).__name__}
     return out
 
 

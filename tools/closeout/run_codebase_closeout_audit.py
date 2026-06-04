@@ -30,6 +30,15 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 DEFAULT_OUT = ROOT / "artifacts" / "current" / "closeout_audit"
 _SUBPROCESS_GATEWAY = get_subprocess_gateway()
+_GATE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    TimeoutError,
+)
 
 TEXT_EXTENSIONS = {
     ".cfg",
@@ -290,7 +299,7 @@ def production_readiness_gate() -> GateResult:
             ),
             duration_s=round(time.time() - started, 4),
         )
-    except Exception as exc:
+    except _GATE_RECOVERABLE_ERRORS as exc:
         return GateResult(
             name="production_readiness_contract",
             passed=False,
@@ -331,7 +340,7 @@ def architecture_map_gate(out_dir: Path) -> GateResult:
             ),
             duration_s=round(time.time() - started, 4),
         )
-    except Exception as exc:
+    except _GATE_RECOVERABLE_ERRORS as exc:
         return GateResult(
             name="architecture_dependency_map",
             passed=False,

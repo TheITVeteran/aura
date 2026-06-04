@@ -141,15 +141,17 @@ async def test_shm_atomicity():
     
     from threading import Event
     stop_event = Event()
+    write_errors = 0
     
     def writer_loop():
+        nonlocal write_errors
         i = 0
         while not stop_event.is_set():
             data = {"id": i, "payload": "X" * 100}
             try:
                 transport_w.write(data)
-            except Exception:
-                pass
+            except (BufferError, RuntimeError, ValueError, OSError):
+                write_errors += 1
             i += 1
             
     from threading import Thread
@@ -168,6 +170,7 @@ async def test_shm_atomicity():
     w.join()
     transport_w.close()
     transport_r.close()
+    errors += write_errors
     
     if errors == 0:
         logger.info("✅ SUCCESS: No torn reads detected in 200 stress cycles.")

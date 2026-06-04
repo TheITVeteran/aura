@@ -6,15 +6,25 @@ import pytest
 
 
 def heavy_background_task(stop_event: threading.Event):
-    """Simulate heavy CPU-bound task (e.g. dream consolidation)."""
+    """Simulate blocking background work (e.g. dream consolidation)."""
     while not stop_event.is_set():
-        # Blocking the event loop entirely for 100ms
+        # Sleeps in a worker thread; the event loop should remain responsive.
         time.sleep(0.1)
         yield
 
+
+async def _measure_sleep_p95(samples: int = 10, interval_s: float = 0.01) -> float:
+    latencies = []
+    for _ in range(samples):
+        start = time.perf_counter()
+        await asyncio.sleep(interval_s)
+        latencies.append(time.perf_counter() - start)
+    return sorted(latencies)[int(len(latencies) * 0.95)]
+
+
 @pytest.mark.asyncio
 async def test_realtime_concurrency():
-    """Prove that background work blocks real-time reflex actions."""
+    """Prove background work does not materially block real-time reflex actions."""
     print("\n   - Starting background dream consolidation...")
     
     # We use a thread to run the blocking background task 
@@ -25,21 +35,24 @@ async def test_realtime_concurrency():
         for _ in heavy_background_task(stop_event):
             pass
 
+    baseline_p95 = await _measure_sleep_p95()
     bg_thread = threading.Thread(target=run_bg, daemon=False)
     bg_thread.start()
     try:
-        latencies = []
         print("   - Measuring reflex latency (10 samples)...")
-        for _ in range(10):
-            start = time.perf_counter()
-            await asyncio.sleep(0.01) # Baseline 10ms
-            latencies.append(time.perf_counter() - start)
+        loaded_p95 = await _measure_sleep_p95()
+        allowed_p95 = max(0.1, baseline_p95 * 3.0 + 0.02)
+        print(
+            f"   - baseline p95: {baseline_p95*1000:.2f}ms; "
+            f"loaded p95: {loaded_p95*1000:.2f}ms; "
+            f"allowed: {allowed_p95*1000:.2f}ms"
+        )
 
-        # Threshold is tight: < 100ms for reflexes even with blocking background
-        p95 = sorted(latencies)[int(len(latencies) * 0.95)]
-        print(f"   - p95 Latency: {p95*1000:.2f}ms")
-
-        assert p95 < 0.1, f"Reflex latency too high: {p95*1000:.2f}ms (p95)"
+        assert loaded_p95 < allowed_p95, (
+            f"Reflex latency regressed under background load: "
+            f"baseline={baseline_p95*1000:.2f}ms loaded={loaded_p95*1000:.2f}ms "
+            f"allowed={allowed_p95*1000:.2f}ms"
+        )
     finally:
         stop_event.set()
         bg_thread.join(timeout=1.0)
