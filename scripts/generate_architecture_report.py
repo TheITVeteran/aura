@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Generate a live-source Aura architecture report as HTML and PDF.
 
@@ -6,22 +5,26 @@ The report is intentionally source-grounded: it reads the repository's current
 documentation and file tree, summarizes key architecture areas, and optionally
 prints a PDF through a locally installed Chrome/Chromium binary.
 """
-
-from core.runtime.atomic_writer import atomic_write_text
+from __future__ import annotations
 
 import argparse
 import html
 import os
 import re
-import subprocess
+import sys
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 DEFAULT_OUTPUT_DIR = Path.home() / "Desktop"
 
 
@@ -136,16 +139,17 @@ def markdown_headings(path: Path, *, limit: int = 8) -> list[str]:
 
 def git_value(args: Iterable[str]) -> str:
     try:
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             ["git", *args],
             cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
             timeout=10,
-            check=True,
+            read_only=True,
+            source="architecture_report_git_value",
         )
+        if result.returncode != 0:
+            return ""
         return result.stdout.strip()
-    except Exception:
+    except (OSError, RuntimeError, TimeoutError, ValueError):
         return ""
 
 
@@ -164,7 +168,7 @@ def count_lines(path: Path) -> int:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
             return sum(1 for _ in handle)
-    except Exception:
+    except OSError:
         return 0
 
 
@@ -587,13 +591,20 @@ def export_pdf(html_path: Path, pdf_path: Path) -> None:
         f"--print-to-pdf={pdf_path}",
         html_uri,
     ]
-    subprocess.run(cmd, check=True, timeout=180)
+    result = get_subprocess_gateway().run(
+        cmd,
+        timeout=180,
+        read_only=True,
+        source="architecture_report_pdf_export",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Chrome PDF export failed.")
 
 
 def main() -> int:
     args = parse_args()
     output_dir: Path = args.output_dir.expanduser().resolve()
-    get_task_tracker().create_task(get_storage_gateway().create_dir(output_dir, cause='main'))
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     html_path = output_dir / f"{args.basename}.html"
     pdf_path = output_dir / f"{args.basename}.pdf"

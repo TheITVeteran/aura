@@ -6,7 +6,7 @@ Every commit must pass these before merging:
 
 1. **Syntax**: All Python files parse without SyntaxError
 2. **Tests**: `pytest tests/ -q` — all tests pass
-3. **No hardcoded paths**: No `/Users/bryan` in tracked files
+3. **No hardcoded paths**: No personal home-directory literals such as `<USER_HOME>` in tracked files
 4. **No model artifacts**: No `.safetensors`, `.gguf`, or files > 1MB in git
 5. **No log files**: No `.log` files tracked
 6. **Imports resolve**: Core modules import without error

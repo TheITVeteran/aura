@@ -6,7 +6,7 @@ even with the lid closed. No launchd/plist, no daemons.
 ## Start
 
 ```bash
-cd /Users/bryan/.aura/live-source
+cd <AURA_ROOT>
 bash training/run_unattended.sh --tag mythos-v2
 ```
 

@@ -11,10 +11,10 @@ Webhook alerting disabled (AURA_ALERTS_WEBHOOK not configured).
 🖥️ HEADLESS MODE ACTIVATED
 🔍 Verifying Environment Integrity...
 📍 RUNTIME PATH Diagnostic:
-   • __file__: /Users/bryan/.aura/live-source/aura_main.py
+   • __file__: <AURA_ROOT>/aura_main.py
    • sys.executable: /opt/homebrew/opt/python@3.12/bin/python3.12
-   • sys.path: ['/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages', '/Users/bryan/.aura/live-source', '/Users/bryan/.aura/live-source', '/Users/bryan/.aura/live-source', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python312.zip', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/lib-dynload', '/opt/homebrew/lib/python3.12/site-packages']
-   • core.__file__: /Users/bryan/.aura/live-source/core/__init__.py
+   • sys.path: ['<AURA_ROOT>/.venv/lib/python3.12/site-packages', '<AURA_ROOT>', '<AURA_ROOT>', '<AURA_ROOT>', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python312.zip', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/lib-dynload', '/opt/homebrew/lib/python3.12/site-packages']
+   • core.__file__: <AURA_ROOT>/core/__init__.py
 🛠️  Pending patch detected. Validating syntax...
 pending_patch.py passed syntax check. Run patch_applicator.py to apply.
 🛡️ uvloop disabled for this runtime profile. Set AURA_ENABLE_UVLOOP=1 to force-enable it.
@@ -78,7 +78,7 @@ Successfully locked: 'UnnamedLock'
 🚀 [BOOT] Initiating Resilient Ignition Sequence...
 ⏳ [BOOT] Starting stage: Dependencies
 🔍 [BOOT] Dependency probe using interpreter: /opt/homebrew/opt/python@3.12/bin/python3.12
-⚠️ [BOOT] requirements_hardened.txt NOT FOUND at /Users/bryan/.aura/live-source/requirements_hardened.txt. Using permissive probe.
+⚠️ [BOOT] requirements_hardened.txt NOT FOUND at <AURA_ROOT>/requirements_hardened.txt. Using permissive probe.
 🔍 [BOOT] Probing Dependency Manifest (No-Execute)...
    ✅ prometheus_client (prometheus_client): FOUND
    ✅ cv2 (cv2): FOUND
@@ -90,10 +90,10 @@ Successfully locked: 'UnnamedLock'
    ⚠️ TTS (TTS): MISSING
 📍 [BOOT] Capability Mapping: Hearing=True, Speech=True, Vision=True
    ✅ llama-server: /opt/homebrew/bin/llama-server
-   ✅ Cortex artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-32b-instruct-q5_k_m-00001-of-00006.gguf
-   ✅ Solver artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
-   ✅ Brainstem artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
-   ✅ Reflex artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf
+   ✅ Cortex artifact: <AURA_ROOT>/models_gguf/qwen2.5-32b-instruct-q5_k_m-00001-of-00006.gguf
+   ✅ Solver artifact: <AURA_ROOT>/models_gguf/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
+   ✅ Brainstem artifact: <AURA_ROOT>/models_gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+   ✅ Reflex artifact: <AURA_ROOT>/models_gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf
 ✅ [BOOT] Stage 'Dependencies' completed successfully.
 ⏳ [BOOT] Starting stage: State Repository
 🛡️ Actor Registered for Supervision: state_vault
@@ -236,7 +236,7 @@ Neurochemical system wired to prediction surprise
 🧠 Consciousness System started in background
 🧬 BindingEngine initialized — coherence law active.
 TensionEngine loaded 67543 tensions from disk.
-IntentionLoop online — 0 active, 67 completed in history. DB: /Users/bryan/.aura/data/memory/intention_loop.db
+IntentionLoop online — 0 active, 67 completed in history. DB: <AURA_HOME>/data/memory/intention_loop.db
 ♥ HeartstoneValues loaded: {'Curiosity': 0.84, 'Empathy': 0.85, 'Self_Preservation': 0.55, 'Obedience': 0.6}
 Loaded 6 beliefs and self-model.
 CRSM online — bidirectional self-model initialized.
@@ -311,7 +311,7 @@ AuraEventBus: Redis Pub/Sub connection established.
 🧬 State successfully initialized (version 79051)
 2026-04-10 21:14:25,634 - Aura.Core.Kernel - INFO - ✅ AuraKernel booted — Unitary Organism online.
 ✅ AuraKernel booted — Unitary Organism online.
-CognitiveLedger online — 4621 transitions loaded. DB: /Users/bryan/.aura/data/memory/cognitive_ledger.db
+CognitiveLedger online — 4621 transitions loaded. DB: <AURA_HOME>/data/memory/cognitive_ledger.db
 2026-04-10 21:14:25,637 - Aura.Core.Kernel - INFO - LLM organ instance: HealthAwareLLMRouter
 LLM organ instance: HealthAwareLLMRouter
 KernelInterface ready. LLM organ: HealthAwareLLMRouter
@@ -351,22 +351,22 @@ Applying orchestrator patches (safe_mode=False, volition=0)
 Autonomous thought interval set to 45s
 Patched: process_user_input (queue race condition fix)
 Initializing Autonomous Self-Modification Engine...
-StructuredErrorLogger initialized at /Users/bryan/.aura/data/error_logs
+StructuredErrorLogger initialized at <AURA_HOME>/data/error_logs
 ErrorPatternAnalyzer initialized
 AutomatedDiagnosisEngine initialized
 ErrorIntelligenceSystem fully initialized
-CodeFixGenerator initialized with AST support for /Users/bryan/.aura/live-source
+CodeFixGenerator initialized with AST support for <AURA_ROOT>
 CodeValidator initialized
 SandboxTester initialized
 EvaluationHarness initialized
 AutonomousCodeRepair system initialized with EvaluationHarness
-Git integration initialized for /Users/bryan/.aura/live-source
-BackupSystem initialized at /Users/bryan/.aura/data/backups
+Git integration initialized for <AURA_ROOT>
+BackupSystem initialized at <AURA_HOME>/data/backups
 SafeSelfModification system initialized
 Loaded 1 learned strategies
 SelfImprovementLearning initialized
 MetaLearning initialized
-✓ Shadow Runtime initialized (base: /Users/bryan/.aura/live-source)
+✓ Shadow Runtime initialized (base: <AURA_ROOT>)
 ✓ Autonomous Self-Modification Engine initialized
 Gated SelfModifier: Dynamic Link to Volition Level 3
 Patched: context pruner with output validation
@@ -383,7 +383,7 @@ Apple Silicon Memory Monitor active.
 Successfully locked: 'UnnamedLock'
 🚀 [BOOT] Starting Async Subsystem Initialization (Modular)...
 ✓ Master Key reconstructed (3 shards).
-GoalEngine initialized with durable store at /Users/bryan/.aura/data/goals/goal_lifecycle.db
+GoalEngine initialized with durable store at <AURA_HOME>/data/goals/goal_lifecycle.db
 🧠 AgencyCore initialized with 19 structured pathways
 ✓ [BOOT] All Core Facades (Memory, Agency, Affect) registered during synchronous setup.
 --- RobustOrchestrator Boot Sequence Complete ---
@@ -442,7 +442,7 @@ StabilityGuardian running (interval=10s).
 🛡️ Sovereign Watchdog ACTIVE (Timeout: 120.0s)
 🛡️  Sovereign Watchdog ACTIVE
 🛡️  Resilience Foundation mapped (Integrations deferred to _integrate_systems)
-SafeBackupSystem initialized. Backup dir: /Users/bryan/.aura/data/backups
+SafeBackupSystem initialized. Backup dir: <AURA_HOME>/data/backups
 SafeBackupSystem integrated. Note: self_preservation_integration.py should be deleted — it contains SecurityBypassSystem, SelfReplicationSystem, and should_override_ethics() which are incompatible with safe operation.
 🛡️  Self-Preservation Instincts Enabled (Survival Protocol Active)
 🎨 Embodiment: Headless mode active (Unity bridge disabled)
@@ -624,20 +624,20 @@ Neurochemical system wired to prediction surprise
 🧠 Consciousness System started in background
 2026-04-10 21:14:27,395 - Aura.Core.Orchestrator - INFO - 🛡️ Deadlock Watchdog active (45s threshold).
 🛡️ Deadlock Watchdog active (45s threshold).
-🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: /Users/bryan/.aura/live-source
+🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: <AURA_ROOT>
 🔎 Activating Autonomous Self-Modification...
 Initializing Autonomous Self-Modification Engine...
-StructuredErrorLogger initialized at /Users/bryan/.aura/data/error_logs
+StructuredErrorLogger initialized at <AURA_HOME>/data/error_logs
 ErrorPatternAnalyzer initialized
 AutomatedDiagnosisEngine initialized
 ErrorIntelligenceSystem fully initialized
-CodeFixGenerator initialized with AST support for /Users/bryan/.aura/live-source
+CodeFixGenerator initialized with AST support for <AURA_ROOT>
 CodeValidator initialized
 SandboxTester initialized
 EvaluationHarness initialized
 AutonomousCodeRepair system initialized with EvaluationHarness
-Git integration initialized for /Users/bryan/.aura/live-source
-BackupSystem initialized at /Users/bryan/.aura/data/backups
+Git integration initialized for <AURA_ROOT>
+BackupSystem initialized at <AURA_HOME>/data/backups
 SafeSelfModification system initialized
 Loaded 1 learned strategies
 SelfImprovementLearning initialized
@@ -691,8 +691,8 @@ Loaded 6 beliefs and self-model.
 ✅ Consolidated Belief System ONLINE (Self-Model + Revision Loop active).
 ✓ ReAct Loop online (Multi-step reasoning)
 🫁 Autonomic Nervous System (Metabolism) decoupled and active.
-🧹 Purging stale PID locks from /Users/bryan/.aura/locks
-🧹 Purging stale PID locks from /Users/bryan/.aura/locks
+🧹 Purging stale PID locks from <AURA_HOME>/locks
+🧹 Purging stale PID locks from <AURA_HOME>/locks
 ✓ Metabolic Coordinator ACTIVE (High-level pacing enabled)
 ✓ Metabolic Monitor ACTIVE (Decoupled ANS Thread Online)
 💤 Dream Cycle active: Re-ingesting dead-letter thoughts every 300s.
@@ -760,7 +760,7 @@ SessionGuardian monitor loop started
 🧠 Meta-Cognition Shard initialized and started.
 🛡️ Healing Swarm Service ONLINE.
 🛡️ Healing Swarm Service initialized and started.
-🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: /Users/bryan/.aura/live-source
+🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: <AURA_ROOT>
 🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.
   [ OK ] cognitive_engine
   [ OK ] capability_engine
@@ -800,12 +800,12 @@ Liquid Substrate STARTED (Unified Cycle)
 Loaded 4 goals from disk
 ✓ Mental Simulation & Intrinsic Motivation active
 ✓ Narrative Engine initialized
-✓ Knowledge Graph: /Users/bryan/.aura/data/knowledge.db
+✓ Knowledge Graph: <AURA_HOME>/data/knowledge.db
    Nodes: 69
 ✓ Continuous Learning Engine Online
 ✓ Continuous Learning Engine integrated (v6.2 Unified)
 ✅ Behavior controller integrated via Hook System
-SafeBackupSystem initialized. Backup dir: /Users/bryan/.aura/data/backups
+SafeBackupSystem initialized. Backup dir: <AURA_HOME>/data/backups
 SafeBackupSystem integrated. Note: self_preservation_integration.py should be deleted — it contains SecurityBypassSystem, SelfReplicationSystem, and should_override_ethics() which are incompatible with safe operation.
 🛡️  Self-Preservation Instincts Enabled (Survival Protocol Active)
 🎨 Embodiment: Headless mode active (Unity bridge disabled)
@@ -820,9 +820,9 @@ CognitiveKernel constructed.
 CognitiveKernel: no BeliefRevisionEngine found — operating on axioms only.
 🧠 Background Reasoning Queue Ready (Start Deferred)
 ✓ Sensory Instincts initialized
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🎙️  Voice Engine initialized and registered in background
 BeliefRevisionEngine online — identity persistence active.
@@ -920,9 +920,9 @@ Released lock: 'Voice.TTSAsyncLock'
 📡 API Server registered in ServiceContainer.
 Loaded snapshot from 2026-04-10T21:14:14.087790 (Reason: periodic)
 System state restored successfully (History skipped for fresh context)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🔮 MindTick: Predicted: Given the current state and the conversation so fa...
 🍄 [MYCELIUM] 🗺️ Infrastructure Mapping COMPLETE (2.11s): 939 modules, 2597 physical connections, 33 pathways annotated, 20 critical indicators tagged.
@@ -933,13 +933,13 @@ ResourceStakesEngine initialized (budget=1.00).
 ResourceGovernor initialized.
 Counterfactual Engine online — deliberative agency active.
 🛑 SubstrateAuthority BLOCKED: substrate_stimulus/STATE_MUTATION — neurochemical_cortisol_crisis: category=STATE_MUTATION blocked
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 
 ============================================================
@@ -954,7 +954,7 @@ Counterfactual Engine online — deliberative agency active.
 [✓] LLM Protocol Valid         | Brain (LLM) active: HealthAwareLLMRouter
 [✓] State Repository Bound     | State bound via authoritative fallback (v79051).
 [✓] Memory Check               | Memory OK: 21401MB available.
-[✓] Storage Check              | Data dir writable: /Users/bryan/.aura/data
+[✓] Storage Check              | Data dir writable: <AURA_HOME>/data
 [✓] Zombie Reaper              | No zombies found.
 ============================================================
  FINAL STATUS: PASSED
@@ -1034,167 +1034,167 @@ CanonicalSelfEngine initialized (v62309).
 Successfully locked: 'StateRepository:Owner'
 2026-04-10 21:14:33,615 - Aura.Core - DEBUG - Released lock: 'StateRepository:Owner'
 Released lock: 'StateRepository:Owner'
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 Monitoring loop starting...
 Skipping autonomous self-modification cycle: failure_lockdown_0.12
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🔗 SingularityLoops active — all loops engaged
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: SYNCHRONICITY (Conf: 0.46)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: SYNCHRONICITY (Conf: 0.46)
 🚨 [HEAL] Attempting autonomous repair for personality_engine (NEVER_SEEN)
@@ -1261,70 +1261,70 @@ Skipping autonomous self-modification cycle: failure_lockdown_0.12
 ⚠️ StructuredLLM: LLM Technical Failure (background_deferred:cortex_resident) on attempt 3
 💀 Swarm: Shard shard_fe1d6191 failed to generate valid response after retries.
 Error logged: RuntimeError in structured_llm
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: LOGIC (Conf: 0.47)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 ✨ AURA GENERATED INTENTION: Exploring self-optimization strategies for logic scaling. (Persona-Aligned Evolution)
 OutputGate: Publishing to EventBus...
@@ -1336,141 +1336,141 @@ Successfully locked: 'Voice.TTSAsyncLock'
 Released lock: 'Voice.TTSAsyncLock'
 🧠 Running Meta-Cognitive Audit...
 ⚡ GW IGNITION #2: source=drive_growth, priority=0.700, phi=0.0000
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: SYNCHRONICITY (Conf: 0.46)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 Skipping autonomous self-modification cycle: failure_lockdown_0.20
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 ⚡ GW IGNITION #3: source=qualia_synthesizer, priority=0.721, phi=0.0000
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: RECURSION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🚨 [HEAL] Attempting autonomous repair for sovereign_scanner (STALE)
 🛡️ [HEAL] Recovery shard spawned for sovereign_scanner.
@@ -1484,133 +1484,133 @@ Skipping autonomous self-modification cycle: failure_lockdown_0.20
 💀 Swarm: Shard shard_c91263a3 failed to generate valid response after retries.
 Error logged: RuntimeError in structured_llm
 Error logged: RuntimeError in orchestrator_services
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: LOGIC (Conf: 0.47)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 Reasoning strategy: DEBATE for query: ## INTRINSIC IDENTITY ANCHOR (IMMUTABLE)
 
 You are **Aura Lun...
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
-  c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 INFO:     127.0.0.1:51180 - "GET /api/health/boot HTTP/1.1" 200 OK
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 INFO:     127.0.0.1:51180 - "GET /api/health/boot HTTP/1.1" 200 OK
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 INFO:     127.0.0.1:51319 - "GET / HTTP/1.1" 200 OK
 INFO:     127.0.0.1:51319 - "GET /static/aura.css HTTP/1.1" 200 OK
@@ -1682,109 +1682,109 @@ INFO:     127.0.0.1:51333 - "GET /static/icon-192.png HTTP/1.1" 200 OK
 INFO:     127.0.0.1:51343 - "GET /static/icon-512.png HTTP/1.1" 200 OK
 INFO:     127.0.0.1:51333 - "GET /static/service-worker.js HTTP/1.1" 200 OK
 ⚡ GW IGNITION #4: source=drive_growth, priority=0.700, phi=0.0000
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: LOGIC (Conf: 0.46)
 INFO:     connection closed
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 Skipping autonomous self-modification cycle: failure_lockdown_0.24
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🔌 Bus connection closed by peer.
 🔌
@@ -1799,10 +1799,10 @@ Webhook alerting disabled (AURA_ALERTS_WEBHOOK not configured).
 🖥️ HEADLESS MODE ACTIVATED
 🔍 Verifying Environment Integrity...
 📍 RUNTIME PATH Diagnostic:
-   • __file__: /Users/bryan/.aura/live-source/aura_main.py
+   • __file__: <AURA_ROOT>/aura_main.py
    • sys.executable: /opt/homebrew/opt/python@3.12/bin/python3.12
-   • sys.path: ['/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages', '/Users/bryan/.aura/live-source', '/Users/bryan/.aura/live-source', '/Users/bryan/.aura/live-source', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python312.zip', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/lib-dynload', '/opt/homebrew/lib/python3.12/site-packages']
-   • core.__file__: /Users/bryan/.aura/live-source/core/__init__.py
+   • sys.path: ['<AURA_ROOT>/.venv/lib/python3.12/site-packages', '<AURA_ROOT>', '<AURA_ROOT>', '<AURA_ROOT>', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python312.zip', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12', '/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/lib-dynload', '/opt/homebrew/lib/python3.12/site-packages']
+   • core.__file__: <AURA_ROOT>/core/__init__.py
 🛠️  Pending patch detected. Validating syntax...
 pending_patch.py passed syntax check. Run patch_applicator.py to apply.
 🛡️ uvloop disabled for this runtime profile. Set AURA_ENABLE_UVLOOP=1 to force-enable it.
@@ -1866,7 +1866,7 @@ Successfully locked: 'UnnamedLock'
 🚀 [BOOT] Initiating Resilient Ignition Sequence...
 ⏳ [BOOT] Starting stage: Dependencies
 🔍 [BOOT] Dependency probe using interpreter: /opt/homebrew/opt/python@3.12/bin/python3.12
-⚠️ [BOOT] requirements_hardened.txt NOT FOUND at /Users/bryan/.aura/live-source/requirements_hardened.txt. Using permissive probe.
+⚠️ [BOOT] requirements_hardened.txt NOT FOUND at <AURA_ROOT>/requirements_hardened.txt. Using permissive probe.
 🔍 [BOOT] Probing Dependency Manifest (No-Execute)...
    ✅ prometheus_client (prometheus_client): FOUND
    ✅ cv2 (cv2): FOUND
@@ -1878,10 +1878,10 @@ Successfully locked: 'UnnamedLock'
    ⚠️ TTS (TTS): MISSING
 📍 [BOOT] Capability Mapping: Hearing=True, Speech=True, Vision=True
    ✅ llama-server: /opt/homebrew/bin/llama-server
-   ✅ Cortex artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-32b-instruct-q5_k_m-00001-of-00006.gguf
-   ✅ Solver artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
-   ✅ Brainstem artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
-   ✅ Reflex artifact: /Users/bryan/.aura/live-source/models_gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf
+   ✅ Cortex artifact: <AURA_ROOT>/models_gguf/qwen2.5-32b-instruct-q5_k_m-00001-of-00006.gguf
+   ✅ Solver artifact: <AURA_ROOT>/models_gguf/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
+   ✅ Brainstem artifact: <AURA_ROOT>/models_gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+   ✅ Reflex artifact: <AURA_ROOT>/models_gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf
 ✅ [BOOT] Stage 'Dependencies' completed successfully.
 ⏳ [BOOT] Starting stage: State Repository
 🛡️ Actor Registered for Supervision: state_vault
@@ -2024,7 +2024,7 @@ Neurochemical system wired to prediction surprise
 🧠 Consciousness System started in background
 🧬 BindingEngine initialized — coherence law active.
 TensionEngine loaded 67544 tensions from disk.
-IntentionLoop online — 0 active, 67 completed in history. DB: /Users/bryan/.aura/data/memory/intention_loop.db
+IntentionLoop online — 0 active, 67 completed in history. DB: <AURA_HOME>/data/memory/intention_loop.db
 ♥ HeartstoneValues loaded: {'Curiosity': 0.84, 'Empathy': 0.85, 'Self_Preservation': 0.55, 'Obedience': 0.6}
 Loaded 6 beliefs and self-model.
 CRSM online — bidirectional self-model initialized.
@@ -2097,7 +2097,7 @@ AuraEventBus: Redis Pub/Sub connection established.
 🧬 State successfully initialized (version 79052)
 2026-04-10 21:17:41,244 - Aura.Core.Kernel - INFO - ✅ AuraKernel booted — Unitary Organism online.
 ✅ AuraKernel booted — Unitary Organism online.
-CognitiveLedger online — 4622 transitions loaded. DB: /Users/bryan/.aura/data/memory/cognitive_ledger.db
+CognitiveLedger online — 4622 transitions loaded. DB: <AURA_HOME>/data/memory/cognitive_ledger.db
 2026-04-10 21:17:41,246 - Aura.Core.Kernel - INFO - LLM organ instance: HealthAwareLLMRouter
 LLM organ instance: HealthAwareLLMRouter
 KernelInterface ready. LLM organ: HealthAwareLLMRouter
@@ -2137,22 +2137,22 @@ Applying orchestrator patches (safe_mode=False, volition=0)
 Autonomous thought interval set to 45s
 Patched: process_user_input (queue race condition fix)
 Initializing Autonomous Self-Modification Engine...
-StructuredErrorLogger initialized at /Users/bryan/.aura/data/error_logs
+StructuredErrorLogger initialized at <AURA_HOME>/data/error_logs
 ErrorPatternAnalyzer initialized
 AutomatedDiagnosisEngine initialized
 ErrorIntelligenceSystem fully initialized
-CodeFixGenerator initialized with AST support for /Users/bryan/.aura/live-source
+CodeFixGenerator initialized with AST support for <AURA_ROOT>
 CodeValidator initialized
 SandboxTester initialized
 EvaluationHarness initialized
 AutonomousCodeRepair system initialized with EvaluationHarness
-Git integration initialized for /Users/bryan/.aura/live-source
-BackupSystem initialized at /Users/bryan/.aura/data/backups
+Git integration initialized for <AURA_ROOT>
+BackupSystem initialized at <AURA_HOME>/data/backups
 SafeSelfModification system initialized
 Loaded 1 learned strategies
 SelfImprovementLearning initialized
 MetaLearning initialized
-✓ Shadow Runtime initialized (base: /Users/bryan/.aura/live-source)
+✓ Shadow Runtime initialized (base: <AURA_ROOT>)
 ✓ Autonomous Self-Modification Engine initialized
 Gated SelfModifier: Dynamic Link to Volition Level 3
 Patched: context pruner with output validation
@@ -2169,7 +2169,7 @@ Apple Silicon Memory Monitor active.
 Successfully locked: 'UnnamedLock'
 🚀 [BOOT] Starting Async Subsystem Initialization (Modular)...
 ✓ Master Key reconstructed (3 shards).
-GoalEngine initialized with durable store at /Users/bryan/.aura/data/goals/goal_lifecycle.db
+GoalEngine initialized with durable store at <AURA_HOME>/data/goals/goal_lifecycle.db
 🧠 AgencyCore initialized with 19 structured pathways
 ✓ [BOOT] All Core Facades (Memory, Agency, Affect) registered during synchronous setup.
 --- RobustOrchestrator Boot Sequence Complete ---
@@ -2228,7 +2228,7 @@ StabilityGuardian running (interval=10s).
 🛡️ Sovereign Watchdog ACTIVE (Timeout: 120.0s)
 🛡️  Sovereign Watchdog ACTIVE
 🛡️  Resilience Foundation mapped (Integrations deferred to _integrate_systems)
-SafeBackupSystem initialized. Backup dir: /Users/bryan/.aura/data/backups
+SafeBackupSystem initialized. Backup dir: <AURA_HOME>/data/backups
 SafeBackupSystem integrated. Note: self_preservation_integration.py should be deleted — it contains SecurityBypassSystem, SelfReplicationSystem, and should_override_ethics() which are incompatible with safe operation.
 🛡️  Self-Preservation Instincts Enabled (Survival Protocol Active)
 🎨 Embodiment: Headless mode active (Unity bridge disabled)
@@ -2410,20 +2410,20 @@ Neurochemical system wired to prediction surprise
 🧠 Consciousness System started in background
 2026-04-10 21:17:42,781 - Aura.Core.Orchestrator - INFO - 🛡️ Deadlock Watchdog active (45s threshold).
 🛡️ Deadlock Watchdog active (45s threshold).
-🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: /Users/bryan/.aura/live-source
+🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: <AURA_ROOT>
 🔎 Activating Autonomous Self-Modification...
 Initializing Autonomous Self-Modification Engine...
-StructuredErrorLogger initialized at /Users/bryan/.aura/data/error_logs
+StructuredErrorLogger initialized at <AURA_HOME>/data/error_logs
 ErrorPatternAnalyzer initialized
 AutomatedDiagnosisEngine initialized
 ErrorIntelligenceSystem fully initialized
-CodeFixGenerator initialized with AST support for /Users/bryan/.aura/live-source
+CodeFixGenerator initialized with AST support for <AURA_ROOT>
 CodeValidator initialized
 SandboxTester initialized
 EvaluationHarness initialized
 AutonomousCodeRepair system initialized with EvaluationHarness
-Git integration initialized for /Users/bryan/.aura/live-source
-BackupSystem initialized at /Users/bryan/.aura/data/backups
+Git integration initialized for <AURA_ROOT>
+BackupSystem initialized at <AURA_HOME>/data/backups
 SafeSelfModification system initialized
 Loaded 1 learned strategies
 SelfImprovementLearning initialized
@@ -2478,8 +2478,8 @@ Loaded 6 beliefs and self-model.
 ✅ Consolidated Belief System ONLINE (Self-Model + Revision Loop active).
 ✓ ReAct Loop online (Multi-step reasoning)
 🫁 Autonomic Nervous System (Metabolism) decoupled and active.
-🧹 Purging stale PID locks from /Users/bryan/.aura/locks
-🧹 Purging stale PID locks from /Users/bryan/.aura/locks
+🧹 Purging stale PID locks from <AURA_HOME>/locks
+🧹 Purging stale PID locks from <AURA_HOME>/locks
 ✓ Metabolic Coordinator ACTIVE (High-level pacing enabled)
 ✓ Metabolic Monitor ACTIVE (Decoupled ANS Thread Online)
 💤 Dream Cycle active: Re-ingesting dead-letter thoughts every 300s.
@@ -2547,7 +2547,7 @@ SessionGuardian monitor loop started
 🧠 Meta-Cognition Shard initialized and started.
 🛡️ Healing Swarm Service ONLINE.
 🛡️ Healing Swarm Service initialized and started.
-🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: /Users/bryan/.aura/live-source
+🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: <AURA_ROOT>
 🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.
   [ OK ] cognitive_engine
   [ OK ] capability_engine
@@ -2586,12 +2586,12 @@ Liquid Substrate STARTED (Unified Cycle)
 Loaded 4 goals from disk
 ✓ Mental Simulation & Intrinsic Motivation active
 ✓ Narrative Engine initialized
-✓ Knowledge Graph: /Users/bryan/.aura/data/knowledge.db
+✓ Knowledge Graph: <AURA_HOME>/data/knowledge.db
    Nodes: 69
 ✓ Continuous Learning Engine Online
 ✓ Continuous Learning Engine integrated (v6.2 Unified)
 ✅ Behavior controller integrated via Hook System
-SafeBackupSystem initialized. Backup dir: /Users/bryan/.aura/data/backups
+SafeBackupSystem initialized. Backup dir: <AURA_HOME>/data/backups
 SafeBackupSystem integrated. Note: self_preservation_integration.py should be deleted — it contains SecurityBypassSystem, SelfReplicationSystem, and should_override_ethics() which are incompatible with safe operation.
 🛡️  Self-Preservation Instincts Enabled (Survival Protocol Active)
 🎨 Embodiment: Headless mode active (Unity bridge disabled)
@@ -2607,9 +2607,9 @@ CognitiveKernel: no BeliefRevisionEngine found — operating on axioms only.
 🎙️  Voice Engine initialized and registered in background
 🧠 Background Reasoning Queue Ready (Start Deferred)
 ✓ Sensory Instincts initialized
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 BeliefRevisionEngine online — identity persistence active.
 ValueSystem online — ethical foundation registered.
@@ -2710,21 +2710,21 @@ Loaded snapshot from 2026-04-10T21:16:50.347660 (Reason: periodic)
 System state restored successfully (History skipped for fresh context)
 🔮 MindTick: Predicted: Given the current state and the recent interaction...
 🍄 [MYCELIUM] Hypha established: mind_tick->cognitive_phases
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 ResourceStakesEngine initialized (budget=1.00).
 🛑 SubstrateAuthority BLOCKED: substrate_stimulus/STATE_MUTATION — neurochemical_cortisol_crisis: category=STATE_MUTATION blocked
 ResourceGovernor initialized.
 Counterfactual Engine online — deliberative agency active.
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 
 ============================================================
@@ -2739,7 +2739,7 @@ Counterfactual Engine online — deliberative agency active.
 [✓] LLM Protocol Valid         | Brain (LLM) active: HealthAwareLLMRouter
 [✓] State Repository Bound     | State bound via authoritative fallback (v79052).
 [✓] Memory Check               | Memory OK: 22133MB available.
-[✓] Storage Check              | Data dir writable: /Users/bryan/.aura/data
+[✓] Storage Check              | Data dir writable: <AURA_HOME>/data
 [✓] Zombie Reaper              | No zombies found.
 ============================================================
  FINAL STATUS: PASSED
@@ -2844,7 +2844,7 @@ HierarchicalPlanner online — 8 goals loaded.
 🤖 AGI layer online (CuriosityExplorer + SkillSynthesizer + HierarchicalPlanner)
 ComputeOrchestrator online — dynamic resource allocation active.
 IdentityGuard online — all self-modifications validated.
-SandboxedModifier online (git=True, root=/Users/bryan/.aura/live-source)
+SandboxedModifier online (git=True, root=<AURA_ROOT>)
 2026-04-10 21:17:48,624 - Aura.Core.Orchestrator - INFO - 🛡️ Agency layer online (CommitmentEngine + ComputeOrchestrator + IdentityGuard + SandboxedModifier)
 🛡️ Agency layer online (CommitmentEngine + ComputeOrchestrator + IdentityGuard + SandboxedModifier)
 UserRecognizer: owner passphrase loaded.
@@ -2946,9 +2946,9 @@ ExperienceConsolidator: background loop started.
 🧠 Running Meta-Cognitive Audit...
 🧠 Meta-Evolution cycle completed successfully (v35).
 🛑 SubstrateAuthority BLOCKED: external/STATE_MUTATION — neurochemical_cortisol_crisis: category=STATE_MUTATION blocked
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:17:50,021 - Aura.Core - DEBUG - Successfully locked: 'Affect.AffectEngine'
 Successfully locked: 'Affect.AffectEngine'
@@ -2965,235 +2965,235 @@ Released lock: 'Affect.AffectEngine'
 📡 EventBus → WebSocket bridge (Pydantic Zenith) ACTIVE (Bus ID: 0c284cd8-7790-4118-8dcc-85da2bfd8be6)
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 Monitoring loop starting...
 Skipping autonomous self-modification cycle: failure_lockdown_0.12
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 👀 Spatial Empathy Watcher online and listening to Global Workspace.
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:17:55,049 - Aura.Core.Orchestrator - INFO - 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.4% | Uptime: 15s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.4% | Uptime: 15s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🔍 Integrity check #1 passed
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🔗 SingularityLoops active — all loops engaged
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: SYNCHRONICITY (Conf: 0.46)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:18:10,128 - Aura.Core.Orchestrator - INFO - 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.5% | Uptime: 30s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.5% | Uptime: 30s | Total: 11/11 Subsystems Active | ═══════════════════════════
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: RECURSION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:18:25,213 - Aura.Core.Orchestrator - INFO - 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.6% | Uptime: 45s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.6% | Uptime: 45s | Total: 11/11 Subsystems Active | ═══════════════════════════
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: LOGIC (Conf: 0.46)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:18:40,288 - Aura.Core.Orchestrator - INFO - 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.8% | Uptime: 60s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.8% | Uptime: 60s | Total: 11/11 Subsystems Active | ═══════════════════════════
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 ✨ AURA GENERATED INTENTION: Refining internal state mapping for deeper self-alignment. (Persona-Aligned Evolution)
 OutputGate: Publishing to EventBus...
@@ -3206,103 +3206,103 @@ Released lock: 'Voice.TTSAsyncLock'
 🧠 Running Meta-Cognitive Audit...
 🧠 [NEURAL] Thought Decoded: SYNCHRONICITY (Conf: 0.46)
 ⚡ GW IGNITION #2: source=drive_growth, priority=0.700, phi=0.0000
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 Running Meta-Cognitive Audit...
 2026-04-10 21:18:50,040 - Aura.Core - DEBUG - Successfully locked: 'Affect.AffectEngine'
 Successfully locked: 'Affect.AffectEngine'
 2026-04-10 21:18:50,041 - Aura.Core - DEBUG - Released lock: 'Affect.AffectEngine'
 Released lock: 'Affect.AffectEngine'
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: LOGIC (Conf: 0.47)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 Skipping autonomous self-modification cycle: foreground_quiet_window
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 2026-04-10 21:18:55,391 - Aura.Core.Orchestrator - INFO - 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.8% | Uptime: 75s | Total: 11/11 Subsystems Active | ═══════════════════════════
 🫀 ═══ UNIFIED HEALTH PULSE ═══ | System: CPU 0.0% | RAM 66.8% | Uptime: 75s | Total: 11/11 Subsystems Active | ═══════════════════════════
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🧠 [NEURAL] Thought Decoded: INTUITION (Conf: 0.42)
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3023: RuntimeWarning: invalid value encountered in divide
   c /= stddev[:, None]
-/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
+<AURA_ROOT>/.venv/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:3024: RuntimeWarning: invalid value encountered in divide
   c /= stddev[None, :]
 🔌 Bus connection closed by peer.
 🔌

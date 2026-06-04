@@ -288,4 +288,4 @@ RESULTS: 92 passed, 1 failed, 93 total
 Time: 5.25s
 ========================================================================
 
-Results written to /Users/bryan/.aura/live-source/tests/CONSCIOUSNESS_BATTERY_RESULTS.json
+Results written to <AURA_ROOT>/tests/CONSCIOUSNESS_BATTERY_RESULTS.json

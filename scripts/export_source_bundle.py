@@ -10,18 +10,20 @@ personal-content paths. Keeps: Python core, infrastructure (scripts, CI,
 docker, configs), HTML/CSS/JS interface, markdown docs, shell, Makefile.
 """
 from __future__ import annotations
-from core.runtime.atomic_writer import atomic_write_text
 
 import argparse
 import fnmatch
-import os
 import shutil
 import sys
 from pathlib import Path
 from typing import List, Tuple
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.atomic_writer import atomic_write_text
+
 DOWNLOADS = Path.home() / "Downloads"
 
 MAX_CHARS_PER_PART = 3_900_000  # 100K-char safety margin below the stated 4M cap
@@ -105,16 +107,19 @@ PRIORITY_ORDER: List[Tuple[str, List[str]]] = [
 ]
 
 
-def _should_skip(path: Path) -> bool:
-    parts = set(path.parts)
+def _should_skip(rel_path: Path, full_path: Path) -> bool:
+    parts = set(rel_path.parts)
     if any(p in EXCLUDE_DIRS for p in parts):
         return True
-    name = path.name
+    rel_posix = rel_path.as_posix()
+    if any("/" in excluded and (rel_posix == excluded or rel_posix.startswith(f"{excluded}/")) for excluded in EXCLUDE_DIRS):
+        return True
+    name = rel_path.name
     for pattern in EXCLUDE_GLOBS:
         if fnmatch.fnmatch(name, pattern):
             return True
     try:
-        if path.stat().st_size > 2_000_000:
+        if full_path.stat().st_size > 2_000_000:
             return True
     except OSError:
         return True
@@ -125,7 +130,7 @@ def _collect(root: Path) -> List[Path]:
     """Return architecture files in priority order, no duplicates."""
     seen: set[Path] = set()
     ordered: List[Path] = []
-    for category, patterns in PRIORITY_ORDER:
+    for _category, patterns in PRIORITY_ORDER:
         for pattern in patterns:
             for p in root.glob(pattern):
                 if not p.is_file():
@@ -133,7 +138,7 @@ def _collect(root: Path) -> List[Path]:
                 rel = p.resolve()
                 if rel in seen:
                     continue
-                if _should_skip(p.relative_to(root)):
+                if _should_skip(p.relative_to(root), p):
                     continue
                 seen.add(rel)
                 ordered.append(p)
@@ -141,10 +146,14 @@ def _collect(root: Path) -> List[Path]:
 
 
 def _write_parts(files: List[Path], root: Path, downloads: Path) -> List[Path]:
-    get_task_tracker().create_task(get_storage_gateway().create_dir(downloads, cause='_write_parts'))
+    downloads.mkdir(parents=True, exist_ok=True)
     # Remove old parts so stale content never lingers
+    warnings: list[str] = []
     for old in downloads.glob("aura_source_part_*.txt"):
-        get_task_tracker().create_task(get_storage_gateway().delete(old, cause='_write_parts'))
+        try:
+            old.unlink()
+        except OSError as exc:
+            warnings.append(f"old export part cleanup skipped for {old}: {exc}")
     parts: List[Path] = []
     current_parts: List[str] = []
     current_size = 0
@@ -164,7 +173,8 @@ def _write_parts(files: List[Path], root: Path, downloads: Path) -> List[Path]:
     for path in files:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except (OSError, UnicodeError) as exc:
+            warnings.append(f"text export skipped {path}: {exc}")
             continue
         rel = path.relative_to(root)
         header = (
@@ -178,27 +188,44 @@ def _write_parts(files: List[Path], root: Path, downloads: Path) -> List[Path]:
         current_parts.append(chunk)
         current_size += len(chunk)
     flush()
+    _print_warnings(warnings)
     return parts
 
 
 def _copy_folder(files: List[Path], root: Path, downloads: Path, limit: int = MAX_FOLDER_FILES) -> Path:
     dest = downloads / "aura_source_copy"
+    warnings: list[str] = []
     if dest.exists():
-        get_task_tracker().create_task(get_storage_gateway().delete_tree(dest, cause='_copy_folder'))
-    get_task_tracker().create_task(get_storage_gateway().create_dir(dest, cause='_copy_folder'))
+        try:
+            shutil.rmtree(dest)
+        except (OSError, shutil.Error) as exc:
+            raise RuntimeError(f"Unable to reset source copy folder {dest}: {exc}") from exc
+    dest.mkdir(parents=True, exist_ok=True)
     written = 0
     for path in files:
         if written >= limit:
             break
         rel = path.relative_to(root)
         target = dest / rel
-        get_task_tracker().create_task(get_storage_gateway().create_dir(target.parent, cause='_copy_folder'))
+        target.parent.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copy2(path, target)
             written += 1
-        except Exception:
+        except (OSError, shutil.Error) as exc:
+            warnings.append(f"folder copy skipped {path}: {exc}")
             continue
+    _print_warnings(warnings)
     return dest
+
+
+def _print_warnings(warnings: list[str]) -> None:
+    if not warnings:
+        return
+    print(f"Completed with {len(warnings)} skipped source-bundle operation(s):", file=sys.stderr)
+    for warning in warnings[:20]:
+        print(f"  - {warning}", file=sys.stderr)
+    if len(warnings) > 20:
+        print(f"  - ... {len(warnings) - 20} more", file=sys.stderr)
 
 
 def main() -> int:

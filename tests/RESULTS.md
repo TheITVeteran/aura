@@ -1,5 +1,5 @@
 2026-04-14 12:06:18,732 - Aura.Core - INFO - Webhook alerting disabled (AURA_ALERTS_WEBHOOK not configured).
-/Users/bryan/.aura/live-source/tests/run_null_hypothesis_suite.py:153: DeprecationWarning: There is no current event loop
+<AURA_ROOT>/tests/run_null_hypothesis_suite.py:153: DeprecationWarning: There is no current event loop
   fb0, fb8 = asyncio.get_event_loop().run_until_complete(_phi_test())
 Integrity breach: Severity critical reported. Current: 0.00
 ========================================================================

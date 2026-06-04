@@ -6,7 +6,7 @@
 
 ## Probable root cause: knowledge-graph write lockdown, not LLM failure
 
-The agent sweep of `/Users/bryan/.aura/live-source/.aura_runtime/data/error_logs/error_events.jsonl` and `/Users/bryan/.aura/live-source/.aura_runtime/logs/aura_json.log` surfaced a recurring pattern that cleanly explains the symptom:
+The agent sweep of `<AURA_ROOT>/.aura_runtime/data/error_logs/error_events.jsonl` and `<AURA_ROOT>/.aura_runtime/logs/aura_json.log` surfaced a recurring pattern that cleanly explains the symptom:
 
 1. **`knowledge_graph:memory_write_blocked` (recurring every ~4 min)**
    - Reason: `epistemic_filter requiring reconciliation before writes (source="conversation")`

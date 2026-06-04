@@ -98,10 +98,10 @@ Results:
   background ticking, autonomous-path execution, unified decision gating,
   skills loading/execution, and sustained-load behavior.
 - A local proof artifact was also created on the Desktop:
-  `/Users/bryan/Desktop/AuraSnake.html`
+  `<USER_DESKTOP>/AuraSnake.html`
 - Aura also produced live runtime proof artifacts via her own orchestrator and
   agency stack:
-  - `/Users/bryan/Desktop/agency_test/aura_terminal_runtime_proof.txt`
-  - `/Users/bryan/Desktop/agency_test/aura_live_snake.html`
-  - `/Users/bryan/Desktop/Aura_Manifests/…`
+  - `<USER_DESKTOP>/agency_test/aura_terminal_runtime_proof.txt`
+  - `<USER_DESKTOP>/agency_test/aura_live_snake.html`
+  - `<USER_DESKTOP>/Aura_Manifests/…`
   - `artifacts/aura_live_skill_probe_2026-04-21.json`

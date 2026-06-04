@@ -1,7 +1,7 @@
 # Aura Architecture Dependency Map
 
 Schema: `aura.architecture.dependency_map.v2`
-Root: `/Users/bryan/.aura/live-source`
+Root: `<AURA_ROOT>`
 Generated: `1780496222.950977`
 
 ## Summary

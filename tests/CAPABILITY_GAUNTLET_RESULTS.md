@@ -12,9 +12,9 @@
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -46,9 +46,9 @@ tests/test_audit_chain.py::test_exported_chain_can_be_independently_verified PAS
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -77,9 +77,9 @@ tests/test_causal_exclusion.py::TestPhiCausalExclusion::test_phi_zero_provides_n
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -97,9 +97,9 @@ collecting ... collected 0 items
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -125,9 +125,9 @@ tests/test_canary_replay_real.py::TestCanaryReplayReal::test_canary_report_seria
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -163,9 +163,9 @@ tests/test_grounding_and_plasticity.py::test_grounding_persists_across_reopen PA
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -193,9 +193,9 @@ tests/test_restore_drill.py::test_backup_restore_round_trip_via_aura_home PASSED
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -220,9 +220,9 @@ tests/steering/test_caa_32b.py::TestSteeringABLive::test_live_steering_divergenc
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
@@ -248,9 +248,9 @@ tests/test_long_run_model.py::test_write_report_bundle_emits_markdown_and_json P
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <AURA_ROOT>/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/bryan/.aura/live-source
+rootdir: <AURA_ROOT>
 configfile: pyproject.toml
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
