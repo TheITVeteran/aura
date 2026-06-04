@@ -101,6 +101,39 @@ def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
     assert _heartbeat_response_healthy(_Response()) is False
 
 
+def test_gui_actor_rejects_heartbeat_without_required_probe_components():
+    from interface.gui_actor import _heartbeat_response_healthy
+
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "healthy": True,
+                "status": "healthy",
+                "required_probes": {
+                    "all_passed": True,
+                    "kernel": {"ok": True, "components": {"kernel_interface": True}},
+                    "inference": {
+                        "ok": True,
+                        "components": {"inference_gate": True, "llm_router": True},
+                    },
+                    "memory": {"ok": True, "components": {"state_repository": True}},
+                    "scheduler": {"ok": True, "components": {"scheduler": True}},
+                    "tool_governance": {
+                        "ok": True,
+                        "components": {
+                            "unified_will": True,
+                            "authority_gateway": True,
+                            "capability_engine": True,
+                        },
+                    },
+                },
+            }
+
+    assert _heartbeat_response_healthy(_Response()) is False
+
+
 def test_websocket_runtime_heartbeat_requires_runtime_probe_groups(monkeypatch):
     from core.runtime import health_contract as health_contract_module
     from interface.websocket_manager import runtime_heartbeat_payload

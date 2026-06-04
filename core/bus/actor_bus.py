@@ -99,13 +99,57 @@ class ActorBus:
 
     def get_status(self) -> dict[str, Any]:
         queue_size = self._telemetry_queue.qsize() if self._telemetry_queue is not None else 0
+        transport_status = {
+            name: self._transport_status(transport)
+            for name, transport in self._transports.items()
+        }
         return {
             "running": self._is_running,
             "actors": sorted(self._transports),
+            "healthy": self.is_alive(),
+            "transports": transport_status,
             "telemetry_queue_size": queue_size,
             "telemetry_drops": self._telemetry_drops,
             "send_drops": self._send_drops,
             "last_drop": dict(self._last_drop or {}),
+        }
+
+    def is_alive(self) -> bool:
+        """Return true when the bus and every registered transport are usable."""
+
+        if not self._is_running:
+            return False
+        return all(self._transport_alive(transport) for transport in self._transports.values())
+
+    @staticmethod
+    def _transport_alive(transport: Any) -> bool:
+        is_alive = getattr(transport, "is_alive", None)
+        if callable(is_alive):
+            return bool(is_alive())
+        if not bool(getattr(transport, "_is_running", False)):
+            return False
+        write_conn = getattr(transport, "write_conn", None)
+        if write_conn is not None and bool(getattr(write_conn, "closed", False)):
+            return False
+        if bool(getattr(transport, "_pipe_broken", False)):
+            return False
+        return True
+
+    @classmethod
+    def _transport_status(cls, transport: Any) -> dict[str, Any]:
+        get_status = getattr(transport, "get_status", None)
+        if callable(get_status):
+            status = get_status()
+            if isinstance(status, dict):
+                return status
+        return {
+            "alive": cls._transport_alive(transport),
+            "running": bool(getattr(transport, "_is_running", False)),
+            "pipe_broken": bool(getattr(transport, "_pipe_broken", False)),
+            "write_closed": bool(
+                getattr(getattr(transport, "write_conn", None), "closed", False)
+            ),
+            "legacy_transport_status": True,
         }
 
     def _transport_stop_timeout_s(self) -> float:
@@ -153,12 +197,7 @@ class ActorBus:
         if not self._is_running:
             return False
         transport = self._transports.get(name)
-        if not transport or not getattr(transport, "_is_running", False):
-            return False
-        write_conn = getattr(transport, "write_conn", None)
-        if write_conn is not None and getattr(write_conn, "closed", False):
-            return False
-        if getattr(transport, "_pipe_broken", False):
+        if not transport or not self._transport_alive(transport):
             return False
         return True
 
@@ -330,7 +369,7 @@ class ActorBus:
     async def _health_ping(self, actor: str) -> bool:
         """One-shot TCP/Pipe probe to verify actor responsiveness."""
         transport = self._transports.get(actor)
-        if not transport or not transport._is_running:
+        if not transport or not self._transport_alive(transport):
             return False
             
         # Congestion Check (High Water Mark)

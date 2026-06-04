@@ -2822,13 +2822,24 @@ function laneHealthIsOperational(lane, healthStatus = '') {
 }
 
 const REQUIRED_RUNTIME_PROBES = ['kernel', 'inference', 'memory', 'scheduler', 'tool_governance'];
+const REQUIRED_RUNTIME_PROBE_COMPONENTS = {
+    kernel: ['kernel_interface'],
+    inference: ['inference_gate', 'llm_router'],
+    memory: ['state_repository', 'memory_facade'],
+    scheduler: ['scheduler'],
+    tool_governance: ['unified_will', 'authority_gateway', 'capability_engine']
+};
 
 function requiredRuntimeProbesPass(requiredProbes) {
     if (!requiredProbes || typeof requiredProbes !== 'object') return false;
     if (requiredProbes.all_passed !== true) return false;
     return REQUIRED_RUNTIME_PROBES.every(group => {
         const probe = requiredProbes[group];
-        return !!(probe && typeof probe === 'object' && probe.ok === true);
+        if (!(probe && typeof probe === 'object' && probe.ok === true)) return false;
+        const components = probe.components;
+        if (!components || typeof components !== 'object') return false;
+        const expected = REQUIRED_RUNTIME_PROBE_COMPONENTS[group] || [];
+        return expected.every(component => components[component] === true);
     });
 }
 
@@ -2862,7 +2873,15 @@ function runtimeHealthBlockers(payload) {
         blockers.push('runtime_required_probes');
         REQUIRED_RUNTIME_PROBES.forEach(group => {
             const probe = required && required[group];
-            if (!probe || probe.ok !== true) blockers.push(`probe:${group}`);
+            if (!probe || probe.ok !== true) {
+                blockers.push(`probe:${group}`);
+                return;
+            }
+            const components = probe.components;
+            const expected = REQUIRED_RUNTIME_PROBE_COMPONENTS[group] || [];
+            if (!components || typeof components !== 'object' || expected.some(component => components[component] !== true)) {
+                blockers.push(`probe:${group}`);
+            }
         });
     }
     return Array.from(new Set(blockers));

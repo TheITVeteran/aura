@@ -91,6 +91,9 @@ class LocalPipeBus:
         self._is_running = False
         self._activity_callback: Callable[[], None] | None = None
         self._pipe_broken = False
+        self._degraded = False
+        self._last_error: str | None = None
+        self._last_error_at = 0.0
         self._write_timeout_count = 0
         self._write_suppressed_until = 0.0
         self._write_lock: asyncio.Lock | None = None
@@ -125,6 +128,59 @@ class LocalPipeBus:
         if self._write_lock is None:
             self._write_lock = asyncio.Lock()
         return self._write_lock
+
+    def is_alive(self) -> bool:
+        """Return true only when the pipe transport is writable and not degraded."""
+
+        now = time.monotonic()
+        read_closed = bool(getattr(self.read_conn, "closed", False))
+        write_closed = bool(getattr(self.write_conn, "closed", False))
+        return bool(
+            not read_closed
+            and not write_closed
+            and not self._pipe_broken
+            and not self._degraded
+            and now >= self._write_suppressed_until
+        )
+
+    def get_status(self) -> dict[str, Any]:
+        """Return a machine-readable health report for this transport."""
+
+        now = time.monotonic()
+        return {
+            "alive": self.is_alive(),
+            "running": bool(self._is_running),
+            "start_reader": bool(self.start_reader),
+            "is_child": bool(self.is_child),
+            "pipe_broken": bool(self._pipe_broken),
+            "degraded": bool(self._degraded),
+            "read_closed": bool(getattr(self.read_conn, "closed", False)),
+            "write_closed": bool(getattr(self.write_conn, "closed", False)),
+            "pending_requests": len(self._pending_requests),
+            "write_timeout_count": int(self._write_timeout_count),
+            "write_backpressure_drops": int(self._write_backpressure_drops),
+            "write_suppressed_for_s": round(max(0.0, self._write_suppressed_until - now), 3),
+            "last_error": self._last_error,
+            "last_error_at": self._last_error_at,
+        }
+
+    def _clear_transport_degradation(self) -> None:
+        self._degraded = False
+        self._last_error = None
+        self._last_error_at = 0.0
+
+    def _mark_transport_degraded(self, exc: BaseException, action: str) -> None:
+        self._degraded = True
+        self._last_error = f"{type(exc).__name__}: {exc}"
+        self._last_error_at = time.time()
+        record_degradation(
+            "local_pipe_bus",
+            exc,
+            severity="degraded",
+            action=action,
+            enforce_failure_policy=False,
+            extra=self.get_status(),
+        )
 
     def _response_write_timeout_s(self) -> float:
         try:
@@ -423,10 +479,18 @@ class LocalPipeBus:
             )
             self._write_timeout_count = 0
             self._write_backpressure_drops = 0
+            self._clear_transport_degradation()
         except TimeoutError:
             self._write_timeout_count += 1
             suppress_for_s = self._pipe_suppression_window_s()
             self._write_suppressed_until = time.monotonic() + suppress_for_s
+            self._mark_transport_degraded(
+                TimeoutError(f"fire-and-forget pipe write timed out for {msg_type}"),
+                (
+                    f"pipe write timed out; suppressed fire-and-forget writes "
+                    f"for {suppress_for_s:.1f}s"
+                ),
+            )
             logger.warning(
                 "📡 Pipe write TIMEOUT (%.1fs) — suppressing fire-and-forget writes "
                 "for %.1fs (streak=%d).",
@@ -454,6 +518,10 @@ class LocalPipeBus:
         except (BrokenPipeError, EOFError, OSError, ConnectionResetError) as e:
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
+                self._mark_transport_degraded(
+                    e,
+                    "pipe closed during fire-and-forget send; transport marked unhealthy",
+                )
                 logger.info("📡 Bus pipe closed (normal shutdown): %s", str(e)[:60])
             try:
                 self._safe_close_connection(self.write_conn)
@@ -486,15 +554,20 @@ class LocalPipeBus:
             raise BrokenPipeError("Connection is closed")
         pending_count = len(self._pending_requests)
         if pending_count >= self._max_pending_requests:
+            admission_error = TimeoutError(
+                f"LocalPipeBus pending request limit reached ({pending_count}/{self._max_pending_requests})"
+            )
+            self._mark_transport_degraded(
+                admission_error,
+                "request admission blocked by pending-request backpressure",
+            )
             logger.warning(
                 "📡 LocalPipeBus request admission blocked: pending=%d max=%d msg_type=%s",
                 pending_count,
                 self._max_pending_requests,
                 msg_type,
             )
-            raise TimeoutError(
-                f"LocalPipeBus pending request limit reached ({pending_count}/{self._max_pending_requests})"
-            )
+            raise admission_error
 
         request_id = str(uuid.uuid4())
         trace_id = str(uuid.uuid4())
@@ -525,9 +598,15 @@ class LocalPipeBus:
                 timeout_s=min(timeout, 10.0),
                 context=f"request:{msg_type}",
             )
-            return await asyncio.wait_for(future, timeout=timeout)
+            result = await asyncio.wait_for(future, timeout=timeout)
+            self._clear_transport_degradation()
+            return result
         except TimeoutError:
             self._pending_requests.pop(request_id, None)
+            self._mark_transport_degraded(
+                TimeoutError(f"pipe request timed out for {msg_type}"),
+                f"pipe request timed out for {msg_type}",
+            )
             logger.warning("⏳ Bus request timed out: %s", msg_type)
             raise
         except (BrokenPipeError, EOFError, OSError) as e:
@@ -539,6 +618,10 @@ class LocalPipeBus:
             
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
+                self._mark_transport_degraded(
+                    e,
+                    "pipe request failed with broken transport",
+                )
                 logger.warning("📡 Bus request failed (Broken Pipe): %s", e)
             
             try:

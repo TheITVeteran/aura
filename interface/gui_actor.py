@@ -1,11 +1,11 @@
-import os
-import sys
 import logging
+import os
 import site
+import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Setup Path Resolution
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +47,14 @@ _GUI_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
+_REQUIRED_RUNTIME_PROBE_COMPONENTS = {
+    "kernel": ("kernel_interface",),
+    "inference": ("inference_gate", "llm_router"),
+    "memory": ("state_repository", "memory_facade"),
+    "scheduler": ("scheduler",),
+    "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
+}
+
 
 def _flush_logs_before_forced_exit() -> None:
     try:
@@ -68,9 +76,14 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
     probes = payload.get("required_probes")
     if not isinstance(probes, dict) or not bool(probes.get("all_passed", False)):
         return False
-    for group in ("kernel", "inference", "memory", "scheduler", "tool_governance"):
+    for group, expected_components in _REQUIRED_RUNTIME_PROBE_COMPONENTS.items():
         probe = probes.get(group)
         if not isinstance(probe, dict) or not bool(probe.get("ok", False)):
+            return False
+        components = probe.get("components")
+        if not isinstance(components, dict):
+            return False
+        if any(components.get(component) is not True for component in expected_components):
             return False
     return True
 
@@ -90,8 +103,8 @@ def gui_actor_entry(port: int, token: str = None):
     os.environ["AURA_GUI_PROXY"] = "1"
 
     # 2. Setup Logging for the process
-    from core.logging_config import setup_logging
     from core.config import config
+    from core.logging_config import setup_logging
     setup_logging(log_dir=config.paths.log_dir)
     
     logger.info(f"🎨 GUI Actor initiating Pure WebView (Port: {port})")
@@ -99,6 +112,7 @@ def gui_actor_entry(port: int, token: str = None):
     # 4. Launch webview
     try:
         import webview
+
         from core.utils.port_check import wait_for_port
         
         app_url = f"http://127.0.0.1:{port}"

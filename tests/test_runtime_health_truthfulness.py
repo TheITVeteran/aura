@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +69,86 @@ def test_event_bus_records_degraded_health_without_callback_raise(monkeypatch):
     assert health.status == "failed_closed"
     assert bus.get_status()["degraded"] is True
     assert bus.get_status()["alive"] is False
+
+
+def test_boot_snapshot_rejects_important_contract_failure(monkeypatch):
+    from core.health import boot_status
+
+    def service(container_key: str) -> dict:
+        return {
+            "name": container_key,
+            "container_key": container_key,
+            "tier": "critical",
+            "present": True,
+            "liveness": "ok",
+            "liveness_check": "is_ready",
+            "error": None,
+        }
+
+    required_keys = (
+        "kernel_interface",
+        "inference_gate",
+        "llm_router",
+        "state_repository",
+        "memory_facade",
+        "scheduler",
+        "unified_will",
+        "authority_gateway",
+        "capability_engine",
+    )
+    contract = {
+        "status": "degraded",
+        "healthy": False,
+        "operational": True,
+        "status_code": 200,
+        "services": [service(key) for key in required_keys],
+        "failures": {
+            "critical": [],
+            "important": [
+                {
+                    "name": "Event Bus",
+                    "container_key": "event_bus",
+                    "tier": "important",
+                    "present": True,
+                    "liveness": "failed",
+                    "error": "is_alive() returned False",
+                }
+            ],
+            "optional": [],
+        },
+    }
+    monkeypatch.setattr(boot_status, "_runtime_contract_snapshot", lambda: contract)
+
+    orchestrator = SimpleNamespace(
+        status=SimpleNamespace(
+            initialized=True,
+            running=True,
+            healthy=True,
+            last_error="",
+            cycle_count=2,
+            start_time=time.time() - 5.0,
+        ),
+        health_check=lambda: True,
+    )
+    runtime_state = {
+        "state": {"heartbeat_tick": time.time()},
+        "sha256": "abc123",
+        "signature": "sig",
+    }
+
+    snapshot, status_code = boot_status.build_boot_health_snapshot(
+        orchestrator,
+        runtime_state,
+        is_gui_proxy=False,
+        conversation_lane={"conversation_ready": True, "state": "ready"},
+    )
+
+    assert status_code == 503
+    assert snapshot["ready"] is False
+    assert snapshot["checks"]["runtime_contract_operational"] is True
+    assert snapshot["checks"]["runtime_contract_healthy"] is False
+    assert "runtime_contract_healthy" in snapshot["blockers"]
+    assert "important:event_bus" in snapshot["blockers"]
 
 
 def test_runtime_hygiene_treats_zombie_process_introspection_as_dead():

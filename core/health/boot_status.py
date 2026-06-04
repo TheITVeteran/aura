@@ -218,6 +218,9 @@ def build_boot_health_snapshot(
         if not runtime_contract_operational:
             blockers.append("runtime_contract")
             blockers.extend(f"critical:{key}" for key in critical_contract_failures)
+        if not runtime_contract_healthy:
+            blockers.append("runtime_contract_healthy")
+            blockers.extend(f"important:{key}" for key in important_contract_failures)
         if not runtime_required_probes_ok:
             blockers.append("runtime_required_probes")
             blockers.extend(
@@ -227,7 +230,7 @@ def build_boot_health_snapshot(
             )
         system_ready = (
             runtime_integrity_ok
-            and runtime_contract_operational
+            and runtime_contract_healthy
             and runtime_required_probes_ok
         )
         conversation_ready = system_ready
@@ -249,6 +252,9 @@ def build_boot_health_snapshot(
         if not runtime_contract_operational:
             blockers.append("runtime_contract")
             blockers.extend(f"critical:{key}" for key in critical_contract_failures)
+        if not runtime_contract_healthy:
+            blockers.append("runtime_contract_healthy")
+            blockers.extend(f"important:{key}" for key in important_contract_failures)
         if not runtime_required_probes_ok:
             blockers.append("runtime_required_probes")
             blockers.extend(
@@ -275,7 +281,7 @@ def build_boot_health_snapshot(
             and healthy
             and not last_error
             and runtime_integrity_ok
-            and runtime_contract_operational
+            and runtime_contract_healthy
             and runtime_required_probes_ok
             and (running or runtime_fresh or cycle_count > 0)
         )
