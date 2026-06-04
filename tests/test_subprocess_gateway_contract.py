@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import pytest
@@ -54,3 +55,19 @@ def test_offline_tooling_spawn_denied_when_live_governance_active(monkeypatch: p
             offline_tooling=True,
             source="training_tooling:test",
         )
+
+
+def test_offline_tooling_spawn_async_denied_when_live_governance_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+
+    async def _attempt() -> None:
+        await subprocess_gateway.SubprocessGateway().spawn_async(
+            [sys.executable, "-c", "print('strict-async-spawn')"],
+            offline_tooling=True,
+            source="maintenance_tooling:test",
+        )
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation):
+        asyncio.run(_attempt())

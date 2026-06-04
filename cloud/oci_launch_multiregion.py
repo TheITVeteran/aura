@@ -6,13 +6,19 @@ Creates networking on-the-fly in each region if needed.
 """
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 import oci
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 # ─── Configuration ──────────────────────────────────────────
 # Configuration
@@ -26,8 +32,11 @@ BOOT_VOLUME_GB = 200
 DISPLAY_NAME = "aura-cloud"
 
 RETRY_INTERVAL = 45   # seconds between attempts (faster with multi-region)
+MAX_ATTEMPTS = int(os.environ.get("OCI_MAX_ATTEMPTS", "0"))  # 0 = run until interrupted
 STATE_FILE = Path(tempfile.gettempdir()) / "oci_multi_region_state.json"
 CLOUD_IP_FILE = Path(tempfile.gettempdir()) / "aura_cloud_ip.txt"
+_OCI_RECOVERABLE_ERRORS = (OSError, RuntimeError, ValueError, KeyError, IndexError, json.JSONDecodeError)
+_OCI_IMAGE_ERRORS = (oci.exceptions.ServiceError,) + _OCI_RECOVERABLE_ERRORS
 
 # Regions most likely to have free-tier A1 capacity
 # Ordered by typical availability (less popular = more capacity)
@@ -57,18 +66,20 @@ REGIONS = [
 # ─── Load/save state (track which regions have networking set up) ───
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except _OCI_RECOVERABLE_ERRORS as exc:
+            print(f"[!] Failed to load state {STATE_FILE}: {type(exc).__name__}: {exc}; starting fresh.")
     return {"networks": {}, "total_attempts": 0}
 
 def save_state(state):
-    with open(STATE_FILE, 'w') as f:
-        json.dump(state, f, indent=2)
+    atomic_write_text(STATE_FILE, json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 # ─── Setup ──────────────────────────────────────────────────
 config = oci.config.from_file()
 
-with open(SSH_KEY_FILE) as f:
+with open(SSH_KEY_FILE, encoding="utf-8") as f:
     ssh_key = f.read().strip()
 
 state = load_state()
@@ -231,7 +242,7 @@ def find_image(compute_client, region):
             limit=1
         ).data
         return images[0].id if images else None
-    except Exception:
+    except _OCI_IMAGE_ERRORS:
         return None
 
 def try_launch(region):
@@ -309,13 +320,19 @@ def try_launch(region):
         print(f"\n  ✓ PUBLIC IP: {public_ip}")
         print(f"  ✓ REGION: {region}")
         print(f"\n  SSH: ssh -i ~/.ssh/aura-oracle.key ubuntu@{public_ip}\n")
-        with open(CLOUD_IP_FILE, "w") as f:
+        with open(CLOUD_IP_FILE, "w", encoding="utf-8") as f:
             f.write(f"{public_ip}\n{region}\n")
     else:
         print("  [!] Could not get public IP. Check console.")
 
-    subprocess.Popen(["afplay", "/System/Library/Sounds/Glass.aiff"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    get_subprocess_gateway().run(
+        ["afplay", "/System/Library/Sounds/Glass.aiff"],
+        cwd=ROOT,
+        timeout=10,
+        capture_output=True,
+        offline_tooling=True,
+        source="maintenance_tooling:oci_multiregion_notify",
+    )
     return "success"
 
 # ─── Main rotation loop ────────────────────────────────────
@@ -324,7 +341,7 @@ print("[*] Starting multi-region rotation. Ctrl+C to stop.\n")
 skip_regions = set()
 region_idx = 0
 
-while True:
+while MAX_ATTEMPTS <= 0 or state["total_attempts"] < MAX_ATTEMPTS:
     region = REGIONS[region_idx % len(REGIONS)]
     region_idx += 1
 
@@ -359,8 +376,8 @@ while True:
         else:
             print(f"Error ({e.status}): {e.message[:80]}")
 
-    except Exception as e:
-        print(f"Error: {str(e)[:80]}")
+    except _OCI_RECOVERABLE_ERRORS as exc:
+        print(f"Error: {type(exc).__name__}: {str(exc)[:80]}")
 
     save_state(state)
 
@@ -369,3 +386,6 @@ while True:
         time.sleep(RETRY_INTERVAL // len(REGIONS) * 3 + 5)  # ~10-15s between regions
     else:
         time.sleep(RETRY_INTERVAL)
+
+print(f"[!] Max attempts ({MAX_ATTEMPTS}) reached. Giving up.")
+sys.exit(1)

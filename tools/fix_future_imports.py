@@ -7,6 +7,12 @@ Moves the logging import lines to after the __future__ imports.
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 BROKEN_FILES = [
     "core/environments/terminal_grid/nethack_adapter.py",
     "core/learning/rsi_lineage.py",
@@ -33,7 +39,7 @@ def fix_file(filepath: Path):
     remaining = []
     removed_logging = False
     
-    for i, line in enumerate(lines):
+    for line in lines:
         if not removed_logging and (line.strip() == "import logging" or line.strip().startswith('logger = logging.getLogger(')):
             logging_lines.append(line)
             continue
@@ -81,7 +87,7 @@ def fix_file(filepath: Path):
 
 
 def main():
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     
     for rel in BROKEN_FILES:
         filepath = root / rel
@@ -91,16 +97,19 @@ def main():
             print(f"  ⚠️  Not found: {rel}")
     
     # Compile check
-    import subprocess
     python = str(root / ".venv" / "bin" / "python")
     failures = 0
     for rel in BROKEN_FILES:
         filepath = root / rel
         if not filepath.exists():
             continue
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             [python, "-m", "py_compile", str(filepath)],
-            capture_output=True, text=True,
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            read_only=True,
+            source="maintenance_tooling:fix_future_imports_compile",
         )
         if result.returncode != 0:
             print(f"  ❌ STILL BROKEN: {rel}")

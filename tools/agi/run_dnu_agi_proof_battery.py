@@ -415,7 +415,7 @@ async def wait_for_proof_runtime_health(
     last_snapshot: dict | None = None
     last_blockers: list[str] = []
 
-    while True:
+    while time.monotonic() < deadline or attempts == 0:
         attempts += 1
         snapshot = collect_proof_resource_snapshot(
             label=label,
@@ -447,6 +447,12 @@ async def wait_for_proof_runtime_health(
 
         await asyncio.sleep(max(0.0, interval_s))
 
+    if last_snapshot is not None and last_blockers:
+        last_snapshot["runtime_health_recovery"] = {
+            "initial_blockers": first_blockers or list(last_blockers),
+            "attempts": attempts,
+            "recovered": False,
+        }
     return last_snapshot or {}, last_blockers
 
 

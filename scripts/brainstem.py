@@ -6,11 +6,18 @@ This script monitors the main Aura process and reboots it if it crashes
 or stops pulsing its heartbeat.
 """
 import os
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from subprocess import TimeoutExpired
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 # --- Lazarus Version Lock ---------------------------------------
 # The brainstem must use the same interpreter as the cognitive mind
@@ -29,7 +36,7 @@ if sys.version_info.major != REQUIRED_MAJOR or sys.version_info.minor != REQUIRE
 # ---------------------------------------------------------------
 
 # --- Configuration for the Brainstem ---
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT
 MIND_SCRIPT = str(PROJECT_ROOT / "aura_main.py")
 HEARTBEAT_FILE = Path(tempfile.gettempdir()) / "aura_heartbeat.pulse"
 HEARTBEAT_TIMEOUT = 60 # seconds (Extended slightly for heavy M1 Pro boot)
@@ -43,30 +50,36 @@ def log_brainstem(message: str):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"{timestamp} [BRAINSTEM]: {message}\n"
     try:
-        with open(BRAINSTEM_LOG_FILE, "a") as f:
+        with open(BRAINSTEM_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_line)
-    except Exception:
-        pass
+    except OSError as exc:
+        print(f"{timestamp} [BRAINSTEM_LOG_ERROR]: {exc}")
     print(log_line.strip())
 
-def launch_mind_process() -> subprocess.Popen:
+_BRAINSTEM_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutExpired, ValueError)
+
+
+def launch_mind_process() -> Any | None:
     """Launches the cognitive core in a new, separate process."""
     log_brainstem("🚀 Igniting cognitive core process...")
     
-    # We use subprocess.Popen to ensure it's a truly independent child process.
+    # The gateway still spawns an independent child process, but gives launch
+    # ownership, cwd/env validation, and strict/live governance fail-closed behavior.
     try:
-        with open(COGNITIVE_LOG_FILE, "a") as log_file:
-            process = subprocess.Popen(
+        with open(COGNITIVE_LOG_FILE, "a", encoding="utf-8") as log_file:
+            process = get_subprocess_gateway().spawn(
                 [sys.executable, MIND_SCRIPT],
                 stdout=log_file,
                 stderr=log_file,
                 env=os.environ.copy(),
-                cwd=str(PROJECT_ROOT)
+                cwd=str(PROJECT_ROOT),
+                offline_tooling=True,
+                source="maintenance_tooling:brainstem_launch_mind",
             )
         log_brainstem(f"✅ Mind process launched with PID: {process.pid}")
         return process
-    except Exception as e:
-        log_brainstem(f"❌ Failed to launch Mind process: {e}")
+    except _BRAINSTEM_RECOVERABLE_ERRORS as exc:
+        log_brainstem(f"❌ Failed to launch Mind process: {type(exc).__name__}: {exc}")
         return None
 
 def main():
@@ -77,8 +90,8 @@ def main():
     if HEARTBEAT_FILE.exists():
         try:
             HEARTBEAT_FILE.unlink()
-        except Exception:
-            pass
+        except OSError as exc:
+            log_brainstem(f"Failed to remove stale heartbeat file: {exc}")
         
     mind_process = launch_mind_process()
     if not mind_process:
@@ -87,7 +100,8 @@ def main():
     
     boot_grace_period = time.time() + 30 # Give 30s before checking heartbeat
     
-    while True:
+    running = True
+    while running:
         try:
             time.sleep(5) # Check every 5 seconds
             
@@ -115,29 +129,30 @@ def main():
                 mind_process.terminate()
                 try:
                     mind_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
+                except TimeoutExpired:
                     log_brainstem("Stubborn process: Escalating to SIGKILL.")
                     mind_process.kill()
                 
                 try:
                     HEARTBEAT_FILE.unlink()
-                except Exception:
-                    pass
+                except OSError as exc:
+                    log_brainstem(f"Failed to remove heartbeat before reboot: {exc}")
                     
                 time.sleep(2)
                 mind_process = launch_mind_process()
                 boot_grace_period = time.time() + 30
                 
         except KeyboardInterrupt:
+            running = False
             log_brainstem("🛑 Lazarus Protocol disabled by user. Shutting down Mind...")
             mind_process.terminate()
             try:
                 mind_process.wait(timeout=5)
-            except Exception:
+            except _BRAINSTEM_RECOVERABLE_ERRORS:
                 mind_process.kill()
             sys.exit(0)
-        except Exception as e:
-            log_brainstem(f"‼️ FATAL BRAINSTEM ERROR: {e}")
+        except _BRAINSTEM_RECOVERABLE_ERRORS as exc:
+            log_brainstem(f"‼️ FATAL BRAINSTEM ERROR: {type(exc).__name__}: {exc}")
             time.sleep(5)
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ out while still receiving consistent validation and logging behavior.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -154,6 +155,39 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             shell=False,
             text=text,
+            start_new_session=start_new_session,
+        )
+
+    async def spawn_async(
+        self,
+        argv: Sequence[str],
+        *,
+        stdout: Any = None,
+        stderr: Any = None,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        start_new_session: bool = True,
+        offline_tooling: bool = False,
+        source: str = "unknown",
+    ) -> asyncio.subprocess.Process:
+        command = _coerce_argv(argv)
+        offline_bypass = _validate_offline_tooling_bypass(
+            offline_tooling=offline_tooling,
+            source=source,
+            command=command,
+        )
+        if not offline_bypass:
+            require_governance(
+                f"subprocess_gateway.spawn_async:{source}",
+                strict=True,
+                allowed_domains=_EFFECT_DOMAINS,
+            )
+        return await asyncio.create_subprocess_exec(
+            *command,
+            stdout=stdout,
+            stderr=stderr,
+            cwd=_coerce_cwd(cwd),
+            env=dict(env) if env is not None else None,
             start_new_session=start_new_session,
         )
 

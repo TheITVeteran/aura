@@ -1,10 +1,17 @@
 """Generate Aura app icon - dark geometric brain/circuit design."""
 import math
 import os
-import subprocess
+import sys
 import tempfile
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 SIZE = 1024
 img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
@@ -65,7 +72,7 @@ for cr in range(100, 0, -1):
 # "A" letter in the center
 try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 200)
-except Exception:
+except OSError:
     font = ImageFont.load_default()
 bbox = draw.textbbox((0, 0), "A", font=font)
 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -91,11 +98,19 @@ for s in [16, 32, 64, 128, 256, 512, 1024]:
         retina = img.resize((s * 2, s * 2), Image.LANCZOS)
         retina.save(os.path.join(iconset_dir, f"icon_{s}x{s}@2x.png"))
 
-subprocess.run(["iconutil", "-c", "icns", "-o", icns_path, iconset_dir],
-               capture_output=True, timeout=30)
+iconutil_result = get_subprocess_gateway().run(
+    ["iconutil", "-c", "icns", "-o", icns_path, iconset_dir],
+    cwd=os.getcwd(),
+    capture_output=True,
+    timeout=30,
+    offline_tooling=True,
+    source="maintenance_tooling:generate_icon:iconutil",
+)
 if os.path.exists(icns_path):
     print(f"Saved ICNS: {icns_path}")
 else:
     print("iconutil failed - will use PNG fallback")
+    if iconutil_result.stderr:
+        print(iconutil_result.stderr.strip())
 
 print("Icon generation complete.")

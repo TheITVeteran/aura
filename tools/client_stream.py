@@ -1,7 +1,8 @@
 import asyncio
-import websockets
-import pyaudio
 import json
+
+import pyaudio
+import websockets
 
 # Audio configuration
 FORMAT = pyaudio.paInt16
@@ -22,7 +23,7 @@ async def stream_mic():
         print("Connected! Start speaking...")
         
         try:
-            while True:
+            while stream.is_active():
                 # Read audio chunk from mic
                 data = stream.read(CHUNK, exception_on_overflow=False)
                 # Send raw bytes to FastAPI
@@ -43,8 +44,8 @@ async def stream_mic():
                     except json.JSONDecodeError:
                         print(f"\n[Aura Message]: {message}")
 
-                except asyncio.TimeoutError:
-                    pass
+                except TimeoutError:
+                    continue
                     
         except KeyboardInterrupt:
             print("\nStopping stream.")

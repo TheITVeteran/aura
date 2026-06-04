@@ -4,13 +4,18 @@ OCI ARM Instance Launcher — Python SDK version
 Avoids CLI "Aborted!" issues. Run and walk away.
 """
 import os
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 import oci
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 # ─── Configuration ──────────────────────────────────────────
 # Configuration (from Environment)
@@ -31,8 +36,9 @@ BOOT_VOLUME_GB = 200
 DISPLAY_NAME = "aura-cloud"
 
 RETRY_INTERVAL = 60   # seconds between attempts
-MAX_ATTEMPTS = 0       # 0 = infinite
+MAX_ATTEMPTS = int(os.environ.get("OCI_MAX_ATTEMPTS", "0"))  # 0 = run until interrupted
 CLOUD_IP_FILE = Path(tempfile.gettempdir()) / "aura_cloud_ip.txt"
+_OCI_RECOVERABLE_ERRORS = (OSError, RuntimeError, ValueError, KeyError, IndexError)
 
 # ─── Setup ──────────────────────────────────────────────────
 config = oci.config.from_file()
@@ -40,7 +46,7 @@ compute = oci.core.ComputeClient(config)
 network = oci.core.VirtualNetworkClient(config)
 
 # Read SSH key
-with open(SSH_KEY_FILE) as f:
+with open(SSH_KEY_FILE, encoding="utf-8") as f:
     ssh_key = f.read().strip()
 
 print("╔══════════════════════════════════════════════════════╗")
@@ -101,12 +107,8 @@ print()
 
 # ─── Retry loop ────────────────────────────────────────────
 attempt = 0
-while True:
+while MAX_ATTEMPTS <= 0 or attempt < MAX_ATTEMPTS:
     attempt += 1
-    if MAX_ATTEMPTS > 0 and attempt > MAX_ATTEMPTS:
-        print(f"[!] Max attempts ({MAX_ATTEMPTS}) reached. Giving up.")
-        sys.exit(1)
-
     timestamp = time.strftime("%H:%M:%S")
     print(f"[{timestamp}] Attempt #{attempt}...", end=" ", flush=True)
 
@@ -126,7 +128,7 @@ while True:
 
         # Wait for RUNNING
         print("[*] Waiting for instance to reach RUNNING state...")
-        get_response = oci.wait_until(
+        oci.wait_until(
             compute,
             compute.get_instance(instance.id),
             'lifecycle_state',
@@ -159,15 +161,21 @@ while True:
             print()
 
             # Save IP
-            with open(CLOUD_IP_FILE, "w") as f:
+            with open(CLOUD_IP_FILE, "w", encoding="utf-8") as f:
                 f.write(public_ip)
             print(f"  IP saved to {CLOUD_IP_FILE}")
         else:
             print("[!] Could not fetch public IP yet. Check Oracle Console.")
 
         # Play sound (macOS)
-        subprocess.Popen(["afplay", "/System/Library/Sounds/Glass.aiff"],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        get_subprocess_gateway().run(
+            ["afplay", "/System/Library/Sounds/Glass.aiff"],
+            cwd=ROOT,
+            timeout=10,
+            capture_output=True,
+            offline_tooling=True,
+            source="maintenance_tooling:oci_launch_notify",
+        )
         sys.exit(0)
 
     except oci.exceptions.ServiceError as e:
@@ -184,7 +192,10 @@ while True:
         else:
             print(f"Error ({e.status}): {e.message[:100]}")
 
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    except _OCI_RECOVERABLE_ERRORS as exc:
+        print(f"Unexpected error: {type(exc).__name__}: {exc}")
 
     time.sleep(RETRY_INTERVAL)
+
+print(f"[!] Max attempts ({MAX_ATTEMPTS}) reached. Giving up.")
+sys.exit(1)

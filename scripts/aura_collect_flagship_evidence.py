@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Collect a flagship-readiness evidence bundle for Aura.
 
@@ -9,22 +8,37 @@ This does not claim metaphysical proof. It creates a concrete artifact with:
 - morphogenesis file/integration presence
 - recent log evidence when logs are present
 """
-
-from core.runtime.atomic_writer import atomic_write_text
+from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def run_cmd(cmd: list[str], cwd: Path) -> dict[str, Any]:
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
+_COMMAND_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutError, ValueError)
+_READ_RECOVERABLE_ERRORS = (OSError, UnicodeDecodeError)
+
+
+def run_cmd(cmd: list[str], cwd: Path, *, source: str) -> dict[str, Any]:
     started = time.time()
     try:
-        proc = subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True, timeout=90)
+        proc = get_subprocess_gateway().run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=90,
+            offline_tooling=True,
+            source=source,
+        )
         return {
             "cmd": cmd,
             "returncode": proc.returncode,
@@ -32,7 +46,7 @@ def run_cmd(cmd: list[str], cwd: Path) -> dict[str, Any]:
             "stderr": proc.stderr[-20000:],
             "duration_s": round(time.time() - started, 3),
         }
-    except Exception as exc:
+    except _COMMAND_RECOVERABLE_ERRORS as exc:
         return {"cmd": cmd, "error": f"{type(exc).__name__}: {exc}", "duration_s": round(time.time() - started, 3)}
 
 
@@ -40,20 +54,27 @@ def read_tail(path: Path, max_chars: int = 5000) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
         return text[-max_chars:]
-    except Exception:
+    except _READ_RECOVERABLE_ERRORS:
         return ""
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def find_logs(root: Path) -> list[Path]:
     candidates = []
     for base in [root / "logs", Path.home() / ".aura" / "logs"]:
         if base.exists():
-            candidates.extend(sorted(base.glob("*.log"), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:8])
+            candidates.extend(sorted(base.glob("*.log"), key=_safe_mtime, reverse=True)[:8])
     return candidates
 
 
 def collect(root: Path, out_dir: Path) -> dict[str, Any]:
-    get_task_tracker().create_task(get_storage_gateway().create_dir(out_dir, cause='collect'))
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     evidence: dict[str, Any] = {
         "schema": "aura.flagship.evidence.v1",
@@ -81,7 +102,11 @@ def collect(root: Path, out_dir: Path) -> dict[str, Any]:
     }
     for name, cmd in commands.items():
         if (root / cmd[1]).exists() or cmd[1] == "-m":
-            evidence["checks"][name] = run_cmd(cmd, root)
+            evidence["checks"][name] = run_cmd(
+                cmd,
+                root,
+                source=f"maintenance_tooling:flagship_evidence:{name}",
+            )
         else:
             evidence["checks"][name] = {"skipped": True, "reason": f"{cmd[1]} not found"}
 

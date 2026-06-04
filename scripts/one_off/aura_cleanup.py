@@ -1,13 +1,18 @@
-import os
-import signal
-import subprocess
-import time
-import shutil
 import logging
+import shutil
+import sys
+import time
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Aura.IroncladCleanup")
+_CLEANUP_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutError, ValueError)
 
 def main() -> None:
     """
@@ -24,9 +29,18 @@ def main() -> None:
         try:
             logger.info(f"  💀 Killing: {target}")
             # -9: SIGKILL, -f: Full command line match
-            subprocess.run(["pkill", "-9", "-f", target], check=False, capture_output=True)
-        except Exception:
-            pass
+            result = get_subprocess_gateway().run(
+                ["pkill", "-9", "-f", target],
+                cwd=ROOT,
+                timeout=10,
+                capture_output=True,
+                offline_tooling=True,
+                source="maintenance_tooling:aura_cleanup:pkill",
+            )
+            if result.returncode not in {0, 1}:
+                logger.warning("pkill failed for %s: %s", target, result.stderr.strip())
+        except _CLEANUP_RECOVERABLE_ERRORS as exc:
+            logger.warning("Failed to kill %s: %s: %s", target, type(exc).__name__, exc)
 
     # 2. Hard Purge Locks
     # Instead of unlinking individual files, we wipe the whole directory to 
@@ -37,8 +51,8 @@ def main() -> None:
         try:
             shutil.rmtree(lock_dir)
             lock_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(f"Failed to wipe locks: {e}")
+        except OSError as exc:
+            logger.error(f"Failed to wipe locks: {exc}")
 
     # 3. Final Pause to let OS release ports/VRAM
     time.sleep(2)

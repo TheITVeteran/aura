@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-import subprocess
-import time
 import os
+import sys
+import time
 from pathlib import Path
+from subprocess import TimeoutExpired
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 GAUNTLET_TESTS = {
     "Closure Gauntlet": "tests/test_audit_chain.py",
@@ -15,9 +22,11 @@ GAUNTLET_TESTS = {
     "Long-Run Stability Trace": "tests/test_long_run_model.py",
     "External Task Performance": "tests/test_agent_workspace_integrations.py"
 }
+_RUN_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutExpired, ValueError)
+
 
 def run_gauntlet():
-    root_dir = Path(__file__).resolve().parent.parent.parent
+    root_dir = ROOT
     os.chdir(root_dir)
     
     results_file = root_dir / "tests" / "CAPABILITY_GAUNTLET_RESULTS.md"
@@ -42,11 +51,13 @@ def run_gauntlet():
                 if (root_dir / ".venv" / "bin" / "pytest").exists():
                     pytest_cmd = [str(root_dir / ".venv" / "bin" / "pytest")]
 
-                result = subprocess.run(
+                result = get_subprocess_gateway().run(
                     pytest_cmd + ["-v", "--tb=short", path],
+                    cwd=root_dir,
                     capture_output=True,
-                    text=True,
-                    timeout=300 # 5 minute timeout per suite
+                    timeout=300, # 5 minute timeout per suite
+                    offline_tooling=True,
+                    source="maintenance_tooling:capability_gauntlet",
                 )
                 duration = time.time() - start_time
                 status = "✅ PASS" if result.returncode == 0 else "❌ FAIL"
@@ -66,16 +77,16 @@ def run_gauntlet():
                 
                 print(f"  -> {status} in {duration:.2f}s")
                 
-            except subprocess.TimeoutExpired:
+            except TimeoutExpired:
                 f.write(f"### {name}\n")
                 f.write(f"- **File:** `{path}`\n")
-                f.write(f"- **Status:** ⚠️ TIMEOUT (>300s)\n\n")
-                print(f"  -> ⚠️ TIMEOUT")
-            except Exception as e:
+                f.write("- **Status:** ⚠️ TIMEOUT (>300s)\n\n")
+                print("  -> ⚠️ TIMEOUT")
+            except _RUN_RECOVERABLE_ERRORS as exc:
                 f.write(f"### {name}\n")
                 f.write(f"- **File:** `{path}`\n")
-                f.write(f"- **Status:** 💥 ERROR ({e})\n\n")
-                print(f"  -> 💥 ERROR: {e}")
+                f.write(f"- **Status:** 💥 ERROR ({type(exc).__name__}: {exc})\n\n")
+                print(f"  -> 💥 ERROR: {type(exc).__name__}: {exc}")
 
     print(f"\nResults saved to {results_file}")
 
