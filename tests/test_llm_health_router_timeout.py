@@ -108,6 +108,23 @@ class _HangingAbortableClient:
         return True
 
 
+def _block_event_loop_for(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+class _NonCooperativeBlockingClient:
+    def __init__(self):
+        self.abort_reasons = []
+
+    async def think(self, prompt: str, system_prompt: str = "", **kwargs):
+        _block_event_loop_for(0.08)
+        return "late success after blocked event loop"
+
+    def force_abort_active_generation(self, *, reason: str):
+        self.abort_reasons.append(reason)
+        return True
+
+
 @pytest.mark.asyncio
 async def test_direct_client_think_receives_timeout_budget():
     router = HealthAwareLLMRouter()
@@ -163,6 +180,38 @@ async def test_router_outer_watchdog_aborts_hung_endpoint():
     assert result["error"].startswith("endpoint_timeout:Cortex:")
     assert client.abort_reasons
     assert client.abort_reasons[0].startswith("endpoint_timeout:Cortex:")
+
+
+@pytest.mark.asyncio
+async def test_router_wall_clock_watchdog_rejects_noncooperative_late_success(monkeypatch):
+    router = HealthAwareLLMRouter()
+    client = _NonCooperativeBlockingClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="test",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+    monkeypatch.setattr("core.brain.llm_health_router._endpoint_call_timeout", lambda _timeout: 0.02)
+
+    result = await router.generate_with_metadata(
+        "probe",
+        timeout=0.01,
+        prefer_tier="primary",
+        origin="proof",
+        purpose="proof_model_lane_probe",
+        foreground_request=True,
+        health_probe=True,
+        skip_runtime_payload=True,
+        allow_cloud_fallback=False,
+    )
+
+    assert result["ok"] is False
+    assert result["endpoint"] == "all_failed"
+    assert result["error"].startswith("endpoint_timeout:Cortex:")
+    assert client.abort_reasons
 
 
 @pytest.mark.asyncio

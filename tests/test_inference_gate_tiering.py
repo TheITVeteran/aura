@@ -480,6 +480,35 @@ async def test_user_facing_primary_retry_uses_clean_cortex_repair_lane(monkeypat
     assert brainstem.kwargs == []
 
 
+@pytest.mark.asyncio
+async def test_health_probe_primary_lane_uses_adaptive_recurrent_depth_clamp(monkeypatch):
+    gate = InferenceGate()
+    cortex = _RecordingClient("local lane ready")
+    gate._mlx_client = cortex
+
+    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_RecordingClient("fallback")):
+        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Reply briefly that the requested local lane is ready.",
+                    context={
+                        "origin": "internal",
+                        "purpose": "proof_model_lane_probe",
+                        "prefer_tier": "primary",
+                        "health_probe": True,
+                        "foreground_request": True,
+                        "max_tokens": 24,
+                    },
+                )
+
+    assert result == "local lane ready"
+    assert cortex.kwargs
+    probe_kwargs = cortex.kwargs[0]
+    assert probe_kwargs["max_tokens"] <= 64
+    assert probe_kwargs["clean_user_surface_contract"] is True
+    assert probe_kwargs["clean_user_surface_recurrent_loops"] == 1
+
+
 def test_adaptive_max_tokens_expands_budget_for_compound_prompt():
     prompt = (
         "If you refuse to give receipts or operational details, say exactly why. "

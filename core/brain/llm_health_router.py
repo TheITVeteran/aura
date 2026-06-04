@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -110,6 +111,33 @@ def _force_abort_endpoint_client(client: Any, *, reason: str) -> bool:
         )
         logger.warning("Endpoint force-abort failed: %s", exc)
         return False
+
+
+def _start_endpoint_wall_clock_watchdog(
+    client: Any,
+    *,
+    reason: str,
+    timeout_s: float,
+) -> tuple[threading.Event, dict[str, bool], threading.Timer]:
+    """Abort non-cooperative local inference on wall-clock time.
+
+    ``asyncio.wait_for`` only fires when the awaited coroutine yields. The local
+    MLX stack can block during native/model work, so proof and desktop routes
+    need a thread-backed watchdog that can terminate the active generation even
+    if the event loop is temporarily occupied.
+    """
+
+    fired = threading.Event()
+    aborted = {"value": False}
+
+    def _abort() -> None:
+        fired.set()
+        aborted["value"] = _force_abort_endpoint_client(client, reason=reason)
+
+    watchdog = threading.Timer(max(0.01, float(timeout_s)), _abort)
+    watchdog.daemon = True
+    watchdog.start()
+    return fired, aborted, watchdog
 
 
 _USER_FACING_ORIGINS = frozenset({
@@ -1901,12 +1929,24 @@ class HealthAwareLLMRouter:
                     last_error,
                 )
                 continue
+            watchdog_aborted = {"value": False}
             try:
                 endpoint_budget = _endpoint_call_timeout(timeout)
-                result = await asyncio.wait_for(
-                    self._call_endpoint(ep, prompt, system_prompt, timeout, schema=schema, **kwargs),
-                    timeout=endpoint_budget,
+                timeout_reason = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
+                watchdog_fired, watchdog_aborted, watchdog = _start_endpoint_wall_clock_watchdog(
+                    ep.client,
+                    reason=timeout_reason,
+                    timeout_s=endpoint_budget,
                 )
+                try:
+                    result = await asyncio.wait_for(
+                        self._call_endpoint(ep, prompt, system_prompt, timeout, schema=schema, **kwargs),
+                        timeout=endpoint_budget,
+                    )
+                    if watchdog_fired.is_set():
+                        raise TimeoutError(timeout_reason)
+                finally:
+                    watchdog.cancel()
                 if result["ok"]:
                     # [TELEMETRY] Update for UI reporting
                     self.last_tier = ep.tier
@@ -1958,7 +1998,9 @@ class HealthAwareLLMRouter:
             except TimeoutError as exc:
                 endpoint_budget = _endpoint_call_timeout(timeout)
                 last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
-                aborted = _force_abort_endpoint_client(ep.client, reason=last_error)
+                aborted = bool(watchdog_aborted.get("value", False))
+                if not aborted:
+                    aborted = _force_abort_endpoint_client(ep.client, reason=last_error)
                 _record_router_degradation(
                     exc,
                     action="recorded endpoint timeout and force-aborted local client if possible",
@@ -2053,6 +2095,8 @@ class HealthAwareLLMRouter:
             proof_evaluation_contract = bool(
                 clean_kwargs.get("proof_evaluation_contract", False)
             ) or (not benchmark_request and is_proof_evaluation_purpose(call_purpose))
+            if proof_evaluation_contract:
+                clean_kwargs["proof_evaluation_contract"] = True
 
             # 2. Use Client Adapter if provided
             if ep.client:

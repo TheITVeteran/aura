@@ -237,6 +237,18 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(engine._surface_alpha_override)
         self.assertFalse(hasattr(_Model.model, "_recurrent_depth_runtime_loops"))
 
+        health_engine = _Engine()
+        health_state = _apply_surface_generation_controls(
+            health_engine,
+            _Model(),
+            {"health_probe": True},
+        )
+        try:
+            self.assertEqual(_Model.model._recurrent_depth_runtime_loops, 1)
+            self.assertLessEqual(health_engine._surface_alpha_override, 0.35)
+        finally:
+            _restore_surface_generation_controls(health_state)
+
     async def test_foreground_request_lock_timeout_is_bounded_for_live_chat(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 
@@ -276,6 +288,29 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             client._current_gen_future = None
             with contextlib.suppress(RuntimeError):
                 client._request_lock.release()
+
+    async def test_force_abort_completes_waiting_generation_future(self):
+        from core.brain.llm.mlx_client import _await_shared_future, _new_shared_future
+
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        future = _new_shared_future()
+        client._pending_generations["probe-req"] = future
+        client._current_gen_future = future
+        client._current_request_id = "probe-req"
+        client._active_generations = 1
+        try:
+            aborted = client.force_abort_active_generation("unit_test_generation_timeout")
+            payload = await _await_shared_future(future, timeout_s=0.1)
+        finally:
+            client.close()
+
+        self.assertTrue(aborted)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["action"], "generate")
+        self.assertEqual(payload["id"], "probe-req")
+        self.assertEqual(payload["message"], "unit_test_generation_timeout")
+        self.assertTrue(payload["force_aborted"])
+        self.assertFalse(future.cancelled())
 
     async def test_worker_sanitizer_finishes_current_request_for_caller_recovery(self):
         worker_source = await asyncio.to_thread(

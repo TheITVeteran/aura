@@ -1491,10 +1491,18 @@ class MLXLocalClient:
         )
         self._set_lane_state("recovering", reason)
 
+        abort_payload = {
+            "status": "error",
+            "action": "generate",
+            "id": self._current_request_id,
+            "message": reason,
+            "force_aborted": True,
+        }
+        for future in pending_futures.values():
+            _set_shared_future_result(future, abort_payload)
+
         acquired = self._lock.acquire(timeout=0.25)
         try:
-            for future in pending_futures.values():
-                _cancel_shared_future(future)
             self._pending_generations.clear()
             self._current_gen_future = None
             self._active_generations = 0
@@ -2830,9 +2838,17 @@ class MLXLocalClient:
             "strict_value_contract": bool(kwargs.get("strict_value_contract", False)),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
             "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
-            "clean_user_surface_contract": bool(kwargs.get("clean_user_surface_contract", False)),
+            "health_probe": bool(kwargs.get("health_probe", False)),
+            "clean_user_surface_contract": bool(
+                kwargs.get("clean_user_surface_contract", False)
+                or kwargs.get("health_probe", False)
+            ),
             "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
-            "clean_user_surface_recurrent_loops": kwargs.get("clean_user_surface_recurrent_loops"),
+            "clean_user_surface_recurrent_loops": (
+                kwargs.get("clean_user_surface_recurrent_loops")
+                if kwargs.get("clean_user_surface_recurrent_loops") is not None
+                else (1 if kwargs.get("health_probe", False) else None)
+            ),
             "benchmark_request": bool(kwargs.get("benchmark_request", False)),
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),

@@ -83,6 +83,7 @@ def _safe_int(value: Any, default: int) -> int:
 def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
     return bool(
         job.get("clean_user_surface_contract", False)
+        or job.get("health_probe", False)
         or job.get("operator_evidence_contract", False)
     )
 

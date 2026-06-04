@@ -51,6 +51,47 @@ def _will_receipt() -> dict[str, object]:
     }
 
 
+def _canonical_will_receipt(**payload_overrides: object) -> dict[str, object]:
+    receipt_id = str(payload_overrides.pop("receipt_id", "will_canonical_receipt"))
+    payload_record = {
+        "aura_now_constraints": [],
+        "aura_now_evidence": {"source": "being_runtime", "tick": 1},
+        "aura_now_hash": "a" * 64,
+        "aura_now_policy": "proceed",
+        "aura_now_tick": 1,
+        "causal_closure_score": 1.0,
+        "constraints": [],
+        "content_hash": "abc123abc123abcd",
+        "domain": "external_action",
+        "identity_alignment": "aligned",
+        "memory_relevance": 0.25,
+        "mind_moment_id": "",
+        "outcome": "proceed",
+        "reason": "all gates passed",
+        "receipt_id": receipt_id,
+        "source": "external_live_validation",
+        "substrate_coherence": 0.9,
+        "timestamp": 1780381149.0,
+        "unity_level": "nominal",
+        "unity_score": 1.0,
+    }
+    payload_record.update(payload_overrides)
+    payload = json.dumps(payload_record, sort_keys=True, separators=(",", ":"))
+    from core.runtime_tools import _sign_payload
+
+    return {
+        "receipt_id": receipt_id,
+        "domain": payload_record["domain"],
+        "outcome": payload_record["outcome"],
+        "verification": {
+            "receipt_id": receipt_id,
+            "payload": payload,
+            "signature": _sign_payload(payload.encode("utf-8")),
+            "signature_scheme": "ed25519",
+        },
+    }
+
+
 def _person_box_receipt(**overrides: object) -> dict[str, object]:
     receipt = {
         "action": "browser_ui_probe",
@@ -100,6 +141,33 @@ def test_receipt_coverage_accepts_person_box_harness_receipts(tmp_path, monkeypa
     assert report["total_receipts"] == 1
     assert report["person_box_harness_receipts"] == 8
     assert report["passed"] is True
+
+
+def test_receipt_coverage_accepts_canonical_json_will_receipts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    (tmp_path / "external_live_validation").mkdir()
+    _write_jsonl(tmp_path / "external_live_validation" / "RECEIPTS.jsonl", [_canonical_will_receipt()])
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 0
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["invalid_receipts"] == 0
+    assert report["total_receipts"] == 1
+    assert report["surface_counts"]["tool_calls"] == 1
+
+
+def test_receipt_coverage_rejects_canonical_will_payload_mismatch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    (tmp_path / "external_live_validation").mkdir()
+    receipt = _canonical_will_receipt(domain="memory_write")
+    receipt["domain"] = "external_action"
+    _write_jsonl(tmp_path / "external_live_validation" / "RECEIPTS.jsonl", [receipt])
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["invalid_receipts"] == 1
+    assert report["total_receipts"] == 0
 
 
 def test_receipt_coverage_rejects_damaged_person_box_receipts(tmp_path, monkeypatch) -> None:

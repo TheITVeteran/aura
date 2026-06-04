@@ -206,6 +206,20 @@ async def main(argv: list[str] | None = None) -> int:
         reason: str = "",
         verification: dict[str, Any] | None = None,
     ) -> None:
+        verification = verification or {}
+        signed_payload: dict[str, Any] = {}
+        raw_payload = verification.get("payload") if isinstance(verification, dict) else None
+        if isinstance(raw_payload, str) and raw_payload.startswith("{"):
+            try:
+                parsed = json.loads(raw_payload)
+                if isinstance(parsed, dict) and parsed.get("receipt_id") == receipt_id:
+                    signed_payload = parsed
+            except json.JSONDecodeError:
+                signed_payload = {}
+        if signed_payload:
+            domain = str(signed_payload.get("domain") or domain)
+            outcome = str(signed_payload.get("outcome") or outcome)
+            reason = str(signed_payload.get("reason") or reason)
         _append_jsonl(
             receipts_path,
             {
@@ -214,7 +228,7 @@ async def main(argv: list[str] | None = None) -> int:
                 "domain": domain,
                 "outcome": outcome,
                 "reason": reason,
-                "verification": verification or {},
+                "verification": verification,
             },
         )
 
@@ -222,7 +236,10 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         from aura_main import boot_aura_runtime
         from core.container import ServiceContainer
-        from core.memory.memory_write_gateway import get_memory_write_gateway, reset_memory_write_gateway
+        from core.memory.memory_write_gateway import (
+            get_memory_write_gateway,
+            reset_memory_write_gateway,
+        )
         from core.runtime.gateways import MemoryWriteRequest, StateMutationRequest
         from core.state.state_gateway import get_state_gateway, reset_state_gateway
         from core.will import ActionDomain, get_will

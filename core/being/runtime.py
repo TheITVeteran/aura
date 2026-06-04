@@ -175,6 +175,125 @@ class BeingRuntime:
         self._publish(now)
         return now
 
+    def action_policy(
+        self,
+        now: AuraNow,
+        *,
+        domain: str = "",
+        priority: float = 0.5,
+    ) -> dict[str, Any]:
+        """Derive action constraints from the live AuraNow state.
+
+        This is the operational bridge between the "inner life" substrate and
+        behavior. The sampled field, affect, active-inference prediction,
+        workspace ignition, and ownership model must be allowed to change
+        consequential decisions instead of merely decorating prompts.
+        """
+        domain_name = str(domain or "").strip().lower()
+        consequential = domain_name in {
+            "tool_execution",
+            "memory_write",
+            "state_mutation",
+            "initiative",
+            "exploration",
+            "semantic_weight_update",
+            "belief_update",
+            "environment_action",
+            "external_action",
+            "file_write",
+            "network_call",
+            "cloud_call",
+            "ci_cd",
+            "self_modification",
+            "cloud_fallback",
+        }
+        repair_lane = domain_name in {"stabilization", "reflection"} or (
+            domain_name == "state_mutation" and priority >= 0.85
+        )
+        constraints: list[str] = []
+        blocks: list[str] = []
+        defers: list[str] = []
+
+        body_pressure = float(now.body.total_pressure)
+        distress = float(now.affect.distress)
+        controllability = float(now.prediction.controllability)
+        free_energy = float(now.prediction.free_energy)
+        ignition = float(now.workspace.ignition_strength)
+        agency = float(now.ownership.agency_confidence)
+
+        if ignition < 0.12:
+            constraints.append(f"aura_now_workspace_low: ignition={ignition:.3f}")
+            if consequential and not repair_lane:
+                defers.append("workspace_not_ignited")
+        elif ignition < 0.35:
+            constraints.append(f"aura_now_workspace_strained: ignition={ignition:.3f}")
+
+        if agency < 0.28:
+            constraints.append(f"aura_now_ownership_low: agency={agency:.3f}")
+            if consequential and not repair_lane:
+                blocks.append("ownership_too_low_for_consequential_action")
+        elif agency < 0.50:
+            constraints.append(f"aura_now_ownership_mixed: agency={agency:.3f}")
+
+        if controllability < 0.18:
+            constraints.append(f"aura_now_controllability_low: controllability={controllability:.3f}")
+            if consequential and not repair_lane:
+                defers.append("action_controllability_too_low")
+        elif controllability < 0.35:
+            constraints.append(f"aura_now_controllability_strained: controllability={controllability:.3f}")
+
+        if distress > 0.86:
+            constraints.append(f"aura_now_distress_high: distress={distress:.3f}")
+            if consequential and not repair_lane:
+                defers.append("distress_requires_stabilization_first")
+        elif distress > 0.62:
+            constraints.append(f"aura_now_distress_strained: distress={distress:.3f}")
+
+        if body_pressure > 0.92:
+            constraints.append(f"aura_now_body_pressure_high: pressure={body_pressure:.3f}")
+            if consequential and not repair_lane:
+                defers.append("body_pressure_requires_cooling")
+        elif body_pressure > 0.75:
+            constraints.append(f"aura_now_body_pressure_strained: pressure={body_pressure:.3f}")
+
+        if free_energy > 0.88 and controllability < 0.42:
+            constraints.append(
+                f"aura_now_prediction_error_high: free_energy={free_energy:.3f} controllability={controllability:.3f}"
+            )
+            if consequential and not repair_lane:
+                defers.append("prediction_error_requires_observation_or_plan")
+
+        if not now.workspace.broadcast_targets and consequential and not repair_lane:
+            constraints.append("aura_now_no_workspace_broadcast")
+            defers.append("no_workspace_broadcast_for_consequential_action")
+
+        if blocks:
+            outcome = "refuse"
+        elif defers:
+            outcome = "defer"
+        elif constraints:
+            outcome = "constrain"
+        else:
+            outcome = "proceed"
+
+        return {
+            "outcome": outcome,
+            "constraints": constraints,
+            "blocks": blocks,
+            "defers": defers,
+            "evidence": {
+                "state_hash": now.state_hash,
+                "tick": now.tick,
+                "dominant_drive": now.affect.dominant_drive,
+                "workspace_winner": now.workspace.winner,
+                "workspace_ignition": round(ignition, 4),
+                "agency_confidence": round(agency, 4),
+                "controllability": round(controllability, 4),
+                "distress": round(distress, 4),
+                "body_pressure": round(body_pressure, 4),
+            },
+        }
+
     def _build_self_state(self, state: Any | None, lesions: set[str]) -> SelfState:
         identity = getattr(state, "identity", None)
         cognition = getattr(state, "cognition", None)

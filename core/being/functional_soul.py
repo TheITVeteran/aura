@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class FunctionalSoul:
         "min_truthfulness": 0.95,
     })
     continuity_chain: list[ContinuityEntry] = field(default_factory=list)
+    receipt_verifier: Callable[[str], bool] | None = None
 
     def _entry_hash(
         self,
@@ -70,8 +71,8 @@ class FunctionalSoul:
         receipt_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> ContinuityEntry:
-        if not str(receipt_id or "").startswith("will_"):
-            raise PermissionError("functional soul transitions require a Will receipt")
+        if not self._verify_will_receipt(str(receipt_id or "")):
+            raise PermissionError("functional soul transitions require a signed Will receipt")
         previous = self.continuity_chain[-1].entry_hash if self.continuity_chain else "genesis"
         timestamp = time.time()
         entry = ContinuityEntry(
@@ -90,6 +91,24 @@ class FunctionalSoul:
         )
         self.continuity_chain.append(entry)
         return entry
+
+    def _verify_will_receipt(self, receipt_id: str) -> bool:
+        if not receipt_id:
+            return False
+        if self.receipt_verifier is not None:
+            try:
+                return bool(self.receipt_verifier(receipt_id))
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                return False
+        try:
+            from core.will import get_will
+
+            will = get_will()
+            if hasattr(will, "verify_receipt_signature"):
+                return bool(will.verify_receipt_signature(receipt_id))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        return False
 
     def verify_chain(self) -> bool:
         previous = "genesis"

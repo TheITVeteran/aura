@@ -29,6 +29,8 @@ Design principles:
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import logging
 import time
 from collections import deque
@@ -185,6 +187,11 @@ class WillDecision:
     unity_repair_needed: bool = False
     mind_moment_id: str = ""
     causal_closure_score: float = 1.0
+    aura_now_hash: str = ""
+    aura_now_tick: int = 0
+    aura_now_policy: str = "unknown"
+    aura_now_constraints: list[str] = field(default_factory=list)
+    aura_now_evidence: dict[str, Any] = field(default_factory=dict)
 
     # Constraints (if outcome is CONSTRAIN)
     constraints: list[str] = field(default_factory=list)
@@ -392,25 +399,10 @@ class UnifiedWill:
         receipt_id = self._make_receipt_id(t0, source, content)
         content_hash = hashlib.sha256(content[:200].encode()).hexdigest()[:16]
 
-        # ── Critical override (the ONLY bypass) ─────────────────────
-        if is_critical:
-            self._state.critical_passes += 1
-            decision = WillDecision(
-                receipt_id=receipt_id,
-                outcome=WillOutcome.CRITICAL_PASS,
-                domain=domain,
-                reason="safety-critical -- unconditional pass",
-                source=source,
-                content_hash=content_hash,
-                latency_ms=(time.time() - t0) * 1000,
-            )
-            self._record(decision)
-            return decision
-
-        # If the Will has not been explicitly started, every non-critical
-        # action fails closed.  This preserves the core runtime invariant that
-        # consequential behavior cannot proceed through a dormant governor.
-        if self._fail_closed_when_stopped and not self._started:
+        # A stopped runtime Will must fail closed before consulting any other
+        # runtime service. AuraNow sampling can touch canonical runtime helpers,
+        # so this guard has to precede evidence sampling.
+        if self._fail_closed_when_stopped and not self._started and not is_critical:
             decision = WillDecision(
                 receipt_id=receipt_id,
                 outcome=WillOutcome.REFUSE,
@@ -419,12 +411,62 @@ class UnifiedWill:
                 constraints=["will_offline_fail_closed"],
                 source=source,
                 content_hash=content_hash,
+                aura_now_hash="",
+                aura_now_tick=0,
+                aura_now_policy="will_offline",
+                aura_now_constraints=["will_offline_fail_closed"],
+                aura_now_evidence={
+                    "source": "unified_will_lifecycle",
+                    "started": False,
+                    "fail_closed": True,
+                },
                 timestamp=time.time(),
                 latency_ms=(time.time() - t0) * 1000,
             )
             self._update_will_state(decision)
             self._record(decision)
             logger.info("WILL REFUSED: %s/%s -- unified_will_not_started", source, domain.value)
+            return decision
+
+        aura_now_packet = self._sample_aura_now_evidence(
+            content=content,
+            source=source,
+            domain=domain,
+            priority=priority,
+            context=context,
+        )
+        aura_now_evidence = dict(aura_now_packet.get("evidence") or {})
+        aura_now_hash = str(aura_now_evidence.get("state_hash") or "")
+        try:
+            aura_now_tick = int(aura_now_evidence.get("tick") or 0)
+        except (TypeError, ValueError):
+            aura_now_tick = 0
+        aura_now_policy = str(aura_now_packet.get("outcome") or "unknown")
+        aura_now_constraints = [
+            str(item)
+            for item in list(aura_now_packet.get("constraints") or [])
+            if str(item)
+        ]
+
+        # ── Critical override (the ONLY bypass) ─────────────────────
+        if is_critical:
+            self._state.critical_passes += 1
+            decision = WillDecision(
+                receipt_id=receipt_id,
+                outcome=WillOutcome.CRITICAL_PASS,
+                domain=domain,
+                reason="safety-critical -- unconditional pass",
+                constraints=list(aura_now_constraints),
+                source=source,
+                content_hash=content_hash,
+                aura_now_hash=aura_now_hash,
+                aura_now_tick=aura_now_tick,
+                aura_now_policy=aura_now_policy,
+                aura_now_constraints=list(aura_now_constraints),
+                aura_now_evidence=aura_now_evidence,
+                latency_ms=(time.time() - t0) * 1000,
+            )
+            self._record(decision)
             return decision
 
         # ── 1. IDENTITY CHECK: Does this align with who I am? ───────
@@ -470,6 +512,15 @@ class UnifiedWill:
             catatonia_relief=catatonia_relief,
         )
 
+        outcome, reason, constraints = self._apply_aura_now_policy(
+            outcome=outcome,
+            reason=reason,
+            constraints=constraints,
+            domain=domain,
+            policy=aura_now_packet,
+            catatonia_relief=catatonia_relief,
+        )
+
         # ── 9b. Inject scar constraints (learned caution from experience) ─
         if scar_constraints:
             constraints.extend(scar_constraints)
@@ -500,6 +551,11 @@ class UnifiedWill:
             unity_repair_needed=bool(unity_context.get("repair_needed", False)),
             mind_moment_id=str(unity_context.get("mind_moment_id", "") or ""),
             causal_closure_score=float(unity_context.get("causal_closure_score", 1.0) or 1.0),
+            aura_now_hash=aura_now_hash,
+            aura_now_tick=aura_now_tick,
+            aura_now_policy=aura_now_policy,
+            aura_now_constraints=list(aura_now_constraints),
+            aura_now_evidence=aura_now_evidence,
             constraints=constraints,
             source=source,
             content_hash=content_hash,
@@ -924,6 +980,173 @@ class UnifiedWill:
             or context.get("world_affecting")
         )
 
+    @staticmethod
+    def _is_consequential_domain(domain: ActionDomain) -> bool:
+        return domain in {
+            ActionDomain.TOOL_EXECUTION,
+            ActionDomain.MEMORY_WRITE,
+            ActionDomain.STATE_MUTATION,
+            ActionDomain.INITIATIVE,
+            ActionDomain.EXPLORATION,
+            ActionDomain.SEMANTIC_WEIGHT_UPDATE,
+            ActionDomain.BELIEF_UPDATE,
+            ActionDomain.ENVIRONMENT_ACTION,
+            ActionDomain.EXTERNAL_ACTION,
+            ActionDomain.FILE_WRITE,
+            ActionDomain.NETWORK_CALL,
+            ActionDomain.CLOUD_CALL,
+            ActionDomain.CLOUD_FALLBACK,
+            ActionDomain.CI_CD,
+            ActionDomain.SELF_MODIFICATION,
+        }
+
+    @staticmethod
+    def _state_from_repository(repo: Any) -> Any | None:
+        if repo is None:
+            return None
+        for attr in ("_current", "_current_state", "current_state", "state"):
+            state = getattr(repo, attr, None)
+            if state is not None:
+                return state
+        for method in ("get_current_state", "get_state", "read"):
+            fn = getattr(repo, method, None)
+            if fn is None:
+                continue
+            try:
+                state = fn()
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                continue
+            if state is not None:
+                return state
+        return None
+
+    def _resolve_aura_state_for_decision(self, context: dict[str, Any]) -> Any | None:
+        for key in ("aura_state", "state", "runtime_state"):
+            state = context.get(key)
+            if state is not None:
+                return state
+        for service_name in ("aura_state", "state_repository", "runtime_state"):
+            try:
+                service = ServiceContainer.get(service_name, default=None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            if service_name == "state_repository":
+                state = self._state_from_repository(service)
+                if state is not None:
+                    return state
+            elif service is not None:
+                return service
+        return None
+
+    def _sample_aura_now_evidence(
+        self,
+        *,
+        content: str,
+        source: str,
+        domain: ActionDomain,
+        priority: float,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        state = self._resolve_aura_state_for_decision(context)
+        candidate_action = f"{domain.value}:{source}:{str(content or '')[:160]}"
+        objective = str(
+            context.get("objective")
+            or context.get("message")
+            or context.get("user_message")
+            or content
+            or ""
+        )
+        try:
+            runtime = ServiceContainer.get("being_runtime", default=None)
+            if runtime is None:
+                from core.being.runtime import get_being_runtime
+
+                runtime = get_being_runtime()
+            now = runtime.sample(
+                state,
+                objective=objective,
+                candidate_action=candidate_action,
+                predicted_outcome=str(context.get("predicted_outcome") or ""),
+                actual_outcome=str(context.get("actual_outcome") or ""),
+                tool_failed=bool(context.get("tool_failed", False)),
+                external_override=bool(context.get("external_override", False)),
+            )
+            policy = runtime.action_policy(now, domain=domain.value, priority=priority)
+            policy.setdefault("outcome", "proceed")
+            policy.setdefault("constraints", [])
+            evidence = dict(policy.get("evidence") or {})
+            evidence.setdefault("state_hash", now.state_hash)
+            evidence.setdefault("tick", now.tick)
+            evidence.setdefault("source", "being_runtime")
+            policy["evidence"] = evidence
+            return policy
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "will",
+                exc,
+                severity="error",
+                action="blocked or constrained decision because AuraNow evidence could not be sampled",
+            )
+            outcome = "refuse" if self._is_consequential_domain(domain) else "constrain"
+            return {
+                "outcome": outcome,
+                "constraints": ["aura_now_unavailable_fail_closed"],
+                "blocks": ["aura_now_unavailable"] if outcome == "refuse" else [],
+                "defers": [],
+                "evidence": {
+                    "state_hash": "",
+                    "tick": 0,
+                    "source": "being_runtime_unavailable",
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                },
+            }
+
+    def _apply_aura_now_policy(
+        self,
+        *,
+        outcome: WillOutcome,
+        reason: str,
+        constraints: list[str],
+        domain: ActionDomain,
+        policy: dict[str, Any],
+        catatonia_relief: bool,
+    ) -> tuple[WillOutcome, str, list[str]]:
+        policy_constraints = [
+            str(item)
+            for item in list(policy.get("constraints") or [])
+            if str(item)
+        ]
+        if policy_constraints:
+            constraints.extend(policy_constraints)
+        policy_outcome = str(policy.get("outcome") or "unknown").lower()
+        if policy_outcome == "proceed":
+            if policy_constraints and outcome == WillOutcome.PROCEED:
+                return WillOutcome.CONSTRAIN, "aura_now_constrained: " + "; ".join(policy_constraints), constraints
+            return outcome, reason, constraints
+
+        if domain == ActionDomain.STABILIZATION or catatonia_relief:
+            if policy_outcome in {"defer", "refuse"}:
+                constraints.append(f"aura_now_repair_lane:{policy_outcome}")
+            if outcome == WillOutcome.PROCEED:
+                return WillOutcome.CONSTRAIN, "aura_now_repair_lane", constraints
+            return outcome, reason, constraints
+
+        if policy_outcome == "refuse" and self._is_consequential_domain(domain):
+            return (
+                WillOutcome.REFUSE,
+                "aura_now_block: present-state policy refused consequential action",
+                constraints,
+            )
+        if policy_outcome == "defer" and self._is_consequential_domain(domain):
+            return (
+                WillOutcome.DEFER,
+                "aura_now_defer: present-state policy requires stabilization or observation first",
+                constraints,
+            )
+        if policy_constraints and outcome == WillOutcome.PROCEED:
+            return WillOutcome.CONSTRAIN, "aura_now_constrained: " + "; ".join(policy_constraints), constraints
+        return outcome, reason, constraints
+
     def _catatonia_relief_allowed(
         self,
         domain: ActionDomain,
@@ -1260,6 +1483,9 @@ class UnifiedWill:
                 "domain": decision.domain.value,
                 "source": decision.source,
                 "reason": decision.reason,
+                "aura_now_hash": decision.aura_now_hash,
+                "aura_now_tick": decision.aura_now_tick,
+                "aura_now_policy": decision.aura_now_policy,
                 "signature_scheme": decision.signature_scheme,
                 "timestamp": decision.timestamp,
             })
@@ -1286,18 +1512,29 @@ class UnifiedWill:
 
     @staticmethod
     def _signature_payload(decision: WillDecision) -> bytes:
-        raw = "|".join(
-            [
-                decision.receipt_id,
-                decision.outcome.value,
-                decision.domain.value,
-                decision.source,
-                decision.content_hash,
-                f"{decision.timestamp:.6f}",
-                decision.reason,
-            ]
-        )
-        return raw.encode("utf-8")
+        payload = {
+            "receipt_id": decision.receipt_id,
+            "outcome": decision.outcome.value,
+            "domain": decision.domain.value,
+            "source": decision.source,
+            "content_hash": decision.content_hash,
+            "timestamp": round(float(decision.timestamp or 0.0), 6),
+            "reason": decision.reason,
+            "constraints": list(decision.constraints),
+            "identity_alignment": decision.identity_alignment.value,
+            "substrate_coherence": round(float(decision.substrate_coherence), 6),
+            "memory_relevance": round(float(decision.memory_relevance), 6),
+            "unity_level": decision.unity_level,
+            "unity_score": round(float(decision.unity_score), 6),
+            "mind_moment_id": decision.mind_moment_id,
+            "causal_closure_score": round(float(decision.causal_closure_score), 6),
+            "aura_now_hash": decision.aura_now_hash,
+            "aura_now_tick": int(decision.aura_now_tick or 0),
+            "aura_now_policy": decision.aura_now_policy,
+            "aura_now_constraints": list(decision.aura_now_constraints),
+            "aura_now_evidence": dict(decision.aura_now_evidence),
+        }
+        return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
 
     # ------------------------------------------------------------------
     # Public API
@@ -1343,6 +1580,11 @@ class UnifiedWill:
                 "ownership_confidence": round(d.ownership_confidence, 4),
                 "mind_moment_id": d.mind_moment_id,
                 "causal_closure_score": round(d.causal_closure_score, 4),
+                "aura_now_hash": d.aura_now_hash,
+                "aura_now_tick": d.aura_now_tick,
+                "aura_now_policy": d.aura_now_policy,
+                "aura_now_constraints": list(d.aura_now_constraints),
+                "aura_now_evidence": dict(d.aura_now_evidence),
                 "signature_scheme": d.signature_scheme,
                 "signature": d.signature,
                 "timestamp": d.timestamp,
@@ -1373,12 +1615,17 @@ class UnifiedWill:
         return any(getattr(d, "receipt_id", None) == receipt_id for d in self._audit_trail)
 
     def verify_receipt_signature(self, receipt_id: str) -> bool:
-        """Verify that the receipt exists and carries a non-empty signature."""
+        """Verify that the receipt exists and its signature matches the payload."""
         for decision in self._audit_trail:
             if getattr(decision, "receipt_id", None) == receipt_id:
-                return bool(
-                    getattr(decision, "signature", None)
-                    and getattr(decision, "signature_scheme", None)
+                signature = getattr(decision, "signature", None)
+                scheme = getattr(decision, "signature_scheme", None)
+                if not signature or not scheme:
+                    return False
+                expected_signature, expected_scheme = self._sign_decision(decision)
+                return (
+                    str(scheme) == str(expected_scheme)
+                    and hmac.compare_digest(str(signature), str(expected_signature))
                 )
         return False
 

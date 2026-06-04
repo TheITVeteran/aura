@@ -296,7 +296,7 @@ def test_conversation_lane_standby_helper_and_runtime_capabilities_align():
     assert server_module._collect_runtime_capabilities(standby_lane)["local_runtime"] == "standby"
 
 
-def test_collect_stability_details_treats_cold_standby_as_healthy(service_container, monkeypatch):
+def test_collect_stability_details_keeps_cold_standby_unhealthy_without_real_probes(service_container, monkeypatch):
     from interface import server as server_module
 
     monkeypatch.setattr(
@@ -312,9 +312,9 @@ def test_collect_stability_details_treats_cold_standby_as_healthy(service_contai
 
     details = server_module._collect_stability_details()
 
-    assert details["healthy"] is True
-    assert details["status"] == "healthy"
-    assert details["active_issues"] == []
+    assert details["healthy"] is False
+    assert details["status"] != "healthy"
+    assert any(issue["name"] == "stability_guardian" for issue in details["active_issues"])
 
 
 def test_state_repository_treats_prefixed_user_origin_as_foreground_for_db_snapshot():
@@ -348,7 +348,7 @@ def test_state_repository_deserialize_migrates_legacy_root_pending_intents():
 
 
 @pytest.mark.asyncio
-async def test_api_health_treats_cold_standby_lane_as_ready(service_container, monkeypatch):
+async def test_api_health_reports_cold_standby_without_healthy_claim(service_container, monkeypatch):
     from interface import server as server_module
 
     standby_lane = {
@@ -411,7 +411,8 @@ async def test_api_health_treats_cold_standby_lane_as_ready(service_container, m
     response = await server_module.api_health(SimpleNamespace(headers={}))
     payload = json.loads(response.body)
 
-    assert payload["status"] == "ok"
+    assert payload["status"] == "standby"
+    assert payload["healthy"] is False
     assert payload["conversation_lane"]["state"] == "cold"
     assert payload["boot"]["status"] == "ready"
 
@@ -1407,6 +1408,7 @@ async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
         assert "Vault pipe closed during shutdown" in caplog.text
         assert tracker.recent(subsystem="state_repository_proxy_transport") == []
     finally:
+        await repo.close()
         clear_shutdown_request()
         tracker.reset()
 
@@ -6290,6 +6292,62 @@ async def test_boot_probes_round_trip_memory_and_state(tmp_path):
     assert "output_gate_dry_emit" in names
     assert "event_bus_loopback" in names
     assert "actor_supervisor" in names
+    assert "event_loop_responsiveness" in names
+
+
+@pytest.mark.asyncio
+async def test_boot_event_loop_responsiveness_probe_reports_stable_loop():
+    from core.runtime.boot_probes import probe_event_loop_responsiveness
+
+    class FakeClock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    clock = FakeClock()
+
+    async def sleeper(delay):
+        clock.value += delay + 0.001
+
+    result = await probe_event_loop_responsiveness(
+        threshold_ms=5.0,
+        required_consecutive=2,
+        timeout_s=1.0,
+        interval_s=0.01,
+        clock=clock,
+        sleeper=sleeper,
+    )
+
+    assert result.ok is True
+
+
+@pytest.mark.asyncio
+async def test_boot_event_loop_responsiveness_probe_rejects_stalled_loop():
+    from core.runtime.boot_probes import probe_event_loop_responsiveness
+
+    class FakeClock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    clock = FakeClock()
+
+    async def sleeper(delay):
+        clock.value += delay + 0.2
+
+    result = await probe_event_loop_responsiveness(
+        threshold_ms=50.0,
+        required_consecutive=2,
+        timeout_s=0.5,
+        interval_s=0.01,
+        clock=clock,
+        sleeper=sleeper,
+    )
+
+    assert result.ok is False
+    assert "max_lag_ms" in result.detail
 
 
 @pytest.mark.asyncio

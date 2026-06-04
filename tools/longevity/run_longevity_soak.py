@@ -62,7 +62,22 @@ def _queue_depths() -> dict[str, int]:
 
 
 def write_json(path: Path, data: Any) -> None:
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    from core.runtime.atomic_writer import atomic_write_text
+
+    atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _resolve_output_dir(raw_path: str) -> Path:
+    out_dir = Path(raw_path).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+async def _measure_lag_ms() -> float:
+    from core.runtime.event_loop_responsiveness import sample_event_loop_lag
+
+    sample = (await sample_event_loop_lag(samples=1, interval_s=0.05))[0]
+    return round(float(sample.lag_ms), 3)
 
 
 async def async_main(argv: list[str] | None = None) -> int:
@@ -72,8 +87,7 @@ async def async_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--iterations", type=int, default=10)
     args = parser.parse_args(argv)
 
-    out_dir = Path(args.out).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _resolve_output_dir(args.out)
 
     os.environ.setdefault("AURA_PROOF_RUN", "1")
     from aura_main import boot_aura_runtime
@@ -90,14 +104,21 @@ async def async_main(argv: list[str] | None = None) -> int:
 
     receipts_path = out_dir / "RECEIPTS.jsonl"
     metrics: list[dict[str, Any]] = []
+    lag_threshold_ms = float(os.getenv("AURA_LONGEVITY_MAX_LOOP_LAG_MS", "250") or 250)
+    from core.runtime.event_loop_responsiveness import wait_for_event_loop_quiescence
+
+    boot_loop_report = await wait_for_event_loop_quiescence(
+        threshold_ms=lag_threshold_ms,
+        required_consecutive=int(os.getenv("AURA_LONGEVITY_STABLE_LOOP_SAMPLES", "3") or 3),
+        timeout_s=float(os.getenv("AURA_LONGEVITY_LOOP_STABILIZE_TIMEOUT_S", "20") or 20),
+        interval_s=0.05,
+    )
     try:
         will = get_will()
         await will.start()
         with receipts_path.open("w", encoding="utf-8") as receipt_file:
             for index in range(max(1, args.iterations)):
-                before = time.perf_counter()
-                await asyncio.sleep(0.05)
-                lag_ms = max(0.0, (time.perf_counter() - before - 0.05) * 1000.0)
+                lag_ms = await _measure_lag_ms()
                 decision = will.decide(
                     content=f"longevity proof pulse {index}",
                     source="longevity_soak",
@@ -142,7 +163,10 @@ async def async_main(argv: list[str] | None = None) -> int:
         "memory_leakage_detected": rss_growth > 128.0,
         "rss_growth_mb": round(rss_growth, 3),
         "queue_growth_stable": max_queue <= 10,
-        "event_loop_lag_normal": max_lag <= 250.0,
+        "boot_event_loop_stable": boot_loop_report.stable,
+        "boot_event_loop_warmup": boot_loop_report.to_dict(),
+        "event_loop_lag_threshold_ms": round(lag_threshold_ms, 3),
+        "event_loop_lag_normal": bool(boot_loop_report.stable and max_lag <= lag_threshold_ms),
         "max_lag_ms": round(max_lag, 3),
         "max_queue_len": max_queue,
         "metrics": metrics,

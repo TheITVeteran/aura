@@ -16,24 +16,29 @@ Architecture:
 TTS uses pyttsx3 (macOS native NSSpeechSynthesizer under the hood).
 """
 
-from core.runtime.errors import record_degradation
+import asyncio
 import base64
+import importlib
 import importlib.util
-
-from core.utils.exceptions import capture_and_log
-from core.utils.concurrency import RobustLock
 import inspect
+import io
+import logging
+import os
+import queue
 import subprocess
 import threading
 import time
+import urllib.request
+import wave
+from collections.abc import Awaitable, Callable
 from enum import Enum, auto
 from pathlib import Path
-from typing import Awaitable, Callable, List, Optional
 
 import numpy as np
-import logging
-import queue
-import asyncio
+
+from core.runtime.errors import record_degradation
+from core.utils.concurrency import RobustLock
+from core.utils.exceptions import capture_and_log
 
 # ── Optional imports with graceful degradation ────────────
 _WhisperModel = None
@@ -54,12 +59,25 @@ try:
 except ImportError:
     PiperVoice = None
 
-import io
-import wave
-import urllib.request
-import os
-
 logger = logging.getLogger("Aura.VoiceEngine")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on", "enabled", "accepted"}
+
+
+def _coqui_license_accepted() -> bool:
+    return any(
+        _env_flag(name)
+        for name in (
+            "AURA_COQUI_CPML_ACCEPTED",
+            "AURA_COQUI_COMMERCIAL_LICENSED",
+            "COQUI_TOS_AGREED",
+        )
+    )
 
 
 def _get_whisper_model_class():
@@ -72,11 +90,12 @@ def _get_whisper_model_class():
 
     _whisper_import_attempted = True
     try:
-        from faster_whisper import WhisperModel as whisper_model_cls
-        _WhisperModel = whisper_model_cls
+        from faster_whisper import WhisperModel as FasterWhisperModel
+
+        _WhisperModel = FasterWhisperModel
     except ImportError:
         logger.warning("faster-whisper not installed — STT unavailable")
-    except (ImportError, AttributeError, RuntimeError) as exc:
+    except (AttributeError, RuntimeError) as exc:
         record_degradation('voice_engine', exc)
         logger.error("❌ faster-whisper import failed — STT unavailable: %s", exc)
     return _WhisperModel
@@ -112,9 +131,7 @@ def _load_tts_api():
         from core.utils.transformers_tts_compat import install_transformers_tts_compat
 
         install_transformers_tts_compat()
-        from TTS.api import TTS as tts_cls
-
-        TTS = tts_cls
+        TTS = importlib.import_module("TTS.api").TTS
         _tts_api_import_error = None
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
         TTS = None
@@ -179,7 +196,7 @@ class SovereignVoiceEngine:
 
     def __init__(self,
                  whisper_model: str = "base",
-                 data_dir: Optional[str] = None):
+                 data_dir: str | None = None):
         from core.utils.paths import DATA_DIR
         self.data_dir = Path(data_dir or (DATA_DIR / "voice_models"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -192,7 +209,7 @@ class SovereignVoiceEngine:
 
         # ── TTS State ─────────────────────────────────────
         self._tts_lock = threading.Lock()
-        self._tts_async_lock: Optional[RobustLock] = None  # Lazy async mutex
+        self._tts_async_lock: RobustLock | None = None  # Lazy async mutex
         self.tts_engine = None  # Defer init
         
         # ── Mycelial / Affective State ────────────────────
@@ -240,15 +257,15 @@ class SovereignVoiceEngine:
             self.interrupt_flag = threading.Event()
 
         # ── Callbacks ─────────────────────────────────────
-        self._on_transcript: Optional[Callable[[str], Awaitable[None]]] = None
+        self._on_transcript: Callable[[str], Awaitable[None]] | None = None
         self._transcript_callbacks: dict[str, Callable[[str], Awaitable[None]]] = {}
-        self._anonymous_transcript_callbacks: List[Callable[[str], Awaitable[None]]] = []
-        self._on_tts_audio: Optional[Callable[[bytes], Awaitable[None]]] = None
-        self._on_state_change: Optional[Callable[[VoiceState], Awaitable[None]]] = None
-        self._on_vad_change: Optional[Callable[[bool], None]] = None # Pulse when VAD detection changes
+        self._anonymous_transcript_callbacks: list[Callable[[str], Awaitable[None]]] = []
+        self._on_tts_audio: Callable[[bytes], Awaitable[None]] | None = None
+        self._on_state_change: Callable[[VoiceState], Awaitable[None]] | None = None
+        self._on_vad_change: Callable[[bool], None] | None = None # Pulse when VAD detection changes
 
         # ── SSE & Threading ───────────────────────────────
-        self._sse_queues: List[asyncio.Queue] = []
+        self._sse_queues: list[asyncio.Queue] = []
         try:
             self.loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -260,11 +277,18 @@ class SovereignVoiceEngine:
         self._piper_voice = None
 
         # ── XTTS / Persona Cloning Configuration ─────────
-        self.use_xtts = True  # Enable Sara v3 Persona
+        self.use_xtts = _env_flag("AURA_ENABLE_XTTS", False)
         self.xtts_model_name = "tts_models/multilingual/multi-dataset/xtts_v2"
         self._xtts_engine = None
         self._speaker_wavs = []
         self._voice_ref_dir = self.data_dir.parent / "voice_references"
+        if self.use_xtts and not _coqui_license_accepted():
+            self.use_xtts = False
+            logger.warning(
+                "XTTS disabled: set AURA_COQUI_CPML_ACCEPTED=1 or "
+                "AURA_COQUI_COMMERCIAL_LICENSED=1 after accepting Coqui terms. "
+                "Using Piper/pyttsx3 fallback."
+            )
 
         logger.info("🎙️ SovereignVoiceEngine v5.0 (Server-Side + Mycelial) initialized")
         if self.auto_listen_enabled:
@@ -542,7 +566,7 @@ class SovereignVoiceEngine:
             try:
                 self._init_xtts()
                 return
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            except (EOFError, RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("Failed to init XTTS: %s", e)
 
@@ -601,6 +625,9 @@ class SovereignVoiceEngine:
 
     def _init_xtts(self):
         """Initialize the Sara v3 XTTS-v2 voice clone."""
+        if not _coqui_license_accepted():
+            raise RuntimeError("XTTS requires explicit Coqui license acceptance in environment")
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")
         if TTS is None:
             if _load_tts_api() is None:
                 raise ImportError(_tts_api_import_error or "TTS library not installed")
@@ -780,7 +807,8 @@ class SovereignVoiceEngine:
                     last_voice_time = time.time()
                     if not is_speaking:
                         is_speaking = True
-                        if self._on_vad_change: self._on_vad_change(True)
+                        if self._on_vad_change:
+                            self._on_vad_change(True)
                         logger.debug("🎙️ Voice activity detected (RMS=%.4f, Gate=%.4f)", rms, current_silence_threshold)
                         # Add Barge-in Detection
                         from core.senses.voice_engine import VoiceState
@@ -842,13 +870,14 @@ class SovereignVoiceEngine:
         
         # Threshold: -35 dB. Normal direct speech is -20 to -10 dB.
         # TV at room volume from 6ft away is typically -40 to -35 dB.
-        MIN_RMS_DB = -35.0
-        if rms_db < MIN_RMS_DB:
-            logger.debug("STT: rejected by volume gate (%.1f dB < %.1f dB threshold)", rms_db, MIN_RMS_DB)
+        min_rms_db = -35.0
+        if rms_db < min_rms_db:
+            logger.debug("STT: rejected by volume gate (%.1f dB < %.1f dB threshold)", rms_db, min_rms_db)
             return
 
         try:
-            from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+            from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
+
             sentinel = get_gpu_sentinel()
             
             # STT is a REFLEX task - it should pre-empt the LLM
@@ -1008,7 +1037,7 @@ class SovereignVoiceEngine:
             "data": base64.b64encode(raw_pcm).decode("ascii"),
             "timestamp": time.time(),
         }
-        stale_queues: List[asyncio.Queue] = []
+        stale_queues: list[asyncio.Queue] = []
         for queue_ref in list(self._sse_queues):
             try:
                 queue_ref.put_nowait(payload)
@@ -1029,7 +1058,8 @@ class SovereignVoiceEngine:
             refs = self._speaker_wavs[:5] if self._speaker_wavs else None
             out_path = self.data_dir / "xtts_temp.wav"
             
-            from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+            from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
+
             sentinel = get_gpu_sentinel()
             
             acquired = sentinel.acquire(priority=GPUPriority.REFLEX, timeout=10)
@@ -1283,9 +1313,12 @@ class SovereignVoiceEngine:
 
     def get_status(self) -> dict:
         tts_type = "Not loaded"
-        if self._xtts_engine: tts_type = "Sara v3 (XTTS-v2)"
-        elif self._piper_voice: tts_type = f"Piper ({self.piper_voice_name})"
-        elif self.tts_engine: tts_type = "pyttsx3 (Native)"
+        if self._xtts_engine:
+            tts_type = "Sara v3 (XTTS-v2)"
+        elif self._piper_voice:
+            tts_type = f"Piper ({self.piper_voice_name})"
+        elif self.tts_engine:
+            tts_type = "pyttsx3 (Native)"
         coqui_tts_available = _tts_dependency_available()
         piper_tts_available = _piper_dependency_available()
         pyttsx3_available = pyttsx3 is not None
@@ -1315,7 +1348,7 @@ class SovereignVoiceEngine:
 
 # ── Singleton ─────────────────────────────────────────────
 
-_voice_engine: Optional[SovereignVoiceEngine] = None
+_voice_engine: SovereignVoiceEngine | None = None
 
 
 def get_voice_engine(**kwargs) -> SovereignVoiceEngine:

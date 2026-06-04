@@ -15,19 +15,19 @@ Strict mode (AURA_STRICT_RUNTIME=1) raises on any failed probe; non-strict
 records a degraded event but allows boot to proceed.
 """
 from __future__ import annotations
-import inspect
-from core.runtime.errors import record_degradation
-
-
 
 import asyncio
+import inspect
 import logging
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.BootProbes")
 _BOOT_PROBE_RECOVERABLE_ERRORS = (
@@ -52,13 +52,13 @@ class ProbeResult:
 
 @dataclass
 class BootProbeReport:
-    results: List[ProbeResult] = field(default_factory=list)
+    results: list[ProbeResult] = field(default_factory=list)
 
     @property
     def all_ok(self) -> bool:
         return all(r.ok for r in self.results)
 
-    def failed(self) -> List[ProbeResult]:
+    def failed(self) -> list[ProbeResult]:
         return [r for r in self.results if not r.ok]
 
 
@@ -96,14 +96,14 @@ async def _run_probe(name: str, probe: Callable) -> ProbeResult:
 # ---------------------------------------------------------------------------
 
 
-def _approve_boot_probe_governance(**_kwargs: Any) -> Dict[str, Any]:
+def _approve_boot_probe_governance(**_kwargs: Any) -> dict[str, Any]:
     return {"approved": True, "receipt_id": "boot-probe-governance"}
 
 
 async def probe_memory_write_read(
     *,
-    gateway_factory: Optional[Callable[[], Any]] = None,
-    tmp_root: Optional[Path] = None,
+    gateway_factory: Callable[[], Any] | None = None,
+    tmp_root: Path | None = None,
 ) -> ProbeResult:
     """Round-trip a memory write through the gateway and read it back."""
     if gateway_factory is None:
@@ -131,8 +131,8 @@ async def probe_memory_write_read(
 
 async def probe_state_mutate_read(
     *,
-    gateway_factory: Optional[Callable[[], Any]] = None,
-    tmp_root: Optional[Path] = None,
+    gateway_factory: Callable[[], Any] | None = None,
+    tmp_root: Path | None = None,
 ) -> ProbeResult:
     if gateway_factory is None:
         from core.state.state_gateway import ConcreteStateGateway
@@ -247,6 +247,44 @@ async def probe_actor_supervisor() -> ProbeResult:
     return ProbeResult(name="actor_supervisor", ok=True)
 
 
+async def probe_event_loop_responsiveness(
+    *,
+    threshold_ms: float | None = None,
+    required_consecutive: int | None = None,
+    timeout_s: float | None = None,
+    interval_s: float = 0.05,
+    clock: Callable[[], float] = time.perf_counter,
+    sleeper: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> ProbeResult:
+    """Require the runtime loop itself to be responsive before declaring ready."""
+
+    from core.runtime.event_loop_responsiveness import wait_for_event_loop_quiescence
+
+    if threshold_ms is None:
+        threshold_ms = float(os.getenv("AURA_BOOT_EVENT_LOOP_MAX_LAG_MS", "250") or 250)
+    if required_consecutive is None:
+        required_consecutive = int(
+            os.getenv("AURA_BOOT_EVENT_LOOP_REQUIRED_STABLE_SAMPLES", "3") or 3
+        )
+    if timeout_s is None:
+        timeout_s = float(os.getenv("AURA_BOOT_EVENT_LOOP_STABILIZE_TIMEOUT_S", "10") or 10)
+
+    report = await wait_for_event_loop_quiescence(
+        threshold_ms=threshold_ms,
+        required_consecutive=required_consecutive,
+        timeout_s=timeout_s,
+        interval_s=interval_s,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    detail = (
+        f"max_lag_ms={report.max_lag_ms:.3f} "
+        f"threshold_ms={report.threshold_ms:.3f} "
+        f"consecutive_ok={report.consecutive_ok}/{report.required_consecutive}"
+    )
+    return ProbeResult(name="event_loop_responsiveness", ok=report.stable, detail=detail)
+
+
 # ---------------------------------------------------------------------------
 # Aggregate runner
 # ---------------------------------------------------------------------------
@@ -254,9 +292,9 @@ async def probe_actor_supervisor() -> ProbeResult:
 
 async def run_boot_probes(
     *,
-    extra_probes: Optional[Dict[str, Callable]] = None,
-    strict: Optional[bool] = None,
-    tmp_root: Optional[Path] = None,
+    extra_probes: dict[str, Callable] | None = None,
+    strict: bool | None = None,
+    tmp_root: Path | None = None,
 ) -> BootProbeReport:
     """Run the canonical probe set. In strict mode, raises on any failure."""
     if strict is None:
@@ -269,6 +307,7 @@ async def run_boot_probes(
         "output_gate_dry_emit": probe_output_gate_dry_emit,
         "event_bus_loopback": probe_event_bus_loopback,
         "actor_supervisor": probe_actor_supervisor,
+        "event_loop_responsiveness": probe_event_loop_responsiveness,
     }
     if extra_probes:
         base.update(extra_probes)

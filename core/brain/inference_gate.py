@@ -4552,6 +4552,10 @@ class InferenceGate:
                 requested_cap_int = 32
             max_tokens = max(1, min(max_tokens, requested_cap_int, 64))
             context["max_tokens"] = max_tokens
+            context.setdefault("clean_user_surface_contract", True)
+            context.setdefault("clean_user_surface_recurrent_loops", 1)
+            morpho_kwargs.setdefault("clean_user_surface_contract", True)
+            morpho_kwargs.setdefault("clean_user_surface_recurrent_loops", 1)
 
         if benchmark_request:
             requested_cap = context.get("max_tokens", max_tokens)
@@ -4787,6 +4791,7 @@ class InferenceGate:
             and not strict_value_contract
         ):
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
+            morpho_kwargs.setdefault("clean_user_surface_recurrent_loops", 1)
         client_foreground_request = (
             bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request
         )

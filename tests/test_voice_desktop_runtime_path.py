@@ -321,6 +321,76 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
 
 
 @pytest.mark.asyncio
+async def test_voice_bridge_routes_generic_browser_document_objective(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.voice.voice_bridge import VoiceConversationBridge
+
+    calls: list[dict[str, object]] = []
+
+    class CognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "engine": "cognitive",
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "origin": origin,
+                    "foreground_request": kwargs.get("foreground_request"),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "I will open the requested browser/document surface, draft the essay body, "
+                    "and keep the work inside governed desktop control."
+                ),
+                mode=mode,
+            )
+
+    class CapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append(
+                {
+                    "engine": "capability",
+                    "skill_name": skill_name,
+                    "params": dict(params),
+                    "context": dict(context or {}),
+                }
+            )
+            return {
+                "ok": True,
+                "summary": "Desktop task completed 3/3 governed computer-use steps.",
+                "steps_requested": 3,
+                "steps_completed": 3,
+            }
+
+    def get_service(name, default=None):
+        if name == "cognitive_engine":
+            return CognitiveEngine()
+        if name == "capability_engine":
+            return CapabilityEngine()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(get_service))
+
+    bridge = VoiceConversationBridge(SimpleNamespace(), None)
+    response = await bridge.process_voice_input(
+        "Hey Aura, open a tab for Google Docs and start typing a coherent essay about climate adaptation."
+    )
+
+    assert response == "Desktop task completed 3/3 governed computer-use steps."
+    assert calls[0]["engine"] == "cognitive"
+    assert calls[0]["objective"] == "open a tab for Google Docs and start typing a coherent essay about climate adaptation."
+    assert calls[1]["engine"] == "capability"
+    assert calls[1]["skill_name"] == "desktop_task"
+    assert calls[1]["params"] == {
+        "objective": "open a tab for Google Docs and start typing a coherent essay about climate adaptation.",
+        "steps": [],
+    }
+    assert calls[1]["context"]["route"] == "voice.desktop_objective"
+    assert calls[1]["context"]["desktop_task_document_body"].startswith("I will open the requested")
+
+
+@pytest.mark.asyncio
 async def test_voice_bridge_reports_capability_lookup_failure_without_legacy_claim(monkeypatch) -> None:
     from core.container import ServiceContainer
     from core.voice.voice_bridge import VoiceConversationBridge

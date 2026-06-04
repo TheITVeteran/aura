@@ -861,12 +861,25 @@ async def _bounded_probe_metadata(
     **kwargs,
 ) -> dict:
     """Run a proof-lane router call with a hard abort boundary."""
+    watchdog_fired = threading.Event()
+    watchdog_aborted = {"count": 0}
+
+    def _watchdog_abort() -> None:
+        watchdog_fired.set()
+        watchdog_aborted["count"] = _force_abort_router_generation(router, reason=abort_reason)
+
+    watchdog = threading.Timer(max(0.01, float(timeout_s)), _watchdog_abort)
+    watchdog.daemon = True
+    watchdog.start()
     task = asyncio.create_task(
         router.generate_with_metadata(**kwargs),
         name=f"dnu_model_lane_probe:{abort_reason}",
     )
     try:
-        return await asyncio.wait_for(task, timeout=timeout_s)
+        metadata = await asyncio.wait_for(task, timeout=timeout_s)
+        if watchdog_fired.is_set():
+            raise TimeoutError(abort_reason)
+        return metadata
     except (asyncio.TimeoutError, TimeoutError) as exc:
         if not task.done():
             task.cancel()
@@ -874,8 +887,11 @@ async def _bounded_probe_metadata(
                 await asyncio.wait_for(task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
                 pass
-        _force_abort_router_generation(router, reason=abort_reason)
+        if not watchdog_aborted["count"]:
+            _force_abort_router_generation(router, reason=abort_reason)
         raise TimeoutError(abort_reason) from exc
+    finally:
+        watchdog.cancel()
 
 
 async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> dict:

@@ -59,6 +59,13 @@ def main(argv: list[str] | None = None) -> int:
         if report.get("queue_growth_stable") is not True:
             print("Error: Queue growth was not stable in soak run.", file=sys.stderr)
             return 1
+        if report.get("boot_event_loop_stable") is not True:
+            print("Error: Event loop did not stabilize before measured soak.", file=sys.stderr)
+            return 1
+        warmup = report.get("boot_event_loop_warmup")
+        if not isinstance(warmup, dict) or not warmup.get("samples"):
+            print("Error: Soak is missing event-loop warmup evidence.", file=sys.stderr)
+            return 1
         if report.get("event_loop_lag_normal") is not True:
             print("Error: Event loop lag exceeded proof profile threshold.", file=sys.stderr)
             return 1

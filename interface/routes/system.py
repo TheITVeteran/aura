@@ -1526,6 +1526,8 @@ async def api_health(request: Request):
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         lane_is_standby = _conversation_lane_is_standby_resilient(conversation_lane)
         service_ok = bool(boot_snapshot.get("system_ready", False))
+        required_probes_ok = required_probe_groups_pass(boot_snapshot.get("required_probes", {}))
+        healthy_ready = bool(service_ok and required_probes_ok and conversation_ready)
         diagnostics_data = {
             "stability_guardian": _collect_stability_details(),
             "recent_degraded_events": _collect_recent_degraded_events(),
@@ -1533,7 +1535,9 @@ async def api_health(request: Request):
 
         health_status = (
             "ok"
-            if service_ok and (conversation_ready or lane_is_standby) else
+            if healthy_ready else
+            "standby"
+            if service_ok and lane_is_standby else
             "unavailable"
             if service_ok and str(conversation_lane.get("state", "") or "").lower() == "failed" else
             "recovering"
@@ -1545,6 +1549,7 @@ async def api_health(request: Request):
 
         payload = {
             "status":      health_status,
+            "healthy":     healthy_ready,
             "version":     version_string("full"),
             "connected":   connected,
             "initialized": initialized,

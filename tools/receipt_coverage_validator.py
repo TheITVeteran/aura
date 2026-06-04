@@ -261,13 +261,38 @@ def _is_valid_signed_will_receipt(record: dict[str, object]) -> bool:
     scheme = verification.get("signature_scheme")
     if not (
         isinstance(payload, str)
-        and payload.startswith(receipt_id + "|")
         and isinstance(signature, str)
         and bool(signature.strip())
         and isinstance(scheme, str)
         and bool(scheme.strip())
     ):
         return False
+    verification_receipt_id = verification.get("receipt_id")
+    if verification_receipt_id is not None and verification_receipt_id != receipt_id:
+        return False
+
+    if payload.startswith("{"):
+        try:
+            payload_record = json.loads(payload)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(payload_record, dict):
+            return False
+        if payload_record.get("receipt_id") != receipt_id:
+            return False
+        if str(payload_record.get("domain", "")) != str(record.get("domain", "")):
+            return False
+        if str(payload_record.get("outcome", "")) != str(record.get("outcome", "")):
+            return False
+        if not isinstance(payload_record.get("source", ""), str):
+            return False
+        if not _is_hex_digest(payload_record.get("content_hash"), length=16):
+            return False
+        if not isinstance(payload_record.get("timestamp"), (int, float)):
+            return False
+    elif not payload.startswith(receipt_id + "|"):
+        return False
+
     try:
         from core.runtime_tools import _sign_payload
 
