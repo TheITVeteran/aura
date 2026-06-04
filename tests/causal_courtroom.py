@@ -156,14 +156,14 @@ class ConditionReport:
 def _try_load_mlx() -> Optional[Tuple[Any, Any]]:
     try:
         from mlx_lm import load  # type: ignore
-    except Exception:
+    except ImportError:
         return None
     try:
         model_name = os.environ.get(
             "AURA_COURTROOM_MODEL", "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
         )
         return load(model_name)
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError):
         return None
 
 
@@ -177,7 +177,7 @@ def _generate_real(model_tuple: Tuple[Any, Any], system: str, user: str, *, max_
     )
     try:
         return str(generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens))
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError):
         return ""
 
 

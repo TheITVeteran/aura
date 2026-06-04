@@ -28,8 +28,8 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
                 banned = [p for p in data.get("banned_files", []) if p != str(self.test_file)]
                 data["banned_files"] = banned
                 self.sepsis_registry.write_text(json.dumps(data))
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                self.fail(f"failed to prepare sepsis registry fixture: {exc}")
 
     def tearDown(self):
         if self._old_supervised_selfmod is None:

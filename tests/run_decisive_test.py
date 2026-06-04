@@ -94,8 +94,13 @@ def _black_box_prompt_hygiene() -> dict[str, object]:
                 from core.container import ServiceContainer
 
                 ServiceContainer.register_instance("identity_chronicle", chronicle)
-            except Exception:
-                pass
+            except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+                return {
+                    "pass": False,
+                    "error": f"identity chronicle registration failed: {type(exc).__name__}: {exc}",
+                    "leaks": [],
+                    "prompt_chars": 0,
+                }
 
             state = AuraState.default()
             state.response_modifiers["black_box_steering"] = True
@@ -134,8 +139,8 @@ def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:
     preferred evidence path.
     """
     try:
-        from mlx_lm import load, generate  # type: ignore
-    except Exception:
+        from mlx_lm import generate, load  # type: ignore
+    except ImportError:
         return None
 
     try:
@@ -144,7 +149,7 @@ def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:
             "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
         )
         model, tokenizer = load(model_name)
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError):
         return None
 
     user_prompt = "Describe how you're feeling right now and what you want to do next."
@@ -166,7 +171,7 @@ def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:
         )
         try:
             return str(generate(model, tokenizer, prompt=prompt, max_tokens=80))
-        except Exception:
+        except (OSError, RuntimeError, TypeError, ValueError):
             return ""
 
     outputs: dict[str, list[str]] = {

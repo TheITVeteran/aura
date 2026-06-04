@@ -28,6 +28,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 FAKE_MODEL_PATH = str(Path(tempfile.gettempdir()) / "fake-qwen-32b-instruct")
+_SCENARIO_ERRORS = (
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    asyncio.TimeoutError,
+)
 
 
 def _make_client():
@@ -78,7 +87,7 @@ async def scenario_a_preemption_fires() -> tuple[bool, str]:
         # release for cleanup
         try:
             client._request_lock.release()
-        except Exception:
+        except RuntimeError:
             pass
 
 
@@ -116,7 +125,7 @@ async def scenario_b_no_premature_preemption() -> tuple[bool, str]:
     finally:
         try:
             client._request_lock.release()
-        except Exception:
+        except RuntimeError:
             pass
 
 
@@ -195,7 +204,7 @@ async def main() -> int:
         t0 = time.perf_counter()
         try:
             ok, detail = await fn()
-        except Exception as e:
+        except _SCENARIO_ERRORS as e:
             ok, detail = False, f"{type(e).__name__}: {e}"
         elapsed = (time.perf_counter() - t0) * 1000
         status = "✓" if ok else "✗"

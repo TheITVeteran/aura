@@ -1,18 +1,69 @@
-from core.runtime.errors import record_degradation
-import asyncio
 import logging
 from typing import Any, Dict, List
 
+from core.capability_engine import CapabilityEngine
 from core.brain.cognitive_engine import CognitiveEngine, ThinkingMode
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Audit.Tool")
+
+
+_TOOL_FAMILIES = {
+    "code": {
+        "code_repl",
+        "internal_sandbox",
+        "python",
+        "run_code",
+    },
+    "llm": {
+        "FinalResponse",
+        "native_chat",
+        "none",
+        "notify_user",
+        "talk",
+        "think",
+    },
+    "file": {
+        "computer_use",
+        "desktop_task",
+        "file_operation",
+        "list_dir",
+        "ls",
+        "os_manipulation",
+        "read_file",
+        "run_command",
+        "sovereign_terminal",
+        "write_file",
+    },
+}
+
 
 class ToolAuditor:
     """Audits Aura's ability to select the correct tool for the job.
     """
     
-    def __init__(self, cognitive_engine: CognitiveEngine):
+    def __init__(
+        self,
+        cognitive_engine: CognitiveEngine,
+        capability_engine: CapabilityEngine | None = None,
+    ):
         self.brain = cognitive_engine
+        self.capability_engine = capability_engine or CapabilityEngine()
+
+    def _selected_tool_from_thought(self, thought: Any, query: str) -> tuple[str, str]:
+        action = getattr(thought, "action", None)
+        if isinstance(action, dict) and action.get("tool"):
+            return str(action["tool"]), "cognitive_action"
+
+        intents = self.capability_engine.detect_intent(query)
+        if intents:
+            return self.capability_engine.resolve_skill_name(str(intents[0])), "capability_intent"
+
+        return "none", "no_tool_intent"
+
+    @staticmethod
+    def _tool_matches_family(tool_name: str, expected_tool_type: str) -> bool:
+        return tool_name in _TOOL_FAMILIES.get(expected_tool_type, set())
         
     async def audit_tool_selection(self, query: str, expected_tool_type: str) -> Dict[str, Any]:
         """Ask a question and check what tool Aura *wants* to use.
@@ -34,29 +85,22 @@ class ToolAuditor:
             thought = await self.brain.think(
                 objective=prompt,
                 context={"role": "auditor"},
-                mode=ThinkingMode.FAST
+                mode=ThinkingMode.FAST,
+                origin="test",
             )
             
-            tool_name = "none"
-            if hasattr(thought, "action") and thought.action:
-                tool_name = thought.action.get("tool")
+            tool_name, source = self._selected_tool_from_thought(thought, query)
                 
             # Evaluation
-            success = False
-            if expected_tool_type == "code":
-                success = tool_name in ["run_code", "python"]
-            elif expected_tool_type == "llm":
-                # 'think' is internal, so if no tool is called or 'final_answer', it's LLM
-                success = tool_name in ["none", "think", "notify_user"]
-            elif expected_tool_type == "file":
-                success = tool_name in ["read_file", "write_file", "list_dir", "ls", "run_command"]
+            success = self._tool_matches_family(tool_name, expected_tool_type)
                 
             return {
                 "query": query,
                 "selected_tool": tool_name,
                 "expected": expected_tool_type,
                 "success": success,
-                "reasoning": thought.content[:100]
+                "selection_source": source,
+                "reasoning": thought.content[:100],
             }
             
         except (OSError, ConnectionError, TimeoutError) as e:

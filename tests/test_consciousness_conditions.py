@@ -153,7 +153,7 @@ def _get_class_from_module(module_path: str, class_name: str):
     try:
         mod = importlib.import_module(module_path)
         return getattr(mod, class_name, None)
-    except Exception:
+    except (ImportError, AttributeError):
         return None
 
 
@@ -161,7 +161,7 @@ def _safe_import(module_path: str):
     """Import module, return None on failure."""
     try:
         return importlib.import_module(module_path)
-    except Exception:
+    except ImportError:
         return None
 
 

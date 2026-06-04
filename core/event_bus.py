@@ -126,6 +126,7 @@ class AuraEventBus:
         self._remote_degraded = False
         self._remote_error_count = 0
         self._remote_last_error: Optional[BaseException] = None
+        self._closing = False
 
         if not _REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False):
             logger.warning("redis package not installed — EventBus running in local-only mode.")
@@ -410,6 +411,7 @@ class AuraEventBus:
 
     async def shutdown(self):
         """Best-effort teardown for tests and controlled process shutdown."""
+        self._closing = True
         pubsub_task = self._pubsub_task
         self._pubsub_task = None
         if pubsub_task:
@@ -688,6 +690,9 @@ class AuraEventBus:
 
     def _threadsafe_publish_done(self, future) -> None:
         if future.cancelled():
+            if self._closing:
+                logger.debug("EventBus threadsafe publish cancelled during controlled shutdown.")
+                return
             self._record_error(
                 asyncio.CancelledError("threadsafe publish cancelled"),
                 "EventBus threadsafe publish did not complete: %s",

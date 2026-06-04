@@ -133,10 +133,7 @@ async def test_engine_think_stream(engine):
             assert len(tokens) > 0
             assert "Thinking..." in tokens
     finally:
-        try:
-            ServiceContainer._services.pop("llm_router", None)
-        except Exception:
-            pass
+        ServiceContainer._services.pop("llm_router", None)
 
 
 @pytest.mark.asyncio

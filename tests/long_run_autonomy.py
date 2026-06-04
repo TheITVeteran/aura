@@ -58,6 +58,10 @@ from core.self_modification.structural_mutator import (  # noqa: E402
     reset_singleton_for_test as reset_mutator,
 )
 
+_MUTATION_ERRORS = (KeyError, OSError, RuntimeError, TypeError, ValueError)
+_LINEAGE_ERRORS = (KeyError, OSError, RuntimeError, TypeError, ValueError)
+_PHI_ERRORS = (FloatingPointError, RuntimeError, TypeError, ValueError)
+
 
 @dataclass
 class TickMetrics:
@@ -117,7 +121,7 @@ def run_long_run(
     tmp_root: Path | None = None,
 ) -> LongRunReport:
     tmp_root = Path(tmp_root or Path("tests") / "long_run_autonomy_state")
-    get_task_tracker().create_task(get_storage_gateway().create_dir(tmp_root, cause='run_long_run'))
+    tmp_root.mkdir(parents=True, exist_ok=True)
 
     # Reset singletons so each run is clean.
     reset_adaptive_mood()
@@ -169,6 +173,9 @@ def run_long_run(
         "lineage": 0,
         "self_awareness": 0,
         "resource_stakes": 0,
+        "structural_mutator_errors": 0,
+        "lineage_errors": 0,
+        "phi_errors": 0,
     }
     per_tick: List[Dict[str, float]] = []
     action_kinds: List[str] = []
@@ -291,8 +298,8 @@ def run_long_run(
                     )
                 )
                 modules_touched["structural_mutator"] += 1
-            except Exception:
-                pass
+            except _MUTATION_ERRORS:
+                modules_touched["structural_mutator_errors"] += 1
 
         # ---- lineage: fork every 200 ticks -----------------------------
         if tick > 0 and tick % 200 == 0:
@@ -303,8 +310,8 @@ def run_long_run(
                 if score > current_snapshot.selection_score:
                     current_snapshot = child
                 modules_touched["lineage"] += 1
-            except Exception:
-                pass
+            except _LINEAGE_ERRORS:
+                modules_touched["lineage_errors"] += 1
 
         # ---- real phi work: compute a bipartition phi every tick so the
         # long-run soak actually exercises the math rather than finishing
@@ -312,7 +319,8 @@ def run_long_run(
         # runner uses for its reference validation.
         try:
             tick_phi = phi_core._phi_for_subset_bipartition(phi_tpm, phi_dist, (0,), (1,), 2)
-        except Exception:
+        except _PHI_ERRORS:
+            modules_touched["phi_errors"] += 1
             tick_phi = 0.0
 
         # ---- metrics ----------------------------------------------------
@@ -367,6 +375,12 @@ def run_long_run(
         reasons.append("lineage never forked")
     if adaptive_mood.total_updates() == 0:
         reasons.append("adaptive_mood never learned")
+    if modules_touched["structural_mutator_errors"]:
+        reasons.append(f"structural_mutator errors: {modules_touched['structural_mutator_errors']}")
+    if modules_touched["lineage_errors"]:
+        reasons.append(f"lineage errors: {modules_touched['lineage_errors']}")
+    if modules_touched["phi_errors"]:
+        reasons.append(f"phi computation errors: {modules_touched['phi_errors']}")
 
     passed = not reasons
     return LongRunReport(
