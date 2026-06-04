@@ -362,23 +362,33 @@ def main(argv: list[str] | None = None) -> int:
         passed = False
         reasons.append("Mature RSI must be marked as not proven due to safety & model limitations.")
 
-    # 7. Production-Sealed check: Requires flagship readiness and linter pass
+    # 7. Local production gate readiness check: requires linter evidence and
+    # may not be upgraded into a broad "production sealed" claim.
     production_sealed = claims.get("production-sealed", "not proven")
-    if production_sealed in {"implemented", "causally demonstrated", "locally demonstrated"}:
-        # Check if flagship readiness and linter results are positive
+    if production_sealed not in {"not proven", "deprecated/retired"}:
+        passed = False
+        reasons.append(
+            "Production-Sealed is not an allowed active claim; use Local Production Gate Readiness."
+        )
+
+    production_readiness = claims.get("local production gate readiness", "not proven")
+    if production_readiness in {"implemented", "causally demonstrated", "locally demonstrated"}:
         linter_json = artifacts_dir / "production_surface_lint.json"
         if linter_json.exists():
             try:
                 linter_data = json.loads(linter_json.read_text(encoding="utf-8"))
                 if not linter_data.get("passed", False):
                     passed = False
-                    reasons.append("Production-sealed claimed but production surface linter failed.")
+                    reasons.append("Local production gate readiness claimed but production surface linter failed.")
             except Exception:
                 passed = False
-                reasons.append("Production-sealed claimed but linter report is unreadable.")
+                reasons.append("Local production gate readiness claimed but linter report is unreadable.")
         else:
             passed = False
-            reasons.append("Production-sealed claimed but production surface linter report is missing.")
+            reasons.append("Local production gate readiness claimed but production surface linter report is missing.")
+    elif production_readiness not in {"not proven", "deprecated/retired"}:
+        passed = False
+        reasons.append(f"Unsupported Local Production Gate Readiness classification: {production_readiness!r}.")
 
     synthetic_entity = claims.get("synthetic cognitive entity", "not proven")
     if synthetic_entity in {"implemented", "causally demonstrated", "locally demonstrated"}:

@@ -22,7 +22,7 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 | **12. External Real-World Validation** | `not proven` | Blocker: Requires independent, external third-party evaluation and live production network |
 | **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` passed the configured local 100-task battery, but AGI itself remains unproven |
 | **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence |
-| **15. Production-Sealed** | `causally demonstrated` | Pass status of flagship readiness, production surface lint, and artifact consistency |
+| **15. Local Production Gate Readiness** | `locally demonstrated` | Pass status of configured local readiness gates, production surface lint, and artifact consistency |
 | **16. Mature RSI** | `not proven` | Blocker: Safety filters and local model capability restrict autonomous non-interactive improvement |
 | **17. Subjective Consciousness** | `not proven` | Strictly unsupported. Qualitative experience, qualia, and personhood are not scientifically provable |
 | **18. Personhood** | `not proven` | Strictly unsupported. Aura is a software runtime, not a legal or moral person |
@@ -105,10 +105,10 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 * **Definition**: Meeting the comprehensive criteria of DNU, Agency Emergence, and External Live Validation.
 * **Evidence**: The configured local final-proof profile includes DNU, baselines, ablations, agency emergence, external validation, unified scenario, receipt coverage, artifact consistency, and Aletheia Tier 5 validation. This supports "proof-bearing AGI-candidate architecture", not "AGI solved".
 
-### 15. Production-Sealed
-* **Classification**: `causally demonstrated`
-* **Definition**: Strict compilation, flagship readiness, enterprise gates, and production linting completed with zero critical/high issues.
-* **Evidence**: Pass status of flagship readiness and production surface lint.
+### 15. Local Production Gate Readiness
+* **Classification**: `locally demonstrated`
+* **Definition**: The configured local compile, readiness, enterprise, production-surface, artifact-consistency, and final-proof gates passed for this profile. This is not independent production certification, indefinite-runtime certification, or proof that every possible deployment environment is sealed.
+* **Evidence**: Pass status of configured local readiness gates, production surface lint, artifact consistency, and final-proof artifacts.
 
 ### 16. Mature RSI
 * **Classification**: `not proven`

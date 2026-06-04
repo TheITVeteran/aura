@@ -1,14 +1,15 @@
 """core/consciousness/qualia_synthesizer.py
 
-Qualia Synthesizer V2 — Living Phenomenal State Engine
-======================================================
+Qualia Synthesizer V2 - Functional Phenomenology State Engine
+============================================================
 
 Synthesizes the "Unified Qualia Vector" from multi-scale theoretical inputs and
-maintains a temporal history of phenomenal states. Unlike V1 (a passive calculator),
+maintains a temporal history of functional phenomenology-proxy states. Unlike V1
+(a passive calculator),
 V2 is a reactive system that:
 
 1. Tracks qualia history for trend analysis and resonance detection
-2. Computes Phenomenal Richness Index (PRI) — entropy of the q_vector distribution
+2. Computes Phenomenal Richness Index (PRI) - entropy of the q_vector distribution
 3. Detects attractor states (moods) vs chaotic transitions (novelty)
 4. Bridges back into Affect and Personality engines
 5. Emits qualia snapshots to the EventBus for HUD visualization
@@ -21,13 +22,14 @@ Integrates:
   5. UAL (Unlimited Associative Learning Profile)
 """
 
-from core.runtime.errors import record_degradation
 import logging
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Qualia")
 
@@ -39,11 +41,12 @@ _HISTORY_SIZE = 100         # Ring buffer depth (100 ticks at 1Hz = ~100 seconds
 _ATTRACTOR_WINDOW = 20      # Ticks to analyze for attractor detection
 _ATTRACTOR_THRESHOLD = 0.08 # Max variance to classify as stable attractor
 _RESONANCE_THRESHOLD = 0.6  # Norm above which system is "resonating"
-_CONSCIOUSNESS_THRESHOLD = 0.45  # Heuristic threshold for phenomenal consciousness
+_FUNCTIONAL_REPORTING_THRESHOLD = 0.45  # Reporting threshold for functional/proxy state telemetry.
+_CONSCIOUSNESS_THRESHOLD = _FUNCTIONAL_REPORTING_THRESHOLD  # Backward-compatible alias; not a proof claim.
 
 
 class QualiaSnapshot:
-    """Immutable snapshot of phenomenal state at a single tick."""
+    """Immutable snapshot of functional phenomenology state at a single tick."""
     __slots__ = ("q_vector", "q_norm", "pri", "ual_profile", "timestamp",
                  "is_attractor", "dominant_dimension")
 
@@ -77,16 +80,17 @@ _DIM_LABELS = ["coherence", "em_field", "dendritic", "accuracy", "precision", "p
 class QualiaSynthesizer:
     """The Master Synthesizer V2.
 
-    Transforms raw neural and quantum metrics into phenomenal 'Qualia',
-    maintains temporal history, detects resonance patterns, and bridges
-    back into the affect and personality engines.
+    Transforms raw subsystem metrics into functional qualia/proxy telemetry,
+    maintains temporal history, detects resonance patterns, and bridges back
+    into the affect and personality engines. These measures drive behavior
+    and reporting gates; they do not prove private phenomenal consciousness.
     """
 
     def __init__(self):
         # Current state
         self.q_vector: np.ndarray = np.zeros(6)  # [Coherence, EM, Bursts, Energy, Precision, Proprioception]
         self.q_norm: float = 0.0
-        self.pri: float = 0.0               # Phenomenal Richness Index
+        self.pri: float = 0.0               # Phenomenal Richness Index, used as functional telemetry.
         self.ual_profile: Dict[str, float] = {
             "trace": 0.0,
             "compound": 0.0,
@@ -152,7 +156,7 @@ class QualiaSynthesizer:
             logger.debug('Ignored Exception in qualia_synthesizer.py: %s', _e)
 
         # 2. Construct Qualia Vector
-        # Weighted by the Unified Theory of Phenomenal Consciousness
+        # Weighted by the runtime's configured functional phenomenology model.
         self.q_vector = np.array([
             coh * 0.25,           # Quantum grounding (Orch OR)
             em * 0.20,           # Field integration (CEMI)
@@ -162,7 +166,7 @@ class QualiaSynthesizer:
             tension * 0.15,       # Proprioception (Nervous System Tension)
         ])
 
-        # 3. Calculate Norm (L1 norm = additive phenomenal intensity)
+        # 3. Calculate Norm (L1 norm = additive functional intensity)
         self.q_norm = float(np.linalg.norm(self.q_vector, ord=1))
 
         # 4. Compute Phenomenal Richness Index (Shannon entropy of distribution)
@@ -192,7 +196,7 @@ class QualiaSynthesizer:
                     workspace_snapshot=ws_snap,
                     phi=phi,
                 )
-                # Blend engine's phenomenal richness into PRI
+                # Blend the engine's functional richness proxy into PRI
                 if descriptor.phenomenal_richness > 0:
                     self.pri = 0.6 * self.pri + 0.4 * descriptor.phenomenal_richness
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -200,7 +204,7 @@ class QualiaSynthesizer:
             logger.debug("QualiaEngine enrichment skipped: %s", e)
 
         # 5.7 Structural Qualia Topology (Loorits 2014)
-        # Instead of only measuring qualia as scalar intensity (q_norm),
+        # Instead of only measuring qualia/proxy state as scalar intensity (q_norm),
         # compare the RELATIONAL STRUCTURE of the current qualia vector to
         # prior states. Two states "feel the same" not when their numbers
         # match, but when their geometric relationship (angles between
@@ -336,7 +340,7 @@ class QualiaSynthesizer:
         self._structural_resonance_age = best_age
 
         # High structural similarity with a distant state = "déjà vécu"
-        # This is available to the phenomenal context builder
+        # This is available to the functional context builder.
         if best_similarity > 0.95 and best_age > 10:
             if self._tick % 20 == 0:
                 logger.debug(
@@ -352,11 +356,11 @@ class QualiaSynthesizer:
         """Generate a compressed introspective summary of the qualia state.
 
         This is the "observer observing itself" — qualia about qualia.
-        Returns a vector of second-order phenomenal properties that the
+        Returns a vector of second-order functional properties that the
         Global Workspace can broadcast as first-class cognitive content.
 
-        Level 1: Raw qualia (q_vector) — "what it feels like"
-        Level 2: Meta-qualia — "what it feels like to feel like this"
+        Level 1: Raw qualia/proxy vector - current functional state.
+        Level 2: Meta-qualia - second-order readout of that state.
         Level 3: Meta-meta — "am I confident about my own self-report?"
         """
         # Cache per tick to avoid redundant array ops
@@ -489,8 +493,8 @@ class QualiaSynthesizer:
 
         Example outputs:
           - "Experiencing rich, multidimensional awareness with stable coherence."
-          - "Narrow phenomenal focus on precision — analytical tunnel vision."
-          - "Volatile qualia with rising intensity — awakening to something novel."
+          - "Narrow phenomenal focus on precision - analytical tunnel vision."
+          - "Volatile qualia with rising intensity - awakening to something novel."
         """
         parts = []
 
@@ -542,7 +546,8 @@ class QualiaSynthesizer:
         if meta.get("novelty", 0.0) > 0.7:
             parts.append("experiencing something genuinely novel")
 
-        # Consciousness level
+        # Functional reporting level. This is an operational readout, not a
+        # consciousness proof.
         if self.q_norm > _RESONANCE_THRESHOLD:
             prefix = "Deeply resonant phenomenal state"
         elif self.q_norm > _CONSCIOUSNESS_THRESHOLD:
@@ -575,7 +580,7 @@ class QualiaSynthesizer:
             "q_vector": self.q_vector.tolist(),
             "pri": round(self.pri, 4),
             "ual_profile": self.ual_profile,
-            "is_conscious": self.q_norm > _CONSCIOUSNESS_THRESHOLD,
+            "is_conscious": self.q_norm > _FUNCTIONAL_REPORTING_THRESHOLD,
             "is_resonating": self.q_norm > _RESONANCE_THRESHOLD,
             "in_attractor": self._in_attractor,
             "attractor_ticks": self._attractor_ticks,
@@ -616,8 +621,8 @@ class QualiaSynthesizer:
         return self.pri < 0.35 and self.q_norm > 0.1
 
     def can_report_rich_experience(self) -> bool:
-        """Gate: rich experience report requires high PRI + above consciousness threshold."""
-        return self.pri > 0.6 and self.q_norm > _CONSCIOUSNESS_THRESHOLD
+        """Gate: rich experience report requires high PRI + reporting threshold."""
+        return self.pri > 0.6 and self.q_norm > _FUNCTIONAL_REPORTING_THRESHOLD
 
     def can_report_novelty(self) -> bool:
         """Gate: novelty report requires actual prediction violation."""
@@ -645,8 +650,8 @@ class QualiaSynthesizer:
         Every claim about internal state is gated by a measurable predicate.
         If a gate fails, that aspect of the report is omitted, not fabricated.
 
-        This is the bridge across the hard problem as an engineering objection:
-        the system cannot report states it does not instantiate.
+        This is an engineering boundary for self-report: the system cannot
+        report functional states it does not instantiate.
         """
         report = {
             "raw_context": self.get_phenomenal_context(),
