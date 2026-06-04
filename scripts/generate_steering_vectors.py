@@ -255,7 +255,7 @@ class SteeringVectorGenerator:
             input_tensor = mx.array([input_ids])
             _ = self.model(input_tensor)
             mx.eval(_)
-        except Exception as e:
+        except (AttributeError, IndexError, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to extract activation: {e}")
         finally:
             target_block.__class__ = original_class

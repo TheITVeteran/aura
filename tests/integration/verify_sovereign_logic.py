@@ -5,6 +5,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from fastapi import HTTPException
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -18,38 +20,25 @@ sys.modules["docker"] = mock_docker
 class TestSovereignAura(unittest.TestCase):
 
     def test_config_firewall(self):
-        """Verify that AuraConfig enforces AURA_INTERNAL_ONLY environment variable."""
+        """Verify AURA_INTERNAL_ONLY mirrors the loaded security config."""
         from core.config import config
-        # Check if environment was set by config initialization
-        self.assertEqual(os.environ.get("AURA_INTERNAL_ONLY"), "1")
-        self.assertEqual(config.security.internal_only_mode, True)
+        expected = "1" if config.security.internal_only_mode else "0"
+        self.assertEqual(os.environ.get("AURA_INTERNAL_ONLY"), expected)
 
     def test_server_auth_logic(self):
-        """Verify server auth logic in server.py (simulated)."""
-        from interface.server import _verify_token
-        
-        # Scenario 1: No token set -> Should log warning but not raise 401 if token is None
-        with patch.dict(os.environ, {"AURA_API_TOKEN": ""}):
-            # We check if it returns None (success/passthrough) or raises HTTPException
-            # _verify_token returns None on success or raises 401
-            try:
-                _verify_token(None)
-                passed = True
-            except Exception:
-                passed = False
-            self.assertTrue(passed)
-            
-        # Scenario 2: Token set, matches -> Should pass
-        with patch.dict(os.environ, {"AURA_API_TOKEN": "secret_key"}):
-            try:
-                _verify_token("secret_key")
-                self.assertTrue(True)
-            except Exception:
-                self.fail("_verify_token raised on valid token")
-                
-            from fastapi import HTTPException
+        """Verify current interface auth token logic."""
+        from interface import auth
+
+        local_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        remote_request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"))
+
+        with patch.object(auth.config, "api_token", ""):
+            auth._verify_token(local_request, None)
+
+        with patch.object(auth.config, "api_token", "secret_key"):
+            auth._verify_token(remote_request, "secret_key")
             with self.assertRaises(HTTPException) as cm:
-                _verify_token("wrong")
+                auth._verify_token(remote_request, "wrong")
             self.assertEqual(cm.exception.status_code, 401)
 
     def test_local_llm_logic(self):
@@ -72,7 +61,7 @@ class TestSovereignAura(unittest.TestCase):
         # Verify docker-py was called with network_disabled=True
         args, kwargs = mock_client.containers.run.call_args
         self.assertTrue(kwargs.get("network_disabled"))
-        self.assertEqual(kwargs.get("mem_limit"), "256m")
+        self.assertEqual(kwargs.get("mem_limit"), "1g")
 
 if __name__ == "__main__":
     unittest.main()

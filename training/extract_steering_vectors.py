@@ -252,7 +252,7 @@ def _extract_hidden_states(
                     # Last token hidden state, cast to float32
                     last_tok = out_tensor[:, -1, :].astype(mx.float32)
                     captured[lidx] = np.array(last_tok).flatten()
-                except Exception as exc:
+                except (AttributeError, IndexError, RuntimeError, TypeError, ValueError) as exc:
                     logger.debug("Hook capture failed at layer %d: %s", lidx, exc)
                 return result
             return patched
@@ -264,7 +264,7 @@ def _extract_hidden_states(
     try:
         model(tokens)
         mx.eval()
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         logger.warning("Forward pass failed: %s", exc)
     finally:
         # Always restore original methods

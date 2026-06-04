@@ -154,7 +154,7 @@ def main():
         with open(RAW_DATA_DIR / "new_scraped_quotes.json") as f2:
             new_quotes = json.load(f2)
             direct_quotes.extend([(q["user"], q["assistant"]) for q in new_quotes])
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         print("Warning: verbatim_quotes_final.json or new_scraped_quotes.json not found. Falling back.")
         direct_quotes = get_all_direct_quotes()
 
@@ -167,7 +167,7 @@ def main():
             human_speech = [(q["user"], q["assistant"]) for q in sampled_human]
 
 
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         print("Warning: human_conversations.json not found.")
         human_speech = []
 

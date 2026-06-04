@@ -44,9 +44,18 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 RESULTS_DIR = ROOT / "training"
-get_task_tracker().create_task(get_storage_gateway().create_dir(RESULTS_DIR, cause=''))
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_PATH = RESULTS_DIR / "crucible_results.jsonl"
 SUMMARY_PATH = RESULTS_DIR / "crucible_summary.md"
+
+CRUCIBLE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 # ------------------------------------------------------------------
@@ -179,7 +188,7 @@ async def _boot_aura(logger: logging.Logger):
     register_all_services()
     try:
         await ServiceContainer.wake()
-    except Exception as e:
+    except CRUCIBLE_RECOVERABLE_ERRORS as e:
         # A boot failure during crucible is information — record it but keep
         # going; some optional services may be intentionally unavailable in
         # this test environment.
@@ -232,7 +241,7 @@ async def run_crucible():
         start = time.time()
         try:
             trace = await react.run(scenario["query"], context={"priority": True})
-        except Exception as exc:
+        except CRUCIBLE_RECOVERABLE_ERRORS as exc:
             logger.exception("Scenario %s crashed: %s", scenario["id"], exc)
             trace = None
 

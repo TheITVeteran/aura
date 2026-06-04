@@ -18,6 +18,8 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger("Aura.RSILab")
 
+RSI_LAB_IO_ERRORS = (OSError, TypeError, ValueError)
+
 @dataclass
 class CandidateArtifact:
     """An artifact proposed for core integration."""
@@ -110,7 +112,7 @@ class RSILab:
             data = {k: asdict(v) for k, v in self.candidates.items()}
             with open(self.lab_dir / "candidates.json", "w") as f:
                 json.dump(data, f, indent=4)
-        except Exception as e:
+        except RSI_LAB_IO_ERRORS as e:
             logger.error(f"Failed to save RSI Lab candidates: {e}")
 
     def _load(self):
@@ -121,7 +123,7 @@ class RSILab:
             with open(file_path, "r") as f:
                 data = json.load(f)
             self.candidates = {k: CandidateArtifact(**v) for k, v in data.items()}
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
             logger.error(f"Failed to load RSI Lab candidates: {e}")
 
 def register_rsi_lab(orchestrator=None):

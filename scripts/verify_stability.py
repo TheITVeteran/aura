@@ -8,8 +8,19 @@ sys.path.append(os.path.abspath("."))
 
 from core.orchestrator import AsyncAgentOrchestrator
 
+STABILITY_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
 async def verify_stability_fixes():
     print("🚀 Verifying Aura Stability Fixes...")
+    ok = True
     
     # Initialize Orchestrator
     orchestrator = AsyncAgentOrchestrator()
@@ -22,8 +33,9 @@ async def verify_stability_fixes():
         print(f"✅ Snapshot captured: {snapshot}")
         orchestrator.state_manager.push_checkpoint(snapshot)
         print("✅ Checkpoint pushed.")
-    except Exception as e:
+    except STABILITY_RECOVERABLE_ERRORS as e:
         print(f"❌ StateManager error: {e}")
+        ok = False
     
     # 2. Test Resilient Async Call (No more coroutine attribute errors)
     print("\n--- Testing Resilient Async Call ---")
@@ -46,8 +58,9 @@ async def verify_stability_fixes():
         success = result.get("ok", False) if isinstance(result, dict) else True
         print(f"✅ Meta-cognition logic success check: {success}")
         
-    except Exception as e:
+    except STABILITY_RECOVERABLE_ERRORS as e:
         print(f"❌ Resilient call error: {e}")
+        ok = False
 
     # 3. Test string result handling
     print("\n--- Testing String Result Handling ---")
@@ -56,7 +69,8 @@ async def verify_stability_fixes():
     print(f"✅ String result success check: {success_str}")
 
     print("\n🎉 Stability Fixes Verified!")
+    return ok
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(verify_stability_fixes())
+    sys.exit(0 if asyncio.run(verify_stability_fixes()) else 1)

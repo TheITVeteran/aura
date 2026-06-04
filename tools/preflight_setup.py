@@ -70,28 +70,27 @@ def _check_database() -> dict[str, Any]:
     
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH), timeout=5)
-        cursor = conn.cursor()
-        
-        # Test projects table
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")
-        projects_exist = cursor.fetchone() is not None
-        
-        # Test tasks table
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
-        tasks_exist = cursor.fetchone() is not None
-        
-        if not (projects_exist and tasks_exist):
-            # Try initializing DB via ProjectStore to repair schema
-            from core.data.project_store import ProjectStore
-            store = ProjectStore(str(DB_PATH))
-            report["detail"] = "Database schema initialized/repaired successfully."
-        else:
-            report["detail"] = "Existing projects and tasks tables verified."
-            
+        with sqlite3.connect(str(DB_PATH), timeout=5) as conn:
+            cursor = conn.cursor()
+
+            # Test projects table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")
+            projects_exist = cursor.fetchone() is not None
+
+            # Test tasks table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+            tasks_exist = cursor.fetchone() is not None
+
+            if not (projects_exist and tasks_exist):
+                # Try initializing DB via ProjectStore to repair schema
+                from core.data.project_store import ProjectStore
+                ProjectStore(str(DB_PATH))
+                report["detail"] = "Database schema initialized/repaired successfully."
+            else:
+                report["detail"] = "Existing projects and tasks tables verified."
+
         report["schema_ok"] = True
-        conn.close()
-    except Exception as e:
+    except (ImportError, OSError, RuntimeError, sqlite3.Error) as e:
         report["detail"] = f"Database diagnostic failed: {e}"
         report["schema_ok"] = False
         

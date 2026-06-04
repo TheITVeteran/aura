@@ -8,6 +8,13 @@ import pytest
 
 logger = logging.getLogger("Aura.MLXStressTest")
 
+MLX_STRESS_RECOVERABLE_ERRORS = (
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 def _load_mlx():
     return pytest.importorskip("mlx.core"), pytest.importorskip("numpy")
@@ -36,7 +43,7 @@ def _stress_test(duration_s: float = 2.0) -> None:
                 result = x + 15.0 * composite
                 if np.random.random() > 0.9:
                     mx.eval(result)
-            except Exception as exc:  # pragma: no cover - diagnostic harness
+            except MLX_STRESS_RECOVERABLE_ERRORS as exc:  # pragma: no cover - diagnostic harness
                 failures.append(f"steering:{type(exc).__name__}:{exc}")
                 break
             time.sleep(0.001)
@@ -47,7 +54,7 @@ def _stress_test(duration_s: float = 2.0) -> None:
                 hidden = mx.random.normal((d_model,))
                 for vector in vectors:
                     float(mx.sum(hidden * vector))
-            except Exception as exc:  # pragma: no cover - diagnostic harness
+            except MLX_STRESS_RECOVERABLE_ERRORS as exc:  # pragma: no cover - diagnostic harness
                 failures.append(f"readout:{type(exc).__name__}:{exc}")
                 break
             time.sleep(0.001)

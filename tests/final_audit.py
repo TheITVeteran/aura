@@ -12,6 +12,7 @@ sys.path.append(os.getcwd())
 async def audit_aura():
     print("🚀 STARTING AURA FINAL PERFORMANCE & INTEGRATION AUDIT")
     print("-" * 50)
+    ok = True
     
     # 1. Test Skill Loading
     try:
@@ -37,8 +38,9 @@ async def audit_aura():
             
         await orch.stop()
             
-    except Exception as e:
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         print(f"❌ SKILL LOADING FAILED: {e}")
+        ok = False
 
     # 2. Test Latency Throttling (Simulated)
     print("\n⏱️ AUDITING LATENCY THROTTLING...")
@@ -71,15 +73,18 @@ async def audit_aura():
             print("✨ SUCCESS: Cognition is correctly mode-aware and optimized for latency.")
         else:
             print(f"❌ FAILURE: Turn limits ({fast_turns}/{deep_turns}) are not correctly applied.")
-            
-    except Exception as e:
+            ok = False
+
+    except (AttributeError, ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
         print(f"❌ LATENCY AUDIT FAILED: {e}")
+        ok = False
 
     print("-" * 50)
     print("🏆 AUDIT COMPLETE")
+    return ok
 
 if __name__ == "__main__":
-    asyncio.run(audit_aura())
+    raise SystemExit(0 if asyncio.run(audit_aura()) else 1)
 
 
 ##

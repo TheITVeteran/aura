@@ -41,6 +41,15 @@ import numpy as np
 
 logger = logging.getLogger("Research.AdversarialTheoryTesting")
 
+THEORY_TEST_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    KeyError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -616,21 +625,21 @@ class AdversarialTheoryTestingProtocol:
         try:
             r1 = self._test_gwt_rpt.run(workspace, qualia_synth, substrate_metrics, predictive_metrics)
             results.append(r1)
-        except Exception as e:
+        except THEORY_TEST_RECOVERABLE_ERRORS as e:
             logger.error("GWT vs RPT test failed: %s", e)
 
         # Test 2: GWT vs Multiple Drafts
         try:
             r2 = self._test_gwt_md.run(workspace, md_engine)
             results.append(r2)
-        except Exception as e:
+        except THEORY_TEST_RECOVERABLE_ERRORS as e:
             logger.error("GWT vs MD test failed: %s", e)
 
         # Test 3: HOT vs First-Order
         try:
             r3 = self._test_hot_fo.run(qualia_synth, hot_engine, substrate_metrics, predictive_metrics)
             results.append(r3)
-        except Exception as e:
+        except THEORY_TEST_RECOVERABLE_ERRORS as e:
             logger.error("HOT vs First-Order test failed: %s", e)
 
         # Log to TheoryArbitration framework
@@ -681,7 +690,7 @@ class AdversarialTheoryTestingProtocol:
 
                 arb.resolve_prediction(event_id=event_id, actual_outcome=outcome)
 
-        except Exception as e:
+        except THEORY_TEST_RECOVERABLE_ERRORS as e:
             logger.warning("Failed to log to TheoryArbitration: %s", e)
 
     def get_cumulative_evidence(self) -> Dict[str, float]:

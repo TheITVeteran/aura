@@ -57,7 +57,7 @@ def main():
             TrainingArguments,
             Trainer,
         )
-    except Exception as e:
+    except ImportError as e:
         raise SystemExit("Missing packages: install `transformers` and `datasets`. Error: " + str(e))
 
     ds = Dataset.from_dict({'text': texts})

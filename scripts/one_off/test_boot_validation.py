@@ -18,6 +18,16 @@ from core.supervisor.tree import reset_tree
 
 logging.basicConfig(level=logging.INFO)
 
+BOOT_VALIDATION_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
 async def _reset_runtime_boundary():
     """Return shared process globals to a clean slate before/after validation."""
     await KernelInterface.reset_instance()
@@ -29,16 +39,16 @@ async def _reset_runtime_boundary():
         shm = shared_memory.SharedMemory(name="aura_state_shm")
     except FileNotFoundError:
         return
-    except Exception as shm_err:
+    except OSError as shm_err:
         print(f"⚠️ Shared memory probe failed: {shm_err}")
         return
 
     try:
         shm.close()
-        get_task_tracker().create_task(get_storage_gateway().delete(shm, cause='_reset_runtime_boundary'))
+        shm.unlink()
     except FileNotFoundError:
         pass
-    except Exception as shm_err:
+    except OSError as shm_err:
         print(f"⚠️ Shared memory cleanup failed: {shm_err}")
 
 async def _run_validation():
@@ -52,7 +62,7 @@ async def _run_validation():
         try:
             # We manually run the init steps that register the services
             await orch._async_init_subsystems()
-        except Exception as e:
+        except BOOT_VALIDATION_RECOVERABLE_ERRORS as e:
             print(f"❌ Subsystem init failed: {e}")
             # Continue to see what registered
 
@@ -72,12 +82,12 @@ async def _run_validation():
             if getattr(orch, "status", None):
                 orch.status.running = True
             await orch.stop()
-        except Exception as stop_err:
+        except BOOT_VALIDATION_RECOVERABLE_ERRORS as stop_err:
             print(f"⚠️ Orchestrator cleanup failed: {stop_err}")
 
         try:
             await orch.supervisor.stop()
-        except Exception as supervisor_err:
+        except BOOT_VALIDATION_RECOVERABLE_ERRORS as supervisor_err:
             print(f"⚠️ Supervisor cleanup failed: {supervisor_err}")
 
         for proc in multiprocessing.active_children():
@@ -89,7 +99,7 @@ async def _run_validation():
 
         try:
             await bus.shutdown()
-        except Exception as bus_err:
+        except BOOT_VALIDATION_RECOVERABLE_ERRORS as bus_err:
             print(f"⚠️ Event bus cleanup failed: {bus_err}")
 
         await _reset_runtime_boundary()

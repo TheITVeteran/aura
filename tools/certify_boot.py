@@ -28,6 +28,16 @@ os.environ["AURA_DEFERRED_CORTEX_PREWARM"] = "0"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("Aura.BootCertifier")
 
+CERTIFY_BOOT_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 async def run_certification():
     print("")
@@ -56,7 +66,7 @@ async def run_certification():
             readiness_context="certification_boot",
             artifact_root=out_dir
         )
-    except Exception as exc:
+    except CERTIFY_BOOT_RECOVERABLE_ERRORS as exc:
         print(f"❌ CRITICAL: Aura failed to boot: {exc}")
         return False
 
@@ -230,7 +240,7 @@ async def run_certification():
     try:
         from core.container import ServiceContainer
         await ServiceContainer.shutdown()
-    except Exception as shutdown_exc:
+    except CERTIFY_BOOT_RECOVERABLE_ERRORS as shutdown_exc:
         logger.debug("Shutdown coordinator finished: %s", shutdown_exc)
 
     return cert_passed

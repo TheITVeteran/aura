@@ -8,8 +8,20 @@ from core.runtime.atomic_writer import atomic_write_text
 # Fix paths
 sys.path.insert(0, str(Path.cwd()))
 
+ZENITH_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
 async def test_zenith_fixes():
     print("🧪 Testing Zenith Audit Fixes...")
+    ok = True
 
     # 1. Test Mycelial Network (Cycle Detection)
     print("\n1. Testing Mycelial Network...")
@@ -24,8 +36,10 @@ async def test_zenith_fixes():
             print("✅ Cycle detection blocked correctly.")
         else:
             print("❌ Cycle detection failed!")
-    except Exception as e:
+            ok = False
+    except ZENITH_RECOVERABLE_ERRORS as e:
         print(f"❌ Mycelial test error: {e}")
+        ok = False
 
     # 2. Test Safety Registry
     print("\n2. Testing Safety Registry...")
@@ -38,8 +52,10 @@ async def test_zenith_fixes():
             print("✅ Skill revocation working.")
         else:
             print("❌ Skill revocation failed!")
-    except Exception as e:
+            ok = False
+    except ZENITH_RECOVERABLE_ERRORS as e:
         print(f"❌ Safety registry test error: {e}")
+        ok = False
 
     # 3. Test Hybrid Store (Unicode & Pruning)
     print("\n3. Testing Hybrid Store...")
@@ -52,8 +68,10 @@ async def test_zenith_fixes():
             print("✅ Hybrid store unicode-safe and retrieving.")
         else:
             print("❌ Hybrid store retrieval failed.")
-    except Exception as e:
+            ok = False
+    except ZENITH_RECOVERABLE_ERRORS as e:
         print(f"❌ Hybrid store test error: {e}")
+        ok = False
 
     # 4. Test Safe Optimizer (Safety checks)
     print("\n4. Testing Safe Optimizer...")
@@ -65,10 +83,12 @@ async def test_zenith_fixes():
         atomic_write_text(test_data, "dummy dataset content")
         await opt.optimize_lora(str(test_data), "base_model")
         print("✅ Safe optimizer executed without crash.")
-    except Exception as e:
+    except ZENITH_RECOVERABLE_ERRORS as e:
         print(f"❌ Safe optimizer test error: {e}")
+        ok = False
 
     print("\n✨ Zenith Audit Fixes Verification Complete.")
+    return ok
 
 if __name__ == "__main__":
-    asyncio.run(test_zenith_fixes())
+    raise SystemExit(0 if asyncio.run(test_zenith_fixes()) else 1)

@@ -24,12 +24,22 @@ logging.basicConfig(level=logging.INFO)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "personality_training")
 os.makedirs(OUT_DIR, exist_ok=True)
 
+TRAIN_PERSONALITY_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+TRAIN_PERSONALITY_GENERATION_ERRORS = (OSError, *TRAIN_PERSONALITY_RECOVERABLE_ERRORS)
+
 
 def get_cognitive_engine():
     try:
         from core.brain.cognitive_engine import cognitive_engine
         return cognitive_engine
-    except Exception as e:
+    except TRAIN_PERSONALITY_RECOVERABLE_ERRORS as e:
         logger.warning(f"cognitive_engine not available: {e}")
         return None
 
@@ -116,7 +126,7 @@ def generate_examples(persona_name: str, n: int = 50, instruction_template: str 
             with open(out_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(example, ensure_ascii=False) + "\n")
             logger.info(f"Generated example {i+1}/{n} for {persona_name}")
-        except Exception as e:
+        except TRAIN_PERSONALITY_GENERATION_ERRORS as e:
             logger.error(f"Generation failed: {e}")
             time.sleep(0.5)
 

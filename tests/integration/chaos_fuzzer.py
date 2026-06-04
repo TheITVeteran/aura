@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import random
+import sqlite3
 import tempfile
 from unittest.mock import AsyncMock
 
@@ -90,7 +91,7 @@ async def test_sqlite_concurrency_spike():
                 "cost": 0.0,
             })
             return True
-        except Exception as e:
+        except (OSError, RuntimeError, sqlite3.Error) as e:
             logger.error("Write %d failed: %s", idx, e)
             return False
 
@@ -105,7 +106,7 @@ async def test_sqlite_concurrency_spike():
     try:
         data = await mem.get_recent_events_async(count=5)
         assert isinstance(data, list)
-    except Exception as e:
+    except (OSError, RuntimeError, sqlite3.Error) as e:
         pytest.fail(f"SQLite DB corrupted after concurrency spike: {e}")
 
 
@@ -127,7 +128,7 @@ async def test_belief_graph_contradiction_storm():
                 target=val,
                 confidence_score=random.uniform(0.1, 1.0)
             )
-        except Exception as e:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             logger.error("Belief '%s' failed: %s", val, e)
 
     for _ in range(200):

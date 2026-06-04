@@ -3,6 +3,14 @@ import logging
 
 logger = logging.getLogger("Storage.VectorAdapter")
 
+VECTOR_STORE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+)
+
 
 class VectorStoreAdapter:
     """
@@ -43,7 +51,7 @@ class VectorStoreAdapter:
             # If none matched, log and return None to allow graceful degradation
             logger.error("Unsupported vector store interface - no compatible add method found")
             return None
-        except Exception:
+        except VECTOR_STORE_RECOVERABLE_ERRORS:
             logger.exception("VectorStoreAdapter.add failed")
             return None  # Graceful degradation instead of raising
 
@@ -51,13 +59,13 @@ class VectorStoreAdapter:
         if hasattr(self.store, "query"):
             try:
                 return self.store.query(query_embedding, top_k=top_k)
-            except Exception as e:
+            except VECTOR_STORE_RECOVERABLE_ERRORS as e:
                 logger.error(f"Vector store query failed: {e}")
                 return []
         if hasattr(self.store, "search"):
             try:
                 return self.store.search(query_embedding, top_k)
-            except Exception as e:
+            except VECTOR_STORE_RECOVERABLE_ERRORS as e:
                 logger.error(f"Vector store search failed: {e}")
                 return []
         logger.error("Unsupported vector store query API")

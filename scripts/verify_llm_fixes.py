@@ -16,6 +16,16 @@ sys.modules["core.event_bus"] = MagicMock()
 sys.modules["core.config"] = MagicMock()
 sys.modules["psutil"] = MagicMock()
 
+LLM_FIX_RECOVERABLE_ERRORS = (
+    AssertionError,
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 async def test_router_compatibility():
     print("🔍 Testing HealthAwareLLMRouter compatibility...")
     try:
@@ -42,10 +52,12 @@ async def test_router_compatibility():
         assert res_meta["text"] == "Mock Response"
         
         print("✅ Router compatibility verified.")
-    except Exception as e:
+        return True
+    except LLM_FIX_RECOVERABLE_ERRORS as e:
         print(f"❌ Router compatibility failed: {e}")
         import traceback
         traceback.print_exc()
+        return False
 
 async def test_language_center_hardening():
     print("\n🔍 Testing LanguageCenter hardening...")
@@ -83,10 +95,12 @@ async def test_language_center_hardening():
         assert "{'text':" in response or "I am a dict" in response
         
         print("✅ LanguageCenter hardening verified.")
-    except Exception as e:
+        return True
+    except LLM_FIX_RECOVERABLE_ERRORS as e:
         print(f"❌ LanguageCenter hardening failed: {e}")
         import traceback
         traceback.print_exc()
+        return False
 
 async def test_synthesis_scrubbing():
     print("\n🔍 Testing Synthesis scrubbing for '. .'...")
@@ -106,10 +120,14 @@ async def test_synthesis_scrubbing():
             assert result.strip() == expected.strip(), f"Expected '{expected}', got '{result}'"
             
         print("✅ Synthesis scrubbing verified.")
-    except Exception as e:
+        return True
+    except LLM_FIX_RECOVERABLE_ERRORS as e:
         print(f"❌ Synthesis scrubbing failed: {e}")
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(test_router_compatibility())
-    asyncio.run(test_language_center_hardening())
-    asyncio.run(test_synthesis_scrubbing())
+    ok = True
+    ok &= asyncio.run(test_router_compatibility())
+    ok &= asyncio.run(test_language_center_hardening())
+    ok &= asyncio.run(test_synthesis_scrubbing())
+    raise SystemExit(0 if ok else 1)

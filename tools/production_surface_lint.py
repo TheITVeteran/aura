@@ -362,8 +362,18 @@ def scan_file(path: Path) -> list[LintFinding]:
     findings: list[LintFinding] = []
     try:
         source = path.read_text(encoding="utf-8")
-    except Exception:
+    except UnicodeDecodeError:
         source = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError as exc:
+        return [
+            LintFinding(
+                file=rel,
+                line=1,
+                kind="unreadable_production_file",
+                severity="high",
+                detail=str(exc),
+            )
+        ]
 
     # Line-level checks
     local_path_pattern = re.compile(r"/(Users|home|tmp)/[a-zA-Z0-9_-]+")

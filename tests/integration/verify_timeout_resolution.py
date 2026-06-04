@@ -10,6 +10,16 @@ from core.brain.cognitive_engine import CognitiveEngine, ThinkingMode
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestTimeout")
 
+TIMEOUT_TEST_RECOVERABLE_ERRORS = (
+    AssertionError,
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 async def test_timeout_resolution():
     """
     Verify that the Orchestrator's watchdog (60s) properly handles 
@@ -76,17 +86,18 @@ async def test_timeout_resolution():
             
         except asyncio.TimeoutError:
             print("❌ TEST FAILED: Watchdog triggered early (before 60s).")
-            exit(1)
-        except Exception as e:
+            return False
+        except TIMEOUT_TEST_RECOVERABLE_ERRORS as e:
             print(f"❌ TEST ERROR: {e}")
-            exit(1)
+            return False
 
-    except Exception as e:
+    except TIMEOUT_TEST_RECOVERABLE_ERRORS as e:
         print(f"Test setup error: {e}")
-        exit(1)
+        return False
+    return True
 
 if __name__ == "__main__":
-    asyncio.run(test_timeout_resolution())
+    raise SystemExit(0 if asyncio.run(test_timeout_resolution()) else 1)
 
 
 ##
