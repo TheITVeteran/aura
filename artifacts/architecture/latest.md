@@ -2,15 +2,15 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1780496222.950977`
+Generated: `1780600261.765214`
 
 ## Summary
 
 - Subsystems: 127
 - Python files: 1630
-- Python lines: 474971
-- Dependency edges: 714
-- ServiceContainer `.get()` calls: 1485
+- Python lines: 476102
+- Dependency edges: 715
+- ServiceContainer `.get()` calls: 1486
 - ServiceContainer registrations: 357
 - Boot contract: PASS
 
@@ -18,22 +18,22 @@ Generated: `1780496222.950977`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>94 files, 21230 lines"]
+    runtime["runtime<br/>94 files, 21330 lines"]
     utils["utils<br/>42 files, 5190 lines"]
-    brain["brain<br/>115 files, 43637 lines"]
-    memory["memory<br/>76 files, 18855 lines"]
-    consciousness["consciousness<br/>128 files, 59684 lines"]
+    brain["brain<br/>115 files, 43733 lines"]
+    memory["memory<br/>76 files, 18869 lines"]
+    consciousness["consciousness<br/>128 files, 59701 lines"]
     resilience["resilience<br/>53 files, 11218 lines"]
-    health["health<br/>3 files, 844 lines"]
-    agency["agency<br/>28 files, 14324 lines"]
+    health["health<br/>3 files, 850 lines"]
+    agency["agency<br/>28 files, 14357 lines"]
     adaptation["adaptation<br/>26 files, 11926 lines"]
     affect["affect<br/>6 files, 2935 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
-    self_modification["self_modification<br/>29 files, 10778 lines"]
+    self_modification["self_modification<br/>29 files, 10817 lines"]
     senses["senses<br/>23 files, 5125 lines"]
     state["state<br/>6 files, 3468 lines"]
     observability["observability<br/>3 files, 575 lines"]
-    governance["governance<br/>8 files, 2682 lines"]
+    governance["governance<br/>8 files, 2687 lines"]
     identity["identity<br/>11 files, 2138 lines"]
     orchestrator["orchestrator<br/>42 files, 18851 lines"]
     security["security<br/>17 files, 4623 lines"]
@@ -41,12 +41,12 @@ graph TD
     executive["executive<br/>4 files, 2323 lines"]
     phases["phases<br/>29 files, 17286 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
+    learning["learning<br/>20 files, 6949 lines"]
     actuators["actuators<br/>9 files, 2132 lines"]
     autonomy["autonomy<br/>22 files, 7703 lines"]
-    conversation["conversation<br/>8 files, 4178 lines"]
-    learning["learning<br/>20 files, 6936 lines"]
+    conversation["conversation<br/>8 files, 4300 lines"]
     reasoning["reasoning<br/>7 files, 3893 lines"]
-    skills["skills<br/>77 files, 16395 lines"]
+    skills["skills<br/>77 files, 16391 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4227 lines"]
     managers["managers<br/>6 files, 932 lines"]
@@ -57,19 +57,19 @@ graph TD
     supervisor["supervisor<br/>3 files, 495 lines"]
     unity["unity<br/>11 files, 2409 lines"]
     agi["agi<br/>6 files, 1520 lines"]
-    being["being<br/>11 files, 1442 lines"]
+    being["being<br/>11 files, 1501 lines"]
     cognitive["cognitive<br/>11 files, 8104 lines"]
-    collective["collective<br/>6 files, 1963 lines"]
+    collective["collective<br/>6 files, 2002 lines"]
     embodiment["embodiment<br/>15 files, 2627 lines"]
     ethics["ethics<br/>1 files, 309 lines"]
-    evaluation["evaluation<br/>10 files, 1765 lines"]
-    kernel["kernel<br/>10 files, 5468 lines"]
+    evaluation["evaluation<br/>10 files, 1768 lines"]
+    kernel["kernel<br/>10 files, 5601 lines"]
     motivation["motivation<br/>7 files, 1194 lines"]
     promotion["promotion<br/>6 files, 945 lines"]
     resource["resource<br/>2 files, 426 lines"]
     voice["voice<br/>7 files, 2963 lines"]
     world["world<br/>1 files, 297 lines"]
-    cognition["cognition<br/>9 files, 3458 lines"]
+    cognition["cognition<br/>9 files, 3465 lines"]
     conversational["conversational<br/>4 files, 2237 lines"]
     data["data<br/>2 files, 514 lines"]
     db["db<br/>4 files, 583 lines"]
@@ -77,11 +77,11 @@ graph TD
     morphogenesis["morphogenesis<br/>12 files, 2864 lines"]
     pneuma["pneuma<br/>7 files, 1224 lines"]
     search["search<br/>2 files, 1715 lines"]
-    somatic["somatic<br/>5 files, 2376 lines"]
+    somatic["somatic<br/>5 files, 2383 lines"]
     verification["verification<br/>4 files, 350 lines"]
     advanced_cognition["advanced_cognition<br/>13 files, 2905 lines"]
     architect["architect<br/>25 files, 5706 lines"]
-    bus["bus<br/>4 files, 1934 lines"]
+    bus["bus<br/>4 files, 2056 lines"]
     coherence["coherence<br/>2 files, 397 lines"]
     discovery["discovery<br/>4 files, 579 lines"]
     environment["environment<br/>82 files, 8308 lines"]
@@ -107,7 +107,7 @@ graph TD
     context["context<br/>4 files, 1199 lines"]
     creativity["creativity<br/>2 files, 801 lines"]
     curriculum["curriculum<br/>7 files, 657 lines"]
-    cybernetics["cybernetics<br/>6 files, 1091 lines"]
+    cybernetics["cybernetics<br/>6 files, 1131 lines"]
     grounding["grounding<br/>7 files, 1092 lines"]
     guardians["guardians<br/>5 files, 623 lines"]
     llm["llm<br/>2 files, 19 lines"]
@@ -119,13 +119,13 @@ graph TD
     research_core["research_core<br/>5 files, 580 lines"]
     safety["safety<br/>3 files, 623 lines"]
     skill_management["skill_management<br/>1 files, 363 lines"]
-    sovereignty["sovereignty<br/>3 files, 873 lines"]
+    sovereignty["sovereignty<br/>3 files, 874 lines"]
     transparency["transparency<br/>2 files, 317 lines"]
     unknowns["unknowns<br/>4 files, 325 lines"]
     adapters["adapters<br/>3 files, 392 lines"]
-    audits["audits<br/>2 files, 222 lines"]
+    audits["audits<br/>2 files, 267 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>179 files, 54785 lines"]
+    core_root["core_root<br/>179 files, 55019 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     initializers["initializers<br/>2 files, 140 lines"]
     intent["intent<br/>1 files, 68 lines"]
@@ -435,6 +435,17 @@ graph TD
     phases --> utils
     phases --> voice
     tasks --> runtime
+    learning --> brain
+    learning --> consciousness
+    learning --> introspection
+    learning --> memory
+    learning --> promotion
+    learning --> reasoning
+    learning --> runtime
+    learning --> self_modification
+    learning --> skills
+    learning --> tasks
+    learning --> utils
     actuators --> affect
     actuators --> brain
     actuators --> executive
@@ -460,17 +471,6 @@ graph TD
     conversation --> runtime
     conversation --> social
     conversation --> utils
-    learning --> brain
-    learning --> consciousness
-    learning --> introspection
-    learning --> memory
-    learning --> promotion
-    learning --> reasoning
-    learning --> runtime
-    learning --> self_modification
-    learning --> skills
-    learning --> tasks
-    learning --> utils
     reasoning --> runtime
     skills --> actuators
     skills --> advanced_cognition
@@ -595,6 +595,7 @@ graph TD
     kernel --> cybernetics
     kernel --> executive
     kernel --> health
+    kernel --> learning
     kernel --> orchestrator
     kernel --> phases
     kernel --> resilience
@@ -865,72 +866,72 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 128 | 59684 | 2511793 | 38 | 29 |
-| core_root | 179 | 54785 | 2226549 | 99 | 0 |
-| brain | 115 | 43637 | 1884614 | 41 | 39 |
-| runtime | 94 | 21230 | 748306 | 39 | 107 |
-| memory | 76 | 18855 | 760404 | 17 | 32 |
+| consciousness | 128 | 59701 | 2512965 | 38 | 29 |
+| core_root | 179 | 55019 | 2237324 | 99 | 0 |
+| brain | 115 | 43733 | 1888655 | 41 | 39 |
+| runtime | 94 | 21330 | 752353 | 39 | 107 |
+| memory | 76 | 18869 | 761365 | 17 | 32 |
 | orchestrator | 42 | 18851 | 832153 | 124 | 9 |
-| phases | 29 | 17286 | 781687 | 32 | 8 |
-| skills | 77 | 16395 | 661450 | 28 | 6 |
-| agency | 28 | 14324 | 580587 | 28 | 17 |
+| phases | 29 | 17286 | 781794 | 32 | 8 |
+| skills | 77 | 16391 | 662291 | 28 | 6 |
+| agency | 28 | 14357 | 582096 | 28 | 17 |
 | adaptation | 26 | 11926 | 477616 | 19 | 14 |
 | resilience | 53 | 11218 | 451972 | 16 | 25 |
-| self_modification | 29 | 10778 | 427434 | 12 | 14 |
+| self_modification | 29 | 10817 | 429022 | 12 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8104 | 330109 | 9 | 4 |
-| autonomy | 22 | 7703 | 316317 | 17 | 6 |
-| learning | 20 | 6936 | 275133 | 15 | 6 |
+| autonomy | 22 | 7703 | 316413 | 17 | 6 |
+| learning | 20 | 6949 | 275811 | 15 | 7 |
 | architect | 25 | 5706 | 238326 | 9 | 2 |
-| kernel | 10 | 5468 | 224936 | 20 | 4 |
-| utils | 42 | 5190 | 202115 | 17 | 50 |
+| kernel | 10 | 5601 | 230936 | 22 | 4 |
+| utils | 42 | 5190 | 202473 | 17 | 50 |
 | senses | 23 | 5125 | 214611 | 16 | 14 |
 | security | 17 | 4623 | 182059 | 11 | 9 |
+| conversation | 8 | 4300 | 158729 | 11 | 6 |
 | coordinators | 9 | 4227 | 198599 | 36 | 5 |
-| conversation | 8 | 4178 | 154882 | 11 | 6 |
 | reasoning | 7 | 3893 | 157700 | 2 | 6 |
 | social | 11 | 3823 | 163226 | 8 | 2 |
 | state | 6 | 3468 | 146953 | 9 | 13 |
-| cognition | 9 | 3458 | 140216 | 8 | 3 |
+| cognition | 9 | 3465 | 140466 | 8 | 3 |
 | perception | 15 | 3260 | 129879 | 3 | 2 |
 | goals | 7 | 3047 | 129238 | 6 | 3 |
 | voice | 7 | 2963 | 134169 | 10 | 4 |
 | affect | 6 | 2935 | 136046 | 13 | 14 |
 | advanced_cognition | 13 | 2905 | 118305 | 3 | 2 |
 | morphogenesis | 12 | 2864 | 111296 | 8 | 3 |
-| governance | 8 | 2682 | 109785 | 10 | 10 |
+| governance | 8 | 2687 | 109972 | 10 | 10 |
 | embodiment | 15 | 2627 | 102452 | 12 | 4 |
 | world_model | 9 | 2541 | 103649 | 8 | 9 |
 | unity | 11 | 2409 | 100598 | 3 | 5 |
-| somatic | 5 | 2376 | 90103 | 8 | 3 |
-| ops | 11 | 2355 | 90934 | 15 | 5 |
+| somatic | 5 | 2383 | 90349 | 8 | 3 |
+| ops | 11 | 2355 | 91027 | 15 | 5 |
 | executive | 4 | 2323 | 98090 | 14 | 8 |
 | self_improvement | 12 | 2285 | 86875 | 3 | 2 |
 | conversational | 4 | 2237 | 95525 | 4 | 3 |
 | identity | 11 | 2138 | 90683 | 9 | 9 |
 | actuators | 9 | 2132 | 83552 | 12 | 6 |
-| collective | 6 | 1963 | 81012 | 8 | 4 |
-| bus | 4 | 1934 | 79738 | 6 | 2 |
+| bus | 4 | 2056 | 84614 | 6 | 2 |
+| collective | 6 | 2002 | 82421 | 8 | 4 |
 | evolution | 6 | 1879 | 76337 | 8 | 2 |
-| evaluation | 10 | 1765 | 61879 | 3 | 4 |
+| evaluation | 10 | 1768 | 62043 | 3 | 4 |
 | search | 2 | 1715 | 64882 | 6 | 3 |
 | self | 6 | 1681 | 70508 | 12 | 5 |
-| agi | 6 | 1520 | 63343 | 13 | 4 |
+| agi | 6 | 1520 | 63529 | 13 | 4 |
 | temporal | 3 | 1502 | 51551 | 2 | 0 |
-| being | 11 | 1442 | 53942 | 3 | 4 |
+| being | 11 | 1501 | 56585 | 3 | 4 |
 | meta | 7 | 1256 | 47229 | 5 | 5 |
 | pneuma | 7 | 1224 | 46166 | 4 | 3 |
 | providers | 6 | 1208 | 53206 | 52 | 0 |
-| context | 4 | 1199 | 46480 | 1 | 1 |
+| context | 4 | 1199 | 46580 | 1 | 1 |
 | motivation | 7 | 1194 | 50455 | 10 | 4 |
+| cybernetics | 6 | 1131 | 45134 | 6 | 1 |
 | grounding | 7 | 1092 | 40453 | 4 | 1 |
-| cybernetics | 6 | 1091 | 43608 | 6 | 1 |
 | workspace | 3 | 1069 | 39594 | 3 | 2 |
 | promotion | 6 | 945 | 31782 | 1 | 4 |
 | managers | 6 | 932 | 39672 | 25 | 5 |
 | autonomic | 4 | 882 | 36599 | 5 | 5 |
-| sovereignty | 3 | 873 | 33628 | 10 | 1 |
-| health | 3 | 844 | 32094 | 7 | 21 |
+| sovereignty | 3 | 874 | 33729 | 10 | 1 |
+| health | 3 | 850 | 32454 | 7 | 21 |
 | creativity | 2 | 801 | 33361 | 3 | 1 |
 | environments | 7 | 748 | 31101 | 3 | 2 |
 | introspection | 3 | 738 | 28467 | 1 | 2 |
@@ -941,7 +942,7 @@ graph TD
 | safety | 3 | 623 | 25543 | 3 | 1 |
 | persistence | 2 | 617 | 24953 | 3 | 2 |
 | sandbox | 4 | 594 | 20856 | 1 | 2 |
-| control | 2 | 586 | 20961 | 4 | 0 |
+| control | 2 | 586 | 21056 | 4 | 0 |
 | db | 4 | 583 | 22581 | 2 | 3 |
 | research_core | 5 | 580 | 22543 | 8 | 1 |
 | discovery | 4 | 579 | 20581 | 2 | 2 |
@@ -962,7 +963,7 @@ graph TD
 | verification | 4 | 350 | 13177 | 2 | 3 |
 | plasticity | 4 | 342 | 12056 | 2 | 1 |
 | tasks | 3 | 333 | 11388 | 3 | 8 |
-| networking | 1 | 327 | 12150 | 3 | 1 |
+| networking | 1 | 327 | 12336 | 3 | 1 |
 | startup | 2 | 326 | 11280 | 5 | 2 |
 | unknowns | 4 | 325 | 11829 | 3 | 1 |
 | transparency | 2 | 317 | 12256 | 1 | 1 |
@@ -970,12 +971,12 @@ graph TD
 | world | 1 | 297 | 10842 | 0 | 4 |
 | values | 2 | 289 | 10861 | 0 | 0 |
 | media | 2 | 273 | 9349 | 0 | 1 |
+| audits | 2 | 267 | 9492 | 3 | 0 |
 | maintenance | 2 | 261 | 9351 | 4 | 2 |
 | systems | 3 | 256 | 9861 | 3 | 0 |
-| middleware | 2 | 254 | 10825 | 2 | 1 |
+| middleware | 2 | 254 | 11019 | 2 | 1 |
 | play | 1 | 228 | 8774 | 4 | 0 |
 | session | 2 | 225 | 9184 | 1 | 0 |
-| audits | 2 | 222 | 8524 | 2 | 0 |
 | pipeline | 3 | 217 | 6684 | 1 | 0 |
 | telemetry | 2 | 191 | 5594 | 0 | 0 |
 | predictive | 2 | 186 | 7105 | 5 | 2 |
@@ -1098,7 +1099,7 @@ graph TD
 | Surface | Calls | Files | Owner Calls | Review Candidates |
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 54 | 28 | 2 | 52 |
-| Memory writes | 271 | 107 | 46 | 225 |
+| Memory writes | 273 | 108 | 47 | 226 |
 | State mutation | 374 | 144 | 5 | 369 |
 | Tool execution | 142 | 76 | 6 | 136 |
 | Self-modification and patching | 15 | 12 | 2 | 13 |
@@ -1190,10 +1191,10 @@ Review candidates:
 - `core/advanced_cognition/world_model.py:73` [advanced_cognition] `self.save` - self.save(self.state_path)
 - `core/advanced_cognition/zero_shot_transfer.py:75` [advanced_cognition] `self.save` - self.save(self.state_path)
 - `core/affect/phenomenal_integration.py:565` [affect] `memory.set_write_weights` - memory.set_write_weights(state.memory_weights)
-- `core/agency/agency_core.py:138` [agency] `get_registry.update` - await get_registry().update(active_shards=len(self.active_shards))
-- `core/agency/agency_core.py:816` [agency] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
-- `core/agency/agency_core.py:1007` [agency] `get_registry.update` - await get_registry().update(
-- `core/agency/agency_core.py:1016` [agency] `_run_registry_update` - _run_registry_update(),
+- `core/agency/agency_core.py:139` [agency] `get_registry.update` - await get_registry().update(active_shards=len(self.active_shards))
+- `core/agency/agency_core.py:841` [agency] `virtual_body.__dict__.update` - virtual_body.__dict__.update(snapshot)
+- `core/agency/agency_core.py:1035` [agency] `get_registry.update` - await get_registry().update(
+- `core/agency/agency_core.py:1044` [agency] `_run_registry_update` - _run_registry_update(),
 - `core/agency/autonomous_task_engine.py:425` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency/autonomous_task_engine.py:661` [agency] `self._update_state_goals` - self._update_state_goals(plan)
 - `core/agency/autonomous_task_engine.py:681` [agency] `self._update_state_goals` - self._update_state_goals(plan)
@@ -1206,7 +1207,7 @@ Review candidates:
 - `core/actuators/actuator_registry.py:375` [actuators] `self.operator.execute_synthesized_tool` - res = self.operator.execute_synthesized_tool(code, timeout_s=timeout_s)
 - `core/actuators/code_execution_actuator.py:98` [actuators] `operator.execute_synthesized_tool` - res = operator.execute_synthesized_tool(code, timeout_s=timeout_s)
 - `core/actuators/web_actuators.py:114` [actuators] `skill.execute` - return await skill.execute({"mode": "browse", "url": url}, {})
-- `core/agency/agency_core.py:424` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
+- `core/agency/agency_core.py:447` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
 - `core/agency/agency_orchestrator.py:360` [agency] `execute` - await execute(proposal, state_snapshot, receipt.capability_token or "")
 - `core/agency/autonomous_task_engine.py:515` [agency] `orchestrator.execute_tool` - return await orchestrator.execute_tool(tool_name, args, **kwargs)
 - `core/agency/autonomous_task_engine.py:2844` [agency] `orch.execute_tool` - return await orch.execute_tool(
@@ -1260,7 +1261,7 @@ Review candidates:
 - `core/adaptation/epistemic_humility.py:145` [adaptation] `llm.chat` - response = await llm.chat(
 - `core/adaptation/heuristic_synthesizer.py:126` [adaptation] `brain.think` - thought = await brain.think(
 - `core/adaptation/star_reasoner.py:364` [adaptation] `llm.think` - result = await asyncio.wait_for(llm.think(prompt), timeout=self.RATIONALIZATION_TIMEOUT)
-- `core/agency/agency_core.py:304` [agency] `structured_brain.generate` - shard_res = await structured_brain.generate(prompt, context=context)
+- `core/agency/agency_core.py:327` [agency] `structured_brain.generate` - shard_res = await structured_brain.generate(prompt, context=context)
 - `core/agency/autonomous_task_engine.py:962` [agency] `llm.think` - llm.think(
 - `core/agency/autonomous_task_engine.py:2596` [agency] `llm.think` - llm.think(
 - `core/agency/autonomous_task_engine.py:2630` [agency] `llm.think` - llm.think(
@@ -1272,7 +1273,7 @@ Review candidates:
 - `core/agi/skill_synthesizer.py:174` [agi] `router.think` - router.think(prompt, priority=0.2, is_background=True,
 - `core/audits/alignment_auditor.py:44` [audits] `self.brain.think` - response = await self.brain.think(
 - `core/audits/alignment_auditor.py:99` [audits] `self.brain.think` - response = await self.brain.think(
-- `core/audits/tool_auditor.py:34` [audits] `self.brain.think` - thought = await self.brain.think(
+- `core/audits/tool_auditor.py:85` [audits] `self.brain.think` - thought = await self.brain.think(
 - `core/autonomy/genuine_refusal.py:334` [autonomy] `llm.think` - llm.think(prompt, mode="FAST"),
 - `core/autonomy/genuine_refusal.py:376` [autonomy] `llm.think` - llm.think(prompt, mode="FAST"),
 - `core/autonomy/genuine_refusal.py:403` [autonomy] `llm.think` - llm.think(prompt, mode="FAST"),
@@ -1302,7 +1303,7 @@ Review candidates:
 - `core/autonomy/content_fetcher.py:587` [autonomy] `urllib.request.urlopen` - with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
 - `core/brain/llm/gemini_adapter.py:316` [brain] `httpx.AsyncClient` - self._client = httpx.AsyncClient(
 - `core/brain/llm/gemini_adapter.py:317` [brain] `httpx.Timeout` - timeout=httpx.Timeout(self.timeout, connect=10.0),
-- `core/brain/llm/llm_router.py:328` [brain] `httpx.AsyncClient` - async with httpx.AsyncClient(timeout=self.endpoint.timeout) as client:
+- `core/brain/llm/llm_router.py:345` [brain] `httpx.AsyncClient` - async with httpx.AsyncClient(timeout=self.endpoint.timeout) as client:
 - `core/brain/llm/local_llm_setup.py:78` [brain] `httpx.AsyncClient` - async with httpx.AsyncClient() as client:
 - `core/brain/llm/local_llm_setup.py:101` [brain] `subprocess.run` - subprocess.run(
 - `core/brain/llm/local_llm_setup.py:121` [brain] `subprocess.run` - res = subprocess.run(
@@ -1312,8 +1313,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2776
-- Log-and-limp candidates: 2574
+- Total `record_degradation()` calls: 2779
+- Log-and-limp candidates: 2577
 - Nearby fail-closed candidates: 202
 
 Top limp-on files:
@@ -1352,7 +1353,7 @@ Top limp-on files:
 
 ## Consolidation Candidates
 
-- `core/audits/`: 2 file(s), 222 line(s)
+- `core/audits/`: 2 file(s), 267 line(s)
 - `core/coherence/`: 2 file(s), 397 line(s)
 - `core/consent/`: 2 file(s), 167 line(s)
 - `core/constitution/`: 1 file(s), 25 line(s)

@@ -30,6 +30,7 @@ from core.runtime.boot_contract import boot_contract_report
 CORE = ROOT / "core"
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
 ARCH_MAP_SCHEMA = "aura.architecture.dependency_map.v2"
+PORTABLE_ROOT_LABEL = "<AURA_ROOT>"
 
 
 @dataclass(frozen=True)
@@ -641,7 +642,7 @@ def build_architecture_report() -> dict:
     return {
         "schema": ARCH_MAP_SCHEMA,
         "generated_at_unix": time.time(),
-        "root": str(ROOT),
+        "root": PORTABLE_ROOT_LABEL,
         "boot_contract": boot_contract_report(ROOT),
         "inputs": {
             "core_python_files": len(all_files),

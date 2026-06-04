@@ -49,6 +49,15 @@ class JsonlResult:
     malformed_lines: list[int]
 
 
+def _portable_path(path: Path) -> str:
+    """Return a repo-relative path for committed validation reports when possible."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path)
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -242,7 +251,7 @@ def validate_aletheia_artifacts(artifact_dir: Path) -> dict[str, Any]:
     report = {
         "generated_at": time.time(),
         "passed": not reasons,
-        "artifact_dir": str(artifact_dir),
+        "artifact_dir": _portable_path(artifact_dir),
         "verdict": scorecard.get("verdict"),
         "tier5_met": scorecard.get("tier5_met"),
         "metrics": metrics,
@@ -267,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         report = {
             "generated_at": time.time(),
             "passed": False,
-            "artifact_dir": str(Path(args.artifacts).resolve()),
+            "artifact_dir": _portable_path(Path(args.artifacts)),
             "reasons": [str(exc)],
         }
 
