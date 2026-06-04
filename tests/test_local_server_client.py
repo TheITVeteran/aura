@@ -345,7 +345,10 @@ async def test_generate_text_records_latent_bridge_fallback(monkeypatch):
     client = LocalServerClient(QWEN32_GGUF)
     client._ensure_runtime_ready = AsyncMock(return_value=False)
 
+    bridge_calls = []
+
     def broken_bridge(*args, **kwargs):
+        bridge_calls.append((args, kwargs))
         raise RuntimeError("substrate bridge offline")
 
     monkeypatch.setattr(
@@ -354,6 +357,7 @@ async def test_generate_text_records_latent_bridge_fallback(monkeypatch):
     )
 
     assert await client.generate_text_async("hello", foreground_request=True) is None
+    assert len(bridge_calls) == 1
 
     last = get_degradation_tracker().recent(subsystem="local_server_client")[-1]
     assert (

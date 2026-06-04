@@ -83,7 +83,10 @@ async def test_agency_orchestrator_blocks_recoverable_execute_oserror(monkeypatc
         lambda error, **kwargs: recorded.append((error, kwargs)),
     )
 
+    execute_calls = []
+
     async def failing_execute(_proposal, _state, _token):
+        execute_calls.append((_proposal, _state, _token))
         raise OSError("tool transport down")
 
     receipt = await AgencyOrchestrator().run(
@@ -92,6 +95,7 @@ async def test_agency_orchestrator_blocks_recoverable_execute_oserror(monkeypatc
     )
 
     assert receipt.blocked_at == "execute"
+    assert len(execute_calls) == 1
     assert "tool transport down" in receipt.blocked_reason
     assert recorded[0][1]["action"] == "Blocked agency life-loop at execution stage"
 

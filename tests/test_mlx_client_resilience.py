@@ -461,7 +461,10 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._set_lane_state("ready")
         client._last_heartbeat = client._last_progress_at = client._last_ready_at = 10_000.0
 
+        cancelled_calls = []
+
         async def _cancelled(*args, **kwargs):
+            cancelled_calls.append((args, kwargs))
             raise asyncio.CancelledError
 
         with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):
@@ -472,6 +475,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                             await client._generate_inner("hello", foreground_request=True)
 
         reboot_mock.assert_not_awaited()
+        self.assertEqual(len(cancelled_calls), 1)
 
     async def test_expected_cancelled_generation_does_not_mark_worker_unhealthy(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
@@ -480,7 +484,10 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._expected_cancel_budget = 1
         client._expected_cancel_recorded_at = 10_000.0
 
+        cancelled_calls = []
+
         async def _cancelled(*args, **kwargs):
+            cancelled_calls.append((args, kwargs))
             raise asyncio.CancelledError
 
         with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):
@@ -490,6 +497,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                         await client._generate_inner("hello", foreground_request=True)
 
         self.assertIsNone(client._deferred_reboot_reason)
+        self.assertEqual(len(cancelled_calls), 1)
         self.assertEqual(client._expected_cancel_budget, 0)
 
     async def test_generate_times_out_waiting_for_foreground_owner(self):

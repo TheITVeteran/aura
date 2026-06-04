@@ -262,12 +262,16 @@ def test_register_research_core_is_idempotent(tmp_path: Path, fresh_store):
 def test_solver_that_raises_does_not_crash_cycle(tmp_path: Path, fresh_store):
     cfg = _tiny_cfg(tmp_path / "wd")
 
+    solver_calls = []
+
     def bad_solver(prompt: str):
+        solver_calls.append(prompt)
         raise RuntimeError("solver explosion")
 
     core = SelfImprovingResearchCore(cfg, task_solver=bad_solver)
     report = core.run_cycle(n_eval_tasks=4)
     # task_accuracy will be 0 but the cycle must complete.
+    assert len(solver_calls) == 4
     assert report.metrics["task_accuracy"] == pytest.approx(0.0)
 
 

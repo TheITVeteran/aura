@@ -20,6 +20,7 @@ def _reset_degradation_tracker():
 async def test_deep_narrative_failure_updates_recovery_state(monkeypatch):
     class _BrokenRouter:
         async def think(self, **_kwargs):
+            self.think_calls = getattr(self, "think_calls", 0) + 1
             raise RuntimeError("narrative backend offline")
 
     monkeypatch.setattr(
@@ -46,6 +47,7 @@ async def test_deep_narrative_failure_updates_recovery_state(monkeypatch):
 async def test_witness_failure_updates_recovery_state(monkeypatch):
     class _BrokenRouter:
         async def think(self, **_kwargs):
+            self.think_calls = getattr(self, "think_calls", 0) + 1
             raise RuntimeError("witness backend offline")
 
     monkeypatch.setattr(
@@ -71,6 +73,7 @@ async def test_experiencer_update_loop_uses_adaptive_backoff(monkeypatch, tmp_pa
     experiencer = PhenomenologicalExperiencer(save_dir=str(tmp_path))
 
     async def _broken_narrative():
+        _broken_narrative.calls = getattr(_broken_narrative, "calls", 0) + 1
         raise RuntimeError("phenomenal narrative task failed")
 
     async def _stop_after_sleep(delay):

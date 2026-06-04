@@ -68,8 +68,10 @@ async def test_mind_tick_stop_drains_closed_db_task_failure():
     tracker.reset()
     tick = MindTick.__new__(MindTick)
     tick._running = True
+    drain_failures: list[str] = []
 
     async def failed_loop():
+        drain_failures.append("closed_database")
         raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
 
     tick._task = asyncio.create_task(failed_loop())
@@ -78,6 +80,7 @@ async def test_mind_tick_stop_drains_closed_db_task_failure():
     await tick.stop()
 
     assert tick._running is False
+    assert drain_failures == ["closed_database"]
     assert any(
         "background loop failed while draining" in record.action
         for record in tracker.recent(subsystem="mind_tick")
@@ -93,9 +96,11 @@ async def test_state_repository_clear_pending_proxy_commit_handles_closed_db(mon
 
     class ClosedDB:
         async def execute(self, *_args, **_kwargs):
+            self.execute_calls = getattr(self, "execute_calls", 0) + 1
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
 
         async def commit(self):
+            self.commit_calls = getattr(self, "commit_calls", 0) + 1
             raise AssertionError("commit should not run after closed execute")
 
     async def closed_db():

@@ -461,9 +461,9 @@ class InferenceGate:
             return False
         if InferenceGate._desktop_safe_boot_enabled():
             logger.info(
-                "🛡️ Desktop safe boot active — scheduling memory-gated deferred 32B prewarm."
+                "🛡️ Desktop safe boot active — skipping deferred 32B prewarm during launch."
             )
-            return True
+            return False
         return True
 
     @staticmethod

@@ -57,7 +57,10 @@ async def test_reasoning_queue_preserves_result_when_callback_fails():
     queue = BackgroundReasoningQueue()
     _disable_registry_updates(queue)
 
+    callback_calls = []
+
     def callback(_result):
+        callback_calls.append(_result)
         raise RuntimeError("callback broke")
 
     await queue.start()
@@ -65,6 +68,7 @@ async def test_reasoning_queue_preserves_result_when_callback_fails():
     await asyncio.wait_for(queue._queue.join(), timeout=1.0)
 
     assert queue.get_result(task_id) == "complete"
+    assert callback_calls == ["complete"]
     assert tracker.count("reasoning_queue", "warning") >= 1
 
     await _stop_queue(queue)
@@ -77,7 +81,10 @@ async def test_reasoning_queue_stores_failure_envelope_and_continues():
     queue = BackgroundReasoningQueue()
     _disable_registry_updates(queue)
 
+    broken_task_calls = []
+
     def broken_task():
+        broken_task_calls.append("attempted")
         raise ValueError("bad premise")
 
     await queue.start()
@@ -88,6 +95,7 @@ async def test_reasoning_queue_stores_failure_envelope_and_continues():
     failure = queue.get_result(failed_id)
     assert failure["status"] == "failed"
     assert failure["error_type"] == "ValueError"
+    assert broken_task_calls == ["attempted"]
     assert queue.get_result(ok_id) == "ok"
     assert tracker.count("reasoning_queue", "degraded") >= 1
 

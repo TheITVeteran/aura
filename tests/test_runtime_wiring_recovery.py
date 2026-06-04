@@ -19,9 +19,13 @@ def _reset_degradation_tracker():
 async def test_prepare_runtime_payload_preserves_prompt_when_contract_state_is_invalid():
     class _SealedCognition:
         def __setattr__(self, _name, _value):
+            attempts = object.__getattribute__(self, "__dict__").get("_set_attempts", 0)
+            object.__setattr__(self, "_set_attempts", attempts + 1)
             raise AttributeError("cognition is sealed")
 
         def __getattr__(self, _name):
+            attempts = object.__getattribute__(self, "__dict__").get("_get_attempts", 0)
+            object.__setattr__(self, "_get_attempts", attempts + 1)
             raise AttributeError("cognition is sealed")
 
     class _BrokenState:
@@ -58,6 +62,7 @@ async def test_prepare_runtime_payload_records_memory_hydration_failure(monkeypa
 
     class _BrokenMemoryFacade:
         async def search(self, _query, limit=5):
+            self.search_calls = getattr(self, "search_calls", 0) + 1
             raise RuntimeError("vector store offline")
 
     monkeypatch.setattr(

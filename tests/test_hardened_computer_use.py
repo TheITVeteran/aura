@@ -393,7 +393,10 @@ async def test_computer_use_clock_falls_back_when_applescript_times_out(monkeypa
     async def allow_permissions(*_args, **_kwargs):
         return None
 
+    run_calls = []
+
     def fake_run(*_args, timeout, **_kwargs):
+        run_calls.append((_args, timeout, _kwargs))
         raise subprocess.TimeoutExpired(cmd=["osascript"], timeout=timeout)
 
     monkeypatch.setattr(skill, "_require_permissions", allow_permissions)
@@ -402,6 +405,7 @@ async def test_computer_use_clock_falls_back_when_applescript_times_out(monkeypa
     result = await skill.execute({"action": "read_menu_clock", "target": ""}, context={})
 
     assert result["ok"] is True
+    assert len(run_calls) == 1
     assert result["status"] == "limited"
     assert result["source"] == "system_clock_fallback"
     assert "AppleScript timed out" in result["error"]

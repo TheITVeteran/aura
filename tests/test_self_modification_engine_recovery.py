@@ -373,6 +373,9 @@ async def test_safe_modification_commits_after_quarantine_promotion(tmp_path):
         fix,
         {
             "success": True,
+            "validation": "safe_modification_harness",
+            "command": "pytest tests/test_example.py",
+            "validated_files": ["core/example.py"],
             "syntax_test": True,
             "import_test": True,
             "integrity_check": True,
@@ -414,7 +417,10 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
     safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
 
+    full_suite_calls = []
+
     async def full_suite():
+        full_suite_calls.append("attempted")
         raise AssertionError("bare or preview evidence must block before suite execution")
 
     safe_mod._run_full_test_suite = full_suite
@@ -431,7 +437,7 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
 
     success, message = await safe_mod.apply_fix(fix, {"success": True})
     assert success is False
-    assert "missing sandbox/static validation artifacts" in message
+    assert "validation evidence lacks command, artifact, receipt, or file proof" in message
 
     success, message = await safe_mod.apply_fix(
         fix,
@@ -439,6 +445,7 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
     )
     assert success is False
     assert "shadow AST preview" in message
+    assert full_suite_calls == []
     assert target.read_text(encoding="utf-8") == "value = 1\n"
 
 
@@ -483,6 +490,9 @@ async def test_safe_modification_blocks_no_branch_promotion_without_supervision(
         fix,
         {
             "success": True,
+            "validation": "safe_modification_harness",
+            "command": "pytest tests/test_example.py",
+            "validated_files": ["core/example.py"],
             "syntax_test": True,
             "import_test": True,
             "integrity_check": True,
@@ -544,6 +554,9 @@ async def test_safe_modification_allows_supervised_no_branch_promotion(
         fix,
         {
             "success": True,
+            "validation": "safe_modification_harness",
+            "command": "pytest tests/test_example.py",
+            "validated_files": ["core/example.py"],
             "syntax_test": True,
             "import_test": True,
             "integrity_check": True,

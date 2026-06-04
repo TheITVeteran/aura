@@ -107,7 +107,11 @@ async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatc
         speaking_enabled = False
         _mic_listening = False
 
+        def __init__(self):
+            self.start_calls = 0
+
         async def start_listening(self) -> bool:
+            self.start_calls += 1
             raise OSError("input device unavailable")
 
         def stop_listening(self) -> None:
@@ -124,6 +128,7 @@ async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatc
     finally:
         privacy.set_voice_engine_fn(original)
 
+    assert voice.start_calls == 1
     assert result["ok"] is False
     assert result["enabled"] is False
     assert result["microphone_enabled"] is False

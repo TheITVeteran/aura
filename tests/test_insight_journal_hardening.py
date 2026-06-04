@@ -85,7 +85,11 @@ def test_insight_journal_broadcast_failure_does_not_block_belief_promotion(monke
     promoted = []
 
     class FailingBus:
+        def __init__(self):
+            self.publish_calls = []
+
         async def publish(self, *_args, **_kwargs):
+            self.publish_calls.append((_args, _kwargs))
             raise RuntimeError("event bus offline")
 
     class Beliefs:
@@ -103,12 +107,13 @@ def test_insight_journal_broadcast_failure_does_not_block_belief_promotion(monke
         calls.append((subsystem, error, kwargs))
 
     journal = _blank_journal(tmp_path)
+    failing_bus = FailingBus()
 
     monkeypatch.setattr(module, "record_degradation", fake_record_degradation)
     monkeypatch.setitem(
         __import__("sys").modules,
         "core.event_bus",
-        type("EventBusModule", (), {"get_event_bus": lambda: FailingBus()}),
+        type("EventBusModule", (), {"get_event_bus": lambda: failing_bus}),
     )
     monkeypatch.setitem(
         __import__("sys").modules,
@@ -127,6 +132,7 @@ def test_insight_journal_broadcast_failure_does_not_block_belief_promotion(monke
     )
 
     assert len(journal._insights) == 1
+    assert len(failing_bus.publish_calls) == 1
     assert promoted
     assert calls
     assert "event-bus broadcast failed" in calls[0][2]["action"]

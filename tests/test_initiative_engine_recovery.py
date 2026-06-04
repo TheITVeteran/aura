@@ -106,7 +106,10 @@ async def test_proactive_loop_records_failure_and_backs_off(monkeypatch):
     engine.silence_threshold_seconds = 0
     engine.boredom_trigger_level = 1.0
 
+    generation_failures = []
+
     async def fail_generation():
+        generation_failures.append("attempted")
         raise RuntimeError("proactive path fault")
 
     engine._trigger_autonomous_conversation = fail_generation
@@ -123,6 +126,7 @@ async def test_proactive_loop_records_failure_and_backs_off(monkeypatch):
 
     await engine.start_proactive_loop()
 
+    assert generation_failures == ["attempted"]
     assert engine._loop_failure_count == 1
     assert engine._last_loop_error == "RuntimeError: proactive path fault"
     assert recorded[0][1]["action"] == (

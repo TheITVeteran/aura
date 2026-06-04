@@ -634,7 +634,10 @@ class TestBackgroundPolicyGuards(unittest.TestCase):
     def test_background_policy_requires_user_anchor_before_unsolicited_work(self):
         from core.health.degraded_events import clear_degraded_events
         from core.runtime.background_policy import background_activity_reason
+        from core.runtime.foreground_guard import _reset_for_tests as reset_foreground_guard
+
         clear_degraded_events()
+        reset_foreground_guard()
 
         orch = MagicMock()
         orch.is_busy = False
@@ -838,7 +841,10 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
 
         loop.set_exception_handler(_handler)
         try:
+            cancelled_attempts = []
+
             async def _cancelled():
+                cancelled_attempts.append("attempted")
                 raise asyncio.CancelledError()
 
             _schedule_background_coro(_cancelled(), label="test_cancelled_background")
@@ -848,6 +854,7 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
             loop.set_exception_handler(previous_handler)
 
         self.assertEqual(captured, [])
+        self.assertEqual(cancelled_attempts, ["attempted"])
 
     async def test_error_logger_ignores_cancelled_append(self):
         from core.self_modification.error_intelligence import StructuredErrorLogger
@@ -1155,7 +1162,9 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_phenomenology_uses_local_reflection_by_default(self):
         from core.agency.private_phenomenology import PrivatePhenomenology
+        from core.runtime.foreground_guard import _reset_for_tests as reset_foreground_guard
 
+        reset_foreground_guard()
         engine = MagicMock()
         engine.think = AsyncMock(return_value=SimpleNamespace(content="quiet inner reflection"))
 
@@ -1178,7 +1187,9 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_phenomenology_llm_mode_marks_internal_reflection_as_background(self):
         from core.agency.private_phenomenology import PrivatePhenomenology
+        from core.runtime.foreground_guard import _reset_for_tests as reset_foreground_guard
 
+        reset_foreground_guard()
         engine = MagicMock()
         engine.think = AsyncMock(return_value=SimpleNamespace(content="quiet inner reflection"))
 

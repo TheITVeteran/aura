@@ -62,8 +62,10 @@ class TestTypedSubscriptions:
     def test_subscriber_error_does_not_crash_bus(self, event_bus):
         """A failing subscriber doesn't prevent other subscribers from running."""
         results = []
+        bad_calls = []
 
         def bad_subscriber(e):
+            bad_calls.append(e.payload)
             raise ValueError("subscriber exploded")
 
         def good_subscriber(e):
@@ -73,6 +75,7 @@ class TestTypedSubscriptions:
         event_bus.subscribe(EventType.SYSTEM, good_subscriber)
 
         event_bus.emit(EventType.SYSTEM, {"test": True})
+        assert bad_calls == [{"test": True}]
         assert len(results) == 1
         assert results[0]["test"] is True
 

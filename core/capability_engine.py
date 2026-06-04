@@ -2459,6 +2459,49 @@ class CapabilityEngine(AuraBaseModule):
         )
         return any(marker in text for marker in risk_markers)
 
+    def _self_preservation_block_reason(
+        self,
+        meta: SkillMetadata,
+        skill_name: str,
+        params: dict[str, Any],
+        ctx: dict[str, Any],
+    ) -> tuple[str, bool]:
+        if meta.is_core_personality:
+            return "", False
+
+        metabolism = resolve_metabolic_monitor(default=None)
+        repo = resolve_state_repository(default=None)
+        current_state = getattr(repo, "_current", None) if repo is not None else None
+        phi = (
+            float(getattr(current_state, "phi", 0.0) or 0.0)
+            if current_state is not None
+            else 0.0
+        )
+        snapshot = metabolism.get_current_metabolism() if metabolism else None
+        health_score = (
+            float(getattr(snapshot, "health_score", 1.0) or 1.0) if snapshot else 1.0
+        )
+        cpu_percent = (
+            float(getattr(snapshot, "cpu_percent", 0.0) or 0.0) if snapshot else 0.0
+        )
+        ram_percent = (
+            float(getattr(snapshot, "ram_percent", 0.0) or 0.0) if snapshot else 0.0
+        )
+        unbounded = self._looks_like_unbounded_compute_request(params, ctx)
+        if health_score <= 0.25 and meta.metabolic_cost >= 2:
+            return f"metabolic_health_critical:{health_score:.2f}", unbounded
+        if health_score <= 0.40 and meta.metabolic_cost >= 3:
+            return f"metabolic_health_low:{health_score:.2f}", unbounded
+        if unbounded and (health_score <= 0.55 or cpu_percent >= 80.0 or ram_percent >= 85.0):
+            return (
+                f"substrate_risk:health={health_score:.2f}:"
+                f"cpu={cpu_percent:.1f}:ram={ram_percent:.1f}",
+                unbounded,
+            )
+        if phi and phi < 0.18 and meta.metabolic_cost >= 2:
+            return f"phi_fragility:{phi:.3f}", unbounded
+        return "", unbounded
+
     # Skill name aliases — maps legacy/alternate names to actual registered skill names
     SKILL_ALIASES: dict[str, str] = {
         "generate_image": "sovereign_imagination",
@@ -2691,6 +2734,63 @@ class CapabilityEngine(AuraBaseModule):
             ok, errors = meta.requirements.check()
             if not ok:
                 return {"ok": False, "error": "Missing dependencies", "details": errors}
+
+            # Metabolic self-preservation runs before governance/token work: if
+            # the substrate is already in critical pressure, high-cost tools
+            # should fail closed with the true health reason.
+            try:
+                reason, unbounded = self._self_preservation_block_reason(
+                    meta, skill_name, params, ctx
+                )
+                if reason:
+                    try:
+                        from core.health.degraded_events import record_degraded_event
+
+                        record_degraded_event(
+                            "capability_engine",
+                            "metabolic_self_preservation_block",
+                            detail=skill_name,
+                            severity="warning",
+                            classification="background_degraded",
+                            context={
+                                "reason": reason,
+                                "metabolic_cost": getattr(meta, "metabolic_cost", None),
+                                "unbounded": unbounded,
+                            },
+                        )
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
+                        _record_capability_degradation(
+                            _exc,
+                            action="blocked skill without self-preservation degraded-event receipt",
+                            severity="degraded",
+                        )
+                        self.logger.debug("Suppressed Exception: %s", _exc)
+                    return {
+                        "ok": False,
+                        "error": f"Self-preservation block: {reason}",
+                        "status": "blocked_by_self_preservation",
+                    }
+            except (ImportError, AttributeError, RuntimeError) as e:
+                should_fail_closed = not meta.is_core_personality and (
+                    meta.metabolic_cost >= 3
+                    or skill_name in _HEAVY_BACKGROUND_SKILLS
+                    or self._looks_like_unbounded_compute_request(params, ctx)
+                )
+                _record_capability_degradation(
+                    e,
+                    action=(
+                        "blocked high-cost tool because metabolic guard failed"
+                        if should_fail_closed
+                        else "continued low-cost skill execution without metabolic guard"
+                    ),
+                    severity="degraded" if should_fail_closed else "warning",
+                )
+                if should_fail_closed:
+                    return {
+                        "ok": False,
+                        "error": "Metabolic self-preservation guard unavailable",
+                        "status": "blocked_by_self_preservation_guard_unavailable",
+                    }
 
             # ── CONSTITUTIONAL CLOSURE: Will + AuthorityGateway gated tools ──
             constitutional_runtime_live = False

@@ -77,7 +77,11 @@ async def test_affect_anxiety_delivery_failures_are_owned_by_compute_orchestrato
     )
 
     class BrokenAffect:
+        def __init__(self):
+            self.apply_calls = 0
+
         async def apply_stimulus(self, _stimulus_type, _intensity):
+            self.apply_calls += 1
             raise RuntimeError("affect loop unavailable")
 
     class CapturingTracker:
@@ -90,10 +94,11 @@ async def test_affect_anxiety_delivery_failures_are_owned_by_compute_orchestrato
             return task
 
     tracker = CapturingTracker()
+    affect = BrokenAffect()
     monkeypatch.setattr(co, "get_task_tracker", lambda: tracker)
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
-        staticmethod(lambda name, default=None: BrokenAffect() if name == "affect_engine" else default),
+        staticmethod(lambda name, default=None: affect if name == "affect_engine" else default),
     )
 
     orchestrator = co.ComputeOrchestrator()
@@ -103,6 +108,7 @@ async def test_affect_anxiety_delivery_failures_are_owned_by_compute_orchestrato
     await tracker.tasks[0][0]
 
     assert orchestrator._affect_delivery_failures == 1
+    assert affect.apply_calls == 1
     assert orchestrator._last_affect_delivery_error == "RuntimeError: affect loop unavailable"
     assert recorded[0][1]["action"] == (
         "captured asynchronous affect anxiety delivery failure and left compute throttles active"

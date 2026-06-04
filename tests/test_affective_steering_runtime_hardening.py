@@ -25,7 +25,10 @@ def test_derivation_failure_uses_neutral_disabled_vector(tmp_path, monkeypatch):
 
     library = SteeringVectorLibrary(cache_dir=tmp_path)
 
+    derivation_failures = []
+
     def fail_derivation(**_kwargs):
+        derivation_failures.append(_kwargs)
         raise RuntimeError("capture failed")
 
     monkeypatch.setattr(library, "_derive_caa", fail_derivation)
@@ -39,6 +42,7 @@ def test_derivation_failure_uses_neutral_disabled_vector(tmp_path, monkeypatch):
     )
 
     assert vector.source == "disabled_neutral"
+    assert len(derivation_failures) == 1
     assert vector.selection_reason == "disabled_after_derivation_failure"
     assert np.allclose(vector.v, np.zeros(8, dtype=np.float32))
     assert recorded == [("affective_steering", "RuntimeError")]
@@ -59,7 +63,10 @@ def test_invalid_cached_vector_is_rejected_before_derivation(tmp_path, monkeypat
     )
     library = SteeringVectorLibrary(cache_dir=tmp_path)
 
+    derivation_failures = []
+
     def fail_derivation(**_kwargs):
+        derivation_failures.append(_kwargs)
         raise RuntimeError("fresh derivation unavailable")
 
     monkeypatch.setattr(library, "_derive_caa", fail_derivation)
@@ -72,6 +79,7 @@ def test_invalid_cached_vector_is_rejected_before_derivation(tmp_path, monkeypat
     )
 
     assert vectors[1]["valence_positive"].source == "disabled_neutral"
+    assert len(derivation_failures) == len(AFFECTIVE_DIMENSIONS)
     assert ("affective_steering", "ValueError") in recorded
     assert ("affective_steering", "RuntimeError") in recorded
 

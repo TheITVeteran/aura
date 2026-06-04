@@ -90,6 +90,7 @@ async def test_strict_real_adapter_uses_runtime_workspace_for_sidecar_config(mon
             return None
 
         def read_nonblocking(self, **_kwargs):
+            self.read_calls = getattr(self, "read_calls", 0) + 1
             raise FakeTimeout()
 
         def send(self, value):
@@ -108,7 +109,8 @@ async def test_strict_real_adapter_uses_runtime_workspace_for_sidecar_config(mon
         spawned["env"] = env
         spawned["encoding"] = encoding
         spawned["timeout"] = timeout
-        return FakeChild()
+        spawned["child"] = FakeChild()
+        return spawned["child"]
 
     class FakeScreen:
         def __init__(self, width, height):

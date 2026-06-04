@@ -476,7 +476,10 @@ class TestCuriosityScheduler(unittest.TestCase):
         self.assertIsNone(sched.pick_next())
 
     def test_substrate_failure_does_not_crash(self):
+        substrate_calls = []
+
         def bad_substrate():
+            substrate_calls.append("attempted")
             raise RuntimeError("substrate broken")
         sched = CuriosityScheduler(
             corpus_loader=lambda: self._make_corpus(),
@@ -485,6 +488,7 @@ class TestCuriosityScheduler(unittest.TestCase):
             trigger_drainer=lambda: [],
         )
         decision = sched.pick_next()
+        self.assertEqual(substrate_calls, ["attempted"])
         self.assertIsNotNone(decision)
 
     def test_trigger_alignment_boosts_matching(self):
@@ -782,18 +786,24 @@ class TestOrchestrator(_AsyncTestCase):
                 )
 
         class _FailFetcher:
+            def __init__(self):
+                self.execute_calls = []
+
             async def execute(self, plan, stop_after_n_successes: int = 4):
+                self.execute_calls.append((plan, stop_after_n_successes))
                 raise RuntimeError("fetch engine down")
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            fetcher = _FailFetcher()
             orch = AutonomousResearchOrchestrator(
                 scheduler=_Sched(),
                 router=_Router(),
-                fetcher=_FailFetcher(),
+                fetcher=fetcher,
                 sessions_dir=Path(tmpdir),
             )
             result = self.run_async(orch.run_once())
             self.assertIsNotNone(result)
+            self.assertEqual(len(fetcher.execute_calls), 1)
             self.assertIn("RuntimeError: fetch engine down", result.error)
             self.assertEqual(outcomes, ["error"])
 

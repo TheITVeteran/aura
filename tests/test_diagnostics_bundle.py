@@ -156,13 +156,17 @@ def test_bundle_records_collector_errors_without_aborting(tmp_path: Path, monkey
     """A failing collector should produce an _error file and not raise."""
     import core.runtime.diagnostics_bundle as db
 
+    collector_failures = []
+
     def _boom():
+        collector_failures.append("attempted")
         raise RuntimeError("simulated outage")
 
     monkeypatch.setattr(db, "collect_health", _boom)
     out = tmp_path / "bundle.tar.gz"
     info = build_bundle(output_path=out, workspace=tmp_path / "ws")
     assert info["ok"] is True
+    assert collector_failures == ["attempted"]
     assert "health" in info["errors"]
     assert "simulated outage" in info["errors"]["health"]
     with tarfile.open(info["path"], "r:gz") as tar:

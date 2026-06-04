@@ -139,7 +139,10 @@ def test_live_aletheia_transport_failure_is_fail_closed(monkeypatch):
     import httpx
     from aura_bench.aletheia_runner_live import AuraRuntimeUnavailable, send_to_aura
 
+    transport_attempts = []
+
     def _raise_transport(*_args, **_kwargs):
+        transport_attempts.append((_args, _kwargs))
         raise httpx.ConnectError("server down")
 
     monkeypatch.setattr(httpx.Client, "post", _raise_transport)
@@ -147,6 +150,7 @@ def test_live_aletheia_transport_failure_is_fail_closed(monkeypatch):
     try:
         send_to_aura("hello", "http://127.0.0.1:9/api/chat", timeout=0.1, retries=1)
     except AuraRuntimeUnavailable as exc:
+        assert len(transport_attempts) == 1
         assert "transport unavailable" in str(exc)
     else:
         raise AssertionError("transport failure should stop the live battery runner")

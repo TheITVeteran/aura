@@ -77,7 +77,10 @@ async def test_background_policy_failure_defers_instead_of_running_router(monkey
 
     router = _MetadataRouter({"text": '{"action": "should-not-run", "priority": 1}'})
 
+    policy_failures = []
+
     def fail_policy(*_args, **_kwargs):
+        policy_failures.append((_args, _kwargs))
         raise RuntimeError("policy unavailable")
 
     monkeypatch.setattr(background_policy, "background_activity_reason", fail_policy)
@@ -86,5 +89,6 @@ async def test_background_policy_failure_defers_instead_of_running_router(monkey
     result = await structured.generate("Return a task.")
 
     assert result is None
+    assert len(policy_failures) == 1
     assert structured.last_defer_reason == "background_policy_unavailable"
     assert router.calls == []

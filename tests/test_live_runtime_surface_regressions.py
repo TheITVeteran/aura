@@ -100,13 +100,17 @@ def test_lock_watchdog_start_failure_is_observable(monkeypatch):
     asyncio.run(watchdog.stop())
     watchdog.last_start_error = ""
 
+    create_task_failures = []
+
     def fail_create_tracked_task(*args, **kwargs):
+        create_task_failures.append((args, kwargs))
         raise RuntimeError("task ownership unavailable")
 
     monkeypatch.setattr("core.runtime.task_ownership.create_tracked_task", fail_create_tracked_task)
 
     try:
         assert watchdog.start() is False
+        assert len(create_task_failures) == 1
         assert watchdog.get_snapshot()["running"] is False
         assert "RuntimeError" in watchdog.last_start_error
         assert "task ownership unavailable" in watchdog.last_start_error

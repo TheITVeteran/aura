@@ -25,7 +25,11 @@ class _Client(LocalAgentClient):
 
 
 class _FailingAdapter:
+    def __init__(self):
+        self.execute_calls = []
+
     async def execute_tool(self, tool_name, tool_args):
+        self.execute_calls.append((tool_name, tool_args))
         raise RuntimeError("tool bridge offline")
 
 
@@ -49,17 +53,19 @@ def isolated_local_agent_state(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_execution_failure_becomes_react_observation():
+    adapter = _FailingAdapter()
     client = _Client(
         [
             '{"tool": "web_search", "args": {"query": "Aura"}}',
             "Final answer after observing the failed tool.",
         ],
-        adapter=_FailingAdapter(),
+        adapter=adapter,
     )
 
     result = await client.think_and_act("search", "system", max_turns=2, context={})
 
     assert result["content"] == "Final answer after observing the failed tool."
+    assert adapter.execute_calls == [("web_search", {"query": "Aura"})]
     assert "Tool web_search failed" in client.prompts[1][0]
     actions = [
         record.action for record in get_degradation_tracker().recent(subsystem="local_agent_client")

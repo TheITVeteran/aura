@@ -192,7 +192,10 @@ def test_worker_init_failure_exits_before_accepting_jobs(monkeypatch):
     tracker = get_degradation_tracker()
     tracker.reset()
 
+    load_failures = []
+
     def load_failure(*_args, **_kwargs):
+        load_failures.append((_args, _kwargs))
         raise RuntimeError("model load failed")
 
     queue_factory = _install_worker_fakes(monkeypatch, mlx_worker, load_impl=load_failure)
@@ -201,6 +204,7 @@ def test_worker_init_failure_exits_before_accepting_jobs(monkeypatch):
 
     mlx_worker._mlx_worker_loop("fake-model", requests, responses)
 
+    assert len(load_failures) == 1
     assert requests.items == [{"action": "generate", "prompt": "must not be read"}]
     assert responses.writes[-1]["status"] == "error"
     assert responses.writes[-1]["action"] == "init"

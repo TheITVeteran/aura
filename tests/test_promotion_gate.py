@@ -181,7 +181,10 @@ def test_will_refuse_blocks_otherwise_passing_candidate():
 
 
 def test_will_raise_fails_closed():
+    will_calls = []
+
     def will(payload):
+        will_calls.append(payload)
         raise RuntimeError("Will service down")
 
     gate = PromotionGate(
@@ -190,6 +193,7 @@ def test_will_raise_fails_closed():
     gate.compare({"acc": ScoreEstimate(0.5)})
     decision = gate.compare({"acc": ScoreEstimate(0.9)})
     assert decision.accepted is False
+    assert len(will_calls) == 1
     assert any("will_decide_raised" in r for r in decision.reasons)
 
 

@@ -232,6 +232,7 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     async def _raise_browser_unavailable(self):
+        self.browser_unavailable_calls = getattr(self, "browser_unavailable_calls", 0) + 1
         raise RuntimeError("browser unavailable during contract sweep")
 
     monkeypatch.setattr(
@@ -423,6 +424,7 @@ async def test_test_generator_read_only_skips_llm_generation(monkeypatch, tmp_pa
 
     class _ForbiddenBrain:
         async def think(self, *args, **kwargs):
+            self.think_calls = getattr(self, "think_calls", 0) + 1
             raise AssertionError("read-only test generation should not use the LLM path")
 
     skill = TestGeneratorSkill(brain=_ForbiddenBrain())
@@ -579,6 +581,7 @@ async def test_self_evolution_read_only_skips_llm_planning(monkeypatch, tmp_path
 
     class _ForbiddenBrain:
         async def think(self, *args, **kwargs):
+            self.think_calls = getattr(self, "think_calls", 0) + 1
             raise AssertionError("read-only self-evolution should not use the LLM path")
 
     target = tmp_path / "sample_module.py"

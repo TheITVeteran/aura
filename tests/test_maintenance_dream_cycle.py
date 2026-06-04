@@ -76,22 +76,28 @@ async def test_dream_cycle_returns_degraded_result_when_wal_checkpoint_fails(mon
     emitter = _Emitter()
 
     class _BrokenCoordinator:
+        def __init__(self):
+            self.checkpoint_calls = 0
+
         def checkpoint_wal(self):
+            self.checkpoint_calls += 1
             raise RuntimeError("wal unavailable")
 
+    coordinator = _BrokenCoordinator()
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
         lambda name, default=None: memory if name == "episodic_memory" else default,
     )
     monkeypatch.setattr(
         "core.resilience.database_coordinator.get_db_coordinator",
-        lambda: _BrokenCoordinator(),
+        lambda: coordinator,
     )
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
 
     result = await dream_cycle.run_dream_cycle()
 
     assert result["ok"] is False
+    assert coordinator.checkpoint_calls == 1
     assert "episodic_memory_consolidation" in result["completed_steps"]
     assert "wal_checkpoint" in result["degraded_steps"]
     assert emitter.events

@@ -7,10 +7,14 @@ from tools.audit_degradation import analyze_file
 
 
 class _FailingAsyncStream:
+    def __init__(self) -> None:
+        self.next_calls = 0
+
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        self.next_calls += 1
         raise RuntimeError("provider unavailable")
 
 
@@ -20,7 +24,8 @@ class _FailingStreamClient:
 
     def generate_text_stream_async(self, *_args, **_kwargs):
         self.calls += 1
-        return _FailingAsyncStream()
+        self.stream = _FailingAsyncStream()
+        return self.stream
 
 
 class _EmptyStreamClient:
@@ -79,6 +84,7 @@ async def test_stream_provider_unavailable_fails_over_to_next_endpoint():
 
     assert chunks == ["backup stream"]
     assert failing.calls == 1
+    assert failing.stream.next_calls == 1
     assert backup.calls == 1
     assert router.health_monitor.failure_counts["Primary-Test"] == 1
 

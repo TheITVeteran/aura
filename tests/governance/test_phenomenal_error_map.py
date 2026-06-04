@@ -37,8 +37,11 @@ def test_envelope_has_three_buttons():
 
 
 def test_decorator_translates_exception_to_phenomenal_raise():
+    fn_calls = []
+
     @phenomenal()
     async def fn() -> None:
+        fn_calls.append("attempted")
         raise ConnectionRefusedError("local cortex offline")
 
     async def runner():
@@ -50,6 +53,7 @@ def test_decorator_translates_exception_to_phenomenal_raise():
         return False
 
     assert asyncio.run(runner())
+    assert fn_calls == ["attempted"]
 
 
 def test_context_manager_translates_exception():

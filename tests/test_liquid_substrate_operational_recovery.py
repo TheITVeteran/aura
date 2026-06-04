@@ -71,7 +71,10 @@ async def test_liquid_substrate_loop_failure_uses_adaptive_backoff(monkeypatch, 
             }
         )
 
+    thread_calls = []
+
     async def _failing_to_thread(*_args, **_kwargs):
+        thread_calls.append((_args, _kwargs))
         raise RuntimeError("integration offline")
 
     async def _stop_after_backoff(delay):
@@ -89,6 +92,7 @@ async def test_liquid_substrate_loop_failure_uses_adaptive_backoff(monkeypatch, 
 
     await substrate._run_loop()
 
+    assert len(thread_calls) == 1
     assert substrate.running is False
     assert substrate._loop_failure_streak == 1
     assert sleep_delays == [1.0]

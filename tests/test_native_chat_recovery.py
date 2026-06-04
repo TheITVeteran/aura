@@ -25,7 +25,11 @@ class _EmptyBrain:
 
 
 class _BrokenMemory:
+    def __init__(self):
+        self.remember_calls = []
+
     def remember(self, *args, **kwargs):
+        self.remember_calls.append((args, kwargs))
         raise RuntimeError("memory database unavailable")
 
 
@@ -48,11 +52,13 @@ async def test_background_scheduler_falls_back_to_active_loop(monkeypatch):
     import core.utils.task_tracker as task_tracker_module
 
     ran = {"value": False}
+    tracker_down_calls = []
 
     async def marker():
         ran["value"] = True
 
     def tracker_down():
+        tracker_down_calls.append("attempted")
         raise RuntimeError("tracker down")
 
     monkeypatch.setattr(task_tracker_module, "get_task_tracker", tracker_down)
@@ -61,6 +67,7 @@ async def test_background_scheduler_falls_back_to_active_loop(monkeypatch):
     await asyncio.sleep(0)
 
     assert ran["value"] is True
+    assert tracker_down_calls == ["attempted"]
     last = get_degradation_tracker().recent(subsystem="native_chat")[-1]
     assert (
         last.action
@@ -72,13 +79,15 @@ async def test_background_scheduler_falls_back_to_active_loop(monkeypatch):
 async def test_native_chat_returns_response_when_memory_write_fails():
     skill = NativeChatSkill(_Brain())
     skill._build_rich_context = _simple_context
+    memory = _BrokenMemory()
 
     result = await skill.execute(
         {"params": {"message": "hello"}},
-        {"memory": _BrokenMemory()},
+        {"memory": memory},
     )
 
     assert result["ok"] is True
+    assert len(memory.remember_calls) == 2
     assert result["response"] == "A clear response."
     assert result["degraded"] is True
     assert set(result["degraded_stages"]) == {"memory_aura_write", "memory_user_write"}

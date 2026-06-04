@@ -85,12 +85,16 @@ async def test_wake_async():
     assert s.awake is True
 
 def test_factory_failure():
+    factory_calls = []
+
     def broken_factory():
+        factory_calls.append("attempted")
         raise ValueError("Boom")
     
     ServiceContainer.register("broken", broken_factory)
     with pytest.raises(LifecycleError) as excinfo:
         ServiceContainer.get("broken")
+    assert factory_calls == ["attempted"]
     assert "Boom" in str(excinfo.value)
 
 

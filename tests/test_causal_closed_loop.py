@@ -43,6 +43,7 @@ def test_output_receptor_survives_container_lookup_failure(monkeypatch):
     events = []
 
     def boom(*args, **kwargs):
+        boom.calls = getattr(boom, "calls", 0) + 1
         raise RuntimeError("container unavailable")
 
     monkeypatch.setattr(ServiceContainer, "get", boom)
@@ -72,8 +73,10 @@ async def test_output_receptor_observes_async_injection_failure(monkeypatch):
     class FailingAsyncSubstrate:
         def __init__(self):
             self.x = np.zeros(64, dtype=np.float32)
+            self.inject_calls = 0
 
         async def inject_stimulus(self, delta, weight):
+            self.inject_calls += 1
             raise RuntimeError("async injection failed")
 
     ServiceContainer.register("conscious_substrate", FailingAsyncSubstrate())
@@ -99,6 +102,7 @@ async def asyncio_sleep():
 async def test_closed_loop_start_fails_closed_when_task_scheduling_fails(monkeypatch):
     class BrokenTracker:
         def create_task(self, *args, **kwargs):
+            self.create_task_calls = getattr(self, "create_task_calls", 0) + 1
             raise RuntimeError("scheduler offline")
 
     events = []

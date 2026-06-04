@@ -231,10 +231,15 @@ async def test_retention_across_runs(fresh_container: EpisodicMemory, monkeypatc
     # Swap in a NEW browser that would fail loudly if called — we want to
     # prove that run 2 never needs the web.
     class NoCallBrowser:
+        def __init__(self):
+            self.search_calls = 0
+
         async def search(self, query):  # pragma: no cover
+            self.search_calls += 1
             raise AssertionError("Run 2 must not call web search — memory recall should suffice.")
 
-    ServiceContainer.register_instance("sovereign_browser", NoCallBrowser())
+    browser = NoCallBrowser()
+    ServiceContainer.register_instance("sovereign_browser", browser)
 
     brain_2 = ScriptedBrain([
         'Thought: First check if I learned anything relevant before.\n'
@@ -268,6 +273,7 @@ async def test_retention_across_runs(fresh_container: EpisodicMemory, monkeypatc
     assert ActionType.WEB_SEARCH not in run2_actions, (
         f"Run 2 must not need web search; actions were: {[a.value for a in run2_actions]}"
     )
+    assert browser.search_calls == 0
 
 
 # ---------------------------------------------------------------------------

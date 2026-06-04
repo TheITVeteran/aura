@@ -131,7 +131,10 @@ def test_will_proceed_but_governor_blocks_low_vitality(loop_factory):
 # Will errors fail closed
 # ---------------------------------------------------------------------------
 def test_will_decide_raising_blocks_update(loop_factory):
+    will_calls = []
+
     def will_raises(domain, module, reward):
+        will_calls.append((domain, module, reward))
         raise RuntimeError("Will service unreachable")
 
     svc, adapter, _gov, pid = loop_factory(will_decide_fn=will_raises)
@@ -141,6 +144,7 @@ def test_will_decide_raising_blocks_update(loop_factory):
     post = adapter.snapshot()["total_updates"]
 
     assert post == pre
+    assert len(will_calls) == 1
     assert out["weight_update"] is None
     assert out["will_outcome"] == "refuse"
     assert "will_decide_raised" in out["weight_update_reason"]

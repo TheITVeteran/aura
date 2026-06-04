@@ -62,7 +62,10 @@ async def test_search_handles_mismatched_response_without_crashing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_network_error_returns_structured_error(monkeypatch):
+    urlopen_calls = []
+
     def fail_urlopen(*_args, **_kwargs):
+        urlopen_calls.append((_args, _kwargs))
         raise urllib.error.URLError("offline")
 
     monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
@@ -70,6 +73,7 @@ async def test_search_network_error_returns_structured_error(monkeypatch):
 
     result = await actor._handle_search({"query": "aura"}, "trace-3")
 
+    assert len(urlopen_calls) == 1
     assert "offline" in result["error"]
 
 

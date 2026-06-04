@@ -58,22 +58,28 @@ def _reset_degradation_tracker():
 @pytest.mark.asyncio
 async def test_compaction_uses_deterministic_fallback_when_summarizer_fails():
     class _FailingRouter:
+        def __init__(self):
+            self.think_calls = 0
+
         async def think(self, *_args, **_kwargs):
+            self.think_calls += 1
             raise RuntimeError("summarizer offline")
 
     black_hole = _BlackHole()
     narrative = _NarrativeMemory()
+    router = _FailingRouter()
     orchestrator = HierarchicalMemoryOrchestrator(
         black_hole=black_hole,
         narrative_memory=narrative,
         context_manager=_ContextManager(),
         conversation_memory=_ConversationMemory(),
-        llm_router=_FailingRouter(),
+        llm_router=router,
     )
 
     current_context = {"history": _history()}
     result = await orchestrator.maybe_compact(current_context)
 
+    assert router.think_calls == 1
     assert result is current_context
     compacted = result["history"]
     assert compacted[0]["role"] == "system"

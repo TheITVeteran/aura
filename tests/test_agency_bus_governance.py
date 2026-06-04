@@ -39,13 +39,17 @@ def test_agency_bus_auto_acquires_and_verifies_will_receipt(monkeypatch):
 
 
 def test_agency_bus_fails_closed_when_will_unavailable(monkeypatch):
+    will_resolution_attempts = []
+
     def unavailable():
+        will_resolution_attempts.append("attempted")
         raise RuntimeError("will offline")
 
     monkeypatch.setattr("core.governance.will.get_will", unavailable)
     bus = AgencyBus()
 
     assert bus.submit({"origin": "test", "text": "hello", "priority_class": "duty"}) is False
+    assert will_resolution_attempts == ["attempted"]
     assert bus.stats["recent_audit"] == []
 
 

@@ -258,7 +258,10 @@ async def test_subconscious_loop_fails_closed_when_constitutional_gate_unavailab
     tool_orch = SimpleNamespace(execute_python=AsyncMock(return_value=(True, "should not run")))
     service_container.register_instance("tool_orchestrator", tool_orch, required=False)
 
+    gate_failures = []
+
     def _raise_gate_error(*_args, **_kwargs):
+        gate_failures.append((_args, _kwargs))
         raise RuntimeError("constitutional core unavailable")
 
     monkeypatch.setattr("core.constitution.get_constitutional_core", _raise_gate_error)
@@ -267,6 +270,7 @@ async def test_subconscious_loop_fails_closed_when_constitutional_gate_unavailab
     await loop._run_proactive_sandbox()
 
     tool_orch.execute_python.assert_not_awaited()
+    assert len(gate_failures) == 1
     assert tracker.count("subconscious_loop", "degraded") >= 1
 
 

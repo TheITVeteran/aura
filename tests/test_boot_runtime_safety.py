@@ -255,18 +255,24 @@ def test_inprocess_mlx_metal_can_be_forced_for_debugging(monkeypatch):
 @pytest.mark.asyncio
 async def test_continuous_vision_defers_screen_backend_without_permission(monkeypatch):
     class _FakeMSSModule:
+        def __init__(self):
+            self.mss_calls = 0
+
         def mss(self):
+            self.mss_calls += 1
             raise AssertionError("mss() should not be called without active permission")
 
     guard = MagicMock()
     guard.check_permission = AsyncMock(return_value={"granted": False, "status": "deferred"})
 
-    monkeypatch.setitem(sys.modules, "mss", _FakeMSSModule())
+    fake_mss = _FakeMSSModule()
+    monkeypatch.setitem(sys.modules, "mss", fake_mss)
 
     with patch("core.container.ServiceContainer.get", return_value=guard):
         buffer = ContinuousSensoryBuffer(VISION_TEST_ROOT)
         ready = await buffer._ensure_screen_backend()
 
     assert ready is False
+    assert fake_mss.mss_calls == 0
     assert buffer.sct is None
     assert buffer.monitor is None

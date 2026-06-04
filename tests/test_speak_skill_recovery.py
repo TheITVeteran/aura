@@ -13,6 +13,7 @@ async def test_speak_rejects_oversized_text_before_audio_attempt(monkeypatch):
     skill._get_engine = lambda: None
 
     async def fail_if_called(*_args, **_kwargs):
+        fail_if_called.calls = getattr(fail_if_called, "calls", 0) + 1
         raise AssertionError("audio process should not start")
 
     monkeypatch.setattr(speak_mod.asyncio, "create_subprocess_exec", fail_if_called)
@@ -39,6 +40,7 @@ async def test_macos_say_waits_for_process_and_reports_nonzero_exit(monkeypatch)
             return b"", b"voice not found"
 
         def kill(self):
+            self.kill_calls = getattr(self, "kill_calls", 0) + 1
             raise AssertionError("process should not be killed without timeout")
 
     async def fake_exec(*args, **kwargs):
@@ -109,6 +111,7 @@ async def test_pyttsx3_fallback_runs_after_primary_failure(monkeypatch):
             spoken.append(("run", "done"))
 
     async def failing_primary(_text):
+        failing_primary.calls = getattr(failing_primary, "calls", 0) + 1
         raise RuntimeError("primary unavailable")
 
     skill = speak_mod.SpeakSkill.__new__(speak_mod.SpeakSkill)

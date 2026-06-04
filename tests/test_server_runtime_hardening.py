@@ -1391,10 +1391,14 @@ async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
     repo._current = AuraState()
 
     class ClosingTransport:
+        def __init__(self):
+            self.request_calls = []
+
         def has_actor(self, name):
             return name == "state_vault"
 
         async def request(self, *_args, **_kwargs):
+            self.request_calls.append((_args, _kwargs))
             raise BrokenPipeError("Connection is closed")
 
     transport = ClosingTransport()
@@ -1406,6 +1410,7 @@ async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
             await repo.commit(repo._current.derive("shutdown", origin="test"), "shutdown")
 
         assert repo.get_runtime_status()["pending_proxy_commit"] is True
+        assert len(transport.request_calls) == 2
         assert "Vault pipe closed during shutdown" in caplog.text
         assert tracker.recent(subsystem="state_repository_proxy_transport") == []
     finally:
@@ -6801,13 +6806,17 @@ async def test_model_runtime_actor_counts_typed_backend_failure():
         ModelRuntimeActor,
     )
 
+    backend_calls = []
+
     async def _backend(req):
+        backend_calls.append(req)
         raise ModelUnavailable("offline")
 
     actor = ModelRuntimeActor(backend=_backend)
     with pytest.raises(ModelUnavailable, match="offline"):
         await actor.generate(GenerateRequest(prompt="fail"))
     assert actor.calls == 1
+    assert len(backend_calls) == 1
     assert actor.failures == 1
 
 

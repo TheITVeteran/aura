@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -510,7 +511,14 @@ class PersonalityEngine:
         from core.container import ServiceContainer
         audit = ServiceContainer.get("subsystem_audit", default=None)
         if audit:
-            audit.heartbeat("personality_engine")
+            heartbeat_result = audit.heartbeat("personality_engine")
+            if inspect.isawaitable(heartbeat_result):
+                close = getattr(heartbeat_result, "close", None)
+                if callable(close):
+                    close()
+                logger.debug(
+                    "Ignored awaitable subsystem_audit heartbeat in synchronous personality update."
+                )
         
         # Decay all emotions towards baseline
         for emotion in self.emotions.values():

@@ -3,13 +3,17 @@ from core.identity.self_object import SelfObject
 
 
 class _BrokenContainer:
+    calls = []
+
     @staticmethod
     def get(*_args, **_kwargs):
+        _BrokenContainer.calls.append((_args, _kwargs))
         raise RuntimeError("container unavailable")
 
 
 def test_self_object_readers_degrade_to_safe_identity_facets(monkeypatch):
     recorded = []
+    _BrokenContainer.calls = []
     monkeypatch.setattr(
         self_object,
         "record_degradation",
@@ -23,6 +27,7 @@ def test_self_object_readers_degrade_to_safe_identity_facets(monkeypatch):
     assert SelfObject._read_recent_memory_consolidations(_BrokenContainer) == []
     assert SelfObject._read_recent_self_mods(_BrokenContainer) == []
 
+    assert len(_BrokenContainer.calls) == 6
     assert recorded
     assert all(module == "self_object" for module, _ in recorded)
 

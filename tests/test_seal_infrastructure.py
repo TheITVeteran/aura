@@ -154,13 +154,17 @@ class TestWorldResult(unittest.TestCase):
     def test_wrap_adapter_call_failure(self):
         from core.adapters.typed_result import WorldResult, wrap_adapter_call
 
+        adapter_calls = []
+
         @wrap_adapter_call
         def bad_adapter():
+            adapter_calls.append("attempted")
             raise TimeoutError("connection timeout")
 
         result = bad_adapter()
         self.assertIsInstance(result, WorldResult)
         self.assertFalse(result.success)
+        self.assertEqual(adapter_calls, ["attempted"])
         self.assertEqual(result.error_info.kind.value, "timeout")
 
 

@@ -31,6 +31,7 @@ def test_secure_sandbox_launch_failure_is_degraded_result(monkeypatch, tmp_path:
     runtime_sandbox = sandbox.SecureSandbox(workdir=tmp_path / "work")
 
     def fail_popen(*_args, **_kwargs):
+        fail_popen.calls = getattr(fail_popen, "calls", 0) + 1
         raise OSError("process launch unavailable")
 
     monkeypatch.setattr(sandbox.subprocess, "Popen", fail_popen)
@@ -47,6 +48,7 @@ def test_code_repair_sandbox_does_not_swallow_programmer_fault(monkeypatch, tmp_
     repair_sandbox = code_sandbox.CodeRepairSandbox()
 
     def fail_parse(_source: str):
+        fail_parse.calls = getattr(fail_parse, "calls", 0) + 1
         raise AssertionError("programmer fault")
 
     monkeypatch.setattr(code_sandbox.ast, "parse", fail_parse)
@@ -122,6 +124,7 @@ async def test_vision_service_records_capture_degradation(monkeypatch, tmp_path:
             return None
 
         def grab(self, _monitor):
+            self.grab_calls = getattr(self, "grab_calls", 0) + 1
             raise OSError("screen locked")
 
     fake_mss = SimpleNamespace(

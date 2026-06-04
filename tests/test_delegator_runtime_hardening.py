@@ -22,7 +22,10 @@ async def test_callback_failure_does_not_poison_completed_agent(monkeypatch):
         async def think(self, *_args, **_kwargs):
             return SimpleNamespace(content="shard complete")
 
+    callback_calls = []
+
     async def broken_callback(**_kwargs):
+        callback_calls.append(_kwargs)
         raise RuntimeError("callback failed")
 
     delegator = AgentDelegator(SimpleNamespace(cognitive_engine=Brain()))
@@ -32,6 +35,7 @@ async def test_callback_failure_does_not_poison_completed_agent(monkeypatch):
     await agent.done_event.wait()
 
     assert agent.status == "COMPLETED"
+    assert len(callback_calls) == 1
     assert agent.result == "shard complete"
     assert any(
         record.action == "preserved agent result after callback failed"

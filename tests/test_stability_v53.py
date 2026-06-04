@@ -79,7 +79,11 @@ class TestConversationStatus:
         """When prewarm task failed with exception, state should be 'recovering'."""
         gate = self._make_gate()
         loop = asyncio.new_event_loop()
-        async def fail(): raise RuntimeError("warmup_failed")
+        prewarm_attempts = []
+
+        async def fail():
+            prewarm_attempts.append("attempted")
+            raise RuntimeError("warmup_failed")
         task = loop.create_task(fail())
         try:
             loop.run_until_complete(task)
@@ -87,6 +91,7 @@ class TestConversationStatus:
             pass
         gate._prewarm_task = task
         lane = gate.get_conversation_status()
+        assert prewarm_attempts == ["attempted"]
         assert lane["state"] == "recovering", f"Failed prewarm should report 'recovering', got '{lane['state']}'"
         assert "prewarm_failed" in lane["last_failure_reason"]
         loop.close()

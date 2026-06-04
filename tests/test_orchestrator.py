@@ -2550,7 +2550,10 @@ async def test_process_user_input_exception():
     orchestrator.status = SimpleNamespace(initialized=False, is_processing=False, running=False)
     orchestrator.start = MagicMock()
 
+    handle_calls = []
+
     async def failing_handle(*args, **kwargs):
+        handle_calls.append((args, kwargs))
         raise ValueError("Simulated input processing error")
 
     orchestrator._handle_incoming_message = failing_handle
@@ -2558,6 +2561,7 @@ async def test_process_user_input_exception():
     with patch("core.thought_stream.get_emitter"):
         with pytest.raises(ValueError):
             await orchestrator._process_message("hello")
+    assert len(handle_calls) == 1
 
 
 # --- _handle_action_step exception handling (line 1735, 1759) ---

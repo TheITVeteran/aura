@@ -58,7 +58,10 @@ async def test_sandbox_validation_fails_closed_when_unit_test_runner_fails(monke
         async def _run_pyright(self, _path):
             return {"ok": True}
 
+    run_calls = []
+
     def _run_raises(*_args, **_kwargs):
+        run_calls.append((_args, _kwargs))
         raise subprocess.SubprocessError("pytest transport failed")
 
     monkeypatch.setattr("core.resilience.diagnostic_hub.get_diagnostic_hub", lambda: _Hub())
@@ -67,6 +70,7 @@ async def test_sandbox_validation_fails_closed_when_unit_test_runner_fails(monke
     result = await SandboxTester()._run_tests_in_sandbox(tmp_path, _fix("pkg/module.py"))
 
     assert result["success"] is False
+    assert len(run_calls) == 1
     assert result["unit_tests"] is False
     assert any("Test execution failed" in error for error in result["errors"])
     last = get_degradation_tracker().recent(subsystem="code_repair")[-1]

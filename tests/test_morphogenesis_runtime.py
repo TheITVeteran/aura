@@ -227,7 +227,10 @@ async def test_cell_quarantine_after_failures():
         activation_threshold=0.01,  # Very low so it always activates
     )
 
+    handler_calls = []
+
     def _failing_handler(cell, signals, field_state):
+        handler_calls.append((cell, signals, field_state))
         raise RuntimeError("test failure")
 
     cell = MorphogenCell(manifest, handler=_failing_handler)
@@ -240,6 +243,7 @@ async def test_cell_quarantine_after_failures():
     for _ in range(3):
         await cell.tick(signals=[task_signal], field=field, global_energy=1.0)
 
+    assert len(handler_calls) == 3
     assert cell.lifecycle == CellLifecycle.QUARANTINED, (
         f"Expected QUARANTINED after 3 failures, got {cell.lifecycle}"
     )

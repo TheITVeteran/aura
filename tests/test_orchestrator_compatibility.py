@@ -405,16 +405,22 @@ async def test_graceful_state_vault_stop_continues_when_bus_already_closed():
     tracker.reset()
 
     class _ClosedBus:
+        def __init__(self):
+            self.request_calls = []
+
         def has_actor(self, name):
             return name == "state_vault"
 
         async def request(self, *_args, **_kwargs):
+            self.request_calls.append((_args, _kwargs))
             raise BrokenPipeError("Connection is closed")
 
-    orch = SimpleNamespace(_actor_bus=_ClosedBus(), _supervisor_tree=None)
+    closed_bus = _ClosedBus()
+    orch = SimpleNamespace(_actor_bus=closed_bus, _supervisor_tree=None)
 
     await _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01)
 
+    assert len(closed_bus.request_calls) == 1
     assert any(
         "actor bus was already closed for state_vault" in record.action
         for record in tracker.recent(subsystem="shutdown")
@@ -433,7 +439,10 @@ async def test_orchestrator_shutdown_continues_when_final_state_commit_is_cancel
         def derive(self, _cause):
             return self
 
+    cancelled_commits = []
+
     async def cancelled_commit(*_args, **_kwargs):
+        cancelled_commits.append((_args, _kwargs))
         raise asyncio.CancelledError()
 
     service_shutdown = AsyncMock()
@@ -477,6 +486,7 @@ async def test_orchestrator_shutdown_continues_when_final_state_commit_is_cancel
         await orchestrator_shutdown(orch)
 
     assert "Shutdown state commit cancelled during process teardown" in caplog.text
+    assert len(cancelled_commits) == 1
     service_shutdown.assert_awaited_once()
     event_bus_shutdown.assert_awaited_once()
     tracker.reset()

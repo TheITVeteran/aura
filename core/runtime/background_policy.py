@@ -263,10 +263,6 @@ def background_activity_reason(
         if boot_grace_s > 0.0 and 0.0 < uptime_s < boot_grace_s:
             return f"boot_grace_{int(uptime_s)}s"
 
-    foreground_reason = _foreground_activity_reason()
-    if foreground_reason:
-        return foreground_reason
-
     if orch is not None:
         if bool(getattr(orch, "is_busy", False)):
             return "orchestrator_busy"
@@ -274,15 +270,20 @@ def background_activity_reason(
         if float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0) > now:
             return "suppressed"
 
+        last_user = _last_user_interaction_time(orch)
+        if last_user <= 0.0 and not allow_no_user_anchor:
+            return "no_user_anchor"
+
+    foreground_reason = _foreground_activity_reason()
+    if foreground_reason:
+        return foreground_reason
+
+    if orch is not None:
         quiet_until = float(getattr(orch, "_foreground_user_quiet_until", 0.0) or 0.0)
         if quiet_until > now:
             return "foreground_quiet_window"
 
-        last_user = _last_user_interaction_time(orch)
-        if last_user <= 0.0:
-            if not allow_no_user_anchor:
-                return "no_user_anchor"
-        elif (now - last_user) < min_idle_seconds:
+        if (now - last_user) < min_idle_seconds:
             return f"recent_user_{int(now - last_user)}"
 
     try:

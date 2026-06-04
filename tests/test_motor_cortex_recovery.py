@@ -36,7 +36,10 @@ async def test_execute_reflex_records_failed_receipt_for_handler_exception(monke
     cortex = mc.MotorCortex()
     cortex.issue_token(mc.ReflexClass.CUSTOM)
 
+    boom_calls = []
+
     async def boom(_payload):
+        boom_calls.append(_payload)
         raise RuntimeError("motor fault")
 
     cortex.register_handler("boom", boom)
@@ -49,6 +52,7 @@ async def test_execute_reflex_records_failed_receipt_for_handler_exception(monke
     )
 
     receipt = cortex.get_recent_receipts(1)[0]
+    assert len(boom_calls) == 1
     assert receipt["success"] is False
     assert receipt["summary"] == "handler_error"
     assert cortex._receipts[-1].error == "motor fault"
@@ -62,7 +66,10 @@ async def test_execute_reflex_propagates_cancellation_without_false_receipt():
     cortex = mc.MotorCortex()
     cortex.issue_token(mc.ReflexClass.CUSTOM)
 
+    cancel_calls = []
+
     async def cancel(_payload):
+        cancel_calls.append(_payload)
         raise asyncio.CancelledError()
 
     cortex.register_handler("cancel", cancel)
@@ -74,6 +81,7 @@ async def test_execute_reflex_propagates_cancellation_without_false_receipt():
                 handler_name="cancel",
             )
         )
+    assert len(cancel_calls) == 1
 
     assert cortex.get_recent_receipts(1) == []
 

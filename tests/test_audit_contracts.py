@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_authority_gateway_fails_closed_when_will_unavailable(monkeypatch):
     import core.will as will_module
 
+    will_resolution_attempts = []
+
     def _boom():
+        will_resolution_attempts.append("attempted")
         raise RuntimeError("will offline")
 
     monkeypatch.setattr(will_module, "get_will", _boom)
@@ -32,6 +35,7 @@ def test_authority_gateway_fails_closed_when_will_unavailable(monkeypatch):
     )
 
     assert not decision.approved
+    assert will_resolution_attempts == ["attempted"]
     assert decision.outcome == "will_unavailable"
     assert "offline" in decision.reason
 

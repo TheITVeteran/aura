@@ -13,6 +13,7 @@ from core.state.aura_state import AuraState
 
 class _BrokenCalibrator:
     def record_prediction(self, *, confidence: float, actual_correctness: float) -> None:
+        self.record_prediction_calls = getattr(self, "record_prediction_calls", 0) + 1
         raise RuntimeError("calibrator offline")
 
 
@@ -62,6 +63,7 @@ def test_learning_phase_preserves_state_when_standard_learning_fails():
     phase = LearningPhase(SimpleNamespace())
 
     async def fail_standard(state: AuraState, objective: str) -> AuraState:
+        fail_standard.calls = getattr(fail_standard, "calls", 0) + 1
         raise RuntimeError("learner database locked")
 
     phase._perform_standard_learning = fail_standard
@@ -84,6 +86,7 @@ def test_cross_domain_mapping_fails_closed_when_background_gate_errors(monkeypat
     state.affect.curiosity = 0.95
 
     def broken_background_gate(*args, **kwargs):
+        broken_background_gate.calls = getattr(broken_background_gate, "calls", 0) + 1
         raise RuntimeError("failure pressure unavailable")
 
     monkeypatch.setattr(

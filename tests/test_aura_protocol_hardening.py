@@ -35,7 +35,10 @@ async def test_process_message_rejects_malformed_payload():
 
 @pytest.mark.asyncio
 async def test_server_bind_failure_stays_offline(monkeypatch):
+    start_attempts = []
+
     async def fail_start_server(*_args, **_kwargs):
+        start_attempts.append((_args, _kwargs))
         raise OSError("port already in use")
 
     monkeypatch.setattr("core.consciousness.aura_protocol.asyncio.start_server", fail_start_server)
@@ -43,6 +46,7 @@ async def test_server_bind_failure_stays_offline(monkeypatch):
     server = AuraProtocolServer()
 
     assert await server.start() is False
+    assert len(start_attempts) == 1
     status = server.get_status()
     assert status["running"] is False
     assert status["last_error"] == "OSError: port already in use"

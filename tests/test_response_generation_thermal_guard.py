@@ -127,7 +127,10 @@ async def test_response_generation_treats_prefixed_user_origin_as_foreground(mon
         lambda: SimpleNamespace(align=lambda text: (text, False, [])),
     )
 
+    background_gate_calls = []
+
     def _unexpected_background_gate(*_args, **_kwargs):
+        background_gate_calls.append((_args, _kwargs))
         raise AssertionError("foreground origins should not consult background gating")
 
     monkeypatch.setattr(
@@ -141,6 +144,7 @@ async def test_response_generation_treats_prefixed_user_origin_as_foreground(mon
     # We don't assert the exact response text because downstream voice shaping
     # (SubstrateVoiceEngine) may legitimately restyle it — but the routing
     # decision (foreground vs background) is what this test validates.
+    assert background_gate_calls == []
     assert router.calls, "Router should have been called for a user-facing origin"
     assert router.calls[0]["is_background"] is False
     assert result.cognition.last_response, "A response should have been generated"

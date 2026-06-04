@@ -75,7 +75,10 @@ async def test_context_streaming_prune_uses_bounded_tail_when_disabled(monkeypat
     history = [{"role": "user", "content": f"m{i}"} for i in range(80)]
     stream = _DummyStreaming(history, runtime_config={"context_pruning": False, "max_conversation_history": 30})
 
+    unexpected_prune_calls = []
+
     async def _unexpected_prune(*_args, **_kwargs):
+        unexpected_prune_calls.append((_args, _kwargs))
         raise AssertionError("context pruner should not be called when feature is disabled")
 
     monkeypatch.setattr("core.memory.context_pruner.context_pruner.prune_history", _unexpected_prune)
@@ -83,6 +86,7 @@ async def test_context_streaming_prune_uses_bounded_tail_when_disabled(monkeypat
     await stream._prune_history_async()
 
     assert len(stream.conversation_history) == 30
+    assert unexpected_prune_calls == []
     assert stream.conversation_history[0]["content"] == "m50"
 
 

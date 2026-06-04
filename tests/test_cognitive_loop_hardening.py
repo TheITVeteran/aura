@@ -82,10 +82,12 @@ async def test_run_applies_backoff_after_recoverable_cycle_failure(monkeypatch):
     import core.cognitive_loop as cognitive_loop_module
 
     sleeps = []
+    cycle_failures = []
     loop = CognitiveLoop(SimpleNamespace())
     loop.is_running = True
 
     async def failed_cycle():
+        cycle_failures.append("attempted")
         raise RuntimeError("cycle dependency failed")
 
     async def fake_sleep(delay: float):
@@ -101,6 +103,7 @@ async def test_run_applies_backoff_after_recoverable_cycle_failure(monkeypatch):
         close_loop(loop)
 
     assert sleeps == [1.0]
+    assert cycle_failures == ["attempted"]
 
 
 @pytest.mark.asyncio

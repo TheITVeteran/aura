@@ -356,12 +356,17 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
     class FailingPatchMesh:
+        def __init__(self):
+            self.attempts = 0
+
         async def attempt_patch_for_antigen(self, _artifact, _antigen):
+            self.attempts += 1
             raise TimeoutError("patch mesh timeout")
 
     immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=7)
+    patch_mesh = FailingPatchMesh()
     immune._get_service = lambda name: (
-        FailingPatchMesh() if name == "autonomous_resilience_mesh" else None
+        patch_mesh if name == "autonomous_resilience_mesh" else None
     )
     artifact = _test_artifact()
 
@@ -374,6 +379,7 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
     assert report["status"] == "execution_error"
+    assert patch_mesh.attempts == 1
     assert artifact.executed is True
     assert artifact.success is False
     assert "patch execution failed" in artifact.notes
@@ -390,11 +396,16 @@ def test_autopoiesis_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
     class FailingAutopoiesis:
+        def __init__(self):
+            self.repair_requests = 0
+
         async def request_repair(self, _component, _strategy):
+            self.repair_requests += 1
             raise RuntimeError("repair loop unavailable")
 
     immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=8)
-    immune._get_service = lambda name: FailingAutopoiesis() if name == "autopoiesis" else None
+    autopoiesis = FailingAutopoiesis()
+    immune._get_service = lambda name: autopoiesis if name == "autopoiesis" else None
     artifact = _test_artifact(kind=EffectorKind.RESTART_COMPONENT)
 
     report = run(
@@ -406,6 +417,7 @@ def test_autopoiesis_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
     assert report["status"] == "execution_error"
+    assert autopoiesis.repair_requests == 1
     assert artifact.executed is True
     assert artifact.success is False
     assert "execution failed" in artifact.notes

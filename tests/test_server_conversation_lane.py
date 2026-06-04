@@ -454,6 +454,7 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
             return True
 
         async def process(self, *_args, **_kwargs):
+            self.unexpected_process_calls = getattr(self, "unexpected_process_calls", 0) + 1
             raise AssertionError("desktop objective should not fall through to KernelInterface")
 
     async def _fake_begin_exchange(*_args, **_kwargs):
@@ -1464,6 +1465,7 @@ async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(
             return True
 
         async def process(self, *_args, **_kwargs):
+            self.unexpected_process_calls = getattr(self, "unexpected_process_calls", 0) + 1
             raise AssertionError("Kernel should be bypassed when the protected foreground lane is engaged")
 
     gate = _FakeGate()
@@ -1521,6 +1523,7 @@ async def test_api_chat_uses_social_presence_before_protected_foreground_for_liv
 
     class _FailingGate:
         async def generate(self, *_args, **_kwargs):
+            self.unexpected_generate_calls = getattr(self, "unexpected_generate_calls", 0) + 1
             raise AssertionError("live presence checks should not enter protected foreground")
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
@@ -1586,6 +1589,7 @@ async def test_api_chat_keeps_protected_foreground_deep_prompts_on_primary_lane(
             return True
 
         async def process(self, *_args, **_kwargs):
+            self.unexpected_process_calls = getattr(self, "unexpected_process_calls", 0) + 1
             raise AssertionError("Kernel should be bypassed when the protected deep lane is engaged")
 
     gate = _FakeGate()
