@@ -10,13 +10,10 @@ can be excluded from fast CI runs with:  pytest -m "not stress"
 """
 from __future__ import annotations
 
-
 import asyncio
-import json
-import os
-import sys
-import time
 import logging
+import os
+import time
 
 import pytest
 
@@ -45,6 +42,7 @@ except ImportError:
     pytest.skip("fastapi not installed; skipping stress tests.", allow_module_level=True)
 
 logger = logging.getLogger(__name__)
+_MAX_TEST_WS_MESSAGES = int(os.getenv("AURA_TEST_WS_MAX_MESSAGES", "1000"))
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,7 +90,7 @@ def _build_test_app() -> FastAPI:
         await ws.accept()
         app.state.ws_connections += 1
         try:
-            while True:
+            for _ in range(_MAX_TEST_WS_MESSAGES):
                 data = await ws.receive_json()
                 msg_type = data.get("type")
 
@@ -106,10 +104,12 @@ def _build_test_app() -> FastAPI:
                     })
                 else:
                     await ws.send_json({"type": "ack"})
+            else:
+                await ws.close(code=1013, reason="test websocket message budget exhausted")
         except WebSocketDisconnect:
             pass
-        except Exception:
-            pass
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("Test websocket handler ended: %s", exc)
         finally:
             app.state.ws_connections -= 1
 
@@ -132,7 +132,7 @@ def _build_websocket_test_app() -> FastAPI:
         await ws.accept()
         app.state.ws_connections += 1
         try:
-            while True:
+            for _ in range(_MAX_TEST_WS_MESSAGES):
                 payload = await ws.receive_json()
                 msg_type = payload.get("type")
                 if msg_type == "ping":
@@ -145,6 +145,8 @@ def _build_websocket_test_app() -> FastAPI:
                     })
                 else:
                     await ws.send_json({"type": "ack"})
+            else:
+                await ws.close(code=1013, reason="test websocket message budget exhausted")
         except WebSocketDisconnect:
             pass
         finally:

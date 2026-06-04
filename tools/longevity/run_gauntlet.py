@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """tools/longevity/run_gauntlet.py
 
@@ -28,6 +27,8 @@ Usage:
     python tools/longevity/run_gauntlet.py --profile 24h_no_user
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import csv
@@ -36,52 +37,103 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger("Aura.Longevity")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-_PROFILES: Dict[str, Dict[str, Any]] = {
+_PROFILES: dict[str, dict[str, Any]] = {
     "24h_no_user": {"duration_s": 24 * 3600, "user_pulse_s": 0, "chaos": False},
     "72h_mixed": {"duration_s": 72 * 3600, "user_pulse_s": 1800, "chaos": False},
     "7d_with_failures": {"duration_s": 7 * 24 * 3600, "user_pulse_s": 3600, "chaos": True},
     "30d_summary": {"duration_s": 30 * 24 * 3600, "user_pulse_s": 0, "chaos": False, "snapshot_only": True},
 }
 
+_RECOVERABLE_SNAPSHOT_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+)
 
-async def _tick_snapshot(run_dir: Path) -> Dict[str, Any]:
-    out: Dict[str, Any] = {"when": time.time()}
+
+def _append_text(path: Path, line: str) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def _append_resource_row(path: Path, row: list[Any]) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        csv.writer(fh).writerow(row)
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    rows.append(json.loads(line))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+    except FileNotFoundError:
+        return []
+    return rows
+
+
+def _write_summary(run_dir: Path, *, run_id: str, profile_name: str, duration_s: float, rows: list[dict[str, Any]]) -> None:
+    with (run_dir / "summary.md").open("w", encoding="utf-8") as fh:
+        fh.write(f"# longevity run {run_id}\n\n")
+        fh.write(f"profile: `{profile_name}`\n")
+        fh.write(f"duration: {duration_s}s\n")
+        fh.write(f"snapshots: {len(rows)}\n")
+        if rows:
+            cpu = [float(r.get("cpu_pct") or 0.0) for r in rows]
+            ram = [float(r.get("ram_pct") or 0.0) for r in rows]
+            fh.write(f"cpu: min={min(cpu):.1f} max={max(cpu):.1f}\n")
+            fh.write(f"ram: min={min(ram):.1f} max={max(ram):.1f}\n")
+            unique_hashes = sorted({r.get("continuity_hash", "?") for r in rows})
+            fh.write(f"unique continuity hashes: {len(unique_hashes)}\n")
+
+
+async def _tick_snapshot(run_dir: Path) -> dict[str, Any]:
+    out: dict[str, Any] = {"when": time.time()}
     try:
         import psutil
+
         out["cpu_pct"] = psutil.cpu_percent(interval=None)
         out["ram_pct"] = psutil.virtual_memory().percent
         try:
             out["disk_pct"] = psutil.disk_usage("/").percent
-        except Exception:
+        except OSError:
             out["disk_pct"] = 0.0
-    except Exception:
-        pass
+    except ImportError:
+        out["resource_probe"] = "psutil_unavailable"
     try:
         from core.identity.self_object import get_self
+
         snap = get_self().snapshot()
         out["continuity_hash"] = snap.continuity_hash
         out["viability"] = snap.viability_state
         out["active_goals"] = len(snap.active_goals)
         out["active_tokens"] = snap.active_capability_tokens
-    except Exception as exc:
+    except _RECOVERABLE_SNAPSHOT_ERRORS as exc:
         out["self_error"] = str(exc)
     try:
         from core.agency.agency_orchestrator import get_receipt_log
+
         out["receipts_recent"] = len(get_receipt_log().recent(limit=200))
-    except Exception:
-        pass
-    # write to per-run trace
-    with open(run_dir / "events.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(out, default=str) + "\n")
-    with open(run_dir / "resource.csv", "a", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow([out.get("when"), out.get("cpu_pct"), out.get("ram_pct"), out.get("disk_pct")])
+    except _RECOVERABLE_SNAPSHOT_ERRORS as exc:
+        out["receipt_error"] = str(exc)
+    await asyncio.to_thread(_append_text, run_dir / "events.jsonl", json.dumps(out, default=str) + "\n")
+    await asyncio.to_thread(
+        _append_resource_row,
+        run_dir / "resource.csv",
+        [out.get("when"), out.get("cpu_pct"), out.get("ram_pct"), out.get("disk_pct")],
+    )
     return out
 
 
@@ -89,15 +141,22 @@ async def _maybe_fire_user(run_dir: Path) -> None:
     # Hook: write a synthetic user-event into events.jsonl. Actual user
     # injection requires the chat HTTP endpoint, which is the user's
     # responsibility to wire when running this against a live instance.
-    with open(run_dir / "user_pulse.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"when": time.time(), "kind": "scripted_user_pulse"}) + "\n")
+    await asyncio.to_thread(
+        _append_text,
+        run_dir / "user_pulse.jsonl",
+        json.dumps({"when": time.time(), "kind": "scripted_user_pulse"}) + "\n",
+    )
 
 
 async def _maybe_inject_chaos(run_dir: Path) -> None:
     from tools.chaos.injector import inject_random_fault
+
     fault = await inject_random_fault()
-    with open(run_dir / "chaos.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"when": time.time(), "fault": fault}) + "\n")
+    await asyncio.to_thread(
+        _append_text,
+        run_dir / "chaos.jsonl",
+        json.dumps({"when": time.time(), "fault": fault}) + "\n",
+    )
 
 
 async def main() -> int:
@@ -114,11 +173,9 @@ async def main() -> int:
     started = time.time()
     last_user_pulse = 0.0
     last_chaos = 0.0
-    while True:
+    while time.time() - started <= profile["duration_s"]:
         now = time.time()
         elapsed = now - started
-        if elapsed > profile["duration_s"]:
-            break
         await _tick_snapshot(run_dir)
         if profile["user_pulse_s"] and (now - last_user_pulse) > profile["user_pulse_s"]:
             await _maybe_fire_user(run_dir)
@@ -126,32 +183,18 @@ async def main() -> int:
         if profile.get("chaos") and (now - last_chaos) > 600.0:
             await _maybe_inject_chaos(run_dir)
             last_chaos = now
-        await asyncio.sleep(args.tick_s)
+        remaining = max(0.0, profile["duration_s"] - elapsed)
+        await asyncio.sleep(min(args.tick_s, remaining))
 
-    # Write summary.md
-    rows = []
-    try:
-        with open(run_dir / "events.jsonl", "r", encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    continue
-    except FileNotFoundError:
-        pass
-
-    with open(run_dir / "summary.md", "w", encoding="utf-8") as fh:
-        fh.write(f"# longevity run {run_id}\n\n")
-        fh.write(f"profile: `{args.profile}`\n")
-        fh.write(f"duration: {profile['duration_s']}s\n")
-        fh.write(f"snapshots: {len(rows)}\n")
-        if rows:
-            cpu = [float(r.get('cpu_pct') or 0.0) for r in rows]
-            ram = [float(r.get('ram_pct') or 0.0) for r in rows]
-            fh.write(f"cpu: min={min(cpu):.1f} max={max(cpu):.1f}\n")
-            fh.write(f"ram: min={min(ram):.1f} max={max(ram):.1f}\n")
-            unique_hashes = sorted({r.get('continuity_hash', '?') for r in rows})
-            fh.write(f"unique continuity hashes: {len(unique_hashes)}\n")
+    rows = await asyncio.to_thread(_read_jsonl, run_dir / "events.jsonl")
+    await asyncio.to_thread(
+        _write_summary,
+        run_dir,
+        run_id=run_id,
+        profile_name=args.profile,
+        duration_s=profile["duration_s"],
+        rows=rows,
+    )
     logger.info("longevity complete: %s", run_dir)
     return 0
 

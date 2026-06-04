@@ -885,7 +885,7 @@ async def test_event_bus_redis_listener_is_task_tracked(monkeypatch):
             return None
 
         async def listen(self):
-            while True:
+            for _ in range(60):
                 await asyncio.sleep(1.0)
                 yield {"type": "message"}
 

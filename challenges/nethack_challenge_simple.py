@@ -1,98 +1,116 @@
-print("SHELL LEVEL")
-import os
-import sys
-print(f"ALIVE (PID {os.getpid()})")
-sys.stdout.flush()
+import argparse
 import asyncio
 import logging
-from pathlib import Path
-import traceback
+import os
 import re
+import sys
+import time
+import traceback
+from pathlib import Path
 
-# Add project root to path
-root = Path(__file__).resolve().parent.parent
-sys.path.append(str(root))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-print(f"DEBUG: Importing NetHackAdapter... (PID {os.getpid()})")
-sys.stdout.flush()
-from core.adapters.nethack_adapter import NetHackAdapter
-print(f"DEBUG: Importing create_orchestrator... (PID {os.getpid()})")
-sys.stdout.flush()
-from core.orchestrator.main import create_orchestrator
-print(f"DEBUG: Importing ServiceContainer... (PID {os.getpid()})")
-sys.stdout.flush()
-from core.container import ServiceContainer
+logger = logging.getLogger("Aura.NetHackChallenge")
 
-async def run():
-    print(f"DEBUG: Entering run() coroutine (PID {os.getpid()})")
-    sys.stdout.flush()
-    print(">>> SIMPLE CHALLENGE STARTING <<<")
-    print(f"DEBUG: Calling create_orchestrator... (PID {os.getpid()})")
-    sys.stdout.flush()
+DEFAULT_MAX_STEPS = int(os.getenv("AURA_NETHACK_MAX_STEPS", "900"))
+DEFAULT_MAX_SECONDS = float(os.getenv("AURA_NETHACK_MAX_SECONDS", "1800"))
+_VALID_MOVES = "hjklubny><."
+_RECOVERABLE_CHALLENGE_ERRORS = (
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    AttributeError,
+    TypeError,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Aura's bounded NetHack reflex challenge.")
+    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--max-seconds", type=float, default=DEFAULT_MAX_SECONDS)
+    return parser.parse_args()
+
+
+def _extract_action(response: str) -> str | None:
+    if "[SOMATIC:key=" in response:
+        action_match = re.search(r"key=['\"](.*?)['\"]", response)
+        return action_match.group(1) if action_match else None
+
+    clean_response = response.strip()
+    if len(clean_response) == 1 and clean_response.lower() in _VALID_MOVES:
+        return clean_response.lower()
+    return None
+
+
+async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAULT_MAX_SECONDS) -> None:
+    from core.adapters.nethack_adapter import NetHackAdapter
+    from core.container import ServiceContainer
+    from core.orchestrator.main import create_orchestrator
+
     orchestrator = create_orchestrator()
-    print(f"DEBUG: create_orchestrator returned. (PID {os.getpid()})")
-    sys.stdout.flush()
-    await orchestrator.start()
-    
     adapter = NetHackAdapter()
-    adapter.start(name="AuraSimple")
-    ServiceContainer.register_instance("nethack_adapter", adapter)
-    
-    print(">>> LOOP STARTING <<<")
-    while True:
-        try:
-            obs = adapter.get_observation()
-            obs_text = obs.get("text", "")
-            print(f"DEBUG: Prompt: {repr(obs_text[:100])}...") # Print more of the screen
-            
-            full_prompt = f"{obs_text}\n\n[EMBODIED CONTROL CONTRACT] Somatic reflex matcher v3 ACTIVE."
-            
-            response = await orchestrator.process_user_input_priority(
-                full_prompt, origin="embodied_motor_reflex"
-            )
-            
-            if response:
-                print(f"DEBUG: Response: {response}")
-                # Simple parser to extract the action (usually a single character)
-                # Aura usually responds with the key she wants to press.
-                # If she says "I should move north", we might need a regex.
-                # But for now, let's assume she returns the character.
-                if "[SOMATIC:key=" in response:
-                    action_match = re.search(r"key=['\"](.*?)['\"]", response)
-                    action = action_match.group(1) if action_match else None
-                else:
-                    # If no explicit token, ONLY accept single characters from the movement set.
-                    # NEVER parse the first letter of a sentence.
-                    clean_resp = response.strip()
-                    valid_moves = "hjklubny><." # NetHack standard moves
-                    if len(clean_resp) == 1 and clean_resp.lower() in valid_moves:
-                        action = clean_resp.lower()
-                    else:
-                        print(f"DEBUG: Ignoring non-action chatter: {repr(response)}")
-                        action = None
-                
+    deadline = time.monotonic() + max(1.0, max_seconds)
+
+    logger.info(
+        "Starting bounded NetHack challenge pid=%s max_steps=%s max_seconds=%s",
+        os.getpid(),
+        max_steps,
+        max_seconds,
+    )
+    try:
+        await orchestrator.start()
+        adapter.start(name="AuraSimple")
+        ServiceContainer.register_instance("nethack_adapter", adapter)
+
+        for step in range(max(1, max_steps)):
+            if time.monotonic() >= deadline:
+                logger.info("NetHack challenge deadline reached at step %s", step + 1)
+                break
+            if not adapter.is_alive():
+                logger.info("NetHack process exited at step %s", step + 1)
+                break
+
+            try:
+                obs = adapter.get_observation()
+                obs_text = obs.get("text", "")
+                logger.debug("NetHack prompt step=%s text=%r", step + 1, obs_text[:100])
+
+                response = await orchestrator.process_user_input_priority(
+                    f"{obs_text}\n\n[EMBODIED CONTROL CONTRACT] Somatic reflex matcher v3 ACTIVE.",
+                    origin="embodied_motor_reflex",
+                )
+                if not response:
+                    await asyncio.sleep(1)
+                    continue
+
+                action = _extract_action(str(response))
                 if action:
-                    print(f"DEBUG: Executing action: {repr(action)}")
+                    logger.debug("Executing NetHack action step=%s action=%r", step + 1, action)
                     adapter.send_action(action)
                 else:
-                    # If she's just talking, we might want to send a 'wait' (.) or just skip
-                    pass
-            
-            await asyncio.sleep(1) # Faster loop for reflexes
-        except Exception as e:
-            print(f"ERROR in loop: {e}")
-            print("TRACEBACK:")
-            print(traceback.format_exc())
-            await asyncio.sleep(2)
+                    logger.debug("Ignoring non-action NetHack response step=%s response=%r", step + 1, response)
 
-print(f"DEBUG: Function definitions complete. (PID {os.getpid()})")
-sys.stdout.flush()
-print(f"DEBUG: REACHED LINE 54 (PID {os.getpid()})")
-sys.stdout.flush()
-print(f"DEBUG: __name__ = {__name__} (PID {os.getpid()})")
-sys.stdout.flush()
+                await asyncio.sleep(1)
+            except _RECOVERABLE_CHALLENGE_ERRORS as exc:
+                logger.warning(
+                    "Recoverable NetHack loop error at step %s: %s\n%s",
+                    step + 1,
+                    exc,
+                    traceback.format_exc(),
+                )
+                await asyncio.sleep(2)
+    finally:
+        adapter.stop()
+        try:
+            await orchestrator.stop()
+        except _RECOVERABLE_CHALLENGE_ERRORS as exc:
+            logger.warning("NetHack challenge orchestrator shutdown failed: %s", exc)
+
 
 if __name__ == "__main__":
-    print(f"DEBUG: Starting asyncio.run(run())... (PID {os.getpid()})")
-    sys.stdout.flush()
-    asyncio.run(run())
+    logging.basicConfig(level=os.getenv("AURA_NETHACK_LOG_LEVEL", "INFO"))
+    cli_args = parse_args()
+    asyncio.run(run(max_steps=cli_args.max_steps, max_seconds=cli_args.max_seconds))

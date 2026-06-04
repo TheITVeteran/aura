@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 # Path setup
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Setup minimal logging
@@ -16,7 +16,7 @@ logger = logging.getLogger("Verify.Phase2.2")
 # Top-level entry points for multiprocessing pickling
 def echo_actor_entry(conn):
     """Refined echo actor that handles the request/response protocol."""
-    while True:
+    while not getattr(conn, "closed", False):
         try:
             if conn.poll(1.0):
                 raw = conn.recv()

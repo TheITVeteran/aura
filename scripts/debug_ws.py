@@ -1,7 +1,12 @@
 import asyncio
-import websockets
 import json
 import os
+
+import websockets
+from websockets.exceptions import WebSocketException
+
+MAX_MESSAGES = int(os.getenv("AURA_DEBUG_WS_MAX_MESSAGES", "100"))
+
 
 async def test_chat():
     uri = "ws://localhost:8000/ws/chat"
@@ -16,8 +21,8 @@ async def test_chat():
             msg = {"type": "message", "message": "Hello Aura"}
             await websocket.send(json.dumps(msg))
             print(f"Sent: {msg}")
-            
-            while True:
+
+            for _ in range(MAX_MESSAGES):
                 try:
                     response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                     data = json.loads(response)
@@ -31,17 +36,19 @@ async def test_chat():
                     if data.get("type") == "error":
                         print("Error received!")
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     print("Timeout waiting for response.")
                     break
                 except websockets.exceptions.ConnectionClosed as e:
                     print(f"Connection closed by server: {e.code} {e.reason}")
                     break
-                except Exception as e:
+                except (json.JSONDecodeError, OSError, RuntimeError, ValueError, WebSocketException) as e:
                     print(f"Error in loop: {type(e)} {e}")
                     break
+            else:
+                print(f"Stopped after {MAX_MESSAGES} messages without a terminal frame.")
                     
-    except Exception as e:
+    except (OSError, RuntimeError, WebSocketException) as e:
         print(f"Connection failed: {type(e)} {e}")
 
 if __name__ == "__main__":

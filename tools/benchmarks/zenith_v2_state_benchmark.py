@@ -13,12 +13,18 @@ import asyncio
 import contextlib
 import json
 import logging
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
-from core.runtime.errors import FallbackClassification, Severity, record_degradation
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.errors import FallbackClassification, Severity, record_degradation  # noqa: E402
 
 logger = logging.getLogger("Aura.ZenithStateBenchmark")
 
@@ -117,10 +123,11 @@ async def measure_event_loop_lag(
     state.cognition.working_memory = [{"role": "user", "content": "x" * 1000}] * 100
     lag_samples: list[float] = []
     max_lag_ms = 0.0
+    stop_monitor = asyncio.Event()
 
     async def monitor_lag() -> None:
         nonlocal max_lag_ms
-        while True:
+        while not stop_monitor.is_set():
             before = time.perf_counter()
             await asyncio.sleep(0.01)
             after = time.perf_counter()
@@ -136,6 +143,7 @@ async def measure_event_loop_lag(
             await state.derive_async(f"stress_{index}")
         await asyncio.sleep(0.1)
     finally:
+        stop_monitor.set()
         monitor.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await monitor
