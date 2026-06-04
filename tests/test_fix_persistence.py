@@ -2,23 +2,30 @@ import json
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from core.config import config
 from core.self_modification.code_repair import CodeFix
 from core.self_modification.self_modification_engine import AutonomousSelfModificationEngine
 
 
+class FixedThought:
+    content = "FIXED"
+
+
+class CognitiveEngineDouble:
+    async def think(self, prompt, priority=0.0):
+        return FixedThought()
+
+
+async def approve_review(*_args, **_kwargs):
+    return True
+
+
 class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._old_supervised_selfmod = os.environ.get("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION")
         os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = "1"
-        # We need a mock cognitive engine
-        class MockBrain:
-            async def think(self, prompt, priority=0.0):
-                return type('Thought', (), {'content': 'FIXED'})()
-        
-        self.engine = AutonomousSelfModificationEngine(MockBrain())
+        self.engine = AutonomousSelfModificationEngine(CognitiveEngineDouble())
         self.test_file = Path("core/temp_fix_test.py")
         self.test_file.write_text("def old_function():\n    return 'old'")
         self.sepsis_registry = config.paths.data_dir / "sepsis_registry.json"
@@ -40,7 +47,7 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
             self.test_file.unlink()
 
     async def test_permanent_fix_application(self):
-        # Create a mock fix proposal
+        # Create a concrete fix proposal and force it through the supervised path.
         fix = CodeFix(
             target_file=str(self.test_file),
             target_line=1,
@@ -61,8 +68,7 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
             }
         }
         
-        # Bypass swarm for testing
-        self.engine._swarm_review = AsyncMock(return_value=True)
+        self.engine._swarm_review = approve_review
         
         # Apply fix
         success = await self.engine.apply_fix(proposal, force=True)
@@ -97,7 +103,7 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
             severity=IncidentSeverity.DEGRADED
         )
         
-        # Mock fix proposal with full ErrorPattern / ErrorEvent
+        # Use a full ErrorPattern / ErrorEvent proposal so recovery state is updated.
         event = ErrorEvent(
             timestamp=123.45,
             error_type="ValueError",
@@ -134,7 +140,7 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
             }
         }
         
-        self.engine._swarm_review = AsyncMock(return_value=True)
+        self.engine._swarm_review = approve_review
         success = await self.engine.apply_fix(proposal, force=True)
         self.assertTrue(success)
         

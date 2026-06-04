@@ -1,110 +1,139 @@
 import logging
+import os
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from core.brain.llm.model_registry import (
+    BRAINSTEM_ENDPOINT,
+    DEEP_ENDPOINT,
+    FALLBACK_ENDPOINT,
+    PRIMARY_ENDPOINT,
+)
+from core.container import ServiceContainer
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("Aura.Test")
+
+
+@contextmanager
+def _safe_boot_disabled():
+    previous = os.environ.get("AURA_SAFE_BOOT_DESKTOP")
+    os.environ["AURA_SAFE_BOOT_DESKTOP"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("AURA_SAFE_BOOT_DESKTOP", None)
+        else:
+            os.environ["AURA_SAFE_BOOT_DESKTOP"] = previous
+
+
+@contextmanager
+def _service_get_overrides(**services):
+    original = ServiceContainer.__dict__["get"]
+    ServiceContainer.get = classmethod(
+        lambda cls, name, default=None: services.get(name, default)
+    )
+    try:
+        yield
+    finally:
+        ServiceContainer.get = original
+
+
+class EndpointCallRecorder:
+    def __init__(self, text: str = "deterministic response"):
+        self.text = text
+        self.calls = []
+
+    async def __call__(self, endpoint, *args, **kwargs):
+        self.calls.append((endpoint, args, kwargs))
+        return {"ok": True, "text": self.text}
+
+    @property
+    def last_endpoint(self):
+        assert self.calls, "endpoint recorder was not called"
+        return self.calls[-1][0]
+
 
 class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from core.brain.llm_health_router import HealthAwareLLMRouter
         self.router = HealthAwareLLMRouter()
         self.router.logger = logger
-        
-        # Manually inject endpoints to avoid real registration overhead/side effects
-        self.router.endpoints = {
-            "local": MagicMock(name="local", model_name="32B", is_healthy=True, tier="local", is_local=True),
-            "local_deep": MagicMock(name="local_deep", model_name="72B", is_healthy=True, tier="local_deep", is_local=True),
-            "api_fast": MagicMock(name="api_fast", model_name="7B-Cloud", is_healthy=True, tier="api_fast", is_local=False),
-            "api_deep": MagicMock(name="api_deep", model_name="GPT-4", is_healthy=True, tier="api_deep", is_local=False),
-            "local_fast": MagicMock(name="local_fast", model_name="7B-Local", is_healthy=True, tier="local_fast", is_local=True)
-        }
-        
-        for name, ep in self.router.endpoints.items():
-            ep.name = name # Ensure name is set correctly
-            ep.is_available.return_value = True
-            
-        self.router._call_endpoint = AsyncMock(return_value={"ok": True, "text": "Mocked Response"})
+        self.router.register(PRIMARY_ENDPOINT, "internal", "32B", is_local=True, tier="local")
+        self.router.register(DEEP_ENDPOINT, "internal", "72B", is_local=True, tier="local_deep")
+        self.router.register("api_fast", "cloud", "7B-Cloud", is_local=False, tier="api_fast")
+        self.router.register("api_deep", "cloud", "GPT-4", is_local=False, tier="api_deep")
+        self.router.register(BRAINSTEM_ENDPOINT, "internal", "7B-Local", is_local=True, tier="local_fast")
+        self.router.register(FALLBACK_ENDPOINT, "internal", "7B-Fallback", is_local=True, tier="local_fast")
+        self.endpoint_calls = EndpointCallRecorder()
+        self.router._call_endpoint = self.endpoint_calls
 
     async def test_automatic_background_tiering_by_flag(self):
         """Verify that is_background=True forces the tertiary tier."""
-        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
-            self.router, '_call_endpoint', new_callable=AsyncMock
-        ) as mock_call:
-            mock_call.return_value = {"ok": True, "text": "Mocked Response"}
-            
+        with _safe_boot_disabled():
             await self.router.think("Hello", is_background=True)
-            
-            # Background routing should use the local 7B brainstem first.
-            called_ep = mock_call.call_args[0][0]
-            self.assertEqual(called_ep.name, "local_fast")
-            self.assertEqual(called_ep.tier, "local_fast")
+
+        # Background routing should use the local 7B brainstem first.
+        called_ep = self.endpoint_calls.last_endpoint
+        self.assertEqual(called_ep.name, BRAINSTEM_ENDPOINT)
+        self.assertEqual(called_ep.tier, "local_fast")
 
     async def test_automatic_background_tiering_by_origin(self):
         """Verify that origin='metabolic' forces the tertiary tier."""
-        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
-            self.router, '_call_endpoint', new_callable=AsyncMock
-        ) as mock_call:
-            mock_call.return_value = {"ok": True, "text": "Mocked Response"}
-            
+        with _safe_boot_disabled():
             await self.router.think("Hello", origin="metabolic_cycle")
-            
-            called_ep = mock_call.call_args[0][0]
-            self.assertEqual(called_ep.name, "local_fast")
+
+        called_ep = self.endpoint_calls.last_endpoint
+        self.assertEqual(called_ep.name, BRAINSTEM_ENDPOINT)
 
     async def test_background_override_is_demoted(self):
         """Background tasks must stay on the 7B path even if they request primary."""
-        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
-            self.router, '_call_endpoint', new_callable=AsyncMock
-        ) as mock_call:
-            mock_call.return_value = {"ok": True, "text": "Mocked Response"}
-            
+        with _safe_boot_disabled():
             await self.router.think("Hello", prefer_tier="primary", is_background=True)
-            
-            called_ep = mock_call.call_args[0][0]
-            self.assertEqual(called_ep.name, "local_fast")
+
+        called_ep = self.endpoint_calls.last_endpoint
+        self.assertEqual(called_ep.name, BRAINSTEM_ENDPOINT)
 
     async def test_originless_primary_request_is_background_unless_purpose_is_user_facing(self):
         """Internal callers must not become foreground just by requesting primary."""
-        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "0"}, clear=False), patch.object(
-            self.router, '_call_endpoint', new_callable=AsyncMock
-        ) as mock_call:
-            mock_call.return_value = {"ok": True, "text": "Mocked Response"}
-
+        with _safe_boot_disabled():
             await self.router.think("quiet internal reflection", prefer_tier="primary")
 
-            called_ep = mock_call.call_args[0][0]
-            self.assertEqual(called_ep.name, "local_fast")
+        called_ep = self.endpoint_calls.last_endpoint
+        self.assertEqual(called_ep.name, BRAINSTEM_ENDPOINT)
 
     async def test_background_inference_is_suppressed_while_foreground_user_turn_is_active(self):
         """Background jobs should back off instead of contending with an active user reply."""
-        mock_orch = MagicMock()
-        mock_orch.status.is_processing = True
-        mock_orch._current_origin = "api"
-        mock_orch._current_task_is_autonomous = False
-        mock_orch._foreground_user_quiet_until = 0.0
+        orch = SimpleNamespace(
+            status=SimpleNamespace(is_processing=True),
+            _current_origin="api",
+            _current_task_is_autonomous=False,
+            _foreground_user_quiet_until=0.0,
+        )
 
-        with patch("core.container.ServiceContainer.get", return_value=mock_orch):
+        with _service_get_overrides(orchestrator=orch):
             result = await self.router.think("Hello", origin="sovereign_pruner", is_background=True)
 
         self.assertIsNone(result)
-        self.router._call_endpoint.assert_not_called()
+        self.assertEqual(self.endpoint_calls.calls, [])
 
     async def test_background_inference_is_suppressed_during_quiet_window(self):
         """Background jobs should also back off immediately after a user-facing turn completes."""
-        mock_orch = MagicMock()
-        mock_orch.status.is_processing = False
-        mock_orch._current_origin = ""
-        mock_orch._current_task_is_autonomous = False
-        mock_orch._foreground_user_quiet_until = 9999999999.0
+        orch = SimpleNamespace(
+            status=SimpleNamespace(is_processing=False),
+            _current_origin="",
+            _current_task_is_autonomous=False,
+            _foreground_user_quiet_until=9999999999.0,
+        )
 
-        with patch("core.container.ServiceContainer.get", return_value=mock_orch):
+        with _service_get_overrides(orchestrator=orch):
             result = await self.router.think("Hello", origin="sovereign_pruner", is_background=True)
 
         self.assertIsNone(result)
-        self.router._call_endpoint.assert_not_called()
+        self.assertEqual(self.endpoint_calls.calls, [])
 
     def test_background_policy_blocks_while_foreground_generation_is_active(self):
         from core.runtime.background_policy import background_activity_reason
@@ -123,7 +152,7 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
             _last_user_interaction_time=0.0,
         )
 
-        with patch("core.container.ServiceContainer.get", lambda name, default=None: gate if name == "inference_gate" else default):
+        with _service_get_overrides(inference_gate=gate):
             reason = background_activity_reason(orch, allow_no_user_anchor=True)
 
         self.assertEqual(reason, "foreground_generation_active")

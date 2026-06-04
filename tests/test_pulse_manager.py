@@ -2,10 +2,39 @@
 
 import asyncio
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from types import SimpleNamespace
+
+from core.container import ServiceContainer
 from core.senses.pulse_manager import PulseManager
 
-class MockOrchestrator:
+
+class FixedMetabolicMonitor:
+    def __init__(self, health_score: float):
+        self.snapshot = SimpleNamespace(health_score=health_score)
+
+    def get_current_metabolism(self):
+        return self.snapshot
+
+
+class MaintenanceRecorder:
+    def __init__(self):
+        self.calls = 0
+
+    async def perform_maintenance(self):
+        self.calls += 1
+
+
+class VisionRecorder:
+    def __init__(self, description: str):
+        self.description = description
+        self.prompts = []
+
+    async def analyze_moment(self, *, prompt: str):
+        self.prompts.append(prompt)
+        return self.description
+
+
+class PulseTestOrchestrator:
     def __init__(self):
         self.message_queue = asyncio.Queue()
         self.is_busy = False
@@ -14,23 +43,18 @@ class MockOrchestrator:
         except RuntimeError:
             self.loop = asyncio.new_event_loop()
         self.peers = {}
-        self.metabolic_monitor = MagicMock()
-        self.optimization_engine = MagicMock()
-        self.optimization_engine.perform_maintenance = AsyncMock() # Use AsyncMock for async calls
+        self.metabolic_monitor = FixedMetabolicMonitor(health_score=1.0)
+        self.optimization_engine = MaintenanceRecorder()
     
     def enqueue_message(self, msg):
         self.message_queue.put_nowait(msg)
 
 @pytest.mark.asyncio
 async def test_system_pulse_critical_health():
-    orch = MockOrchestrator()
+    orch = PulseTestOrchestrator()
     pm = PulseManager(orch)
     pm.system_sample_interval = 0.1
-    
-    # Mock critical health
-    mock_snapshot = MagicMock()
-    mock_snapshot.health_score = 0.2
-    orch.metabolic_monitor.get_current_metabolism.return_value = mock_snapshot
+    orch.metabolic_monitor = FixedMetabolicMonitor(health_score=0.2)
     
     await pm.start()
     await asyncio.sleep(0.2)
@@ -40,15 +64,13 @@ async def test_system_pulse_critical_health():
 
 @pytest.mark.asyncio
 async def test_vision_pulse_idle():
-    orch = MockOrchestrator()
+    orch = PulseTestOrchestrator()
     pm = PulseManager(orch)
     pm.vision_sample_interval = 0.1
     pm.enable_proactive_vision = True
 
-    from core.container import ServiceContainer
-    mock_vision = AsyncMock()
-    mock_vision.analyze_moment.return_value = "Warning: low disk space"
-    ServiceContainer.register_instance("vision_engine", mock_vision)
+    vision = VisionRecorder("Warning: low disk space")
+    ServiceContainer.register_instance("vision_engine", vision)
 
     await pm.start()
     await asyncio.sleep(0.5)

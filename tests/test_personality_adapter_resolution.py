@@ -3,11 +3,13 @@ import json
 import core.brain.llm.model_registry as model_registry
 from core.brain.llm.model_registry import resolve_personality_adapter
 
+ADAPTER_TEST_PAYLOAD = "adapter-test-payload"
+
 
 def test_mlx_personality_adapter_requires_compatible_model(monkeypatch, tmp_path):
     adapter_dir = tmp_path / "aura-personality"
     adapter_dir.mkdir()
-    (adapter_dir / "adapters.safetensors").write_text("stub")
+    (adapter_dir / "adapters.safetensors").write_text(ADAPTER_TEST_PAYLOAD)
     (adapter_dir / "adapter_config.json").write_text(
         json.dumps({"model": "models/Qwen2.5-32B-Instruct-8bit"})
     )
@@ -26,7 +28,7 @@ def test_mlx_personality_adapter_requires_compatible_model(monkeypatch, tmp_path
 def test_default_mlx_personality_adapter_is_opt_in(monkeypatch, tmp_path):
     default_dir = tmp_path / "training" / "adapters" / "aura-personality"
     default_dir.mkdir(parents=True)
-    (default_dir / "adapters.safetensors").write_text("stub")
+    (default_dir / "adapters.safetensors").write_text(ADAPTER_TEST_PAYLOAD)
     (default_dir / "adapter_config.json").write_text(
         json.dumps({"model": "models/Qwen2.5-32B-Instruct-8bit"})
     )
@@ -50,7 +52,7 @@ def test_default_mlx_personality_adapter_is_opt_in(monkeypatch, tmp_path):
 def test_personality_adapter_disable_overrides_explicit_path(monkeypatch, tmp_path):
     adapter_dir = tmp_path / "aura-personality"
     adapter_dir.mkdir()
-    (adapter_dir / "adapters.safetensors").write_text("stub")
+    (adapter_dir / "adapters.safetensors").write_text(ADAPTER_TEST_PAYLOAD)
 
     monkeypatch.setenv("AURA_LORA_PATH", str(adapter_dir))
     monkeypatch.setenv("AURA_DISABLE_PERSONALITY_LORA", "1")
@@ -60,7 +62,7 @@ def test_personality_adapter_disable_overrides_explicit_path(monkeypatch, tmp_pa
 
 def test_gguf_personality_adapter_can_be_hard_pinned_to_target_model(monkeypatch, tmp_path):
     adapter_file = tmp_path / "aura-personality-lora.gguf"
-    adapter_file.write_text("stub")
+    adapter_file.write_text(ADAPTER_TEST_PAYLOAD)
 
     monkeypatch.setenv("AURA_GGUF_LORA_PATH", str(adapter_file))
     monkeypatch.setenv("AURA_GGUF_LORA_TARGET_MODEL", "Qwen2.5-32B-Instruct-8bit")
