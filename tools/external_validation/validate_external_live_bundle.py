@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+
+_VALIDATION_DATA_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, KeyError)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Error: Manifest integrity hash mismatch for {fname}: expected {expected_hash}, got {actual_hash}", file=sys.stderr)
                 return 1
         print("  [OK] Manifest hash integrity verified.")
-    except Exception as exc:
+    except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error validating manifest: {exc}", file=sys.stderr)
         return 1
 
@@ -65,14 +66,14 @@ def main(argv: list[str] | None = None) -> int:
             print("Error: Scorecard contains 0 attempted tasks.", file=sys.stderr)
             return 1
         print(f"  [OK] Scorecard: {passed}/{total} tasks passed (rate: {scorecard.get('pass_rate'):.1%}).")
-    except Exception as exc:
+    except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error reading scorecard: {exc}", file=sys.stderr)
         return 1
 
     # 4. Receipt validation
     try:
         receipts = []
-        with open(receipts_path, "r", encoding="utf-8") as f:
+        with open(receipts_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         print("  [OK] Secure receipt matching verified.")
-    except Exception as exc:
+    except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error validating receipts: {exc}", file=sys.stderr)
         return 1
 

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+_VALIDATION_DATA_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, KeyError)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
             if actual != expected:
                 print(f"Error: Manifest hash mismatch for {rel_path}", file=sys.stderr)
                 return 1
-    except Exception as exc:
+    except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error validating manifest: {exc}", file=sys.stderr)
         return 1
 
@@ -72,12 +73,16 @@ def main(argv: list[str] | None = None) -> int:
         if not report.get("metrics"):
             print("Error: Soak metrics are empty.", file=sys.stderr)
             return 1
-    except Exception as exc:
+    except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error reading metrics: {exc}", file=sys.stderr)
         return 1
 
-    if not receipts_path.read_text(encoding="utf-8").strip():
-        print("Error: Soak receipts are empty.", file=sys.stderr)
+    try:
+        if not receipts_path.read_text(encoding="utf-8").strip():
+            print("Error: Soak receipts are empty.", file=sys.stderr)
+            return 1
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"Error reading soak receipts: {exc}", file=sys.stderr)
         return 1
 
     print("Longevity Soak Validation: PASS")

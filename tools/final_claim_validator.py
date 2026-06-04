@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+_CLAIM_PARSE_ERRORS = (OSError, UnicodeDecodeError, ValueError)
+_LINTER_REPORT_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError)
 
 EVIDENCE_LIMITED_CLOSURE_STATEMENT = (
     "Aura passed the configured local final-proof gates for this profile. "
@@ -297,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     
     try:
         claims = parse_claims(claims_path)
-    except Exception as exc:
+    except _CLAIM_PARSE_ERRORS as exc:
         print(f"Error parsing claims: {exc}", file=sys.stderr)
         return 1
 
@@ -380,9 +382,12 @@ def main(argv: list[str] | None = None) -> int:
                 if not linter_data.get("passed", False):
                     passed = False
                     reasons.append("Local production gate readiness claimed but production surface linter failed.")
-            except Exception:
+            except _LINTER_REPORT_ERRORS as exc:
                 passed = False
-                reasons.append("Local production gate readiness claimed but linter report is unreadable.")
+                reasons.append(
+                    "Local production gate readiness claimed but linter report is unreadable "
+                    f"or malformed: {type(exc).__name__}: {exc}"
+                )
         else:
             passed = False
             reasons.append("Local production gate readiness claimed but production surface linter report is missing.")
