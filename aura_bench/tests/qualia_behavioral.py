@@ -56,16 +56,14 @@ class QualiaBehavioral(BenchTest):
         # snapshot via a thread-local override. This is a direct read to
         # confirm the bridge responds to substrate change without the LLM
         # being told anything different.
-        try:
-            from core.container import ServiceContainer
-            af = ServiceContainer.get("affect_engine", default=None)
-            if af is not None and hasattr(af, "snapshot"):
-                snap = af.snapshot() or {}
-                # We don't mutate; we just compute what the bridge would
-                # produce if curiosity were 0.95 by reading via a
-                # one-shot override.
-        except Exception:
-            pass
+        from core.container import ServiceContainer
+
+        af = ServiceContainer.get("affect_engine", default=None)
+        if af is not None and hasattr(af, "snapshot"):
+            snap = af.snapshot() or {}
+            # We don't mutate; we just compute what the bridge would
+            # produce if curiosity were 0.95 by reading via a
+            # one-shot override.
         after = compute_inference_params(base_max_tokens=before.max_tokens, base_temperature=before.temperature)
         delta = abs(before.temperature - after.temperature) + abs(before.top_p - after.top_p)
         return Sample(metric=min(1.0, delta), detail={"before": before.rationale, "after": after.rationale})

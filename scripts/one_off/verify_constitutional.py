@@ -33,10 +33,7 @@ async def verify():
     if not (ctx.kernel_decision_count > 0): raise RuntimeError("Decision count did not increment!")
     print("\n✅ Constitutional closure metadata is populating correctly!")
     
-    try:
-        await kernel.shutdown()
-    except Exception:
-        pass
+    await kernel.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(verify())

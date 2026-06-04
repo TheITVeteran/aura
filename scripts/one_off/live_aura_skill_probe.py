@@ -27,7 +27,7 @@ try:
     from dotenv import load_dotenv  # noqa: E402
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-except Exception:
+except ModuleNotFoundError:
     pass
 
 
@@ -528,13 +528,10 @@ async def main() -> int:
         _restore_capability_tracing(capability_engine, originals)
         return 0 if proof["overall_ok"] else 1
     finally:
-        try:
-            capability_engine = locals().get("capability_engine")
-            originals = locals().get("originals")
-            if capability_engine is not None and originals is not None:
-                _restore_capability_tracing(capability_engine, originals)
-        except Exception:
-            pass
+        capability_engine = locals().get("capability_engine")
+        originals = locals().get("originals")
+        if capability_engine is not None and originals is not None:
+            _restore_capability_tracing(capability_engine, originals)
 
         run_task.cancel()
         try:

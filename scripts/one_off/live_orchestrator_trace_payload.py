@@ -18,7 +18,7 @@ try:
     from dotenv import load_dotenv  # noqa: E402
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-except Exception:
+except ModuleNotFoundError:
     pass
 
 

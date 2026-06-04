@@ -8,6 +8,7 @@ import sys
 import os
 import time
 import re
+from collections.abc import Awaitable
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -78,36 +79,53 @@ EXPECTED_MARKERS = [
 ]
 
 
-async def _shutdown_runtime(orchestrator, main_task=None):
+async def _shutdown_runtime(orchestrator, main_task: Awaitable | None = None) -> list[str]:
+    errors: list[str] = []
     if main_task is not None:
         main_task.cancel()
-        await asyncio.sleep(0.25)
+        try:
+            await asyncio.wait_for(main_task, timeout=3.0)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            errors.append("orchestrator main task did not cancel within 3s")
+        except RuntimeError as exc:
+            errors.append(f"orchestrator main task cancellation failed: {exc}")
 
     try:
         stop = getattr(orchestrator, "stop", None)
         if callable(stop):
             await asyncio.wait_for(stop(), timeout=12.0)
-    except Exception:
-        pass
+    except asyncio.TimeoutError:
+        errors.append("orchestrator.stop timed out after 12s")
+    except RuntimeError as exc:
+        errors.append(f"orchestrator.stop failed: {exc}")
 
     try:
         import psutil
+    except ModuleNotFoundError:
+        errors.append("psutil unavailable; skipped child-process cleanup")
+        return errors
 
+    try:
         current = psutil.Process()
-        children = current.children(recursive=True)
-        for child in children:
-            try:
-                child.terminate()
-            except psutil.Error:
-                pass
-        gone, alive = psutil.wait_procs(children, timeout=4.0)
-        for child in alive:
-            try:
-                child.kill()
-            except psutil.Error:
-                pass
-    except Exception:
-        pass
+    except psutil.Error as exc:
+        errors.append(f"unable to inspect current process children: {exc}")
+        return errors
+
+    children = current.children(recursive=True)
+    for child in children:
+        try:
+            child.terminate()
+        except psutil.Error as exc:
+            errors.append(f"unable to terminate child process {child.pid}: {exc}")
+    _, alive = psutil.wait_procs(children, timeout=4.0)
+    for child in alive:
+        try:
+            child.kill()
+        except psutil.Error as exc:
+            errors.append(f"unable to kill child process {child.pid}: {exc}")
+    return errors
 
 
 def _extract_response_text(response_dict):
@@ -135,11 +153,14 @@ def _is_coherent(index: int, text: str) -> tuple[bool, str]:
         return False, "recovery_boilerplate"
     try:
         from core.phases.dialogue_policy import contains_corrupted_language
+    except (ImportError, RuntimeError) as exc:
+        return False, f"dialogue_policy_unavailable:{type(exc).__name__}"
 
+    try:
         if contains_corrupted_language(body):
             return False, "corrupted_language"
-    except Exception:
-        pass
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return False, f"dialogue_policy_failed:{type(exc).__name__}"
     markers = EXPECTED_MARKERS[index]
     lower = body.lower()
     if not all(marker in lower for marker in markers):
@@ -219,7 +240,11 @@ async def main():
         print(f"  ⚠️  {failures} failures detected.", flush=True)
 
     exit_code = 0 if successes == 10 else 1
-    await _shutdown_runtime(orchestrator, main_task)
+    shutdown_errors = await _shutdown_runtime(orchestrator, main_task)
+    for shutdown_error in shutdown_errors:
+        print(f"  ⚠️ SHUTDOWN: {shutdown_error}", file=sys.stderr, flush=True)
+    if shutdown_errors and exit_code == 0:
+        exit_code = 1
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(exit_code)

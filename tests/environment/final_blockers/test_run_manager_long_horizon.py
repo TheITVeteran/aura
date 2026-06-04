@@ -153,14 +153,13 @@ class TestLongHorizonStress:
         kernel = EnvironmentKernel(adapter=adapter)
         await kernel.start(run_id="stress_test")
 
-        for i in range(100):  # reduced from 1000 for test speed
-            intent = ActionIntent(name="wait", risk="safe")
-            try:
+        try:
+            for i in range(100):  # reduced from 1000 for test speed
+                intent = ActionIntent(name="wait", risk="safe")
                 frame = await kernel.step(intent)
-            except Exception:
-                break
 
-        # Frame history should be bounded or at least not catastrophically large
-        # (In production, implement frame rotation)
-        assert len(kernel.frames) <= 200
-        await kernel.close()
+            # Frame history should be bounded or at least not catastrophically large
+            # (In production, implement frame rotation)
+            assert len(kernel.frames) <= 200
+        finally:
+            await kernel.close()

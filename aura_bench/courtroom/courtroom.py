@@ -257,8 +257,8 @@ def _persist(report: CourtroomReport) -> None:
         fh.flush()
         try:
             os.fsync(fh.fileno())
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning("Failed to fsync courtroom results %s: %s", _RESULTS_PATH, exc)
 
 
 def _write_markdown(report: CourtroomReport) -> None:

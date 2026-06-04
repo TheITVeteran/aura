@@ -10,6 +10,7 @@ Never fails. Always has a working brain.
 """
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -47,6 +48,22 @@ ROUTER_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
     httpx.HTTPError,
+)
+
+FATAL_BACKEND_PATTERNS = (
+    "RESOURCE_EXHAUSTED",
+    "MTLCompilerService",
+    "No such process",
+    "MLX Init Error",
+    "Metal device not found",
+    "NSRangeException",
+    "bus error",
+    "segmentation fault",
+    "SIGKILL",
+    "SIGABRT",
+    "objectAtIndex",
+    "out of memory",
+    "OOM",
 )
 
 
@@ -740,6 +757,61 @@ class IntelligentLLMRouter:
         logger.info("Registered endpoint: %s (%s)", endpoint.name, endpoint.tier.value)
 
     @staticmethod
+    def _backend_failure_reason(payload: Any) -> str | None:
+        text = str(payload or "")
+        lower = text.lower()
+        for pattern in FATAL_BACKEND_PATTERNS:
+            if pattern.lower() in lower:
+                return pattern
+        return None
+
+    async def _trigger_adapter_recovery(
+        self,
+        *,
+        endpoint_name: str,
+        adapter: Any,
+        reason: str,
+    ) -> bool:
+        reboot = getattr(adapter, "reboot_worker", None)
+        if not callable(reboot):
+            return False
+
+        kwargs: dict[str, Any] = {}
+        try:
+            signature = inspect.signature(reboot)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None:
+            params = signature.parameters
+            accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
+            if accepts_kwargs or "reason" in params:
+                kwargs["reason"] = f"router_backend_failure:{reason}"
+            if accepts_kwargs or "mark_failed" in params:
+                kwargs["mark_failed"] = False
+
+        try:
+            result = reboot(**kwargs)
+            if inspect.isawaitable(result):
+                await result
+        except ROUTER_RECOVERABLE_ERRORS as exc:
+            _record_router_degradation(
+                exc,
+                action="kept LLM failover active after adapter proactive reboot failed",
+                severity="degraded",
+                extra={"endpoint": endpoint_name, "recovery_reason": reason},
+            )
+            return False
+
+        cooldown_until = time.time() + 15.0
+        self._recovery_states[endpoint_name] = cooldown_until
+        logger.warning(
+            "🧯 Triggered proactive LLM adapter reboot for %s after backend failure: %s",
+            endpoint_name,
+            reason,
+        )
+        return True
+
+    @staticmethod
     def _background_deferral_reason(origin: str) -> str:
         if origin == "benchmark":
             return ""
@@ -1075,6 +1147,14 @@ class IntelligentLLMRouter:
                         err = metadata.get("error", "Generation failed")
                         logger.warning("❌ %s (Attempt %d) failure: %s", endpoint_name, attempt + 1, err)
                         last_error_str = str(err)
+                        backend_reason = self._backend_failure_reason(err)
+                        if backend_reason:
+                            await self._trigger_adapter_recovery(
+                                endpoint_name=endpoint_name,
+                                adapter=adapter,
+                                reason=backend_reason,
+                            )
+                            break
                         if attempt == 0:
                             await asyncio.sleep(0.5)
                         continue
@@ -1099,17 +1179,16 @@ class IntelligentLLMRouter:
                         continue
 
                     # [STABILITY v53] Expanded fatal patterns — catch more MLX/Metal/GPU crashes
-                    fatal_patterns = [
-                        "RESOURCE_EXHAUSTED", "MTLCompilerService", "No such process",
-                        "MLX Init Error", "Metal device not found", "NSRangeException",
-                        "bus error", "segmentation fault", "SIGKILL", "SIGABRT",
-                        "objectAtIndex", "out of memory", "OOM",
-                    ]
-                    fatal_lower = final_text_str.lower()
-                    if any(p.lower() in fatal_lower for p in fatal_patterns):
+                    fatal_reason = self._backend_failure_reason(final_text_str)
+                    if fatal_reason:
                         logger.warning("❌ %s returned FATAL ERROR string. Failing over.", endpoint_name)
                         success = False
-                        last_error_str = "MLX/Metal Backend Failure"
+                        last_error_str = f"MLX/Metal Backend Failure: {fatal_reason}"
+                        await self._trigger_adapter_recovery(
+                            endpoint_name=endpoint_name,
+                            adapter=adapter,
+                            reason=fatal_reason,
+                        )
                         break  # Don't bother retrying this endpoint
 
                     # 3. Commit Success
@@ -1146,6 +1225,14 @@ class IntelligentLLMRouter:
                     )
                     logger.error("🚨 Error calling %s (Attempt %d): %s", endpoint_name, attempt + 1, e)
                     last_error_str = str(e)
+                    backend_reason = self._backend_failure_reason(e)
+                    if backend_reason:
+                        await self._trigger_adapter_recovery(
+                            endpoint_name=endpoint_name,
+                            adapter=adapter,
+                            reason=backend_reason,
+                        )
+                        break
                     if attempt == 0:
                         await asyncio.sleep(0.5)
 

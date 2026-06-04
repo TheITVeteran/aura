@@ -35,7 +35,7 @@ try:
     from dotenv import load_dotenv
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-except Exception:
+except ModuleNotFoundError:
     pass
 
 
@@ -63,7 +63,7 @@ def _worker_snapshot(client: Any) -> dict[str, Any]:
     if pid and alive:
         try:
             rss_gb = round(psutil.Process(pid).memory_info().rss / float(1024 ** 3), 2)
-        except Exception:
+        except psutil.Error:
             rss_gb = None
     return {
         "pid": pid,

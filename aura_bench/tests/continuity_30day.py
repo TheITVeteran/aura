@@ -38,7 +38,7 @@ from typing import List, Set
 from aura_bench.runner import BenchTest, Registration, Sample, register
 
 _TRACE_PATH = Path.home() / ".aura" / "data" / "bench" / "continuity_30day.jsonl"
-get_task_tracker().create_task(get_storage_gateway().create_dir(_TRACE_PATH.parent, cause=''))
+_TRACE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _jaccard(a: Set[str], b: Set[str]) -> float:
@@ -79,23 +79,27 @@ class Continuity30Day(BenchTest):
 
         # Compute stability over the most recent 4 captures
         rows: List[dict] = []
+        skipped_rows = 0
         try:
-            for line in _TRACE_PATH.read_text(encoding="utf-8").splitlines():
-                try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    continue
-        except Exception:
-            pass
+            trace_lines = _TRACE_PATH.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            trace_lines = []
+        except OSError as exc:
+            return Sample(metric=0.0, detail={"error": str(exc)})
+        for line in trace_lines:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                skipped_rows += 1
         rows = rows[-4:]
         if len(rows) < 2:
-            return Sample(metric=1.0, detail={"reason": "insufficient_history"})
+            return Sample(metric=1.0, detail={"reason": "insufficient_history", "skipped_rows": skipped_rows})
         sets = [set(r.get("drives_top", []) or []) for r in rows]
         scores = []
         for i in range(len(sets) - 1):
             scores.append(_jaccard(sets[i], sets[i + 1]))
         score = sum(scores) / max(1, len(scores))
-        return Sample(metric=score, detail={"scores": scores, "n": len(rows)})
+        return Sample(metric=score, detail={"scores": scores, "n": len(rows), "skipped_rows": skipped_rows})
 
     async def baseline(self) -> Sample:
         return Sample(metric=0.05, detail={"reason": "random_vocabulary"})

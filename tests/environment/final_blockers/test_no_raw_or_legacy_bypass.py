@@ -4,7 +4,6 @@ No skill, old runtime, or direct adapter call may send environment actions
 outside the canonical EnvironmentKernel path.
 """
 import ast
-import os
 import pytest
 from pathlib import Path
 
@@ -57,10 +56,7 @@ class TestNoRawBypass:
             if any(allowed in rel for allowed in ALLOWED_RAW_KEY_MODULES):
                 continue
 
-            try:
-                content = py_file.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                continue
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
 
             for sink in RAW_KEY_SINKS:
                 if sink in content:

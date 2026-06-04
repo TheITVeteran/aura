@@ -18,7 +18,7 @@ try:
     from dotenv import load_dotenv
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-except Exception:
+except ModuleNotFoundError:
     pass
 
 
@@ -137,11 +137,8 @@ async def main() -> int:
         else:
             _dump("direct_local_replay", {"error": "no captured cortex client"})
     finally:
-        try:
-            if "router" in locals() and router is not None and "original_call_endpoint" in locals():
-                router._call_endpoint = original_call_endpoint
-        except Exception:
-            pass
+        if "router" in locals() and router is not None and "original_call_endpoint" in locals():
+            router._call_endpoint = original_call_endpoint
         run_task.cancel()
         try:
             await run_task

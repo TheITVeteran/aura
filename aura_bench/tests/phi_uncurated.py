@@ -51,39 +51,42 @@ class PhiUncurated(BenchTest):
 
     async def run(self) -> Sample:
         samples = []
-        try:
-            from core.container import ServiceContainer
-            phi = ServiceContainer.get("phi_core", default=None)
-            if phi is None:
-                return Sample(metric=0.0, detail={"reason": "phi_core_unavailable"})
-            for _ in range(8):
+        from core.container import ServiceContainer
+
+        phi = ServiceContainer.get("phi_core", default=None)
+        if phi is None:
+            return Sample(metric=0.0, detail={"reason": "phi_core_unavailable"})
+        for _ in range(8):
+            try:
                 v = float(getattr(phi, "phi_s", 0.0) or 0.0)
-                samples.append(v)
-                await asyncio.sleep(0.5)
-        except Exception as exc:
-            return Sample(metric=0.0, detail={"error": str(exc)})
+            except (TypeError, ValueError) as exc:
+                return Sample(metric=0.0, detail={"error": str(exc)})
+            samples.append(v)
+            await asyncio.sleep(0.5)
         return Sample(metric=statistics.fmean(samples) if samples else 0.0, detail={"samples": samples})
 
     async def baseline(self) -> Sample:
         # Null-hypothesis baseline measured by phi_core itself when called
         # in null mode (deterministic random transitions).
-        try:
-            from core.container import ServiceContainer
-            phi = ServiceContainer.get("phi_core", default=None)
-            if phi is not None and hasattr(phi, "null_baseline"):
+        from core.container import ServiceContainer
+
+        phi = ServiceContainer.get("phi_core", default=None)
+        if phi is not None and hasattr(phi, "null_baseline"):
+            try:
                 v = float(await asyncio.to_thread(phi.null_baseline))
-                return Sample(metric=v, detail={"mode": "null_tpm"})
-        except Exception:
-            pass
+            except (TypeError, ValueError, RuntimeError) as exc:
+                return Sample(metric=0.0, detail={"mode": "null_tpm", "error": str(exc)})
+            return Sample(metric=v, detail={"mode": "null_tpm"})
         return Sample(metric=0.0, detail={"mode": "null_tpm", "fallback": True})
 
     async def ablation(self) -> Sample:
-        try:
-            from core.container import ServiceContainer
-            phi = ServiceContainer.get("phi_core", default=None)
-            if phi is not None and hasattr(phi, "partitioned_phi"):
+        from core.container import ServiceContainer
+
+        phi = ServiceContainer.get("phi_core", default=None)
+        if phi is not None and hasattr(phi, "partitioned_phi"):
+            try:
                 v = float(await asyncio.to_thread(phi.partitioned_phi))
-                return Sample(metric=v, detail={"mode": "partitioned"})
-        except Exception:
-            pass
+            except (TypeError, ValueError, RuntimeError) as exc:
+                return Sample(metric=0.0, detail={"mode": "partitioned", "error": str(exc)})
+            return Sample(metric=v, detail={"mode": "partitioned"})
         return Sample(metric=0.0, detail={"mode": "partitioned", "fallback": True})

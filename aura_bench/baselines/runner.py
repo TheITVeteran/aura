@@ -78,8 +78,8 @@ def _persist(r: BaselineResult) -> None:
         fh.flush()
         try:
             os.fsync(fh.fileno())
-        except Exception:
-            pass
+        except OSError as exc:
+            raise RuntimeError(f"Failed to fsync baseline results {_OUT}: {exc}") from exc
 
 
 if __name__ == "__main__":

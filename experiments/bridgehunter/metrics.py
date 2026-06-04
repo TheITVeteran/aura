@@ -151,7 +151,7 @@ def _effective_information(trajectory: np.ndarray, reg: float = 1e-6) -> float:
         sign, logdet = np.linalg.slogdet(A)
         if sign > 0:
             return float(logdet)
-    except Exception:
-        pass
+    except (FloatingPointError, ValueError, np.linalg.LinAlgError):
+        return 0.0
 
     return 0.0

@@ -34,7 +34,7 @@ def setup_services():
     # :memory: databases are thread-local, causing deadlocks under concurrency
     _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     _tmp_db.close()
-    
+
     mem = SQLiteMemory(storage_file=_tmp_db.name)
     ServiceContainer.register_instance("memory", mem)
 
@@ -46,14 +46,19 @@ def setup_services():
 
     ServiceContainer.register_instance("capability_engine", AsyncMock())
 
-    yield
-    
-    # Cleanup
     try:
-        if _tmp_db is not None:
-            os.unlink(_tmp_db.name)
-    except Exception:
-        pass
+        yield
+    finally:
+        mem.close()
+        ServiceContainer.clear()
+
+        try:
+            if _tmp_db is not None:
+                os.unlink(_tmp_db.name)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.warning("Failed to remove chaos fuzzer temp database %s: %s", _tmp_db.name, exc)
 
 
 

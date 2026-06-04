@@ -80,12 +80,16 @@ class GWTAblation(BenchTest):
             return Sample(metric=0.0, detail={"reason": "no_ablation_history"})
         try:
             scores = []
+            skipped_rows = 0
             for line in path.read_text(encoding="utf-8").splitlines():
                 try:
                     s = json.loads(line)
                     scores.append(float(s.get("score", 0.0)))
-                except Exception:
-                    continue
-            return Sample(metric=statistics.fmean(scores) if scores else 0.0, detail={"history_n": len(scores)})
-        except Exception as exc:
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    skipped_rows += 1
+            detail = {"history_n": len(scores)}
+            if skipped_rows:
+                detail["skipped_rows"] = skipped_rows
+            return Sample(metric=statistics.fmean(scores) if scores else 0.0, detail=detail)
+        except OSError as exc:
             return Sample(metric=0.0, detail={"error": str(exc)})

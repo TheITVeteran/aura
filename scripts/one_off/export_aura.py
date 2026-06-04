@@ -1,6 +1,7 @@
 import os
 import shutil
 import argparse
+import sys
 
 def is_architecture_file(path):
     # Only allow python source files and config files
@@ -41,8 +42,11 @@ def export_source(root_dir, output_dir, char_limit=4000000, copy_limit=1000):
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
-            except Exception:
+            except UnicodeDecodeError as exc:
+                print(f"Skipping non-UTF-8 source file {filepath}: {exc}", file=sys.stderr)
                 continue
+            except OSError as exc:
+                raise RuntimeError(f"Failed to read architecture file {filepath}: {exc}") from exc
                 
             # Handle text export
             header = f"\n{'='*80}\nFILE: {filepath.replace(root_dir, '')}\n{'='*80}\n"
