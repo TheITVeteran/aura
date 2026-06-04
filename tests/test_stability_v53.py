@@ -510,11 +510,8 @@ class TestEndToEndResponsePath:
 
     def test_conversation_lane_user_message_never_empty(self):
         """Status messages must always be non-empty and user-friendly."""
-        try:
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "interface"))
-            from routes.chat import _conversation_lane_user_message
-        except ImportError:
-            pytest.skip("Cannot import chat routes")
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "interface"))
+        from routes.chat import _conversation_lane_user_message
 
         test_lanes = [
             {"state": "warming"},

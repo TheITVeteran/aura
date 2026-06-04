@@ -1431,6 +1431,16 @@ class AuraKernel:
         ):
             return
 
+        try:
+            from core.runtime.shutdown_coordinator import request_shutdown
+
+            request_shutdown("aura_kernel.shutdown")
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="continued kernel shutdown without setting global shutdown request",
+            )
+
         logger.info("🛑 [KERNEL] Initiating graceful shutdown...")
         self._running = False
         self.status.running = False
@@ -1457,7 +1467,130 @@ class AuraKernel:
                 )
                 logger.error("Error shutting down organ %s: %s", name, e)
 
+        # 3. Stop singleton runtime services booted or activated by kernel ticks.
+        await self._shutdown_rubicon_runtime()
+
+        # 4. Close the state vault owned by this kernel instance.
+        await self._close_kernel_vault()
+
+        # 5. Stop process-wide event/task/runtime hygiene surfaces so an isolated
+        # kernel boot leaves no background loops behind after shutdown.
+        await self._shutdown_process_runtime()
+
         logger.info("✅ [KERNEL] Shutdown complete.")
+
+    async def _call_shutdown_hook(self, label: str, target: Any, *hook_names: str) -> None:
+        """Call the first available lifecycle hook on a runtime singleton."""
+        for hook_name in hook_names:
+            hook = getattr(target, hook_name, None)
+            if not callable(hook):
+                continue
+            try:
+                result = hook()
+                if inspect.isawaitable(result):
+                    await asyncio.wait_for(result, timeout=5.0)
+                return
+            except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+                _record_kernel_degradation(
+                    exc,
+                    action=f"continued shutdown after {label}.{hook_name} failed",
+                    severity="error",
+                )
+                logger.warning("Runtime shutdown hook failed for %s.%s: %s", label, hook_name, exc)
+                return
+
+    async def _shutdown_rubicon_runtime(self) -> None:
+        """Stop Rubicon singletons that are started from AuraKernel.boot()."""
+        runtime_targets: list[tuple[str, Any]] = []
+        target_specs = (
+            ("feedback_processor", "core.somatic.action_feedback", "_feedback_processor_instance"),
+            ("motor_cortex", "core.somatic.motor_cortex", "_motor_cortex_instance"),
+            ("pre_linguistic", "core.cognition.pre_linguistic", "_pre_linguistic_instance"),
+        )
+        for label, module_name, attr_name in target_specs:
+            try:
+                module = __import__(module_name, fromlist=[attr_name])
+                target = getattr(module, attr_name, None)
+                if target is not None:
+                    runtime_targets.append((label, target))
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                _record_kernel_degradation(
+                    exc,
+                    action=f"skipped {label} shutdown after singleton lookup failed",
+                )
+
+        for label, target in runtime_targets:
+            await self._call_shutdown_hook(label, target, "shutdown", "stop", "close")
+
+    async def _close_kernel_vault(self) -> None:
+        close = getattr(self.vault, "close", None)
+        if not callable(close):
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await asyncio.wait_for(result, timeout=5.0)
+        except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="continued shutdown after kernel vault close failed",
+                severity="error",
+            )
+            logger.warning("Kernel vault close failed: %s", exc)
+
+    async def _shutdown_process_runtime(self) -> None:
+        """Drain process-wide runtime services that can outlive a kernel instance."""
+        try:
+            import core.learning.live_learner as live_learner_module
+
+            learner = getattr(live_learner_module, "_learner", None)
+            if learner is not None:
+                await self._call_shutdown_hook("live_learner", learner, "shutdown", "stop", "close")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="skipped live learner shutdown after singleton lookup failed",
+            )
+
+        try:
+            from core.resilience.lock_watchdog import get_lock_watchdog
+
+            await self._call_shutdown_hook("lock_watchdog", get_lock_watchdog(), "shutdown", "stop", "close")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="skipped lock watchdog shutdown after singleton lookup failed",
+            )
+
+        try:
+            from core.event_bus import get_event_bus
+
+            await self._call_shutdown_hook("event_bus", get_event_bus(), "shutdown", "stop", "close")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="skipped event bus shutdown after singleton lookup failed",
+            )
+
+        try:
+            await get_task_tracker().shutdown(timeout=5.0)
+        except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="continued shutdown after task tracker drain failed",
+                severity="error",
+            )
+            logger.warning("Task tracker shutdown failed: %s", exc)
+
+        try:
+            from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+            await self._call_shutdown_hook("runtime_hygiene", get_runtime_hygiene(), "shutdown", "stop", "close")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="skipped runtime hygiene shutdown after singleton lookup failed",
+            )
 
     async def hot_reboot(self):
         """

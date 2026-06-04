@@ -47,8 +47,7 @@ class TestNoRawBypass:
         """Scan the codebase for raw key sinks outside the allowlist."""
         violations = []
         core_dir = REPO_ROOT / "core"
-        if not core_dir.exists():
-            pytest.skip("core directory not found")
+        assert core_dir.exists(), "core directory not found"
 
         for py_file in core_dir.rglob("*.py"):
             rel = str(py_file.relative_to(REPO_ROOT))
@@ -69,8 +68,7 @@ class TestNoRawBypass:
     def test_no_direct_adapter_execute_from_policy(self):
         """Policy modules must not call adapter.execute directly."""
         policy_dir = REPO_ROOT / "core" / "environment" / "policy"
-        if not policy_dir.exists():
-            pytest.skip("policy directory not found")
+        assert policy_dir.exists(), "policy directory not found"
 
         violations = []
         for py_file in policy_dir.rglob("*.py"):

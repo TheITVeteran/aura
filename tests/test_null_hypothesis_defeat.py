@@ -1504,11 +1504,13 @@ class TestEmotionalContinuity:
         sub2 = LiquidSubstrate(config=SubstrateConfig(state_file=state_file))
 
         # State should match
-        if state_file.exists():
-            np.testing.assert_allclose(sub2.x[:7], sub1.x[:7], atol=1e-6,
-                err_msg="Loaded state doesn't match saved state")
-        else:
-            pytest.skip("State file not created (persistence may be disabled)")
+        assert state_file.exists(), "State file not created; persistence must remain enabled"
+        np.testing.assert_allclose(
+            sub2.x[:7],
+            sub1.x[:7],
+            atol=1e-6,
+            err_msg="Loaded state doesn't match saved state",
+        )
 
     def test_idle_drift_is_predictable(self):
         """Running ODE for N ticks from a known state must produce

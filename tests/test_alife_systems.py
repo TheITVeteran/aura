@@ -135,11 +135,8 @@ class TestALifeExtensions:
     """Tests for pattern replication, speciation, toroidal topology, costs."""
 
     def _make_extensions(self):
-        try:
-            from core.consciousness.alife_extensions import ALifeExtensions
-            return ALifeExtensions()
-        except ImportError:
-            pytest.skip("alife_extensions not yet available")
+        from core.consciousness.alife_extensions import ALifeExtensions
+        return ALifeExtensions()
 
     def test_instantiation(self):
         ext = self._make_extensions()
@@ -175,11 +172,8 @@ class TestEndogenousFitness:
     """Tests for survival-based evolution and behavioral rules."""
 
     def _make_fitness(self):
-        try:
-            from core.consciousness.endogenous_fitness import get_endogenous_fitness
-            return get_endogenous_fitness()
-        except ImportError:
-            pytest.skip("endogenous_fitness not yet available")
+        from core.consciousness.endogenous_fitness import get_endogenous_fitness
+        return get_endogenous_fitness()
 
     def test_instantiation(self):
         fit = self._make_fitness()

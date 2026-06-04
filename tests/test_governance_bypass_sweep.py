@@ -96,12 +96,10 @@ class TestGovernanceLintClean:
     """Static: lint_governance.py must report zero violations."""
 
     def test_governance_lint_passes(self):
-        try:
-            from tools.lint_governance import main as lint_main
-            exit_code = lint_main([])
-            assert exit_code == 0, "governance lint found violations"
-        except ImportError:
-            pytest.skip("lint_governance.py not importable")
+        from tools.lint_governance import main as lint_main
+
+        exit_code = lint_main([])
+        assert exit_code == 0, "governance lint found violations"
 
 
 class TestGovernanceBypassSweep:

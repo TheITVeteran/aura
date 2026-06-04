@@ -24,6 +24,7 @@ class ICELayer:
         self._threat_level = 0.0  # Normalized threat [0.0 - 1.0]
         self._anomaly_detector = None  # Learned threat model (lazy-loaded)
         self._running = True
+        self._task: asyncio.Task | None = None
         # AWE: Anomaly Taxonomy
         self._anomaly_types = {
             "LOGIC_LOOP": {"desc": "Infinite cognitive recursion.", "containment": "FLUSH_WORKING_MEMORY"},
@@ -57,6 +58,7 @@ class ICELayer:
         return self._anomaly_detector
 
     async def load(self):
+        self._running = True
         try:
             from core.event_bus import get_event_bus
             self._event_bus = get_event_bus()
@@ -64,7 +66,10 @@ class ICELayer:
                 # Refactored to Queue-based processing for Aura EventBus
                 self._audit_queue = await self._event_bus.subscribe("core/brain/empathy_audit")
                 self._violation_queue = await self._event_bus.subscribe("core/security/executive_violation")
-                get_task_tracker().create_task(self._process_events())
+                self._task = get_task_tracker().create_task(
+                    self._process_events(),
+                    name="ice_layer.process_events",
+                )
         except ImportError:
             self._event_bus = None
 
@@ -72,6 +77,16 @@ class ICELayer:
         self._get_anomaly_detector()
 
         logger.info("🛡️ [ICE] Intrusion Counter-Electronics ACTIVE. Firewall at 100%.")
+
+    async def shutdown(self):
+        """Stop the ICE event processing loop before kernel teardown completes."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self._task = None
+        self._event_bus = None
+        logger.info("🛡️ [ICE] Intrusion Counter-Electronics OFFLINE.")
 
     async def _process_events(self):
         """Background loop to drain event queues."""

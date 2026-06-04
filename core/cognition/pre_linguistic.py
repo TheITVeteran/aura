@@ -199,6 +199,13 @@ class PreLinguisticEngine:
         self._started = True
         logger.info("PreLinguisticEngine ONLINE -- structured decisions before language")
 
+    async def stop(self) -> None:
+        """Mark the pre-linguistic layer offline for controlled runtime shutdown."""
+        if not self._started:
+            return
+        self._started = False
+        logger.info("PreLinguisticEngine OFFLINE")
+
     # ------------------------------------------------------------------
     # Signal Reading (all fail-safe with defaults)
     # ------------------------------------------------------------------

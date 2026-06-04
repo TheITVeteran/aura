@@ -91,11 +91,8 @@ class TestMycelialNetwork:
 
     @pytest.fixture(autouse=True)
     def _check_mycelium_available(self):
-        """Skip if MycelialNetwork can't be imported (e.g., broken pydantic in venv)."""
-        try:
-            from core.mycelium import MycelialNetwork
-        except (ImportError, ModuleNotFoundError) as e:
-            pytest.skip(f"MycelialNetwork unavailable: {e}")
+        """Fail during collection if MycelialNetwork cannot be imported."""
+        from core.mycelium import MycelialNetwork  # noqa: F401
 
     def test_register_and_match_pathway(self):
         from core.mycelium import MycelialNetwork
@@ -140,11 +137,8 @@ class TestIdentityGuard:
 
     @pytest.fixture(autouse=True)
     def _check_identity_guard_available(self):
-        """Skip if PersonaEnforcementGate can't be imported."""
-        try:
-            from core.identity.identity_guard import PersonaEnforcementGate
-        except (ImportError, ModuleNotFoundError) as e:
-            pytest.skip(f"IdentityGuard unavailable: {e}")
+        """Fail during collection if PersonaEnforcementGate cannot be imported."""
+        from core.identity.identity_guard import PersonaEnforcementGate  # noqa: F401
 
     def test_validate_output_returns_tuple(self):
         """validate_output should return a (bool, str, float) tuple."""

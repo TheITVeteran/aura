@@ -172,6 +172,13 @@ class FeedbackProcessor:
         self._started = True
         logger.info("FeedbackProcessor ONLINE -- action feedback routing active")
 
+    async def stop(self) -> None:
+        """Mark the feedback processor offline for controlled runtime shutdown."""
+        if not self._started:
+            return
+        self._started = False
+        logger.info("FeedbackProcessor OFFLINE")
+
     # ------------------------------------------------------------------
     # Core Processing
     # ------------------------------------------------------------------

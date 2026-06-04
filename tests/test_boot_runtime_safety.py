@@ -318,6 +318,25 @@ def test_inprocess_mlx_metal_can_be_forced_for_debugging(monkeypatch):
     assert reason == "forced"
 
 
+def test_live_learner_autorun_training_requires_explicit_operator_policy(monkeypatch):
+    from core.learning.live_learner import LiveLearner, TrainingPolicy
+
+    monkeypatch.delenv("AURA_SELF_TRAIN_AUTORUN", raising=False)
+    assert TrainingPolicy.from_env().autorun_enabled is False
+
+    learner = LiveLearner.__new__(LiveLearner)
+    learner._policy = TrainingPolicy(autorun_enabled=False)
+    learner._training_in_progress = False
+    learner._model_path = "aura-model"
+    learner._buffer = [{} for _ in range(LiveLearner.MIN_EXAMPLES_FOR_TRAINING)]
+    learner._last_train_time = 0.0
+
+    assert learner._should_train() is False
+
+    learner._policy = TrainingPolicy(autorun_enabled=True)
+    assert learner._should_train() is True
+
+
 @pytest.mark.asyncio
 async def test_continuous_vision_defers_screen_backend_without_permission(monkeypatch):
     class _FakeMSSModule:

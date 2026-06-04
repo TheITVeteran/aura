@@ -24,6 +24,7 @@ class Tricorder:
         self._event_bus: Optional[Any] = None
         self._violation_queue: Optional[asyncio.Queue] = None
         self._empathy_queue: Optional[asyncio.Queue] = None
+        self._tasks: list[asyncio.Task] = []
         # Consolidation: Merged HealthMonitor logic
         self.consecutive_errors = 0
         self.total_errors = 0
@@ -110,15 +111,39 @@ class Tricorder:
                 # Zenith 2.0 Fix: subscribe() returns a queue, doesn't take a callback
                 self._violation_queue = await self._event_bus.subscribe("core/security/executive_violation")
                 # Start a background task to process the queue
-                get_task_tracker().create_task(self._process_violations())
+                self._tasks.append(
+                    get_task_tracker().create_task(
+                        self._process_violations(),
+                        name="tricorder.process_violations",
+                    )
+                )
                 
                 # Subscribe to empathy updates - also returns a queue
                 self._empathy_queue = await self._event_bus.subscribe("core/brain/empathy_audit")
-                get_task_tracker().create_task(self._process_empathy())
+                self._tasks.append(
+                    get_task_tracker().create_task(
+                        self._process_empathy(),
+                        name="tricorder.process_empathy",
+                    )
+                )
         except ImportError:
             self._event_bus = None
         self._is_active = True
         logger.info("📡 [TRICORDER] Multi-modal Diagnostic Sensor ONLINE.")
+
+    async def shutdown(self):
+        """Stop background event-queue processing before kernel teardown completes."""
+        self._is_active = False
+        for task in list(self._tasks):
+            if not task.done():
+                task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._violation_queue = None
+        self._empathy_queue = None
+        self._event_bus = None
+        logger.info("📡 [TRICORDER] Diagnostic Sensor OFFLINE.")
 
     async def _process_violations(self):
         """Process executive violations from the queue."""

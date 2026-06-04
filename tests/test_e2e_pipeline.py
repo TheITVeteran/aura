@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +57,17 @@ def _make_mock_kernel(vault=None):
     kernel.get = MagicMock(return_value=None)
     kernel._services = {}
     return kernel
+
+
+class _DeterministicPhaseLLM:
+    async def think(self, prompt: str, **_kwargs) -> str:
+        return "Verified continuity summary: the phase pipeline is executing deterministically."
+
+    async def generate(self, prompt: str, **kwargs) -> str:
+        return await self.think(prompt, **kwargs)
+
+    async def classify(self, prompt: str) -> str:
+        return "CHAT"
 
 
 # ============================================================================
@@ -165,7 +177,6 @@ class TestBoot:
 class TestPipeline:
     """Run an AuraState through each phase individually and verify non-None."""
 
-    @pytest.mark.skip(reason="leaky full-kernel phase sweep; covered by boot and targeted phase tests")
     @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_each_phase_returns_valid_state(self):
@@ -181,6 +192,9 @@ class TestPipeline:
                 config = KernelConfig()
                 kernel = AuraKernel(config=config, vault=vault)
                 kernel._setup_phases()
+                kernel.organs["llm"] = SimpleNamespace(
+                    get_instance=lambda: _DeterministicPhaseLLM()
+                )
 
                 state = AuraState.default()
                 state.cognition.current_objective = "Hello, how are you?"
@@ -197,12 +211,7 @@ class TestPipeline:
                         # Use the result as the next input
                         state = result
                     except (ImportError, OSError, RuntimeError, TimeoutError) as exc:
-                        # Some phases may fail due to missing services (LLM, etc.)
-                        # in test mode; that is acceptable as long as they do not
-                        # return None silently.
-                        pytest.skip(
-                            f"Phase {phase_name} raised {type(exc).__name__}: {exc}"
-                        )
+                        pytest.fail(f"Phase {phase_name} raised {type(exc).__name__}: {exc}")
         finally:
             current = asyncio.current_task()
             pending = [

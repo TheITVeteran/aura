@@ -45,8 +45,7 @@ def test_vault_auto_healing(vault):
     aura_dir = os.path.dirname(vault.data_dir)
     file_shard = os.path.join(aura_dir, ".core_seed")
 
-    if not os.path.exists(file_shard):
-        pytest.skip(f"No shard file at {file_shard} to delete for healing test")
+    assert os.path.exists(file_shard), f"No shard file at {file_shard} to delete for healing test"
 
     os.remove(file_shard)
     assert not os.path.exists(file_shard)

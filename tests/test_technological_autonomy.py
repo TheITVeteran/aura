@@ -1684,8 +1684,7 @@ class TestAggregateReport:
 
         This test always passes. Its purpose is to generate the report.
         """
-        if not SCORES:
-            pytest.skip("No scores collected (run full suite)")
+        assert SCORES, "No scores collected; run the full technological autonomy suite"
 
         categories = defaultdict(list)
         for key, val in sorted(SCORES.items()):

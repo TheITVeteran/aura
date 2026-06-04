@@ -14,7 +14,7 @@ def test_heartstone_import():
     except SyntaxError as e:
         pytest.fail(f"core/identity/heartstone.py still has a SyntaxError: {e}")
     except ImportError as e:
-        pytest.skip(f"Skipping due to missing AURA_HEARTSTONE dependency: {e}")
+        pytest.fail(f"core.identity.heartstone import failed: {e}")
 
 def test_conversation_loop_imports():
     """Verify no duplicate imports in conversation_loop.py."""

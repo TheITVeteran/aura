@@ -7,7 +7,6 @@ profiles are valid, and the gauntlet can be invoked.
 from __future__ import annotations
 import sys
 from pathlib import Path
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -29,10 +28,7 @@ class TestLongHorizonInfrastructure:
         assert "run_gauntlet" in content
 
     def test_activation_audit_importable(self):
-        try:
-            from tools.activation_audit import main  # noqa: F401
-        except ImportError:
-            pytest.skip("activation_audit not available")
+        from tools.activation_audit import main  # noqa: F401
 
     def test_proof_bundle_importable(self):
         from tools.proof_bundle import main  # noqa: F401

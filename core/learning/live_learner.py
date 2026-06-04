@@ -265,6 +265,7 @@ class TrainingPolicy:
     replay_fraction: float = 0.35
     max_examples_per_run: int = 240
     timeout_seconds: int = 3600
+    autorun_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> TrainingPolicy:
@@ -316,6 +317,7 @@ class TrainingPolicy:
             replay_fraction=min(0.8, max(0.0, _float("AURA_SELF_TRAIN_REPLAY_FRACTION", 0.35))),
             max_examples_per_run=_int("AURA_SELF_TRAIN_MAX_EXAMPLES", 240),
             timeout_seconds=_int("AURA_SELF_TRAIN_TIMEOUT_SECONDS", 3600),
+            autorun_enabled=_bool("AURA_SELF_TRAIN_AUTORUN", False),
         )
 
 
@@ -396,13 +398,22 @@ class LiveLearner:
         """Gracefully shutdown the learner and training tasks."""
         self._active = False
         if self._training_task:
-            # v32 Hardening: Tracking training termination
             self._training_task.cancel()
             try:
                 await asyncio.wait_for(self._training_task, timeout=5.0)
-            except (TimeoutError, asyncio.CancelledError):
-                logger.debug("Suppressed bare exception")
-                pass  # no-op: intentional
+            except asyncio.CancelledError:
+                logger.info("LiveLearner training task cancelled during shutdown.")
+            except TimeoutError as exc:
+                _record_live_learning_degradation(
+                    "live_learner",
+                    exc,
+                    action="left training worker bounded by command timeout after shutdown cancellation timed out",
+                    extra={"model_path": str(self._model_path), "buffer_size": len(self._buffer)},
+                )
+                logger.warning("LiveLearner training task did not stop within shutdown budget.")
+            finally:
+                self._training_task = None
+                self._training_in_progress = False
         logger.info("Learner stopped.")
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -517,6 +528,8 @@ class LiveLearner:
     # ── Training cycle ────────────────────────────────────────────────────────
 
     def _should_train(self) -> bool:
+        if not self._policy.autorun_enabled:
+            return False
         if self._training_in_progress:
             return False
         if self._model_path is None:

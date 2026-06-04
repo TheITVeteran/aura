@@ -294,8 +294,7 @@ class TestCondition02_IntrinsicNeeds:
     def test_indispensability(self):
         """Drives decay over time -- they are not static labels."""
         de_cls = _get_class_from_module("core.drive_engine", "DriveEngine")
-        if de_cls is None:
-            pytest.skip("DriveEngine not importable")
+        assert de_cls is not None, "DriveEngine not importable"
 
         de = de_cls()
         # Check that drives have negative regen (decay)

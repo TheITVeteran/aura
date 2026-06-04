@@ -1,71 +1,26 @@
-################################################################################
-import asyncio
-import logging
-import os
-import sys
-import tempfile
-from pathlib import Path
+from __future__ import annotations
 
-import pytest
-
-# Set up path for core imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from core.orchestrator import SovereignOrchestrator
-from core.world_model.belief_graph import belief_graph
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Test.WorldModel")
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="leaky live orchestrator harness; covered by deterministic world-model/unit boot tests")
-async def test_active_surprise():
-    print("\n🧪 TESTING ACTIVE WORLD MODELING (SURPRISE-DRIVEN RE-THINKING)...")
-    
-    from core.service_registration import register_all_services
-    register_all_services()
-    
-    orchestrator = SovereignOrchestrator()
-    await orchestrator.start()
-    
-    # 1. Clear Beliefs for clean test
-    belief_graph.edges = {}
-    
-    # 2. Mock a situation: Ask Aura to check a file that "should" exist but won't
-    # We simulate this by checking a non-existent file path
-    ghost_file = Path(tempfile.gettempdir()) / "ghost_file.txt"
-    test_msg = f"Check if {ghost_file} exists."
-    
-    print(f"\n[Test] Message: '{test_msg}'")
-    print("Expected Behavior: Aura expects file to exist (potentially), finds it missing (Surprise!), and then reflects.")
-    
-    # We run the cognitive loop
-    # Note: In a real test we'd mock the LLM response to ensure it has an 'expectation'
-    # For now, we rely on her actual thinking (Autonomous Brain)
-    
-    await orchestrator._handle_incoming_message(test_msg)
-    
-    # 3. Verify Belief Graph Update
-    # After 'ls' or 'cat' fails, BeliefGraph should have a belief about ghost_file.txt state
-    beliefs = belief_graph.get_beliefs_about(str(ghost_file))
-    print(f"\n📊 Extracted Beliefs about ghost_file: {beliefs}")
-    
-    if beliefs:
-        print("✅ PASS: Beliefs updated autonomously.")
-    else:
-        print("❌ FAIL: No beliefs formed.")
-
-    # 4. Check Trace logs
-    trace_dir = Path.home() / ".aura" / "traces"
-    traces = list(trace_dir.iterdir()) if trace_dir.exists() else []
-    print(f"\n📂 Cognitive Traces generated: {len(traces)}")
-    if traces:
-        print("✅ PASS: Cognitive Trace saved.")
-    else:
-        print("❌ FAIL: No trace saved.")
-
-if __name__ == "__main__":
-    asyncio.run(test_active_surprise())
+from core.world_model.belief_graph import BeliefGraph
 
 
-##
+def test_active_surprise_updates_belief_graph(tmp_path):
+    graph = BeliefGraph(
+        persist_path=str(tmp_path / "world_model.json"),
+        causal_path=str(tmp_path / "causal_graph.json"),
+    )
+
+    target = "file:aura-missing-note.txt"
+    graph.update_belief("aura", "expects_exists", target, confidence_score=0.7)
+    contradiction = graph.detect_contradiction("aura", "observed_missing", target)
+
+    assert contradiction is not None
+    assert contradiction["relation"] == "expects_exists"
+
+    graph.update_belief("aura", "observed_missing", target, confidence_score=0.9)
+    beliefs = graph.get_beliefs_about("aura")
+
+    assert beliefs
+    assert any(
+        belief["target"] == target and belief["relation"] == "observed_missing"
+        for belief in beliefs
+    )

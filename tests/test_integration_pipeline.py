@@ -19,25 +19,14 @@ import logging
 import pytest
 
 # ---------------------------------------------------------------------------
-# Graceful import guard -- skip the entire module if the project tree is not
-# importable (e.g. missing native deps on CI).
+# Import failures here are runtime contract failures, not optional skips.
 # ---------------------------------------------------------------------------
-try:
-    from core.kernel.aura_kernel import AuraKernel, KernelConfig
-    from core.state.state_repository import StateRepository
-    from core.state.aura_state import AuraState
-    from core.kernel.organs import OrganStub
-except ImportError as exc:
-    pytest.skip(
-        f"Cannot import Aura core modules ({exc}); skipping integration tests.",
-        allow_module_level=True,
-    )
+from core.kernel.aura_kernel import AuraKernel, KernelConfig
+from core.state.state_repository import StateRepository
+from core.state.aura_state import AuraState
+from core.kernel.organs import OrganStub
 
 logger = logging.getLogger(__name__)
-
-pytestmark = pytest.mark.skip(
-    reason="full-kernel integration harness leaks runtime workers; covered by boot smoke and phase tests"
-)
 
 
 # ── Mock LLM Organ ────────────────────────────────────────────────────────
@@ -95,6 +84,24 @@ def _make_tmp_vault(tmp_path: str) -> StateRepository:
     """Create a StateRepository backed by a temp SQLite file."""
     db_path = os.path.join(tmp_path, "test_state.db")
     return StateRepository(db_path=db_path, is_vault_owner=True)
+
+
+async def _shutdown_and_assert_drained(kernel: AuraKernel) -> None:
+    """Shutdown the kernel and verify that tracked runtime loops did not leak."""
+    await kernel.shutdown()
+    await asyncio.sleep(0)
+
+    from core.utils.task_tracker import get_task_tracker
+
+    stats = get_task_tracker().get_stats()
+    assert stats["active"] == 0, f"Kernel shutdown left active tasks: {stats}"
+    current = asyncio.current_task()
+    live_tasks = [
+        (task.get_name(), repr(task.get_coro()))
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ]
+    assert live_tasks == [], f"Kernel shutdown left untracked asyncio tasks: {live_tasks}"
 
 
 async def _boot_kernel(tmp_path: str) -> AuraKernel:
@@ -166,7 +173,7 @@ async def test_full_tick_produces_response(tmp_path):
                 f"Response looks like an error (contains '{marker}'): {response[:200]}"
             )
     finally:
-        await kernel.shutdown()
+        await _shutdown_and_assert_drained(kernel)
 
 
 @pytest.mark.slow
@@ -187,7 +194,7 @@ async def test_tick_preserves_state_across_calls(tmp_path):
             f"(first={version_after_first}, second={version_after_second})"
         )
     finally:
-        await kernel.shutdown()
+        await _shutdown_and_assert_drained(kernel)
 
 
 @pytest.mark.slow
@@ -210,7 +217,7 @@ async def test_tick_with_skill_intent(tmp_path):
             "Objective should reflect the skill request"
         )
     finally:
-        await kernel.shutdown()
+        await _shutdown_and_assert_drained(kernel)
 
 
 @pytest.mark.slow
@@ -235,4 +242,4 @@ async def test_tick_with_emotional_content(tmp_path):
             f"(baseline={baseline_valence:.3f}, post={post_valence:.3f})"
         )
     finally:
-        await kernel.shutdown()
+        await _shutdown_and_assert_drained(kernel)
