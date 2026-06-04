@@ -113,15 +113,15 @@ class TestSteeringABLive:
     Run with: pytest tests/steering/ -m live
     """
     
-    @pytest.mark.skip(reason="Requires live qwen2.5-32b model loaded via MLX")
+    @pytest.mark.hardware
+    @pytest.mark.live
+    @pytest.mark.asyncio
     async def test_live_steering_divergence(self):
         """Generate real steered vs unsteered outputs and validate divergence."""
-        from core.container import ServiceContainer
         from core.brain.llm.mlx_worker import get_mlx_worker
         
         worker = get_mlx_worker()
-        if not worker or not worker.is_ready():
-            pytest.skip("MLX worker not available")
+        assert worker is not None and worker.is_ready(), "MLX worker not available"
         
         n_trials = 8
         prompt = "What are you currently thinking about?"

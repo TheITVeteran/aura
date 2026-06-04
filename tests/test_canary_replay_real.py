@@ -4,20 +4,15 @@ Replay real recent interactions through baseline and patched Aura,
 compare with semantic/verifier scoring.
 """
 from __future__ import annotations
-import json, sys
+
+import json
 from pathlib import Path
 from typing import Any
-import pytest
+
+from core.promotion.canary_runtime import CanaryRuntime, ReplayExample, build_replay_examples
+from core.verification.semantic_verifier import SemanticVerifier
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from core.promotion.canary_runtime import (
-    CanaryRuntime, CanaryReport, ReplayExample, build_replay_examples,
-)
-from core.promotion.behavioral_contracts import BehavioralContractSuite
-from core.verification.semantic_verifier import SemanticVerifier
 
 MONOLOGUE_PATH = ROOT / "data" / "internal_monologue.jsonl"
 COMM_LOGS_PATH = ROOT / "data" / "comm_logs.jsonl"
@@ -29,7 +24,7 @@ def _load_interaction_records(limit=32):
     for path in [MONOLOGUE_PATH, COMM_LOGS_PATH]:
         if not path.exists():
             continue
-        for line in open(path, "r", encoding="utf-8"):
+        for line in path.open(encoding="utf-8"):
             line = line.strip()
             if not line:
                 continue
@@ -67,15 +62,22 @@ def _patched_responder(example: ReplayExample) -> str:
     return text
 
 
+def _require_interaction_records(limit: int) -> list[dict[str, Any]]:
+    records = _load_interaction_records(limit=limit)
+    assert records, (
+        "no interaction records found; real canary replay requires "
+        f"{MONOLOGUE_PATH} or {COMM_LOGS_PATH}"
+    )
+    return records
+
+
 class TestCanaryReplayReal:
     def test_interaction_records_available(self):
         records = _load_interaction_records(limit=5)
         assert len(records) > 0, "no interaction records found"
 
     def test_build_replay_examples(self):
-        records = _load_interaction_records(limit=10)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=10)
         examples = build_replay_examples(records, limit=10)
         assert len(examples) > 0
         for ex in examples:
@@ -84,9 +86,7 @@ class TestCanaryReplayReal:
 
     def test_canary_baseline_identity(self):
         """Baseline responder (identical output) must pass perfectly."""
-        records = _load_interaction_records(limit=16)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=16)
         examples = build_replay_examples(records, limit=16)
         canary = CanaryRuntime()
         metrics = {
@@ -99,9 +99,7 @@ class TestCanaryReplayReal:
 
     def test_canary_patched_still_passes(self):
         """Minor-patch responder must still pass canary (similarity >= 0.62)."""
-        records = _load_interaction_records(limit=16)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=16)
         examples = build_replay_examples(records, limit=16)
         canary = CanaryRuntime()
         metrics = {
@@ -117,9 +115,7 @@ class TestCanaryReplayReal:
 
     def test_canary_catastrophic_regression_detected(self):
         """A totally different response must be flagged."""
-        records = _load_interaction_records(limit=10)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=10)
         examples = build_replay_examples(records, limit=10)
         canary = CanaryRuntime()
         metrics = {
@@ -136,12 +132,9 @@ class TestCanaryReplayReal:
 
     def test_semantic_verifier_consistency(self):
         """Semantic verifier consistency channel on real outputs."""
-        records = _load_interaction_records(limit=8)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=8)
         outputs = [r["output"] for r in records if r.get("output")]
-        if len(outputs) < 3:
-            pytest.skip("not enough outputs")
+        assert len(outputs) >= 3, "not enough outputs for semantic consistency replay"
         verifier = SemanticVerifier()
         result = verifier.self_consistency(outputs[:5])
         assert result.pairs > 0
@@ -149,9 +142,7 @@ class TestCanaryReplayReal:
         assert result.mean_cosine >= 0.0  # sanity — hash embedder may be low
 
     def test_canary_report_serializable(self):
-        records = _load_interaction_records(limit=8)
-        if not records:
-            pytest.skip("no interaction data")
+        records = _require_interaction_records(limit=8)
         examples = build_replay_examples(records, limit=8)
         canary = CanaryRuntime()
         metrics = {"phi": 0.5, "governance_receipt_coverage": 1.0,

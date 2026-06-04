@@ -17,7 +17,10 @@ MLX_STRESS_RECOVERABLE_ERRORS = (
 
 
 def _load_mlx():
-    return pytest.importorskip("mlx.core"), pytest.importorskip("numpy")
+    import mlx.core
+    import numpy
+
+    return mlx.core, numpy
 
 
 def _stress_test(duration_s: float = 2.0) -> None:
@@ -37,7 +40,7 @@ def _stress_test(duration_s: float = 2.0) -> None:
                 x = mx.random.normal((1, 1, d_model))
                 weights = [np.random.random() for _ in range(n_dims)]
                 composite = None
-                for weight, vector in zip(weights, vectors):
+                for weight, vector in zip(weights, vectors, strict=True):
                     term = weight * vector
                     composite = term if composite is None else composite + term
                 result = x + 15.0 * composite
@@ -76,12 +79,11 @@ def _stress_test(duration_s: float = 2.0) -> None:
     assert failures == []
 
 
-@pytest.mark.skipif(
-    os.environ.get("AURA_RUN_MLX_STABILITY") != "1",
-    reason="Manual MLX stability harness; set AURA_RUN_MLX_STABILITY=1 to run.",
-)
+@pytest.mark.hardware
+@pytest.mark.live
 def test_mlx_stability_harness():
-    _stress_test()
+    duration_s = float(os.environ.get("AURA_MLX_STABILITY_DURATION_S", "2.0"))
+    _stress_test(duration_s=duration_s)
 
 
 if __name__ == "__main__":

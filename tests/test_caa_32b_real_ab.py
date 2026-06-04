@@ -11,24 +11,17 @@ behavioral result as incomplete.
 from __future__ import annotations
 
 import json
-import sys
-import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from training.caa_32b_validation import CAA32BValidator
 from core.evaluation.steering_ab import (
-    REQUIRED_CONDITIONS,
     SteeringABReport,
     analyze_steering_ab,
 )
-from core.evaluation.statistics import cohens_d, permutation_test
+from training.caa_32b_validation import CAA32BValidator
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 VECTORS_DIR = ROOT / "training" / "vectors"
@@ -47,13 +40,11 @@ class TestCAA32BGeometry:
     """Validate the activation-derived vector artifacts."""
 
     def test_vectors_directory_exists(self):
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found — run extract_steering_vectors.py first")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found; run extract_steering_vectors.py"
         assert any(VECTORS_DIR.glob("*.np*")), "vectors/ contains no .npy/.npz files"
 
     def test_validator_loads_vectors(self):
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found"
         validator = CAA32BValidator(vectors_dir=VECTORS_DIR, model_path=MODEL_PATH)
         report = validator.run()
         assert report["vector_count"] > 0, "no vectors loaded"
@@ -61,13 +52,11 @@ class TestCAA32BGeometry:
 
     def test_geometry_coherent(self):
         """Geometry: cross-dim coherence, PCA, permutation controls."""
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found"
         validator = CAA32BValidator(vectors_dir=VECTORS_DIR, model_path=MODEL_PATH)
         report = validator.run()
         geometry = report.get("geometry", {})
-        if not geometry.get("available"):
-            pytest.skip(f"insufficient vectors for geometry: {geometry.get('reason')}")
+        assert geometry.get("available"), f"insufficient vectors for geometry: {geometry.get('reason')}"
 
         # Must have at least 3 coherent groups (dimension clusters)
         assert geometry.get("group_count", 0) >= 3, (
@@ -82,14 +71,12 @@ class TestCAA32BGeometry:
 
     def test_permutation_control_significant(self):
         """Permutation p-value must be < 0.05 in at least one group."""
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found"
         validator = CAA32BValidator(vectors_dir=VECTORS_DIR, model_path=MODEL_PATH)
         report = validator.run()
         geometry = report.get("geometry", {})
         groups = geometry.get("groups", {})
-        if not groups:
-            pytest.skip("no geometry groups")
+        assert groups, "no geometry groups"
         p_values = [g.get("permutation_p_value", 1.0) for g in groups.values()]
         min_p = min(p_values)
         assert min_p < 0.05, f"no group has permutation p < 0.05 (min={min_p:.4f})"
@@ -174,8 +161,7 @@ class TestCAA32BBehavioralAB:
 
     def test_behavioral_results_integration(self):
         """Full validator with behavioral JSON produces complete report."""
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found"
         # Create a minimal behavioral results file
         behavioral = {
             "steered_vs_baseline_effect_size": 0.35,
@@ -197,8 +183,7 @@ class TestCAA32BBehavioralAB:
 
     def test_live_32b_ab_results_schema_integration(self):
         """The proof bundle can consume the live 32B A/B artifact directly."""
-        if not VECTORS_DIR.exists():
-            pytest.skip("training/vectors/ not found")
+        assert VECTORS_DIR.exists(), "training/vectors/ not found"
         behavioral = {
             "model": MODEL_PATH,
             "n_trials": 50,

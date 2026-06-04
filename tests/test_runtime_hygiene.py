@@ -97,12 +97,11 @@ async def test_runtime_hygiene_tracks_subprocesses():
 
 @pytest.mark.asyncio
 async def test_runtime_hygiene_adopts_existing_subprocesses_started_before_hygiene():
-    if not runtime_hygiene_module._HAS_PSUTIL:
-        pytest.skip("psutil unavailable in this environment")
+    assert runtime_hygiene_module._HAS_PSUTIL, "psutil unavailable in this environment"
     try:
         runtime_hygiene_module.psutil.Process().children(recursive=True)
-    except PermissionError:
-        pytest.skip("psutil child-process inspection is blocked in this sandbox")
+    except PermissionError as exc:
+        pytest.fail(f"psutil child-process inspection is blocked: {exc}")
 
     proc = await asyncio.to_thread(
         subprocess.Popen,

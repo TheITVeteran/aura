@@ -15,31 +15,11 @@ import logging
 import os
 import time
 
+import httpx
+import psutil
 import pytest
-
-# ---------------------------------------------------------------------------
-# Graceful import guards
-# ---------------------------------------------------------------------------
-try:
-    import httpx
-except ImportError:
-    pytest.skip("httpx not installed; skipping stress tests.", allow_module_level=True)
-
-try:
-    from starlette.testclient import TestClient
-    from starlette.websockets import WebSocketDisconnect
-except ImportError:
-    pytest.skip("starlette not installed; skipping stress tests.", allow_module_level=True)
-
-try:
-    import psutil
-except ImportError:
-    psutil = None  # Memory test will skip gracefully
-
-try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-except ImportError:
-    pytest.skip("fastapi not installed; skipping stress tests.", allow_module_level=True)
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.testclient import TestClient
 
 logger = logging.getLogger(__name__)
 _MAX_TEST_WS_MESSAGES = int(os.getenv("AURA_TEST_WS_MAX_MESSAGES", "1000"))
@@ -273,9 +253,6 @@ async def test_memory_growth_bounded(test_app):
     """
     Run 100 messages and verify process RSS hasn't grown more than 50MB.
     """
-    if psutil is None:
-        pytest.skip("psutil not installed; cannot measure memory growth")
-
     process = psutil.Process(os.getpid())
     baseline_rss = process.memory_info().rss
 

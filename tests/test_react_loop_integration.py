@@ -289,10 +289,12 @@ async def test_python_sandbox_allows_safe_code():
 async def test_web_search_ddgs_fallback_live():
     """Verify the real DuckDuckGo fallback returns non-empty content.
 
-    Skipped if AURA_OFFLINE is set so the test can be skipped in sealed envs.
+    This is an online test. Test selection should exclude the online marker in
+    sealed/offline environments; executing the test while AURA_OFFLINE is set
+    is a test-environment contract error.
     """
     if os.environ.get("AURA_OFFLINE"):
-        pytest.skip("AURA_OFFLINE set")
+        pytest.fail("AURA_OFFLINE is set while running an online web-search test")
     # Temporarily unset GEMINI_API_KEY so we exercise the fallback explicitly.
     saved = os.environ.pop("GEMINI_API_KEY", None)
     try:

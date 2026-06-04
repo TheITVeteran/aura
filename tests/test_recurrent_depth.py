@@ -7,7 +7,6 @@ into the cache — far worse than leaving recurrent depth off.
 """
 from __future__ import annotations
 
-import os
 import sys
 import types
 from pathlib import Path
@@ -27,25 +26,11 @@ from core.brain.llm.recurrent_depth import (  # noqa: E402
     resolve_loops_for_model,
 )
 
-_RUN_NATIVE_MLX_HARDWARE_TESTS = os.getenv("AURA_RUN_MLX_HARDWARE_TESTS") == "1"
-
-
-def _require_native_mlx_hardware() -> None:
-    if _RUN_NATIVE_MLX_HARDWARE_TESTS:
-        return
-    pytest.importorskip(
-        "_aura_native_mlx_hardware_tests_enabled",
-        reason=(
-            "native MLX/Metal cache tests require AURA_RUN_MLX_HARDWARE_TESTS=1; "
-            "the final proof validates recurrent depth on the live 32B lane"
-        ),
-    )
-
 
 @pytest.mark.hardware
+@pytest.mark.live
 def test_self_test_cache_snapshot_passes_on_installed_mlx_lm():
     """If this fails, mlx_lm's cache contract changed and we must not patch."""
-    _require_native_mlx_hardware()
     _self_test_cache_snapshot()
 
 
@@ -129,9 +114,9 @@ def test_recurrent_depth_rejects_unsafe_fraction_override(monkeypatch):
 
 
 @pytest.mark.hardware
+@pytest.mark.live
 def test_restore_rewinds_mlx_cache():
     """Direct end-to-end proof the snapshot/restore actually works."""
-    _require_native_mlx_hardware()
     import mlx.core as mx
     from mlx_lm.models.cache import KVCache
 

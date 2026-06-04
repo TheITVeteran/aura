@@ -3,18 +3,16 @@
 Train on actual subsystem/tool/user-environment traces, not synthetic only.
 """
 from __future__ import annotations
-import json, sys, time
+
+import json
 from pathlib import Path
-from typing import Any
+
 import numpy as np
-import pytest
+
+from core.consciousness.stdp_external_validation import STDPExternalValidator
+from core.consciousness.stdp_learning import STDPLearningEngine
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from core.consciousness.stdp_learning import STDPLearningEngine
-from core.consciousness.stdp_external_validation import STDPExternalValidator
 
 TRACE_SOURCES = [
     ROOT / ".aura_runtime" / "data" / "unified_action_log.jsonl",
@@ -25,13 +23,18 @@ N_NEURONS = 16
 
 def _load_jsonl(path, limit=500):
     records = []
-    if not path.exists(): return records
-    for line in open(path, "r", encoding="utf-8"):
+    if not path.exists():
+        return records
+    for line in path.open(encoding="utf-8"):
         line = line.strip()
-        if not line: continue
-        try: records.append(json.loads(line))
-        except json.JSONDecodeError: continue
-        if len(records) >= limit: break
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+        if len(records) >= limit:
+            break
     return records
 
 def _record_to_signal(record, n=N_NEURONS):
@@ -61,15 +64,25 @@ def _load_real_sequences():
     all_records = []
     for p in TRACE_SOURCES:
         all_records.extend(_load_jsonl(p, limit=500))
-    if len(all_records) < 20: return None
+    if len(all_records) < 20:
+        return None
     all_records.sort(key=lambda r: float(r.get("t") or r.get("timestamp") or 0.0))
     return np.stack([_record_to_signal(r) for r in all_records])
+
+
+def _require_real_sequence() -> np.ndarray:
+    seq = _load_real_sequences()
+    assert seq is not None, (
+        "insufficient trace data; real STDP validation requires at least "
+        f"20 records across {[str(p) for p in TRACE_SOURCES]}"
+    )
+    return seq
 
 
 class TestSTDPRealTraces:
     def test_trace_sources_exist(self):
         found = sum(1 for p in TRACE_SOURCES if p.exists() and p.stat().st_size > 0)
-        assert found > 0, f"no trace data found"
+        assert found > 0, "no trace data found"
 
     def test_trace_parsing(self):
         for path in TRACE_SOURCES:
@@ -79,16 +92,14 @@ class TestSTDPRealTraces:
                 assert np.all(sig >= 0.0) and np.all(sig <= 1.0)
 
     def test_real_sequence_length(self):
-        seq = _load_real_sequences()
-        if seq is None: pytest.skip("insufficient trace data")
+        seq = _require_real_sequence()
         assert seq.shape[0] >= 20
         assert seq.shape[1] == N_NEURONS
 
     def test_real_stdp_external_beats_controls(self):
-        seq = _load_real_sequences()
-        if seq is None: pytest.skip("insufficient trace data")
+        seq = _require_real_sequence()
         split = seq.shape[0] // 2
-        if split < 10: pytest.skip("not enough data")
+        assert split >= 10, f"not enough trace data for held-out split: split={split}"
         validator = STDPExternalValidator(n_neurons=N_NEURONS, seed=7)
         groups = (
             validator._run_group("external_real", seq[:split], seq[split:], train_mode="external"),
@@ -102,10 +113,9 @@ class TestSTDPRealTraces:
             assert margin > 0.0, f"real traces MSE ({external.heldout_mse:.4f}) didn't beat {ctrl.group} ({ctrl.heldout_mse:.4f})"
 
     def test_instability_budget(self):
-        seq = _load_real_sequences()
-        if seq is None: pytest.skip("insufficient trace data")
+        seq = _require_real_sequence()
         split = seq.shape[0] // 2
-        if split < 10: pytest.skip("not enough data")
+        assert split >= 10, f"not enough trace data for instability split: split={split}"
         validator = STDPExternalValidator(n_neurons=N_NEURONS, seed=7)
         ext = validator._run_group("external_real", seq[:split], seq[split:], train_mode="external")
         assert ext.instability <= 0.30, f"instability {ext.instability:.4f} > 0.30"
