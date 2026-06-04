@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Generate a longitudinal morphogenesis report.
 
@@ -6,20 +5,26 @@ Reads persisted morphogenesis registry state and recent logs, then writes a
 JSON+Markdown report that helps demonstrate whether Aura's cell/tissue/organ
 runtime is actually operating over time.
 """
-
-from core.runtime.atomic_writer import atomic_write_text
+from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.atomic_writer import atomic_write_text
 
 
 def _safe_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
@@ -44,15 +49,15 @@ def _log_candidates(root: Path) -> list[Path]:
         if base.exists():
             try:
                 out.extend(sorted(base.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10])
-            except Exception:
-                pass
+            except OSError:
+                continue
     return out
 
 
 def _tail(path: Path, max_chars: int = 12000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="ignore")[-max_chars:]
-    except Exception:
+    except OSError:
         return ""
 
 
@@ -102,7 +107,7 @@ def analyze_logs(root: Path) -> dict[str, Any]:
 
 
 def build_report(root: Path, out_dir: Path) -> dict[str, Any]:
-    get_task_tracker().create_task(get_storage_gateway().create_dir(out_dir, cause='build_report'))
+    out_dir.mkdir(parents=True, exist_ok=True)
     state_paths = _candidate_state_paths(root)
     registry_reports = []
     for p in state_paths:

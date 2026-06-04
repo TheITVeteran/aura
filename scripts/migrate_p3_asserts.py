@@ -1,7 +1,12 @@
 import csv
 import os
 import re
+import sys
 from pathlib import Path
+
+
+def _warn_skip(filepath: Path, exc: BaseException) -> None:
+    print(f"Skipping {filepath}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def main():
@@ -30,7 +35,8 @@ def main():
             if filepath not in file_mods:
                 try:
                     file_mods[filepath] = {"lines": filepath.read_text().splitlines(), "changed": False}
-                except Exception:
+                except (OSError, UnicodeDecodeError) as exc:
+                    _warn_skip(filepath, exc)
                     continue
 
             lines = file_mods[filepath]["lines"]

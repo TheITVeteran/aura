@@ -97,11 +97,11 @@ async def send(session, msg: str) -> dict:
                     return {"response": response, "ok": True}
                 if attempt == 0:
                     await asyncio.sleep(10)
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError, TypeError) as e:
             if attempt == 0:
                 await asyncio.sleep(10)
             else:
-                return {"response": str(e), "ok": False}
+                return {"response": f"{type(e).__name__}: {e}", "ok": False}
     return {"response": "", "ok": False}
 
 
@@ -121,8 +121,8 @@ async def get_state() -> dict:
                     "coherence": round(float(d.get("qualia", {}).get("pri", 0)), 3),
                     "phi": round(float(d.get("mhaf", {}).get("phi", 0)), 4),
                 }
-    except Exception:
-        return {}
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError, TypeError) as exc:
+        return {"health_error": f"{type(exc).__name__}: {exc}"}
 
 
 def score_turn(response: str, turn_num: int) -> dict:

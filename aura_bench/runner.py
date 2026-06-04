@@ -38,6 +38,15 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 
 logger = logging.getLogger("Aura.Bench")
 
+_BENCH_RECOVERABLE_ERRORS = (
+    AssertionError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 _BENCH_DIR = Path.home() / ".aura" / "data" / "bench"
 try:
     get_task_tracker().create_task(  # type: ignore[name-defined]
@@ -147,7 +156,7 @@ async def run_all() -> List[BenchResult]:
     for cls in _REGISTRY:
         try:
             res = await run_one(cls())
-        except Exception as exc:
+        except _BENCH_RECOVERABLE_ERRORS as exc:
             logger.exception("bench test %s crashed", cls.__name__)
             reg = Registration(hypothesis="crash", metric="-", pass_threshold=0.0, trials=0, baseline_label="-", ablation_label="-")
             res = BenchResult(name=cls.name, registration=reg, full=Sample(metric=0.0), verdict="error", notes=str(exc))
@@ -164,9 +173,9 @@ def _persist(res: BenchResult) -> None:
             fh.flush()
             try:
                 os.fsync(fh.fileno())
-            except Exception:
-                pass
-    except Exception as exc:
+            except OSError as exc:
+                logger.warning("bench fsync failed for %s: %s", out, exc)
+    except (OSError, TypeError, ValueError) as exc:
         logger.warning("bench persist failed: %s", exc)
 
 

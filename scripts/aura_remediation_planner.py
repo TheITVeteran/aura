@@ -51,7 +51,7 @@ def load_json(path: str) -> Any:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
@@ -93,7 +93,7 @@ def extract_issues(data: Any) -> Dict[str, List[str]]:
                     # If item is a dict, serialise as JSON string to maintain context
                     try:
                         items.append(json.dumps(item, sort_keys=True))
-                    except Exception:
+                    except (TypeError, ValueError):
                         items.append(repr(item))
                 else:
                     items.append(repr(item))
@@ -148,7 +148,7 @@ def main(argv: Iterable[str]) -> int:
             os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(aggregated, f, indent=2)
-        except Exception as exc:
+        except (OSError, TypeError, ValueError) as exc:
             print(f"Failed to write output file {out_path}: {exc}", file=sys.stderr)
             return 1
     else:

@@ -2,13 +2,18 @@ import re
 import sys
 from pathlib import Path
 
+def _warn_skip(filepath: Path, exc: BaseException) -> None:
+    print(f"Skipping {filepath}: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 def process_file(filepath: Path):
     if not filepath.exists():
         return
         
     try:
         content = filepath.read_text()
-    except Exception:
+    except (OSError, UnicodeDecodeError) as exc:
+        _warn_skip(filepath, exc)
         return
         
     original = content

@@ -65,8 +65,8 @@ async def send_message(session, prompt: str) -> dict:
                 await asyncio.sleep(10)
                 continue
             return {"response": "", "status": "timeout"}
-        except Exception as e:
-            return {"response": "", "status": f"error: {e}"}
+        except (aiohttp.ClientError, OSError, ValueError, TypeError) as e:
+            return {"response": "", "status": f"error:{type(e).__name__}: {e}"}
     return {"response": "", "status": "exhausted_retries"}
 
 
@@ -93,8 +93,8 @@ async def get_substrate_state() -> dict:
                     "phi": round(float(data.get("mhaf", {}).get("phi", 0)), 4),
                     "cycle_count": data.get("cycle_count", 0),
                 }
-    except Exception:
-        return {}
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError, TypeError) as exc:
+        return {"health_error": f"{type(exc).__name__}: {exc}"}
 
 
 async def run_benchmark():
