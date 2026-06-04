@@ -114,8 +114,9 @@ class SovereignSwarm:
     tool subsystems.
     """
 
-    def __init__(self, orchestrator: Any):
+    def __init__(self, orchestrator: Any, agency_core: Any = None):
         self.orch = orchestrator
+        self.agency_core = agency_core
         self.active_shards: dict[str, asyncio.Task] = {}
         self._inference_semaphore = asyncio.Semaphore(2)
         self._registry_shards_update_pending = False
@@ -255,14 +256,36 @@ class SovereignSwarm:
         return normalized
 
     async def _execute_shard_tool(self, name: str, payload: Any) -> Any:
-        agency_core = getattr(self.orch, "agency_core", None) if self.orch is not None else None
-        orchestrator = getattr(agency_core, "tool_orchestrator", None) or getattr(self, "tool_orchestrator", None)
+        owner_core = self.agency_core
+        orch_core = (
+            getattr(self.orch, "_agency_core", None)
+            or getattr(self.orch, "agency_core", None)
+            if self.orch is not None
+            else None
+        )
+        container_core = ServiceContainer.get("agency_core", default=None)
+        orchestrator = (
+            getattr(owner_core, "tool_orchestrator", None)
+            or getattr(orch_core, "tool_orchestrator", None)
+            or getattr(container_core, "tool_orchestrator", None)
+            or getattr(self, "tool_orchestrator", None)
+        )
         if orchestrator is None:
-            raise RuntimeError("tool_orchestrator_unavailable")
-        result = orchestrator.route_and_execute(name, payload)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+            error = RuntimeError("tool_orchestrator_unavailable")
+            if owner_core is not None:
+                owner_core._last_tool_routing_error = str(error)
+            raise error
+        try:
+            result = orchestrator.route_and_execute(name, payload)
+            if inspect.isawaitable(result):
+                result = await result
+            if owner_core is not None:
+                owner_core._last_tool_routing_error = None
+            return result
+        except _AGENCY_BOUNDARY_ERRORS as exc:
+            if owner_core is not None:
+                owner_core._last_tool_routing_error = f"{type(exc).__name__}: {exc}"
+            raise
 
     async def _shard_wrapper(self, goal: str, context: str, shard_id: str = "unknown"):
         """Internal execution of a thinking shard."""
@@ -557,7 +580,7 @@ class AgencyCore:
     def __init__(self, orchestrator=None):
         self.orch = orchestrator
         self.state = AgencyState()
-        self.swarm = SovereignSwarm(orchestrator)
+        self.swarm = SovereignSwarm(orchestrator, agency_core=self)
         self.canvas_manager = CanvasManager()
         self.tool_orchestrator = ToolOrchestrator()
         self.abstraction_engine = AbstractionEngine()
@@ -569,6 +592,8 @@ class AgencyCore:
         self._self_play_pulse_pending = False  # Guard self_play task accumulation
         self._registry_update_pending = False  # Guard registry update task accumulation
         self._registry_shards_update_pending = False  # Guard shard count registry updates
+        self._last_viability_error: str | None = None
+        self._last_tool_routing_error: str | None = None
 
         try:
             from core.orchestrator.meta_cognition_shard import MetaCognitionShard
@@ -867,6 +892,7 @@ class AgencyCore:
             from core.organism.viability import get_viability
             _viability = get_viability()
             _behavior = _viability.behavior()
+            self._last_viability_error = None
             if _behavior.initiative_budget_per_min <= 0.0:
                 if random.random() < 0.02:
                     logger.info(
@@ -888,8 +914,10 @@ class AgencyCore:
                     )
                 return None
         except _AGENCY_BOUNDARY_ERRORS as _vexc:
-            _record_agency_degradation(_vexc, action="viability gate failed open")
-            logger.error("viability gate failed: %s", _vexc, exc_info=True)
+            self._last_viability_error = f"{type(_vexc).__name__}: {_vexc}"
+            _record_agency_degradation(_vexc, action="viability gate failed closed", severity="critical")
+            logger.error("viability gate failed closed: %s", _vexc, exc_info=True)
+            return None
 
         # Sync state from orchestrator subsystems
         self._sync_from_orchestrator()
@@ -2475,9 +2503,14 @@ class AgencyCore:
         """
         data = self.state.model_dump()
         # Add derived metrics
+        degraded = bool(self._last_viability_error or self._last_tool_routing_error)
         data.update({
+            "status": "degraded" if degraded else "active",
+            "alive": not degraded,
             "pathways_active": len(self._pathway_registry),
             "idle_seconds": float(round(float(time.time() - self.state.last_user_interaction), 1)),
-            "engagement_mode": self.state.engagement_mode.value
+            "engagement_mode": self.state.engagement_mode.value,
+            "last_viability_error": self._last_viability_error,
+            "last_tool_routing_error": self._last_tool_routing_error,
         })
         return data

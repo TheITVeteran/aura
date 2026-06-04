@@ -123,7 +123,9 @@ def test_reliability_prompt_contract_demands_live_self_reflection_substance():
 def test_conversational_continuity_checks_stay_out_of_task_engine():
     from core.kernel.upgrades_10x import _looks_like_simple_dialogue_request as godmode_dialogue
     from core.phases.cognitive_routing import _looks_like_simple_dialogue_request as legacy_dialogue
-    from core.phases.cognitive_routing_unitary import _looks_like_simple_dialogue_request as unitary_dialogue
+    from core.phases.cognitive_routing_unitary import (
+        _looks_like_simple_dialogue_request as unitary_dialogue,
+    )
 
     prompt = "Quick continuity check: what did we just verify about the live chat path?"
 
@@ -267,8 +269,8 @@ def test_how_i_talk_to_you_prompt_routes_as_live_self_reflection():
 def test_reliability_floor_replies_do_not_reenter_prompt_history():
     from core.brain.llm.context_assembler import ContextAssembler
     from core.conversation.response_reliability import (
-        is_reliability_floor_reply,
         is_non_answer_repair_floor_reply,
+        is_reliability_floor_reply,
         reliability_floor_for_user,
     )
     from core.state.aura_state import AuraState
@@ -380,8 +382,8 @@ def test_dangling_article_tail_is_rejected_as_truncated_user_reply():
 
 
 def test_autonomous_follow_through_has_safe_specific_floor():
-    from core.synthesis import deterministic_user_facing_floor
     from core.conversation.response_reliability import assess_user_facing_reply
+    from core.synthesis import deterministic_user_facing_floor
 
     prompt = (
         "Suppose I ask you to autonomously check email and Reddit. "
@@ -566,6 +568,56 @@ Wall-E - Andrew Stanton: A robot learning to care for something small.
 """.strip()
 
     assert live_chat_diagnostic_floor(bundle) == ""
+
+
+def test_exact_reply_allows_role_like_target_without_prompt_artifact_rejection():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply("Please reply exactly: User: Bryan", "User: Bryan")
+
+    assert assessment.ok
+    assert not assessment.retryable
+    assert "prompt_artifact" not in assessment.reasons
+
+
+def test_live_chat_diagnostic_floor_does_not_fire_for_generic_ui_debugging():
+    from core.conversation.response_reliability import live_chat_diagnostic_floor
+
+    prompt = "Why does the settings UI fail even though backend tests pass?"
+
+    assert live_chat_diagnostic_floor(prompt) == ""
+
+
+def test_live_chat_diagnostic_floor_still_handles_chat_surface_failures():
+    from core.conversation.response_reliability import live_chat_diagnostic_floor
+
+    prompt = "Why does the desktop chat UI fail even though backend tests pass?"
+
+    assert "/api/chat" in live_chat_diagnostic_floor(prompt)
+
+
+def test_fenced_generic_assistant_text_is_not_accepted_as_code():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Explain how the live desktop path should route a tool request.",
+        "```\nHow can I help?\n```",
+    )
+
+    assert assessment.retryable
+    assert "generic_assistant_language" in assessment.reasons
+
+
+def test_incomplete_fenced_code_is_retryable():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Write a Python helper that adds two values.",
+        "```python\ndef add(a, b):\n    return a +\n```",
+    )
+
+    assert assessment.retryable
+    assert "incomplete_code_response" in assessment.reasons
 
 
 @pytest.mark.asyncio

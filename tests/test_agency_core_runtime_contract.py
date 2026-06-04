@@ -73,6 +73,15 @@ class QuietReporter:
         return {"valence": 0.0, "arousal": 0.5}
 
 
+class FakeToolOrchestrator:
+    def __init__(self):
+        self.calls = []
+
+    def route_and_execute(self, name, payload):
+        self.calls.append((name, payload))
+        return {"ok": True, "name": name, "payload": payload}
+
+
 def test_agency_scheduler_closes_unscheduled_awaitable():
     awaitable = ClosingAwaitable()
 
@@ -165,3 +174,57 @@ async def test_pulse_commits_visible_side_effects_only_after_bus_approval(monkey
     assert agency.state.topics_to_discuss == []
     assert agency.state.last_self_initiated_contact > 0.0
     assert allowed_bus.submitted
+
+
+@pytest.mark.asyncio
+async def test_pulse_fails_closed_when_viability_gate_errors(monkeypatch):
+    monkeypatch.setattr(
+        "core.organism.viability.get_viability",
+        lambda: (_ for _ in ()).throw(RuntimeError("viability offline")),
+    )
+
+    agency = AgencyCore(orchestrator=None)
+    evaluated = False
+
+    def _pathway(_now, _idle):
+        nonlocal evaluated
+        evaluated = True
+        return {"type": "internal_reflection", "thought": "should not emit", "priority": 1.0}
+
+    agency._pathway_registry = {"must_not_run": _pathway}
+
+    result = await agency.pulse()
+    status = agency.get_status()
+
+    assert result is None
+    assert evaluated is False
+    assert status["status"] == "degraded"
+    assert status["alive"] is False
+    assert "viability offline" in status["last_viability_error"]
+
+
+@pytest.mark.asyncio
+async def test_swarm_tool_dispatch_uses_owning_agency_core_orchestrator():
+    agency = AgencyCore(orchestrator=SimpleNamespace(cognitive_engine=object()))
+    fake_tool_orchestrator = FakeToolOrchestrator()
+    agency.tool_orchestrator = fake_tool_orchestrator
+
+    result = await agency.swarm._execute_shard_tool("python_sandbox", {"code": "1 + 1"})
+
+    assert result == {"ok": True, "name": "python_sandbox", "payload": {"code": "1 + 1"}}
+    assert fake_tool_orchestrator.calls == [("python_sandbox", {"code": "1 + 1"})]
+    assert agency.get_status()["last_tool_routing_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_swarm_tool_dispatch_marks_owner_degraded_when_orchestrator_missing():
+    agency = AgencyCore(orchestrator=SimpleNamespace(cognitive_engine=object()))
+    agency.tool_orchestrator = None
+
+    with pytest.raises(RuntimeError, match="tool_orchestrator_unavailable"):
+        await agency.swarm._execute_shard_tool("python_sandbox", {"code": "1 + 1"})
+
+    status = agency.get_status()
+    assert status["status"] == "degraded"
+    assert status["alive"] is False
+    assert status["last_tool_routing_error"] == "tool_orchestrator_unavailable"

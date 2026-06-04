@@ -581,6 +581,40 @@ _EXACT_REPLY_RE = re.compile(
     re.IGNORECASE,
 )
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(?P<answer>.*?)\s*</answer>", re.IGNORECASE | re.DOTALL)
+_FENCED_BLOCK_RE = re.compile(
+    r"```(?P<lang>[A-Za-z0-9_+.-]*)[ \t]*\n(?P<body>.*?)```",
+    re.DOTALL,
+)
+_CODE_FENCE_LANGS = {
+    "bash",
+    "c",
+    "cpp",
+    "css",
+    "go",
+    "html",
+    "java",
+    "js",
+    "json",
+    "jsx",
+    "mdx",
+    "mjs",
+    "py",
+    "python",
+    "rs",
+    "ruby",
+    "sh",
+    "sql",
+    "swift",
+    "ts",
+    "tsx",
+    "typescript",
+    "yaml",
+    "yml",
+}
+_NON_CODE_FENCE_LANGS = {"", "md", "markdown", "text", "txt"}
+_INCOMPLETE_CODE_TAIL_RE = re.compile(
+    r"(?:[=+\-*/%&|^.,\\[(<{]|(?:\b(?:return|yield|raise|if|elif|else|for|while|with|try|except|finally)\b.*:))$"
+)
 
 
 @dataclass(frozen=True)
@@ -761,18 +795,13 @@ def _contains_any_marker(text: str, markers: Iterable[str]) -> bool:
     return False
 
 
-def live_chat_diagnostic_floor(user_message: Any) -> str:
-    text = _normalize(user_message)
-    if not text or looks_like_learning_resource_bundle(str(user_message or "")):
-        return ""
-    live_surface = _contains_any_marker(
+def _is_chat_surface_reference(text: str) -> bool:
+    direct_chat_surface = _contains_any_marker(
         text,
         (
             "chat lane",
             "conversation lane",
             "foreground lane",
-            "frontend",
-            "gui",
             "live chat",
             "live path",
             "live reply",
@@ -780,9 +809,23 @@ def live_chat_diagnostic_floor(user_message: Any) -> str:
             "live surface",
             "reply path",
             "response path",
-            "ui",
+            "desktop chat",
+            "typed chat",
+            "voice chat",
         ),
     )
+    if direct_chat_surface:
+        return True
+    app_surface = _contains_any_marker(text, ("frontend", "gui", "ui", "desktop", "app"))
+    reply_surface = _contains_any_marker(text, ("chat", "conversation", "reply", "response", "message", "talk"))
+    return app_surface and reply_surface
+
+
+def live_chat_diagnostic_floor(user_message: Any) -> str:
+    text = _normalize(user_message)
+    if not text or looks_like_learning_resource_bundle(str(user_message or "")):
+        return ""
+    live_surface = _is_chat_surface_reference(text)
     backend_surface = _contains_any_marker(text, ("headless", "backend", "test", "tests", "passes", "pass", "passed"))
     failure_pressure = _contains_any_marker(
         text,
@@ -1155,8 +1198,14 @@ def _is_code_response(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
         return False
-    if "```" in raw:
-        return True
+    fenced_blocks = list(_FENCED_BLOCK_RE.finditer(raw))
+    if fenced_blocks:
+        for block in fenced_blocks:
+            lang = (block.group("lang") or "").strip().lower()
+            body = block.group("body") or ""
+            if lang in _CODE_FENCE_LANGS or (lang in _NON_CODE_FENCE_LANGS and _looks_like_code_body(body)):
+                return True
+        return False
     if raw.startswith(("def ", "import ", "class ", "from ", "print(", "#", "var ", "const ", "let ", "function ")):
         return True
 
@@ -1176,6 +1225,68 @@ def _is_code_response(text: str) -> bool:
         if code_like_lines / len(lines) > 0.6:
             return True
 
+    return False
+
+
+def _looks_like_code_body(text: Any) -> bool:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    code_like_lines = 0
+    for line in lines:
+        if (
+            line.startswith(
+                (
+                    "def ",
+                    "import ",
+                    "class ",
+                    "from ",
+                    "return ",
+                    "if ",
+                    "elif ",
+                    "else:",
+                    "for ",
+                    "while ",
+                    "try:",
+                    "except",
+                    "with ",
+                    "#",
+                    "print(",
+                    "const ",
+                    "let ",
+                    "var ",
+                    "function ",
+                )
+            )
+            or "=" in line
+            or ("(" in line and ")" in line)
+            or ("[" in line and "]" in line)
+            or ("{" in line and "}" in line)
+            or ";" in line
+        ):
+            code_like_lines += 1
+    threshold = 0.5 if len(lines) <= 3 else 0.6
+    return code_like_lines / len(lines) >= threshold
+
+
+def _has_incomplete_code_response(text: Any) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if raw.count("```") % 2:
+        return True
+
+    blocks = list(_FENCED_BLOCK_RE.finditer(raw))
+    bodies = [block.group("body") or "" for block in blocks] if blocks else [raw]
+    for body in bodies:
+        if not _looks_like_code_body(body):
+            continue
+        lines = [line.rstrip() for line in body.splitlines() if line.strip()]
+        if not lines:
+            continue
+        last = lines[-1].strip()
+        if _INCOMPLETE_CODE_TAIL_RE.search(last):
+            return True
     return False
 
 
@@ -1254,17 +1365,21 @@ def _model_text_integrity_reasons(
     if _is_code_response(raw):
         if _TRAILING_ESCAPE_RE.search(raw):
             reasons.append("escaped_control_artifact")
-        if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw):
+        if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw) and not _matches_exact_reply_request(prompt, raw):
             reasons.append("prompt_artifact")
         if _BROKEN_LANE_BOILERPLATE_RE.search(raw):
             reasons.append("runtime_boilerplate")
         if _KNOWN_CORRUPT_RE.search(raw):
             reasons.append("corrupted_language")
+        if _GENERIC_ASSISTANT_RE.search(raw):
+            reasons.append("generic_assistant_language")
+        if _has_incomplete_code_response(raw):
+            reasons.append("incomplete_code_response")
         return reasons
 
     if _TRAILING_ESCAPE_RE.search(raw):
         reasons.append("escaped_control_artifact")
-    if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw):
+    if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw) and not _matches_exact_reply_request(prompt, raw):
         reasons.append("prompt_artifact")
     if _BROKEN_LANE_BOILERPLATE_RE.search(raw):
         reasons.append("runtime_boilerplate")
@@ -1367,6 +1482,8 @@ def assess_model_text_integrity(
         "surface_nonsense_drift",
         "format_meta_artifact",
         "corrupted_social_fragment",
+        "generic_assistant_language",
+        "incomplete_code_response",
     }
     unique = tuple(dict.fromkeys(reasons))
     return ConversationReplyAssessment(
@@ -1387,6 +1504,9 @@ def assess_user_facing_reply(
     del recent_user_messages  # reserved for future context-aware checks
     raw = str(reply_text or "").strip()
 
+    if _matches_exact_reply_request(user_message, raw):
+        return ConversationReplyAssessment(ok=True, reasons=(), hard_failure=False, retryable=False)
+
     if _is_code_response(raw):
         reasons = _model_text_integrity_reasons(
             raw,
@@ -1405,6 +1525,8 @@ def assess_user_facing_reply(
             "surface_nonsense_drift",
             "format_meta_artifact",
             "corrupted_language",
+            "generic_assistant_language",
+            "incomplete_code_response",
         }
         return ConversationReplyAssessment(
             ok=not unique,

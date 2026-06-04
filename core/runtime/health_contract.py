@@ -167,6 +167,12 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "Motivation and goal management. Without it, autonomous behavior stops.",
     ),
     ServiceRequirement(
+        "Agency Core",
+        "agency_core",
+        ServiceTier.IMPORTANT,
+        "Canonical autonomous agency pathway loop. Without it, initiative and swarm tool use degrade.",
+    ),
+    ServiceRequirement(
         "Lymphatic Reaper",
         "reaper",
         ServiceTier.IMPORTANT,

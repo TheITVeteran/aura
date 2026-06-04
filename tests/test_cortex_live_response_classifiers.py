@@ -178,3 +178,29 @@ def test_live_operator_rejects_and_trims_glued_role_tail():
     assert "User:" not in trimmed
     assert "That's a lot" not in trimmed
     assert PersonBoxGauntlet.live_response_is_substantive(trimmed, prompt_text=prompt) is True
+
+
+def test_mlx_retry_kwargs_drop_stale_sampler_and_prompt_cache():
+    from core.brain.llm.mlx_worker import _prepare_clean_retry_kwargs
+
+    kwargs = {
+        "temperature": 0.82,
+        "top_p": 0.96,
+        "min_p": 0.0,
+        "repetition_penalty": 1.0,
+        "repetition_context_size": 16,
+        "sampler": object(),
+        "prompt_cache": object(),
+        "logits_processors": [object()],
+    }
+
+    _prepare_clean_retry_kwargs(kwargs, structured=False)
+
+    assert "sampler" not in kwargs
+    assert "prompt_cache" not in kwargs
+    assert "logits_processors" in kwargs
+    assert kwargs["temperature"] <= 0.35
+    assert kwargs["top_p"] <= 0.85
+    assert kwargs["min_p"] >= 0.03
+    assert kwargs["repetition_penalty"] >= 1.18
+    assert kwargs["repetition_context_size"] >= 96

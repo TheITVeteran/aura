@@ -213,6 +213,7 @@ def _contains_corrupted_language(text: str) -> bool:
 def _prepare_clean_retry_kwargs(kwargs: dict[str, Any], *, structured: bool = False) -> None:
     """Reset sampling after a corrupt/looping draft instead of amplifying it."""
     kwargs.pop("sampler", None)
+    kwargs.pop("prompt_cache", None)
     if structured:
         kwargs["temperature"] = 0.0
         kwargs["top_p"] = 1.0
@@ -743,7 +744,7 @@ def _proof_evaluation_fragment_incomplete(text: str) -> bool:
             json.loads(stripped)
             return False
         except (TypeError, ValueError, json.JSONDecodeError):
-            pass
+            return True
     if "\n" in stripped and "," in stripped:
         lines = [line for line in stripped.splitlines() if line.strip()]
         if len(lines) >= 2 and all("," in line for line in lines[:2]):
@@ -1896,7 +1897,7 @@ def _mlx_worker_loop(
                                                 sampler_kwargs["repetition_context_size"] = kwargs.get("repetition_context_size", 20)
                                             kwargs["sampler"] = make_sampler(**sampler_kwargs)
                                     except ImportError:
-                                        pass # old mlx_lm
+                                        logger.debug("MLX make_sampler unavailable; using stream_generate defaults.")
 
                                     # [STABILITY v60] Definitive scrub of legacy kwargs.
                                     # New mlx-lm versions pass kwargs directly to generate_step which
@@ -2097,10 +2098,6 @@ def _mlx_worker_loop(
                                                     original_prompt,
                                                 )
                                             _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
-                                            if "logits_processors" in kwargs:
-                                                # We just recreate the logit processors if they exist so it catches the loop
-                                                pass
-
                                             continue
                                         else:
                                             logger.warning("🚨 [WORKER] Out of retries for loop abort. Returning truncated prefix.")
