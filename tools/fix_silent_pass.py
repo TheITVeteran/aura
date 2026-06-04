@@ -15,6 +15,7 @@ Skips blocks that already have logging, record_degradation, or a comment
 explaining the intentional no-op.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -58,6 +59,43 @@ def extract_module_name(filepath: Path, root: Path) -> str:
         return filepath.stem
 
 
+def find_logger_insert_index(lines: list[str]) -> int:
+    """Insert after shebang/comments, module docstring, and future imports."""
+    source = "\n".join(lines)
+    insert_at = 0
+    if lines and lines[0].startswith("#!"):
+        insert_at = 1
+
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        module = None
+
+    if module and module.body:
+        first = module.body[0]
+        if isinstance(first, ast.Expr) and isinstance(getattr(first, "value", None), ast.Constant) and isinstance(first.value.value, str):
+            insert_at = max(insert_at, int(getattr(first, "end_lineno", insert_at) or insert_at))
+
+    while insert_at < len(lines):
+        stripped = lines[insert_at].strip()
+        if not stripped or stripped.startswith("#"):
+            insert_at += 1
+            continue
+        if stripped.startswith("from __future__"):
+            insert_at += 1
+            continue
+        break
+    return insert_at
+
+
+def has_module_logger(content: str) -> bool:
+    return bool(re.search(r"^\s*logger\s*=", content, re.MULTILINE))
+
+
+def has_logging_import(content: str) -> bool:
+    return bool(re.search(r"^\s*import\s+logging\b", content, re.MULTILINE))
+
+
 def process_file(filepath: Path, root: Path, dry_run: bool = False) -> int:
     try:
         content = filepath.read_text(encoding="utf-8")
@@ -69,7 +107,8 @@ def process_file(filepath: Path, root: Path, dry_run: bool = False) -> int:
     changes = 0
     module_name = extract_module_name(filepath, root)
     needs_logger = False
-    has_logger = "logger" in content or "logging" in content
+    has_logger = has_module_logger(content)
+    has_logging = has_logging_import(content)
     i = 0
 
     while i < len(lines):
@@ -138,16 +177,12 @@ def process_file(filepath: Path, root: Path, dry_run: bool = False) -> int:
 
     # Add logger import if needed and not present
     if changes > 0 and needs_logger and not has_logger:
-        # Insert import at top of file (after any __future__ imports)
-        insert_at = 0
-        for idx, ln in enumerate(new_lines):
-            if ln.strip().startswith("from __future__"):
-                insert_at = idx + 1
-            elif ln.strip() and not ln.strip().startswith("#") and not ln.strip().startswith('"""') and not ln.strip().startswith("'''"):
-                break
-        new_lines.insert(insert_at, "import logging")
-        new_lines.insert(insert_at + 1, f'logger = logging.getLogger("{module_name}")')
-        new_lines.insert(insert_at + 2, "")
+        insert_at = find_logger_insert_index(new_lines)
+        injected = [f'logger = logging.getLogger("{module_name}")', ""]
+        if not has_logging:
+            injected.insert(0, "import logging")
+        for offset, line_to_insert in enumerate(injected):
+            new_lines.insert(insert_at + offset, line_to_insert)
 
     if changes > 0 and not dry_run:
         filepath.write_text("\n".join(new_lines), encoding="utf-8")

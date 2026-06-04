@@ -82,8 +82,8 @@ class AbstractThoughtLayer:
             self._ponder_task.cancel()
             try:
                 await asyncio.wait_for(self._ponder_task, timeout=3.0)
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.brain.abstract_thought_layer: %s", type(_exc).__name__, _exc)
             except TimeoutError as exc:
                 _record_abstract_thought_degradation(
                     exc,

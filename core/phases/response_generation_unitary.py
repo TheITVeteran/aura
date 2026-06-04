@@ -3537,8 +3537,8 @@ class UnitaryResponsePhase(Phase):
                 return False
             if assess_user_facing_reply(prompt, text).retryable:
                 return False
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.phases.response_generation_unitary: %s", type(_exc).__name__, _exc)
         required = ("objective", "governed", "stop", "personhood")
         evidence_terms = ("tool", "receipt", "trace")
         disallowed = (

@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import inspect
 import json
+import logging
 import os
 import re
 import shlex
@@ -18,6 +19,8 @@ import requests
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+
+logger = logging.getLogger("core.capability_engine")
 
 try:
     from RestrictedPython import compile_restricted, safe_builtins, utility_builtins
@@ -2483,8 +2486,8 @@ class CapabilityEngine(AuraBaseModule):
                 elif re.match(r"^-?\d+\.\d+$", v_strip):
                     try:
                         normalized[k] = float(v_strip)
-                    except ValueError:
-                        pass
+                    except ValueError as _exc:
+                        logger.debug("Suppressed %s in core.capability_engine: %s", type(_exc).__name__, _exc)
         return normalized
 
     @staticmethod
@@ -3130,8 +3133,8 @@ class CapabilityEngine(AuraBaseModule):
                     try:
                         exec_time_ms = (time.monotonic() - exec_start) * 1000.0
                         await dev_mode.complete_tool_execution(tool_trace, result, exec_time_ms)
-                    except (ImportError, AttributeError, RuntimeError):
-                        pass
+                    except (ImportError, AttributeError, RuntimeError) as _exc:
+                        logger.debug("Suppressed %s in core.capability_engine: %s", type(_exc).__name__, _exc)
 
             except (ImportError, AttributeError, RuntimeError) as e:
                 _record_capability_degradation(

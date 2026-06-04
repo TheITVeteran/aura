@@ -202,8 +202,8 @@ class ResearchCycle:
                 self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.autonomy.research_cycle: %s", type(_exc).__name__, _exc)
             except RESEARCH_RECOVERABLE_ERRORS as exc:
                 _record_research_degradation(
                     exc,

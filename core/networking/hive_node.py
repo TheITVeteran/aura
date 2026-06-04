@@ -261,8 +261,8 @@ class HiveNode:
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except _HIVE_ERRORS:
-                        pass
+                    except _HIVE_ERRORS as _exc:
+                        logger.debug("Suppressed %s in core.networking.hive_node: %s", type(_exc).__name__, _exc)
         return {"sent": sent, "failed": failed}
 
     async def _gossip_loop(self) -> None:
@@ -283,8 +283,8 @@ class HiveNode:
             self._gossip_task.cancel()
             try:
                 await self._gossip_task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.networking.hive_node: %s", type(_exc).__name__, _exc)
             self._gossip_task = None
 
     async def _close_server(self) -> None:

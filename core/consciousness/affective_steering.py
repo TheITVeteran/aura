@@ -1312,8 +1312,8 @@ class SubstrateSyncThread:
                     if surface_override is not None:
                         try:
                             new_alpha = min(new_alpha, max(0.01, float(surface_override)))
-                        except (TypeError, ValueError):
-                            pass
+                        except (TypeError, ValueError) as _exc:
+                            logger.debug("Suppressed %s in core.consciousness.affective_steering: %s", type(_exc).__name__, _exc)
                     self._engine.telemetry.alpha = new_alpha
                     
                     for hook in self._hooks:

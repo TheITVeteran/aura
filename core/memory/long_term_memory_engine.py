@@ -168,8 +168,8 @@ class LongTermMemoryEngine:
             self._consolidation_task.cancel()
             try:
                 await asyncio.wait_for(self._consolidation_task, timeout=2.0)
-            except (asyncio.CancelledError, TimeoutError):
-                pass
+            except (asyncio.CancelledError, TimeoutError) as _exc:
+                logger.debug("Suppressed %s in core.memory.long_term_memory_engine: %s", type(_exc).__name__, _exc)
             finally:
                 self._consolidation_task = None
         return self._save_memories()

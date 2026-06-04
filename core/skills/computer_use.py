@@ -272,8 +272,8 @@ class ComputerUseSkill(BaseSkill):
                     else msg or "AppleScript native execution failed."
                 )
                 raise RuntimeError(self._normalize_script_error(err_str))
-            except (ImportError, AttributeError):
-                pass
+            except (ImportError, AttributeError) as _exc:
+                logger.debug("Suppressed %s in core.skills.computer_use: %s", type(_exc).__name__, _exc)
 
         try:
             result = subprocess.run(

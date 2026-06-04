@@ -51,8 +51,8 @@ def parse_instance_lock_pid(raw: str) -> int | None:
     first_line = text.splitlines()[0].strip()
     try:
         return int(first_line)
-    except ValueError:
-        pass
+    except ValueError as _exc:
+        logger.debug("Suppressed %s in core.utils.singleton: %s", type(_exc).__name__, _exc)
     try:
         payload = json.loads(text)
     except (json.JSONDecodeError, TypeError, ValueError):

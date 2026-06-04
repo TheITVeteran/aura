@@ -4,7 +4,6 @@ Enforces the capabilities manifest at runtime.
 Acts as a gatekeeper for tool calls and file system operations.
 """
 
-from core.runtime.errors import record_degradation
 import ipaddress
 import json
 import logging
@@ -12,9 +11,10 @@ import os
 import socket
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.config import config
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.CapabilityGuard")
 _NETWORK_RESOLUTION_ERRORS = (OSError, UnicodeError, ValueError)
@@ -118,8 +118,8 @@ class CapabilityGuard:
         try:
             if p.relative_to(sys_temp):
                 return True
-        except ValueError:
-            pass
+        except ValueError as _exc:
+            logger.debug("Suppressed %s in core.middleware.capability_guard: %s", type(_exc).__name__, _exc)
 
         logger.warning("SecurityViolation: Access Denied (Path not in manifest): %s", path)
         return False
@@ -155,8 +155,8 @@ class CapabilityGuard:
         try:
             if p.relative_to(sys_temp):
                 return True
-        except ValueError:
-            pass
+        except ValueError as _exc:
+            logger.debug("Suppressed %s in core.middleware.capability_guard: %s", type(_exc).__name__, _exc)
 
         logger.warning("SecurityViolation: Write Denied (Path not in manifest): %s", path)
         return False

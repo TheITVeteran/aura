@@ -46,6 +46,7 @@ INSTALL:
   patch_context_assembler()   # call once at startup, before first request
 """
 from __future__ import annotations
+
 import logging
 import re
 from typing import TYPE_CHECKING, Dict, List
@@ -223,7 +224,9 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     """
     try:
         from core.brain.llm.context_assembler import (
-            ContextAssembler, AURA_IDENTITY, AURA_FEW_SHOT_EXAMPLES
+            AURA_FEW_SHOT_EXAMPLES,
+            AURA_IDENTITY,
+            ContextAssembler,
         )
     except ImportError as exc:
         logger.error("ContextAssemblerPatch: import failed — %s", exc)
@@ -247,8 +250,8 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     black_box_steering = False
     try:
         black_box_steering = ContextAssembler._black_box_steering_enabled(state)
-    except (AttributeError, TypeError):
-        pass
+    except (AttributeError, TypeError) as _exc:
+        logger.debug("Suppressed %s in core.brain.llm.context_assembler_patch: %s", type(_exc).__name__, _exc)
 
     identity_rag_context = ""
     if not is_casual:
@@ -344,8 +347,8 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     try:
         from core.brain.llm.context_assembler import ContextAssembler
         depth = ContextAssembler._conversation_depth(state)
-    except (ImportError, AttributeError):
-        pass
+    except (ImportError, AttributeError) as _exc:
+        logger.debug("Suppressed %s in core.brain.llm.context_assembler_patch: %s", type(_exc).__name__, _exc)
     elasticity = 0 if depth < 10 else 1 if depth < 20 else 2 if depth < 30 else 3
 
     cognitive_metrics = ""
@@ -521,8 +524,8 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
                         f"Mild divergence ({div_val:.2f}) -- dominant interpretation exists "
                         f"but alternative readings are available."
                     )
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _exc:
+                logger.debug("Suppressed %s in core.brain.llm.context_assembler_patch: %s", type(_exc).__name__, _exc)
         personhood_context = "\n\n".join(personhood_blocks) + "\n\n" if personhood_blocks else ""
 
     if is_casual:
@@ -649,8 +652,8 @@ def _patched_build_messages(
     """
     try:
         from core.brain.llm.context_assembler import ContextAssembler
-        from core.utils.context_allocator import get_token_governor, ContextPriority
         from core.state.aura_state import CognitiveMode
+        from core.utils.context_allocator import ContextPriority, get_token_governor
     except ImportError as exc:
         logger.error("ContextAssemblerPatch.build_messages: import failed — %s", exc)
         from core.brain.llm.context_assembler import ContextAssembler

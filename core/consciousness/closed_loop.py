@@ -214,8 +214,8 @@ class OutputReceptor:
                 data = json.loads(match)
                 if isinstance(data, dict) and "actuator" in data:
                     actions_found.append((data["actuator"], data.get("params", {})))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as _exc:
+                logger.debug("Suppressed %s in core.consciousness.closed_loop: %s", type(_exc).__name__, _exc)
 
         # 2. Parse functional format (e.g. reroute_vessel(Vessel_Alpha, 90, 15))
         if not actions_found:

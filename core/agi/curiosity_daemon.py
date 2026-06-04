@@ -48,8 +48,8 @@ class AutonomousCuriosityDaemon:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.agi.curiosity_daemon: %s", type(_exc).__name__, _exc)
             self._task = None
         logger.info("AutonomousCuriosityDaemon background task stopped.")
 
@@ -89,8 +89,8 @@ class AutonomousCuriosityDaemon:
                             from core.executive.authority_gateway import get_authority_gateway
 
                             resolved_gate = get_authority_gateway()
-                        except ImportError:
-                            pass
+                        except ImportError as _exc:
+                            logger.debug("Suppressed %s in core.agi.curiosity_daemon: %s", type(_exc).__name__, _exc)
 
                     # 4. Generate/request capability token if we have a gate
                     token = None

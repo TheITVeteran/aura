@@ -242,8 +242,8 @@ def record_degradation(
     try:
         from core.runtime.shutdown_coordinator import is_shutdown_requested
         _shutting_down = is_shutdown_requested()
-    except (ImportError, RuntimeError):
-        pass
+    except (ImportError, RuntimeError) as _exc:
+        logger.debug("Suppressed %s in core.runtime.errors: %s", type(_exc).__name__, _exc)
     if _shutting_down:
         severity = "debug"  # Demote cleanup-time events during shutdown.
     if classification in (FallbackClassification.GOVERNANCE_BYPASS, FallbackClassification.STATE_CORRUPTION_RISK):
@@ -257,7 +257,7 @@ def record_degradation(
     failure_policy_error = ""
     try:
         from core.container import ServiceContainer
-        from core.runtime.mode import get_mode, AuraMode
+        from core.runtime.mode import AuraMode, get_mode
         if not _shutting_down and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
             resolved = ServiceContainer._resolve_name(subsystem)
             with ServiceContainer._lock:
@@ -270,8 +270,8 @@ def record_degradation(
                 )
                 if severity != "critical":
                     severity = "critical"
-    except (ImportError, RuntimeError):
-        pass
+    except (ImportError, RuntimeError) as _exc:
+        logger.debug("Suppressed %s in core.runtime.errors: %s", type(_exc).__name__, _exc)
 
 
     error_type = type(error).__qualname__

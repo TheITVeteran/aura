@@ -284,8 +284,8 @@ class ContextCompressionService:
             except (OSError, RuntimeError, TypeError, ValueError):
                 try:
                     os.unlink(tmp_name)
-                except FileNotFoundError:
-                    pass
+                except FileNotFoundError as _exc:
+                    logger.debug("Suppressed %s in core.context.context_compression: %s", type(_exc).__name__, _exc)
                 raise
         except (OSError, TypeError, ValueError, RuntimeError) as e:
             _emit_context_fault(

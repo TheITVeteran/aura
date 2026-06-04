@@ -1,13 +1,14 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
-import logging
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
-from core.event_bus import get_event_bus
-from core.container import ServiceContainer
+
 from core.config import config
+from core.container import ServiceContainer
+from core.event_bus import get_event_bus
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IntegrityGuard")
 
@@ -108,8 +109,8 @@ class IntegrityGuard:
                     parent = process.parent()
                     if parent:
                         chain.append(parent)
-                except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
-                    pass
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as _exc:
+                    logger.debug("Suppressed %s in core.sovereignty.integrity_guard: %s", type(_exc).__name__, _exc)
             for proc in chain:
                 name = ""
                 try:

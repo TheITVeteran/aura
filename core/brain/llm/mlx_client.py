@@ -2507,8 +2507,8 @@ class MLXLocalClient:
         """Returns True if the worker subprocess reports steering as active."""
         try:
             return bool(self._steering_active.value)
-        except (AttributeError, TypeError, ValueError, OSError):
-            pass
+        except (AttributeError, TypeError, ValueError, OSError) as _exc:
+            logger.debug("Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc)
         try:
             sm = getattr(self, "_substrate_mem", None)
             if sm is None:
@@ -3562,8 +3562,8 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
                     "Proof-primary run refused lower local model lane: "
                     f"{target_name} != {primary_name}"
                 )
-    except ImportError:
-        pass
+    except ImportError as _exc:
+        logger.debug("Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc)
 
     backend = get_local_backend()
     # [STABILITY v53] Force llama_cpp for .gguf artifacts, even if the

@@ -429,8 +429,8 @@ class ConversationPersistence:
                     return
                 self._save_task = loop.create_task(self.save_async())
                 return
-        except RuntimeError:
-            pass
+        except RuntimeError as _exc:
+            logger.debug("Suppressed %s in core.memory.conversation_persistence: %s", type(_exc).__name__, _exc)
 
         self.save_sync()
 

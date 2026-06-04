@@ -12,7 +12,6 @@ This closes the "image generation" gap in tool parity.
 
 import asyncio
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -118,8 +117,8 @@ class ImageGenSkill(BaseSkill):
                 return "mps"
             if torch.cuda.is_available():
                 return "cuda"
-        except (ImportError, AttributeError):
-            pass
+        except (ImportError, AttributeError) as _exc:
+            logger.debug("Suppressed %s in core.skills.image_gen: %s", type(_exc).__name__, _exc)
         return "cpu"
 
     def _load_pipeline(self, img2img: bool = False) -> bool:
@@ -180,8 +179,8 @@ class ImageGenSkill(BaseSkill):
                 if hasattr(pipe, "enable_attention_slicing"):
                     try:
                         pipe.enable_attention_slicing()
-                    except _IMAGEGEN_RECOVERABLE_ERRORS:
-                        pass
+                    except _IMAGEGEN_RECOVERABLE_ERRORS as _exc:
+                        logger.debug("Suppressed %s in core.skills.image_gen: %s", type(_exc).__name__, _exc)
 
                 if img2img:
                     self._img2img_pipeline = pipe

@@ -8,7 +8,8 @@ import asyncio
 import logging
 import os
 import time
-from typing import Dict, Any
+from typing import Any, Dict
+
 from core.container import ServiceContainer
 from core.memory.semantic_defrag import SemanticDefragmenter
 from core.runtime.errors import record_degradation
@@ -44,8 +45,8 @@ class KnowledgeCurator:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.memory.knowledge_curator: %s", type(_exc).__name__, _exc)
             self._task = None
         logger.info("KnowledgeCurator service SHUTDOWN.")
         return True
@@ -93,15 +94,11 @@ class KnowledgeCurator:
                     if isinstance(results, dict):
                         ids = results.get("ids", [])
                         metas = results.get("metadatas", [])
-                        docs = results.get("documents", [])
-                        
                         now = time.time()
                         to_delete = []
                         
                         for idx, memory_id in enumerate(ids):
                             metadata = metas[idx] if idx < len(metas) and isinstance(metas[idx], dict) else {}
-                            content = docs[idx] if idx < len(docs) else ""
-                            
                             timestamp = metadata.get("timestamp") or metadata.get("created") or now
                             age_s = now - timestamp
                             importance = metadata.get("importance") or 0.5

@@ -10,10 +10,6 @@ checks are green", not "Aura is proven conscious" or "the whole product is
 perfect".
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import json
 import os
@@ -24,6 +20,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 
 @dataclass
@@ -275,9 +274,9 @@ def run_doctor(root: str | Path, *, include_gates: bool = True) -> DoctorReport:
 
 
 import gc
+import logging
 import sqlite3
 import threading
-import logging
 
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 
@@ -374,8 +373,8 @@ class FlagshipDoctorDaemon:
 
             if proof_run_active():
                 return "proof_run_active"
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
 
         try:
             from core.runtime import foreground_guard
@@ -383,8 +382,8 @@ class FlagshipDoctorDaemon:
             reason = foreground_guard.foreground_activity_reason()
             if reason:
                 return str(reason)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
 
         try:
             from core.container import ServiceContainer
@@ -395,8 +394,8 @@ class FlagshipDoctorDaemon:
                 status = status_getter()
                 if bool(getattr(status, "active", False)):
                     return "foreground_generation"
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
 
         return None
 
@@ -456,8 +455,8 @@ class FlagshipDoctorDaemon:
             try:
                 import psutil
                 ram_percent = psutil.virtual_memory().percent
-            except ImportError:
-                pass
+            except ImportError as _exc:
+                logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
                 
             # Trigger self-healing if limits are violated
             should_heal, lag_context, ram_pressure = self._should_self_heal(
@@ -528,8 +527,8 @@ class FlagshipDoctorDaemon:
                 logger.info("🗄️ Triggering global DatabaseMaintenance pass...")
                 maint.run_maintenance(force=True)
                 compacted_count += 1
-        except ImportError:
-            pass
+        except ImportError as _exc:
+            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
         except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as e:
             logger.error("Global database maintenance run failed: %s", e)
             

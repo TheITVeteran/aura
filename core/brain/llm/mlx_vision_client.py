@@ -1,9 +1,9 @@
+import logging
 import multiprocessing as mp
-import threading
 import queue
+import threading
 import time
 import uuid
-import logging
 from typing import Optional
 
 from .mlx_vision_worker import _mlx_vision_worker_loop
@@ -171,5 +171,5 @@ class MLXVisionClient:
     def __del__(self):
         try:
             self.stop()
-        except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
-            pass
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as _exc:
+            logger.debug("Suppressed %s in core.brain.llm.mlx_vision_client: %s", type(_exc).__name__, _exc)

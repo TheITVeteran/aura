@@ -201,8 +201,8 @@ class DynamicRouter:
             self._learning_task.cancel()
             try:
                 await asyncio.wait_for(self._learning_task, timeout=STOP_TIMEOUT_S)
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.control.dynamic_router: %s", type(_exc).__name__, _exc)
             except TimeoutError as exc:
                 _emit_router_fault(
                     exc,

@@ -49,8 +49,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -149,8 +148,8 @@ class TemporalExperienceEngine:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.consciousness.temporal_experience: %s", type(_exc).__name__, _exc)
         logger.info("🕐 TemporalExperienceEngine stopped")
 
     async def _autonomic_cycle(self):

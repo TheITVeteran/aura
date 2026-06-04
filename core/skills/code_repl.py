@@ -12,7 +12,6 @@ This closes the "code REPL" gap in tool parity.
 
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import tempfile
@@ -139,8 +138,8 @@ class CodeREPLSkill(BaseSkill):
         if params.capture_files:
             try:
                 pre_files = set(session_dir.iterdir())
-            except OSError:
-                pass
+            except OSError as _exc:
+                logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
 
         # Strategy 1: Use core.sandbox.runner (preferred — full isolation)
         result = await self._execute_via_sandbox_runner(
@@ -173,8 +172,8 @@ class CodeREPLSkill(BaseSkill):
                 for f in post_files - pre_files:
                     if f.is_file():
                         new_files.append(str(f))
-            except OSError:
-                pass
+            except OSError as _exc:
+                logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
 
         # Ground affect signals into Heartstone
         self._ground_affect(result.get("ok", False), result.get("stderr", ""))
@@ -302,8 +301,8 @@ class CodeREPLSkill(BaseSkill):
                 process.kill()
                 try:
                     await asyncio.wait_for(process.communicate(), timeout=2.0)
-                except _REPL_RECOVERABLE_ERRORS:
-                    pass
+                except _REPL_RECOVERABLE_ERRORS as _exc:
+                    logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
                 return {
                     "ok": False,
                     "error": f"Execution timed out after {timeout}s",
@@ -337,8 +336,8 @@ class CodeREPLSkill(BaseSkill):
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except OSError:
-                    pass
+                except OSError as _exc:
+                    logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
 
     def _ground_affect(self, success: bool, stderr: str) -> None:
         """Ground execution results into Heartstone Values."""

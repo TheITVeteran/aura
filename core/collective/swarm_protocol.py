@@ -1,12 +1,13 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
-import logging
 import json
+import logging
 import socket
 import time
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict
+
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Mycelium.Swarm")
 
@@ -82,8 +83,8 @@ class SwarmProtocol:
             try:
                 writer.close()
                 await writer.wait_closed()
-            except (OSError, ConnectionError):
-                pass
+            except (OSError, ConnectionError) as _exc:
+                logger.debug("Suppressed %s in core.collective.swarm_protocol: %s", type(_exc).__name__, _exc)
 
     async def _process_gossip(self, message: Dict[str, Any]):
         msg_type = message.get("type")

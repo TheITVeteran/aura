@@ -255,8 +255,8 @@ class InferenceGate:
             fallback = generate_offline_fallback_response(prompt)
             if fallback and len(str(fallback).strip()) > 0:
                 return fallback
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            pass
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+            logger.debug("Suppressed %s in core.brain.inference_gate: %s", type(_exc).__name__, _exc)
         
         # Last resort: structured acknowledgment that always works
         return "I'm processing that. My inference pipeline is working on your request—let me take a moment."

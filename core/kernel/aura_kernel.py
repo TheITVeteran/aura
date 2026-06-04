@@ -1072,8 +1072,8 @@ class AuraKernel:
                         try:
                             if "phase_task" in locals() and not phase_task.done():
                                 phase_task.cancel()
-                        except (AttributeError, RuntimeError):
-                            pass
+                        except (AttributeError, RuntimeError) as _exc:
+                            logger.debug("Suppressed %s in core.kernel.aura_kernel: %s", type(_exc).__name__, _exc)
                         logger.warning(
                             "⏹️ Priority kernel tick cancelled during %s; propagating caller timeout/cancellation.",
                             phase_name,

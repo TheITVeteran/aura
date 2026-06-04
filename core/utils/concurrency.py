@@ -415,8 +415,8 @@ class EventLoopMonitor:
 
             if proof_run_active():
                 return "proof_run_active"
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
         try:
             from core.runtime import foreground_guard
@@ -424,8 +424,8 @@ class EventLoopMonitor:
             reason = foreground_guard.foreground_activity_reason()
             if reason:
                 return str(reason)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
         try:
             from core.container import ServiceContainer
@@ -436,8 +436,8 @@ class EventLoopMonitor:
                 status = status_getter()
                 if bool(getattr(status, "active", False)):
                     return "foreground_generation"
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
         return None
 

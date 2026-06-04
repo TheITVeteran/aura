@@ -103,8 +103,8 @@ class LymphaticReaper:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.ops.lymphatic_reaper: %s", type(_exc).__name__, _exc)
             except _REAPER_ERRORS as exc:
                 self._remember_error(exc)
                 _record_reaper_degradation(

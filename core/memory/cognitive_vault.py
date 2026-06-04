@@ -111,8 +111,8 @@ class CognitiveVault:
             self._worker_task.cancel()
             try:
                 await asyncio.wait_for(self._worker_task, timeout=2.0)
-            except (asyncio.CancelledError, TimeoutError):
-                pass
+            except (asyncio.CancelledError, TimeoutError) as _exc:
+                logger.debug("Suppressed %s in core.memory.cognitive_vault: %s", type(_exc).__name__, _exc)
             finally:
                 self._worker_task = None
         logger.info("CognitiveVault SHUTDOWN.")

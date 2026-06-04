@@ -15,9 +15,7 @@ This closes the "X/Twitter tools" gap in tool parity.
 """
 
 import asyncio
-import json
 import logging
-import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -222,8 +220,8 @@ class XToolsSkill(BaseSkill):
                     "engine": "api",
                     "summary": f"Fetched thread for tweet {tweet_id}",
                 }
-            except _XTOOLS_RECOVERABLE_ERRORS:
-                pass
+            except _XTOOLS_RECOVERABLE_ERRORS as _exc:
+                logger.debug("Suppressed %s in core.skills.x_tools: %s", type(_exc).__name__, _exc)
 
         # Strategy 2: Browser scrape
         browser = await self._get_browser()
@@ -258,8 +256,8 @@ class XToolsSkill(BaseSkill):
                     "engine": "api",
                     "summary": f"Fetched {len(trends)} trending topics",
                 }
-            except _XTOOLS_RECOVERABLE_ERRORS:
-                pass
+            except _XTOOLS_RECOVERABLE_ERRORS as _exc:
+                logger.debug("Suppressed %s in core.skills.x_tools: %s", type(_exc).__name__, _exc)
 
         # Strategy 2: Web search
         try:
@@ -302,8 +300,8 @@ class XToolsSkill(BaseSkill):
                     "engine": "api",
                     "summary": f"Fetched {len(tweets)} tweets from @{username}",
                 }
-            except _XTOOLS_RECOVERABLE_ERRORS:
-                pass
+            except _XTOOLS_RECOVERABLE_ERRORS as _exc:
+                logger.debug("Suppressed %s in core.skills.x_tools: %s", type(_exc).__name__, _exc)
 
         # Fallback: browser scrape
         browser = await self._get_browser()

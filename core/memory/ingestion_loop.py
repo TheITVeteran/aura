@@ -7,10 +7,10 @@ Chunks retrieved content and writes it into semantic memory.
 import asyncio
 import inspect
 import logging
-import time
-from typing import Any, List
-from core.container import ServiceContainer
+from typing import List
+
 from core.actuators.actuator_registry import get_actuator_registry
+from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.IngestionLoop")
@@ -44,8 +44,8 @@ class IngestionLoop:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.memory.ingestion_loop: %s", type(_exc).__name__, _exc)
             self._task = None
         logger.info("IngestionLoop background service SHUTDOWN.")
         return True

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import re
 import time
 import uuid
@@ -23,6 +24,8 @@ from core.base_module import AuraBaseModule
 from core.container import ServiceContainer
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
+
+logger = logging.getLogger("core.collective.delegator")
 
 DELEGATOR_RECOVERABLE_ERRORS = (
     ImportError,
@@ -332,8 +335,8 @@ class AgentDelegator(AuraBaseModule):
         if isinstance(task, asyncio.Task):
             try:
                 await asyncio.wait_for(task, timeout=2.0)
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                logger.debug("Suppressed %s in core.collective.delegator: %s", type(_exc).__name__, _exc)
             except TimeoutError as exc:
                 self._emit_delegator_fault(
                     exc,
