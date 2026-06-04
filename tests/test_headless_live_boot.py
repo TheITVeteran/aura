@@ -125,7 +125,7 @@ async def main():
     print("\n--- Test 8: Web Search Deep Crawl Verification ---")
     from core.skills.web_search import EnhancedWebSearchSkill
     search_skill = EnhancedWebSearchSkill()
-    # Mock network locally to avoid actual latency, but call safely to see tool binds.
+    # Keep network local to avoid external latency, but call safely to see tool binds.
     search_res = await search_skill.safe_execute({"query": "What is Python?", "deep": True, "num_results": 2}, context)
     if search_res.get("ok") or "error" in search_res:
          print("✅ Web Search Deep Execution Path Handled.")

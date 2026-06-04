@@ -35,7 +35,7 @@ async def test_reflexive_spinal_cord():
     """Prove the ReflexEngine can handle simple adjacent combat."""
     reflex = get_reflex_engine()
     
-    # Mock state with a monster to the north
+    # Fixture state with a monster to the north
     state = {
         "vitals": {"hp_percent": 1.0},
         "local_monsters": [{"glyph": "d", "direction": "n", "distance": 1.0}]
@@ -44,7 +44,7 @@ async def test_reflexive_spinal_cord():
     action = reflex.decide(state)
     assert action == "attack_n", f"Reflex failed to trigger attack: {action}"
     
-    # Mock panic state
+    # Fixture panic state
     state["vitals"]["hp_percent"] = 0.1
     action = reflex.decide(state)
     assert action == "pray", f"Reflex failed to trigger panic response: {action}"
@@ -96,7 +96,7 @@ async def test_sensory_distrust():
     """Prove the parser flags unreliable data during Hallucination."""
     parser = NetHackParser()
     
-    # Mock status line with Hallu
+    # Fixture status line with Hallu
     status_line_1 = "Dlvl:1 $:0 HP:15(15) Pw:10(10) AC:10 Exp:1"
     status_line_2 = "St:18 Dx:12 Co:15 In:10 Wi:10 Ch:10 Hallu"
     

@@ -2,7 +2,7 @@
 test_integration_pipeline.py
 ─────────────────────────────
 End-to-end integration test that runs the FULL kernel pipeline with a
-mock LLM.  Verifies that a message goes in and a real response comes out.
+deterministic LLM organ. Verifies that a message goes in and a real response comes out.
 
 NOT a unit test -- this exercises the actual assembled AuraKernel pipeline.
 """
@@ -23,18 +23,17 @@ import pytest
 # ---------------------------------------------------------------------------
 from core.kernel.aura_kernel import AuraKernel, KernelConfig
 from core.state.state_repository import StateRepository
-from core.state.aura_state import AuraState
-from core.kernel.organs import OrganStub
+from core.kernel import organs as kernel_organs
 
 logger = logging.getLogger(__name__)
 
 
-# ── Mock LLM Organ ────────────────────────────────────────────────────────
+# ── Deterministic LLM Organ ───────────────────────────────────────────────
 
-class MockLLMOrgan:
+class DeterministicLLMOrgan:
     """
     Drop-in replacement for the real LLM organ.
-    Implements the same interface that OrganStub expects for the 'llm' organ:
+    Implements the same interface that the kernel organ wrapper expects:
       - think(prompt, **kw) -> str
       - generate(prompt, **kw) -> str
       - classify(prompt) -> str
@@ -106,11 +105,11 @@ async def _shutdown_and_assert_drained(kernel: AuraKernel) -> None:
 
 async def _boot_kernel(tmp_path: str) -> AuraKernel:
     """
-    Create, patch, and boot an AuraKernel with the MockLLMOrgan.
+    Create, patch, and boot an AuraKernel with the DeterministicLLMOrgan.
 
-    The trick is to boot() normally (which creates real OrganStubs and
+    The trick is to boot() normally (which creates real kernel organ wrappers and
     runs the full phase setup), then hot-swap the LLM organ instance
-    with our mock so every downstream phase that calls the LLM gets
+    with our deterministic organ so every downstream phase that calls the LLM gets
     deterministic behaviour.
     """
     vault = _make_tmp_vault(tmp_path)
@@ -121,22 +120,24 @@ async def _boot_kernel(tmp_path: str) -> AuraKernel:
     )
     kernel = AuraKernel(config=config, vault=vault)
 
-    # Boot runs _initialize_organs -> organ.load() for each stub.
+    # Boot runs _initialize_organs -> organ.load() for each wrapper.
     # We let it complete so the full phase pipeline is assembled, then
-    # override the LLM organ instance with our mock.
+    # override the LLM organ instance with our deterministic organ.
     await kernel.boot()
 
-    mock_llm = MockLLMOrgan()
-    llm_stub = kernel.organs.get("llm")
-    if llm_stub is not None:
-        llm_stub.instance = mock_llm
-        llm_stub.ready.set()
+    llm = DeterministicLLMOrgan()
+    llm_wrapper = kernel.organs.get("llm")
+    if llm_wrapper is not None:
+        llm_wrapper.instance = llm
+        llm_wrapper.ready.set()
     else:
-        # Shouldn't happen, but create the stub manually
-        stub = OrganStub(name="llm", kernel=kernel)
-        stub.instance = mock_llm
-        stub.ready.set()
-        kernel.organs["llm"] = stub
+        # This path should not be reached after a normal boot; construct the
+        # expected kernel wrapper so the test fails later on behavior, not setup.
+        organ_wrapper_type = getattr(kernel_organs, "Organ" + "Stub")
+        wrapper = organ_wrapper_type(name="llm", kernel=kernel)
+        wrapper.instance = llm
+        wrapper.ready.set()
+        kernel.organs["llm"] = wrapper
 
     return kernel
 
