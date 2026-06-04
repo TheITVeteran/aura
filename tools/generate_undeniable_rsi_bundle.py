@@ -2,29 +2,31 @@
 """Generate an undeniable RSI proof bundle by running the AutonomousSuccessorEngine."""
 from __future__ import annotations
 
-import os
-os.environ["AURA_EAGER_CORTEX_WARMUP"] = "1"
-os.environ["AURA_METABOLISM_RATE"] = "0"
-os.environ["AURA_STRICT_RUNTIME"] = "1"  # Fully disables volition/MindTick
-
 import argparse
 import asyncio
 import contextlib
 import fcntl
 import json
-import subprocess
+import os
+import sys
 import time
 from pathlib import Path
-import sys
+from subprocess import STDOUT
 from typing import Any
+
+import httpx
+
+os.environ["AURA_EAGER_CORTEX_WARMUP"] = "1"
+os.environ["AURA_METABOLISM_RATE"] = "0"
+os.environ["AURA_STRICT_RUNTIME"] = "1"  # Fully disables volition/MindTick
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import httpx
-
-from core.learning.autonomous_rsi import AutonomousSuccessorEngine
+from core.learning.autonomous_rsi import AutonomousSuccessorEngine  # noqa: E402
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 RUNTIME_LOG = ROOT / "artifacts" / "rsi_frozen_generations" / "cortex_32b_runtime.log"
 LOCK_PATH = ROOT / "artifacts" / "rsi_frozen_generations" / ".generate_undeniable_rsi.lock"
@@ -154,7 +156,15 @@ def start_cortex_runtime(*, runtime_url: str, model_path: str) -> dict[str, Any]
         "256",
         "--no-cache-prompt",
     ]
-    proc = subprocess.Popen(cmd, stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    proc = get_subprocess_gateway().spawn(
+        cmd,
+        stdout=log_handle,
+        stderr=STDOUT,
+        text=False,
+        start_new_session=True,
+        offline_tooling=True,
+        source="proof_tooling:rsi_cortex_runtime",
+    )
     return {"started_pid": proc.pid, "command": cmd, "log": str(RUNTIME_LOG)}
 
 
@@ -314,7 +324,16 @@ def main():
     metadata = json.loads((gen_dir / "generation_metadata.json").read_text(encoding="utf-8"))
     
     # We also need git commit and reproduction command
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+    commit_result = get_subprocess_gateway().run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        timeout=30,
+        read_only=True,
+        source="proof_tooling:rsi_commit_sha",
+    )
+    if commit_result.returncode != 0:
+        raise RuntimeError(f"failed to resolve git commit SHA: {commit_result.stderr.strip()}")
+    commit = commit_result.stdout.strip()
     claim = l3_claim_summary(
         result=result,
         solver_source=solver_source,
@@ -349,7 +368,7 @@ def main():
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_text(out_path, json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Undeniable RSI Bundle written to {out_path}")
     return 0 if bundle["passed"] else 1
 

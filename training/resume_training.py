@@ -9,11 +9,16 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
+from subprocess import STDOUT
 
 PROJECT_ROOT = Path(os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 BASE_MODEL = os.environ.get(
     "AURA_TRAINING_BASE_MODEL",
     str(PROJECT_ROOT / "models" / "Qwen2.5-32B-Instruct-4bit"),
@@ -185,11 +190,13 @@ def main() -> int:
             f"\n--- Resume Zenith from {resume_file.name}, targeting 90153 total iters, seq=4096 ---\n"
         )
         log.flush()
-        process = subprocess.Popen(
+        process = get_subprocess_gateway().spawn(
             cmd,
             cwd=PROJECT_ROOT,
             stdout=log,
-            stderr=subprocess.STDOUT,
+            stderr=STDOUT,
+            offline_tooling=True,
+            source="training_tooling:resume_training",
         )
         process.wait()
         return process.returncode

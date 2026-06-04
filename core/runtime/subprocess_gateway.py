@@ -6,13 +6,18 @@ out while still receiving consistent validation and logging behavior.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import IO, Any, Mapping, Sequence
+from typing import IO, Any
 
-from core.governance_context import require_governance
-
+from core.governance_context import (
+    GovernanceViolation,
+    governance_runtime_active,
+    require_governance,
+)
 
 _EFFECT_DOMAINS = (
     "tool_execution",
@@ -20,6 +25,14 @@ _EFFECT_DOMAINS = (
     "file_write",
     "self_modification",
 )
+_OFFLINE_TOOLING_SOURCE_PREFIXES = (
+    "benchmark_tooling:",
+    "certification_tooling:",
+    "maintenance_tooling:",
+    "proof_tooling:",
+    "training_tooling:",
+)
+logger = logging.getLogger("Aura.SubprocessGateway")
 
 
 def _coerce_argv(argv: Sequence[str]) -> list[str]:
@@ -37,6 +50,39 @@ def _coerce_cwd(cwd: str | os.PathLike[str] | None) -> str | None:
     return str(Path(cwd).expanduser().resolve())
 
 
+def _validate_offline_tooling_bypass(
+    *,
+    offline_tooling: bool,
+    source: str,
+    command: Sequence[str],
+) -> bool:
+    """Allow named repo tooling to launch child processes outside live Aura.
+
+    This is intentionally not a general governance bypass. It exists for CLI
+    proof, certification, benchmark, maintenance, and training wrappers that
+    orchestrate Aura from outside her live runtime. If live/strict governance is
+    active, the bypass fails closed and callers must enter a governed scope.
+    """
+    if not offline_tooling:
+        return False
+    if governance_runtime_active():
+        raise GovernanceViolation(
+            f"offline subprocess tooling bypass denied while live governance is active: {source}"
+        )
+    if not any(source.startswith(prefix) for prefix in _OFFLINE_TOOLING_SOURCE_PREFIXES):
+        raise ValueError(
+            "offline subprocess tooling requires a source prefix of "
+            f"{', '.join(_OFFLINE_TOOLING_SOURCE_PREFIXES)}"
+        )
+    logger.info(
+        "offline subprocess tooling bypass source=%s argv0=%s argc=%s",
+        source,
+        command[0] if command else "",
+        len(command),
+    )
+    return True
+
+
 class SubprocessGateway:
     """Single owner for subprocess execution and spawning."""
 
@@ -48,10 +94,17 @@ class SubprocessGateway:
         env: Mapping[str, str] | None = None,
         timeout: float = 30.0,
         read_only: bool = False,
+        offline_tooling: bool = False,
+        capture_output: bool = True,
         source: str = "unknown",
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
-        if not read_only:
+        offline_bypass = _validate_offline_tooling_bypass(
+            offline_tooling=offline_tooling,
+            source=source,
+            command=command,
+        )
+        if not read_only and not offline_bypass:
             require_governance(
                 f"subprocess_gateway.run:{source}",
                 strict=True,
@@ -62,7 +115,7 @@ class SubprocessGateway:
             cwd=_coerce_cwd(cwd),
             env=dict(env) if env is not None else None,
             timeout=float(timeout),
-            capture_output=True,
+            capture_output=bool(capture_output),
             text=True,
             check=False,
             shell=False,
@@ -78,14 +131,21 @@ class SubprocessGateway:
         env: Mapping[str, str] | None = None,
         text: bool = True,
         start_new_session: bool = True,
+        offline_tooling: bool = False,
         source: str = "unknown",
     ) -> subprocess.Popen[Any]:
         command = _coerce_argv(argv)
-        require_governance(
-            f"subprocess_gateway.spawn:{source}",
-            strict=True,
-            allowed_domains=_EFFECT_DOMAINS,
+        offline_bypass = _validate_offline_tooling_bypass(
+            offline_tooling=offline_tooling,
+            source=source,
+            command=command,
         )
+        if not offline_bypass:
+            require_governance(
+                f"subprocess_gateway.spawn:{source}",
+                strict=True,
+                allowed_domains=_EFFECT_DOMAINS,
+            )
         return subprocess.Popen(
             command,
             stdout=stdout,

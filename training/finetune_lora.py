@@ -22,6 +22,7 @@ Usage:
     # 3. The adapter is saved to training/adapters/aura-personality/
     #    Previous adapter backed up to aura-personality-v4-backup/
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -30,11 +31,18 @@ from pathlib import Path
 
 # Paths
 TRAINING_DIR = Path(__file__).parent
+REPO_DIR = TRAINING_DIR.parent
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 DATA_DIR = TRAINING_DIR / "data"
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
 BACKUP_DIR = TRAINING_DIR / "adapters" / "aura-personality-v4-backup"
 TRAIN_FILE = DATA_DIR / "train.jsonl"
 VAL_FILE = DATA_DIR / "valid.jsonl"
+TRAINING_COMMAND_TIMEOUT_S = float(os.environ.get("AURA_TRAINING_COMMAND_TIMEOUT_S", "86400"))
 
 # ── Hyperparameters — Project Zenith ──────────────────────────────────────
 LORA_RANK = 32          # Up from 8 — architecture knowledge needs density
@@ -88,7 +96,7 @@ def backup_existing_adapter():
         if BACKUP_DIR.exists():
             shutil.rmtree(BACKUP_DIR)
         shutil.copytree(ADAPTER_DIR, BACKUP_DIR)
-        print(f"  Backup complete.")
+        print("  Backup complete.")
 
 
 def _latest_checkpoint() -> Path | None:
@@ -100,9 +108,7 @@ def _latest_checkpoint() -> Path | None:
 
 
 def main():
-    try:
-        from mlx_lm import lora as mlx_lora
-    except ImportError:
+    if importlib.util.find_spec("mlx_lm.lora") is None:
         print("ERROR: mlx-lm not installed. Run: pip install mlx-lm")
         sys.exit(1)
 
@@ -189,8 +195,9 @@ def main():
         }
     }
     lora_config_path = ADAPTER_DIR / "lora_config.yaml"
-    import yaml
     try:
+        import yaml
+
         with open(lora_config_path, "w") as f:
             yaml.dump(lora_config, f)
     except ImportError:
@@ -201,7 +208,7 @@ def main():
 
     # ── Build MLX LoRA command ───────────────────────────────────────────
     cmd_parts = [
-        "python", "-m", "mlx_lm", "lora",
+        sys.executable, "-m", "mlx_lm", "lora",
         "--model", str(model_path),
         "--train",
         "--data", str(DATA_DIR),
@@ -233,20 +240,26 @@ def main():
     print()
 
     try:
-        import subprocess
-        result = subprocess.run(cmd_parts, cwd=str(TRAINING_DIR.parent))
+        result = get_subprocess_gateway().run(
+            cmd_parts,
+            cwd=REPO_DIR,
+            timeout=TRAINING_COMMAND_TIMEOUT_S,
+            capture_output=False,
+            offline_tooling=True,
+            source="training_tooling:finetune_lora",
+        )
         print()
         if result.returncode == 0:
             print("=" * 60)
             print(f"  LoRA adapter saved to: {ADAPTER_DIR}")
-            print(f"  To use: Aura auto-loads from this path on next boot.")
+            print("  To use: Aura auto-loads from this path on next boot.")
             print(f"  Backup of previous adapter: {BACKUP_DIR}")
             print("=" * 60)
         else:
             print(f"Training exited with code {result.returncode}")
             sys.exit(result.returncode)
-    except Exception as e:
-        print(f"Fine-tune failed: {e}")
+    except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+        print(f"Fine-tune failed: {type(exc).__name__}: {exc}")
         print("You can run it manually:")
         print(f"  {cmd_display}")
         sys.exit(1)

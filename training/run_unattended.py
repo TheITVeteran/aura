@@ -14,19 +14,31 @@ import argparse
 import json
 import os
 import signal
-import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 TRAINING_DIR = Path(__file__).resolve().parent
 REPO_DIR = TRAINING_DIR.parent
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
 STATE_FILE = ADAPTER_DIR / "training_state.json"
 TRAIN_AND_FUSE = TRAINING_DIR / "train_and_fuse.py"
 RESUME_SCRIPT = TRAINING_DIR / "resume_training.py"
 CHECKPOINT_GLOB = "*_adapters.safetensors"
+_STATE_RECOVERABLE_ERRORS = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    TypeError,
+    ValueError,
+)
 
 _shutdown = threading.Event()
 
@@ -58,8 +70,8 @@ def update_state(*, started_at: str, **extra: object) -> dict:
     if STATE_FILE.exists():
         try:
             state = json.loads(STATE_FILE.read_text())
-        except Exception:
-            state = {}
+        except _STATE_RECOVERABLE_ERRORS as exc:
+            state = {"state_read_error": f"{type(exc).__name__}: {exc}"}
     state.update({
         "started_at": state.get("started_at") or started_at,
         "last_iter": last_iter,
@@ -77,21 +89,25 @@ def update_state(*, started_at: str, **extra: object) -> dict:
 def _spawn(cmd: list[str], *, started_at: str) -> int:
     """Run subprocess, heartbeat state, honour _shutdown."""
     print(f"[orch] $ {' '.join(cmd)}", flush=True)
-    proc = subprocess.Popen(cmd, cwd=str(REPO_DIR))
+    proc = get_subprocess_gateway().spawn(
+        cmd,
+        cwd=str(REPO_DIR),
+        offline_tooling=True,
+        source="training_tooling:run_unattended",
+    )
     try:
-        while True:
+        while not _shutdown.is_set():
             try:
                 return proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
+            except TimeoutExpired:
                 update_state(started_at=started_at, phase="running")
-                if _shutdown.is_set():
-                    print("[orch] shutdown — terminating subprocess")
-                    proc.terminate()
-                    try:
-                        return proc.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        return proc.wait()
+        print("[orch] shutdown — terminating subprocess")
+        proc.terminate()
+        try:
+            return proc.wait(timeout=30)
+        except TimeoutExpired:
+            proc.kill()
+            return proc.wait(timeout=30)
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -102,11 +118,16 @@ def run_train_and_fuse(args: argparse.Namespace, *, started_at: str) -> int:
         print(f"[orch] {TRAIN_AND_FUSE.name} missing; cannot proceed.")
         return 3
     cmd: list[str] = [sys.executable, str(TRAIN_AND_FUSE)]
-    if args.skip_dataset: cmd.append("--skip-dataset")
-    if args.skip_train: cmd.append("--skip-train")
-    if getattr(args, "resume", False): cmd.append("--resume")
-    if args.base_model: cmd += ["--base-model", args.base_model]
-    if args.tag: cmd += ["--tag", args.tag]
+    if args.skip_dataset:
+        cmd.append("--skip-dataset")
+    if args.skip_train:
+        cmd.append("--skip-train")
+    if getattr(args, "resume", False):
+        cmd.append("--resume")
+    if args.base_model:
+        cmd += ["--base-model", args.base_model]
+    if args.tag:
+        cmd += ["--tag", args.tag]
     update_state(started_at=started_at, phase="train_and_fuse")
     rc = _spawn(cmd, started_at=started_at)
     update_state(started_at=started_at, phase="train_and_fuse_done", last_pipeline_rc=rc)

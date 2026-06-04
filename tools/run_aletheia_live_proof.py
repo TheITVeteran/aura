@@ -6,22 +6,24 @@ saves sequential raw requests/responses, scores them externally,
 and runs a leakage audit.
 """
 
+import asyncio
+import json
 import os
 import sys
 import time
-import json
-import httpx
-import asyncio
-import subprocess
 from pathlib import Path
+from subprocess import DEVNULL, TimeoutExpired
 from typing import Any
+
+import httpx
 
 # Insert project root into path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 # Force headless mode environment variables
 os.environ["AURA_SAFE_BOOT_DESKTOP"] = "1"
@@ -222,11 +224,13 @@ def main() -> int:
 
     # 2. Start clean Aura runtime in headless mode
     print(f"🔌 Spawning headless Aura API server on port {PORT}...")
-    server_process = subprocess.Popen(
+    server_process = get_subprocess_gateway().spawn(
         [sys.executable, "aura_main.py", "--headless", "--port", str(PORT)],
         cwd=str(PROJECT_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=DEVNULL,
+        stderr=DEVNULL,
+        offline_tooling=True,
+        source="proof_tooling:aletheia_headless_server",
     )
 
     try:
@@ -249,7 +253,14 @@ def main() -> int:
         ]
         
         print(f"Running command: {' '.join(cmd)}")
-        completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        completed = get_subprocess_gateway().run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            timeout=float(os.getenv("AURA_ALETHEIA_RUNNER_TIMEOUT_S", "7200")),
+            capture_output=False,
+            offline_tooling=True,
+            source="proof_tooling:aletheia_live_runner",
+        )
         if completed.returncode != 0:
             print(f"❌ ERROR: live Aletheia runner failed with exit code {completed.returncode}.")
             return int(completed.returncode)
@@ -313,11 +324,11 @@ def main() -> int:
             try:
                 server_process.terminate()
                 server_process.wait(timeout=10.0)
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, TimeoutExpired):
                 try:
                     server_process.kill()
                     server_process.wait(timeout=5.0)
-                except (OSError, subprocess.TimeoutExpired):
+                except (OSError, TimeoutExpired):
                     print("⚠️ Headless Aura API server did not stop before timeout.")
         print("✅ Headless Aura API server stopped.")
 
