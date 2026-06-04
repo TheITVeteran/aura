@@ -43,6 +43,19 @@ os.environ.setdefault("AURA_TEST_HARNESS", "1")
 os.environ.setdefault("AURA_DISABLE_REDIS", "1")
 
 
+_HARNESS_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    asyncio.TimeoutError,
+)
+
+
 # ---------------------------------------------------------------------------
 # Result plumbing
 # ---------------------------------------------------------------------------
@@ -86,7 +99,7 @@ async def _time_check(name: str, coro) -> CheckResult:
         return CheckResult(name, True, str(detail or ""), (time.perf_counter() - t0) * 1000)
     except AssertionError as e:
         return CheckResult(name, False, f"AssertionError: {e}", (time.perf_counter() - t0) * 1000)
-    except Exception as e:
+    except _HARNESS_RECOVERABLE_ERRORS as e:
         return CheckResult(name, False, f"{type(e).__name__}: {e}", (time.perf_counter() - t0) * 1000)
 
 
@@ -97,8 +110,29 @@ def _sync_check(name: str, fn) -> CheckResult:
         return CheckResult(name, True, str(detail or ""), (time.perf_counter() - t0) * 1000)
     except AssertionError as e:
         return CheckResult(name, False, f"AssertionError: {e}", (time.perf_counter() - t0) * 1000)
-    except Exception as e:
+    except _HARNESS_RECOVERABLE_ERRORS as e:
         return CheckResult(name, False, f"{type(e).__name__}: {e}", (time.perf_counter() - t0) * 1000)
+
+
+async def _shutdown_harness_runtime() -> List[str]:
+    """Stop shared runtime singletons so harness teardown is explicit evidence."""
+    errors: List[str] = []
+    try:
+        from core.event_bus import get_event_bus
+
+        await get_event_bus().shutdown()
+    except _HARNESS_RECOVERABLE_ERRORS as exc:
+        errors.append(f"event_bus_shutdown:{type(exc).__name__}:{exc}")
+
+    try:
+        from core.utils.task_tracker import get_task_tracker
+
+        shutdown_result = get_task_tracker().shutdown(timeout=2.0)
+        if inspect.isawaitable(shutdown_result):
+            await shutdown_result
+    except _HARNESS_RECOVERABLE_ERRORS as exc:
+        errors.append(f"task_tracker_shutdown:{type(exc).__name__}:{exc}")
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +599,14 @@ async def main() -> int:
         print("\nFailures:")
         for r in failed:
             print(f"  ✗ {r.name} — {r.detail}")
+
+    shutdown_errors = await _shutdown_harness_runtime()
+    if shutdown_errors:
+        print("\nShutdown failures:")
+        for error in shutdown_errors:
+            print(f"  ✗ {error}")
+        return 1
+
     return 0 if not failed else 1
 
 

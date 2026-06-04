@@ -89,10 +89,8 @@ class TestLLMRoutingTiering(unittest.IsolatedAsyncioTestCase):
         self.mock_api.think.side_effect = Exception("API failed")
         
         # Request without tier preference
-        try:
-            await self.router.generate_with_metadata("Hello")
-        except Exception:
-            pass # We expect failure because all PRIMARY endpoints failed
+        result = await self.router.generate_with_metadata("Hello")
+        self.assertEqual(result["endpoint"], "all_failed")
         
         # Verify 72B was NOT called (it used to be called in 'greedy' mode)
         self.mock_72b.think.assert_not_called()

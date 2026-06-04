@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import importlib
 import sys
 import tempfile
 import time
@@ -69,9 +70,9 @@ def score(name: str, value: int, reason: str = "") -> int:
 def _module_exists(dotpath: str) -> bool:
     """Check if a module can be imported without side effects."""
     try:
-        __import__(dotpath)
+        importlib.import_module(dotpath)
         return True
-    except Exception:
+    except ImportError:
         return False
 
 
@@ -1435,6 +1436,7 @@ class TestStrongestFalsifiers:
         We check whether internal state feeds into decision-making pathways.
         """
         causal_connections = []
+        causal_probe_errors = []
 
         # DriveEngine -> InitiativeArbiter (weight modifiers)
         try:
@@ -1443,8 +1445,8 @@ class TestStrongestFalsifiers:
             mods = de.get_arbiter_weight_modifiers()
             if isinstance(mods, dict) and len(mods) > 0:
                 causal_connections.append("DriveEngine -> arbiter weights")
-        except Exception:
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            causal_probe_errors.append(f"DriveEngine: {type(exc).__name__}: {exc}")
 
         # Soul.drives -> VolitionEngine (dominant drive selection)
         try:
@@ -1455,8 +1457,8 @@ class TestStrongestFalsifiers:
             drive = soul.get_dominant_drive()
             if drive.urgency > 0:
                 causal_connections.append("Soul.drives -> dominant drive")
-        except Exception:
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            causal_probe_errors.append(f"Soul: {type(exc).__name__}: {exc}")
 
         # Will.identity_alignment -> decision outcome
         try:
@@ -1468,11 +1470,15 @@ class TestStrongestFalsifiers:
             )
             if not d.is_approved():
                 causal_connections.append("Will.identity_alignment -> refusal")
-        except Exception:
-            pass
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            causal_probe_errors.append(f"WillDecision: {type(exc).__name__}: {exc}")
 
         assert len(causal_connections) >= 2, \
-            f"FALSIFIER DEFEATED: {len(causal_connections)} causal connections found: {causal_connections}"
+            (
+                "FALSIFIER DEFEATED: "
+                f"{len(causal_connections)} causal connections found: {causal_connections}; "
+                f"probe_errors={causal_probe_errors}"
+            )
 
         score("falsifier.decorative_state", 0,
               "FALSIFIER DEFEATED: internal state causally affects behavior")

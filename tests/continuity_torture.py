@@ -20,6 +20,7 @@ import builtins
 import inspect
 import json
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -276,6 +277,7 @@ def run_torture() -> Dict[str, Any]:
     import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="continuity_torture_"))
+    cleanup_error: str | None = None
     try:
         results: List[TortureResult] = [
             test_emergent_goals_survive_restart(tmp),
@@ -288,19 +290,23 @@ def run_torture() -> Dict[str, Any]:
         ]
     finally:
         try:
-            for p in tmp.glob("**/*"):
-                if p.is_file():
-                    get_task_tracker().create_task(get_storage_gateway().delete(p, cause='run_torture'))
-            tmp.rmdir()
-        except Exception:
-            pass
+            shutil.rmtree(tmp)
+        except FileNotFoundError:
+            cleanup_error = None
+        except OSError as exc:
+            cleanup_error = f"{type(exc).__name__}: {exc}"
 
     passed = all(r.passed for r in results)
+    failures = [r.name for r in results if not r.passed]
+    if cleanup_error is not None:
+        passed = False
+        failures.append("cleanup")
     report = {
         "generated_at": time.time(),
         "passed": passed,
         "results": [r.as_dict() for r in results],
-        "failures": [r.name for r in results if not r.passed],
+        "failures": failures,
+        "cleanup_error": cleanup_error,
     }
     out_path = ROOT / "tests" / "CONTINUITY_TORTURE_RESULTS.json"
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

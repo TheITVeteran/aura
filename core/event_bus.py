@@ -6,6 +6,7 @@ import sys
 import time
 import threading
 from collections import defaultdict
+from concurrent.futures import CancelledError as FutureCancelledError
 from enum import IntEnum
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -675,7 +676,9 @@ class AuraEventBus:
         if target_loop and target_loop.is_running():
             # Schedule the async publish call on the target loop
             future = asyncio.run_coroutine_threadsafe(self.publish(topic, data, priority), target_loop)
-            future.add_done_callback(self._threadsafe_publish_done)
+            future.add_done_callback(
+                lambda completed, loop=target_loop: self._threadsafe_publish_done(completed, loop)
+            )
             
             # Periodic health report for diagnostics
             if self._delivered_count % 100 == 0:
@@ -688,9 +691,9 @@ class AuraEventBus:
 
     # _inject_threadsafe is now retired in favor of run_coroutine_threadsafe
 
-    def _threadsafe_publish_done(self, future) -> None:
+    def _threadsafe_publish_done(self, future, target_loop: asyncio.AbstractEventLoop | None = None) -> None:
         if future.cancelled():
-            if self._closing:
+            if self._closing or self._loop_is_tearing_down(target_loop):
                 logger.debug("EventBus threadsafe publish cancelled during controlled shutdown.")
                 return
             self._record_error(
@@ -701,12 +704,26 @@ class AuraEventBus:
             return
         try:
             future.result()
+        except (asyncio.CancelledError, FutureCancelledError) as exc:
+            if self._closing or self._loop_is_tearing_down(target_loop):
+                logger.debug("EventBus threadsafe publish cancelled during loop teardown: %s", exc)
+                return
+            self._record_error(
+                exc,
+                "EventBus threadsafe publish did not complete: %s",
+                degraded=True,
+            )
         except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
             self._record_error(
                 exc,
                 "EventBus threadsafe publish failed: %s",
                 degraded=True,
             )
+
+    @staticmethod
+    def _loop_is_tearing_down(loop: asyncio.AbstractEventLoop | None) -> bool:
+        """Return true when a threadsafe callback was cancelled by loop teardown."""
+        return loop is None or loop.is_closed() or not loop.is_running()
 
 
 

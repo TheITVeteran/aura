@@ -1982,12 +1982,8 @@ async def test_apply_constitutional_guard_with_alignment(orchestrator):
 async def test_gather_agentic_context_simple(orchestrator):
     # Just verify the method exists and returns a dict
     orchestrator.conversation_history = [{"role": "user", "content": "Hello"}]
-    try:
-        result = await orchestrator._gather_agentic_context("Hello")
-        assert isinstance(result, dict)
-    except Exception:
-        # If it fails due to deep dependencies, that's ok
-        pass
+    result = await orchestrator._gather_agentic_context("Hello")
+    assert isinstance(result, dict)
 
 
 # --- get_status second overload (line 2547) ---

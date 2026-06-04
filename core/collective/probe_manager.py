@@ -6,12 +6,14 @@ from core.runtime.errors import record_degradation
 from core.runtime.atomic_writer import atomic_write_text
 from core.utils.task_tracker import get_task_tracker
 import asyncio
+import json
 import logging
 import os
 import signal
 import subprocess
 import tempfile
 import time
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from core.container import ServiceContainer
@@ -33,18 +35,25 @@ class ProbeManager:
             logger.warning("Probe %s already active.", probe_id)
             return False
 
-        # Create a simple probe script if it doesn't exist
-        # In a real impl, we'd have a template. For now, we'll use a python one-liner or simple script.
-        # This probe will write to a local log or socket that we watch, or just report via stdout.
-        
+        try:
+            duration_seconds = max(1, min(int(duration), 86_400))
+        except (TypeError, ValueError):
+            duration_seconds = 3_600
+
+        # Keep probe scripts standalone and data-only: no Aura imports and no
+        # raw interpolation of target/type into executable Python syntax.
         probe_script = f"""
-import time, os, sys
-target = "{target}"
-probe_type = "{type}"
+import os
+import sys
+import time
+
+target = {json.dumps(str(target))}
+probe_type = {json.dumps(str(type))}
+duration = {duration_seconds}
 print(f"ghost_probe_start:{{probe_type}}:{{target}}")
 try:
     start_time = time.time()
-    while time.time() - start_time < {duration}:
+    while time.time() - start_time < duration:
         if probe_type == "file":
             if os.path.exists(target):
                 mtime = os.path.getmtime(target)
@@ -54,9 +63,13 @@ try:
              print(f"ghost_update:ping_ok")
         
         sys.stdout.flush()
-        await asyncio.sleep(60) # Scan every minute
+        remaining = duration - (time.time() - start_time)
+        if remaining <= 0:
+            break
+        time.sleep(min(1.0, remaining))
 except (OSError, IOError) as e:
     print(f"ghost_error:{{e}}")
+    sys.stdout.flush()
 """
         probe_path = Path(tempfile.gettempdir()) / f"aura_probe_{probe_id}.py"
         atomic_write_text(probe_path, probe_script)
@@ -64,7 +77,7 @@ except (OSError, IOError) as e:
         try:
             # Spawn in background with asyncio
             process = await asyncio.create_subprocess_exec(
-                "python3", str(probe_path),
+                sys.executable, str(probe_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True
@@ -75,7 +88,7 @@ except (OSError, IOError) as e:
                 "target": target,
                 "type": type,
                 "start_time": time.time(),
-                "expiry": time.time() + duration,
+                "expiry": time.time() + duration_seconds,
                 "path": str(probe_path)
             }
             
@@ -101,7 +114,11 @@ except (OSError, IOError) as e:
             line = line_bytes.decode().strip()
             if line.startswith("ghost_update:"):
                 update = line.split(":", 2)[1:]
-                self.orchestrator.enqueue_message(f"Impulse [GHOST:{probe_id}]: {update}")
+                enqueue = getattr(self.orchestrator, "enqueue_message", None)
+                if callable(enqueue):
+                    enqueue(f"Impulse [GHOST:{probe_id}]: {update}")
+                else:
+                    logger.debug("Ghost Probe %s update dropped; orchestrator has no enqueue_message.", probe_id)
             elif line.startswith("ghost_error:"):
                 err = line.split(":", 1)[1]
                 logger.error("Ghost Probe %s error: %s", probe_id, err)
@@ -109,22 +126,39 @@ except (OSError, IOError) as e:
         # Cleanup
         await self.cleanup_probe(probe_id)
 
-    async def cleanup_probe(self, probe_id: str):
+    async def cleanup_probe(self, probe_id: str) -> bool:
         """Terminate and cleanup a probe's resources."""
+        ok = True
         if probe_id in self.probes:
             proc = self.probes.pop(probe_id)
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                if proc.returncode is None:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except ProcessLookupError:
+                pass
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+                ok = False
                 record_degradation('probe_manager', e)
                 logger.debug("Failed to kill probe process group %d: %s", proc.pid, e)
             
-            meta = self.probe_metadata.pop(probe_id, {})
-            path = meta.get("path")
-            if path and os.path.exists(path):
-                os.remove(path)
-                
+        meta = self.probe_metadata.pop(probe_id, {})
+        path = meta.get("path")
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError as e:
+                ok = False
+                record_degradation('probe_manager', e)
+                logger.debug("Failed to remove probe script %s: %s", path, e)
+
+        if ok:
             logger.info("👻 Ghost Probe '%s' cleaned up.", probe_id)
+        return ok
 
     async def auto_cleanup_loop(self):
         """Periodically remove expired probes."""
