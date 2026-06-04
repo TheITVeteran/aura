@@ -16,6 +16,12 @@ import re
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
 
 
@@ -82,7 +88,7 @@ def process_file(filepath: Path, dry_run: bool = False) -> int:
 
 def main():
     dry_run = "--dry-run" in sys.argv
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
 
     search_dirs = [root / "core", root / "skills"]
     all_files = []
@@ -104,13 +110,15 @@ def main():
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Total: {total} phantom httpx.HTTPError references removed from {changed} files.")
 
     if not dry_run:
-        import subprocess
         python = str(root / ".venv" / "bin" / "python")
         failures = 0
         for filepath in all_files:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 [python, "-m", "py_compile", str(filepath)],
-                capture_output=True, text=True,
+                cwd=root,
+                timeout=30,
+                read_only=True,
+                source="fix_httpx_phantom:py_compile",
             )
             if result.returncode != 0:
                 print(f"  ❌ COMPILE FAIL: {filepath.relative_to(root)}")

@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 _PROOF_BUNDLE_ARTIFACT_ERRORS = (
     OSError,
@@ -401,8 +402,6 @@ def _asa_messy_refactors() -> dict[str, Any]:
 
 
 def _undeniable_rsi() -> dict[str, Any]:
-    import subprocess
-
     def _sandbox_pass(metadata: dict[str, Any]) -> bool:
         sandbox = metadata.get("sandbox_result")
         return isinstance(sandbox, dict) and bool(sandbox.get("pass"))
@@ -436,7 +435,14 @@ def _undeniable_rsi() -> dict[str, Any]:
         eval_after = json.loads((latest_gen / "eval_after.json").read_text(encoding="utf-8"))
         eval_before = json.loads((latest_gen / "eval_before.json").read_text(encoding="utf-8"))
         metadata = json.loads((latest_gen / "generation_metadata.json").read_text(encoding="utf-8"))
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+        commit_result = get_subprocess_gateway().run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            timeout=10,
+            read_only=True,
+            source="proof_bundle:rev_parse_head",
+        )
+        commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
         
         baseline_score = float(eval_before.get("score", 0.0))
         candidate_score = float(eval_after.get("score", 0.0))

@@ -21,19 +21,29 @@ Usage:
 """
 import ast
 import json
-import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 CORE = ROOT / "core"
 
 
 def get_tracked_files() -> list[str]:
-    result = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, cwd=ROOT,
+    result = get_subprocess_gateway().run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        timeout=30,
+        read_only=True,
+        source="cleanup_agent:tracked_files",
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"git ls-files failed: {result.stderr.strip()}")
     return [f for f in result.stdout.strip().split("\n") if f]
 
 
@@ -80,11 +90,21 @@ def check_dead_imports(py_files: list[Path]) -> list[dict]:
 def check_hardcoded_paths() -> list[dict]:
     """Find author-specific paths in tracked files."""
     home_pattern = str(Path.home())
-    result = subprocess.run(
+    result = get_subprocess_gateway().run(
         ["git", "grep", "-n", home_pattern, "--", "*.py", "*.sh", "*.md"],
-        capture_output=True, text=True, cwd=ROOT,
+        cwd=ROOT,
+        timeout=30,
+        read_only=True,
+        source="cleanup_agent:hardcoded_paths",
     )
     issues = []
+    if result.returncode not in {0, 1}:
+        return [{
+            "type": "scan_failed",
+            "file": "git grep",
+            "description": f"hardcoded path scan failed: {result.stderr.strip()}",
+            "severity": "high",
+        }]
     exclude = {"scripts/cleanup_agent.py", "scripts/quality_gate.py", "specs/QUALITY_GATES.md"}
     for line in result.stdout.strip().split("\n"):
         if not line:
@@ -129,7 +149,7 @@ def check_missing_docstrings(py_files: list[Path]) -> list[dict]:
                     "file": str(f.relative_to(ROOT)),
                     "severity": "low",
                 })
-        except (SyntaxError, UnicodeDecodeError):
+        except (SyntaxError, UnicodeDecodeError, OSError):
             continue
     return issues[:30]
 

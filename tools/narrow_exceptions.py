@@ -9,10 +9,15 @@ This is a one-shot remediation tool — run it, review the diff, compile-check,
 then commit.
 """
 
-import ast
 import re
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 # ── Exception Mapping Rules ──────────────────────────────────────────────
 # Maps patterns found INSIDE the try block to the appropriate narrow catches.
@@ -98,7 +103,6 @@ def process_file(filepath: Path, dry_run: bool = False) -> int:
 
     while i < len(lines):
         line = lines[i]
-        stripped = line.lstrip()
 
         # Match "except Exception:" or "except Exception as <name>:"
         match = re.match(r"^(\s*)(except)\s+Exception(\s+as\s+\w+)?(\s*:\s*)(.*)$", line)
@@ -112,14 +116,12 @@ def process_file(filepath: Path, dry_run: bool = False) -> int:
             # Walk backward to find the try block
             try_block_lines = []
             j = i - 1
-            try_indent = None
 
             # Find matching try
             while j >= 0:
                 l = lines[j]
                 ls = l.lstrip()
                 if ls.startswith("try:") and len(l) - len(ls) <= len(indent):
-                    try_indent = len(l) - len(ls)
                     break
                 j -= 1
 
@@ -147,7 +149,7 @@ def process_file(filepath: Path, dry_run: bool = False) -> int:
 
 def main():
     dry_run = "--dry-run" in sys.argv
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
 
     search_dirs = [root / "core", root / "skills"]
     all_files = []
@@ -170,13 +172,15 @@ def main():
 
     if not dry_run:
         # Compile check all changed files
-        import subprocess
         python = str(root / ".venv" / "bin" / "python")
         failures = 0
         for filepath in all_files:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 [python, "-m", "py_compile", str(filepath)],
-                capture_output=True, text=True,
+                cwd=root,
+                timeout=30,
+                read_only=True,
+                source="narrow_exceptions:py_compile",
             )
             if result.returncode != 0:
                 print(f"  ❌ COMPILE FAIL: {filepath.relative_to(root)}")
