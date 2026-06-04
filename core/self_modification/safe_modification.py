@@ -658,6 +658,24 @@ class SafeSelfModification:
         if validation == "shadow_ast_preview":
             return False, "shadow AST preview is proposal evidence, not promotion evidence"
 
+        artifact_fields = (
+            "artifact_hash",
+            "artifact_path",
+            "command",
+            "commands",
+            "harness_result",
+            "pytest",
+            "py_compile",
+            "receipt_id",
+            "tests_run",
+            "validated_files",
+            "validation_artifact",
+            "validation_artifacts",
+        )
+        has_artifact = any(bool(test_results.get(field)) for field in artifact_fields)
+        if not has_artifact:
+            return False, "validation evidence lacks command, artifact, receipt, or file proof"
+
         if validation in {
             "sandbox",
             "sandbox_tests",
@@ -675,10 +693,7 @@ class SafeSelfModification:
             if "unit_tests" not in test_results or bool(test_results.get("unit_tests", False)):
                 return True, "validated by static sandbox checks"
 
-        if test_results.get("tests_run") or test_results.get("pytest") or test_results.get("py_compile"):
-            return True, "validated by explicit test artifacts"
-
-        return False, "missing sandbox/static validation artifacts"
+        return False, "missing explicit sandbox/static validation marker"
 
     def _emit_proposal_event(self, fix, decision: str, reason: str) -> None:
         """Emit a self-modification proposal event to the event bus."""

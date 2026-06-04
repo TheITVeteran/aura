@@ -1,12 +1,13 @@
-import asyncio
+import json
 import os
 import unittest
-from unittest.mock import AsyncMock
 from pathlib import Path
-import json
-from core.self_modification.self_modification_engine import AutonomousSelfModificationEngine
-from core.self_modification.code_repair import CodeFix
+from unittest.mock import AsyncMock
+
 from core.config import config
+from core.self_modification.code_repair import CodeFix
+from core.self_modification.self_modification_engine import AutonomousSelfModificationEngine
+
 
 class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -36,7 +37,7 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
         else:
             os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = self._old_supervised_selfmod
         if self.test_file.exists():
-            get_task_tracker().create_task(get_storage_gateway().delete(self.test_file, cause='TestFixPersistence.tearDown'))
+            self.test_file.unlink()
 
     async def test_permanent_fix_application(self):
         # Create a mock fix proposal
@@ -74,9 +75,13 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("def old_function()", content)
 
     async def test_apply_fix_resolves_subsystem_and_incident(self):
+        from core.resilience.incident_manager import (
+            IncidentSeverity,
+            IncidentStatus,
+            get_incident_manager,
+        )
         from core.runtime.errors import get_subsystem_registry
-        from core.resilience.incident_manager import get_incident_manager, IncidentSeverity, IncidentStatus
-        from core.self_modification.error_intelligence import ErrorPattern, ErrorEvent
+        from core.self_modification.error_intelligence import ErrorEvent, ErrorPattern
         
         # Setup subsystem status to degraded
         subsystem_reg = get_subsystem_registry()

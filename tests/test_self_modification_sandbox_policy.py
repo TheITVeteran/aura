@@ -164,3 +164,42 @@ class TestAllowedButNotProtected:
         path = "core/consciousness/phi_core.py"
         assert safe_mod.is_allowed_path(path)
         assert safe_mod.is_protected_path(path)
+
+
+class TestValidationEvidence:
+    """Self-modification promotion evidence must be concrete, not caller optimism."""
+
+    def test_bare_success_and_tests_run_is_not_promotion_evidence(self):
+        ok, reason = SafeSelfModification._validate_test_evidence(
+            {"success": True, "tests_run": ["test_claimed_by_caller"]}
+        )
+
+        assert ok is False
+        assert "explicit sandbox/static validation marker" in reason
+
+    def test_sandbox_marker_requires_command_or_artifact_evidence(self):
+        ok, reason = SafeSelfModification._validate_test_evidence(
+            {"success": True, "validation": "safe_modification_harness"}
+        )
+
+        assert ok is False
+        assert "lacks command, artifact" in reason
+
+    def test_code_repair_sandbox_evidence_accepts_validated_artifacts(self):
+        ok, reason = SafeSelfModification._validate_test_evidence(
+            {
+                "success": True,
+                "validation": "code_repair_sandbox",
+                "syntax_test": True,
+                "import_test": True,
+                "integrity_check": True,
+                "unit_tests": True,
+                "py_compile": True,
+                "validated_files": ["core/brain/example.py"],
+                "commands": ["py_compile core/brain/example.py"],
+                "artifact_hash": "0" * 64,
+            }
+        )
+
+        assert ok is True
+        assert "sandbox" in reason

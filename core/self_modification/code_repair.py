@@ -4,6 +4,7 @@ Generates, validates, and applies fixes to detected bugs.
 import ast
 import asyncio
 import difflib
+import hashlib
 import logging
 import shutil
 import subprocess
@@ -517,11 +518,16 @@ class SandboxTester:
         """Run tests in sandbox with enhanced safety (Async)."""
         results = {
             "success": False,
+            "validation": "code_repair_sandbox",
             "import_test": False,
             "syntax_test": False,
             "unit_tests": False,
             "integrity_check": False,
-            "errors": []
+            "py_compile": False,
+            "commands": [],
+            "tests_run": [],
+            "validated_files": [fix.target_file],
+            "errors": [],
         }
         
         sandbox_file = sandbox_path / fix.target_file
@@ -540,6 +546,8 @@ class SandboxTester:
             import py_compile as _py_compile
             # Verify the file compiles without executing it
             _py_compile.compile(str(sandbox_file), doraise=True)
+            results["py_compile"] = True
+            results["commands"].append(f"py_compile {fix.target_file}")
             # Verify AST parses and has no banned patterns
             tree = ast.parse(code, filename=str(sandbox_file))
             banned_calls = {"eval", "exec", "__import__", "compile"}
@@ -569,6 +577,12 @@ class SandboxTester:
             for sibling in sandbox_file.parent.glob("*.py"):
                 try:
                     _py_compile.compile(str(sibling), doraise=True)
+                    try:
+                        rel_sibling = sibling.relative_to(sandbox_path).as_posix()
+                    except ValueError:
+                        rel_sibling = sibling.name
+                    if rel_sibling not in results["validated_files"]:
+                        results["validated_files"].append(rel_sibling)
                 except _py_compile.PyCompileError as e:
                     if "core/" in fix.target_file:
                         results["errors"].append(f"Sibling compile failed: {sibling.name}: {e}")
@@ -635,6 +649,15 @@ class SandboxTester:
             
             if test_files:
                 logger.info("Running tests: %s", test_files)
+                try:
+                    results["tests_run"] = [
+                        path.relative_to(sandbox_path).as_posix() for path in test_files
+                    ]
+                except ValueError:
+                    results["tests_run"] = [str(path) for path in test_files]
+                results["commands"].append(
+                    "python -m pytest " + " ".join(results["tests_run"])
+                )
                 result = await asyncio.to_thread(
                     subprocess.run,
                     ["python", "-m", "pytest", str(test_files[0])],
@@ -667,6 +690,7 @@ class SandboxTester:
 
         # All critical tests passed
         results["success"] = True
+        results["artifact_hash"] = hashlib.sha256(code.encode("utf-8")).hexdigest()
         return results
 
     async def run_custom_probe(
