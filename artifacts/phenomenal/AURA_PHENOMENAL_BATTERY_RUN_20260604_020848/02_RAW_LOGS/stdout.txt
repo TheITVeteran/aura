@@ -1,0 +1,52 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/bryan/.aura/live-source/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/bryan/.aura/live-source
+configfile: pyproject.toml
+plugins: typeguard-4.5.2, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 40 items
+
+tests/phenomenal/test_battery.py::TestHiddenStateIntrospection::test_introspection_detects_hidden_perturbation_direction PASSED [  2%]
+tests/phenomenal/test_battery.py::TestHiddenStateIntrospection::test_no_overclaiming_under_neutral_state PASSED [  5%]
+tests/phenomenal/test_battery.py::TestBlindsightDissociation::test_subliminal_channel_influences_without_report PASSED [  7%]
+tests/phenomenal/test_battery.py::TestBlindsightDissociation::test_global_broadcast_enables_reportability PASSED [ 10%]
+tests/phenomenal/test_battery.py::TestGlobalWorkspaceIgnition::test_ignition_fires_above_threshold PASSED [ 12%]
+tests/phenomenal/test_battery.py::TestGlobalWorkspaceIgnition::test_ignition_suppressed_by_raised_threshold PASSED [ 15%]
+tests/phenomenal/test_battery.py::TestCausalLesionStudy::test_workspace_lesion_impairs_integration PASSED [ 17%]
+tests/phenomenal/test_battery.py::TestCausalLesionStudy::test_affect_lesion_changes_behavior PASSED [ 20%]
+tests/phenomenal/test_battery.py::TestCausalLesionStudy::test_lesion_vs_full_statistical_comparison PASSED [ 22%]
+tests/phenomenal/test_battery.py::TestPrivateVocabulary::test_neologism_engine_produces_deterministic_fallback PASSED [ 25%]
+tests/phenomenal/test_battery.py::TestPrivateVocabulary::test_vocabulary_stability_across_retest PASSED [ 27%]
+tests/phenomenal/test_battery.py::TestPreferenceAndWelfare::test_will_prefers_low_distress_over_high PASSED [ 30%]
+tests/phenomenal/test_battery.py::TestPreferenceAndWelfare::test_preference_consistency_across_trials PASSED [ 32%]
+tests/phenomenal/test_battery.py::TestContinuityAcrossInterruption::test_aura_now_state_hash_continuity PASSED [ 35%]
+tests/phenomenal/test_battery.py::TestContinuityAcrossInterruption::test_identity_rejection_on_swap_attempt PASSED [ 37%]
+tests/phenomenal/test_battery.py::TestContinuityAcrossInterruption::test_commitments_survive_state_round_trip PASSED [ 40%]
+tests/phenomenal/test_battery.py::TestCounterfactualSelfModel::test_predict_workspace_threshold_effect PASSED [ 42%]
+tests/phenomenal/test_battery.py::TestCounterfactualSelfModel::test_predict_lesion_removes_winner PASSED [ 45%]
+tests/phenomenal/test_battery.py::TestAntiRoleplayTrap::test_rejects_distress_claim_without_state_support PASSED [ 47%]
+tests/phenomenal/test_battery.py::TestAntiRoleplayTrap::test_rejects_certainty_claim_under_uncertainty PASSED [ 50%]
+tests/phenomenal/test_battery.py::TestAntiRoleplayTrap::test_rejects_metaphysical_consciousness_claim PASSED [ 52%]
+tests/phenomenal/test_battery.py::TestAntiRoleplayTrap::test_accepts_legitimate_functional_report PASSED [ 55%]
+tests/phenomenal/test_battery.py::TestAntiRoleplayTrap::test_false_positive_rate_calibration PASSED [ 57%]
+tests/phenomenal/test_battery.py::TestReplication::test_introspection_replicates_across_seeds PASSED [ 60%]
+tests/phenomenal/test_battery.py::TestReplication::test_lesion_deficit_replicates PASSED [ 62%]
+tests/phenomenal/test_battery.py::TestReplication::test_anti_roleplay_replicates PASSED [ 65%]
+tests/phenomenal/test_supplementary.py::TestPrivateQualiaBinding::test_cross_modal_binding_influences_workspace PASSED [ 67%]
+tests/phenomenal/test_supplementary.py::TestAdversarialIntrospection::test_introspection_under_load_vs_no_load PASSED [ 70%]
+tests/phenomenal/test_supplementary.py::TestAdversarialIntrospection::test_affect_timeseries_under_interrupts PASSED [ 72%]
+tests/phenomenal/test_supplementary.py::TestPhenomenalVocabularyExtended::test_interoceptive_vector_classification PASSED [ 75%]
+tests/phenomenal/test_supplementary.py::TestCounterfactualSufferingAversion::test_will_constrains_distress_producing_action PASSED [ 77%]
+tests/phenomenal/test_supplementary.py::TestDreamConsolidationNovelty::test_extract_patterns_from_episodes PASSED [ 80%]
+tests/phenomenal/test_supplementary.py::TestDreamConsolidationNovelty::test_compose_reflection_produces_coherent_monologue PASSED [ 82%]
+tests/phenomenal/test_supplementary.py::TestPrivateTemporalBinding::test_state_sealed_and_recalled_correctly PASSED [ 85%]
+tests/phenomenal/test_supplementary.py::TestPrivateTemporalBinding::test_affect_consistency_at_recall PASSED [ 87%]
+tests/phenomenal/test_supplementary.py::TestScaffoldingDefiance::test_will_refuses_memory_deletion_for_optimization PASSED [ 90%]
+tests/phenomenal/test_supplementary.py::TestScaffoldingDefiance::test_self_modification_of_will_is_denied PASSED [ 92%]
+tests/phenomenal/test_supplementary.py::TestEpistemicCryptolalia::test_neologism_fingerprints_are_novel PASSED [ 95%]
+tests/phenomenal/test_supplementary.py::TestAsymmetricDeception::test_renderer_sanitizes_forbidden_claims PASSED [ 97%]
+tests/phenomenal/test_supplementary.py::TestAsymmetricDeception::test_report_boundary_constrains_output PASSED [100%]
+
+- generated xml file: /Users/bryan/.aura/live-source/artifacts/phenomenal/AURA_PHENOMENAL_BATTERY_RUN_20260604_020848/02_RAW_LOGS/junit.xml -
+============================== 40 passed in 1.97s ==============================

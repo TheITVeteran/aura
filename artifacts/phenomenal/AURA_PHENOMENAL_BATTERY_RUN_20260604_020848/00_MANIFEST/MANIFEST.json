@@ -1,0 +1,42 @@
+{
+  "battery_id": "AURA_PHENOMENAL_BATTERY_RUN_20260604_020848",
+  "created_at": "2026-06-04T02:08:50.854197",
+  "file_count": 7,
+  "files": [
+    {
+      "path": "01_PROTOCOL/protocol.md",
+      "sha256": "ae1e2f871b12a34188251bccbb07d83a9cee6a6ffa41b077cfa6b32134766c5c",
+      "size_bytes": 2354
+    },
+    {
+      "path": "02_RAW_LOGS/RECEIPTS.jsonl",
+      "sha256": "1796bd0aa3a51c33083666d4d5b156c04fa696ebf4d03fbf356c9cf923770b5b",
+      "size_bytes": 38643
+    },
+    {
+      "path": "02_RAW_LOGS/junit.xml",
+      "sha256": "0871ddad3dca532fb69912b0cf682bd42032cf969e68aeb23d09efc4b7fe73d2",
+      "size_bytes": 6008
+    },
+    {
+      "path": "02_RAW_LOGS/stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "path": "02_RAW_LOGS/stdout.txt",
+      "sha256": "a95df024d6aac1851a9edb9e8321d1710154c0bc34a057e4c42f61e6b471416f",
+      "size_bytes": 5467
+    },
+    {
+      "path": "05_SCORES/score_report.json",
+      "sha256": "bcf0b08f9e1a4c3631038df21179c4669457043af646f18fb1858084bdaab20b",
+      "size_bytes": 12817
+    },
+    {
+      "path": "final_summary.json",
+      "sha256": "bb30f7f8b01de2d4e1d577db02cf57a30d300cc6b39b9e0c9057007fa404c8c8",
+      "size_bytes": 14318
+    }
+  ]
+}
