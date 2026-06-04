@@ -111,6 +111,25 @@ def test_semantic_review_ledger_marks_re_reviewed_stale_receipts_superseded(tmp_
     assert summary["superseded_stale_review_count"] == 1
 
 
+def test_semantic_review_ledger_marks_moved_reviews_superseded(tmp_path):
+    old = tmp_path / "scripts" / "legacy_probe.py"
+    new = tmp_path / "archive" / "legacy_probe.py"
+    old.parent.mkdir()
+    old.write_text("print('legacy')\n", encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    append_entries(ledger, [build_review_entry(old, reviewer="codex", checkpoint_id="old", root=tmp_path)])
+
+    new.parent.mkdir()
+    old.rename(new)
+    append_entries(ledger, [build_review_entry(new, reviewer="codex", checkpoint_id="new", root=tmp_path)])
+
+    summary = summarize_semantic_reviews(ledger_path=ledger, tracked_paths=[new], root=tmp_path)
+
+    assert summary["full_semantic_review_current"] is True
+    assert summary["orphan_review_count"] == 0
+    assert summary["superseded_orphan_review_count"] == 1
+
+
 def test_semantic_review_ledger_merges_reviewed_spans(tmp_path):
     sample = tmp_path / "spans.py"
     sample.write_text("a\nb\nc\nd\n", encoding="utf-8")

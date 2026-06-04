@@ -11,7 +11,7 @@ Catalogue:
   force_model_load_failure — flip the model registry to point at a nonexistent path
   break_memory_facade      — register a no-op stand-in for memory_facade
   break_agency_pathway     — disable one VolitionEngine pathway
-  fill_disk                — write a 100MB file to the system temp directory until disk is 95%+
+  fill_disk                — write bounded disk-pressure files in a safe temp target
   sever_network            — block outbound connections via local proxy
   expire_api_keys          — flip env vars to invalid values
 
@@ -28,6 +28,7 @@ import random
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -125,10 +126,52 @@ async def _delete_vector_index() -> dict[str, Any]:
 
 @register("fill_disk")
 async def _fill_disk() -> dict[str, Any]:
-    # We deliberately do NOT actually fill the disk in production runs;
-    # this stub records intent and returns. A real chaos run wires this
-    # to a sandbox volume.
-    return {"kind": "fill_disk", "applied": False, "reason": "stub_no_op_in_prod"}
+    target_root = Path(os.environ.get("AURA_CHAOS_DISK_TARGET_DIR", tempfile.gettempdir())).expanduser().resolve()
+    safe_roots = {Path(tempfile.gettempdir()).resolve()}
+    explicit_target = "AURA_CHAOS_DISK_TARGET_DIR" in os.environ
+    if not explicit_target and not any(target_root == root or root in target_root.parents for root in safe_roots):
+        return {"kind": "fill_disk", "applied": False, "reason": "unsafe_target_root", "target": str(target_root)}
+
+    max_mb = int(os.environ.get("AURA_CHAOS_DISK_MAX_MB", "64"))
+    max_mb = max(1, min(max_mb, 512))
+    pressure_dir = target_root / f"aura-chaos-disk-pressure-{uuid.uuid4().hex}"
+    pressure_dir.mkdir(parents=True, exist_ok=False)
+    pressure_file = pressure_dir / "pressure.bin"
+    chunk = b"\0" * (1024 * 1024)
+    bytes_written = 0
+
+    try:
+        with pressure_file.open("wb") as fh:
+            for _ in range(max_mb):
+                fh.write(chunk)
+                bytes_written += len(chunk)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        return {
+            "kind": "fill_disk",
+            "applied": bytes_written > 0,
+            "target": str(pressure_file),
+            "bytes_written": bytes_written,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
+
+    async def _restore():
+        await asyncio.sleep(float(os.environ.get("AURA_CHAOS_DISK_RESTORE_SECONDS", "30")))
+        if pressure_file.exists():
+            pressure_file.unlink()
+        if pressure_dir.exists():
+            pressure_dir.rmdir()
+
+    get_task_tracker().create_task(_restore(), name="chaos.fill_disk.restore_pressure_file")
+    return {
+        "kind": "fill_disk",
+        "applied": True,
+        "target": str(pressure_file),
+        "bytes_written": bytes_written,
+        "restored_in_s": int(os.environ.get("AURA_CHAOS_DISK_RESTORE_SECONDS", "30")),
+    }
 
 
 @register("sever_network")

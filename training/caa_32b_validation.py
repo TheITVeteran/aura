@@ -238,7 +238,7 @@ class CAA32BValidator:
         `tests/run_32b_steering_ab_live.py` writes the full analysis object
         produced by `core.evaluation.steering_ab`. The readiness gate expects a
         compact metrics schema. Translating here keeps the live artifact as the
-        source of truth instead of maintaining a placeholder duplicate.
+        source of truth instead of maintaining a disconnected compatibility copy.
         """
         if "steered_vs_baseline_effect_size" in data:
             return data

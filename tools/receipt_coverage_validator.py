@@ -87,7 +87,7 @@ def run_negative_tests() -> dict[str, bool]:
         results["post_action_receipt_invalid"] = not will.verify_receipt("will_nonexistent_post_action")
         
         # 4. Unauthorized Route Fails (SELF_MODIFICATION requires specialized privileges)
-        # Tested inside mock unstable block below where it actively fails closed under state collapse.
+        # Tested inside the collapsed-unity block below where it actively fails closed.
         
         # 5. Disabled Will Blocks Action
         original_started = will._started
@@ -104,8 +104,8 @@ def run_negative_tests() -> dict[str, bool]:
             will._started = original_started
             
         # 6. Unauthorized Memory Write Fails, Unauthorized Tool Execution Fails, and External IO Fails
-        # Register a mock unstable unity state in the ServiceContainer
-        class MockUnityState:
+        # Register a collapsed unity state in the ServiceContainer.
+        class CollapsedUnityState:
             level = "fragmented"
             unity_score = 0.1
             fragmentation_score = 0.9
@@ -122,17 +122,17 @@ def run_negative_tests() -> dict[str, bool]:
             
         # Keep track of original service registrations
         original_unity = ServiceContainer.get("unity_state", default=None)
-        mock_unity = MockUnityState()
+        collapsed_unity = CollapsedUnityState()
         
-        # Dynamically register mock unity state to inject failure parameters
+        # Inject fault-state parameters through the same service lookup path
+        # used by runtime authorization.
         with ServiceContainer._lock:
-            # We bypass regular register helper to force-inject our mock singleton instance
             from core.container import ServiceDescriptor, ServiceLifetime
             ServiceContainer._services["unity_state"] = ServiceDescriptor(
                 name="unity_state",
-                factory=lambda *args, **kwargs: mock_unity,
+                factory=lambda *args, **kwargs: collapsed_unity,
                 lifetime=ServiceLifetime.SINGLETON,
-                instance=mock_unity,
+                instance=collapsed_unity,
                 required=False,
                 initialized=True
             )

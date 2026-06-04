@@ -16,10 +16,10 @@ def load_jsonl(path):
         return [json.loads(line) for line in f if line.strip()]
 
 def build_text(example):
-    # Prefer explicit assistant field, then generated, then fallback
+    # Prefer explicit assistant field, then generated, then response.
     user = example.get('user') or example.get('prompt') or ''
     assistant = example.get('assistant') or example.get('generated') or example.get('response') or ''
-    # If assistant contains coroutine placeholder, skip
+    # If assistant contains an unawaited coroutine repr, exclude it from training.
     if isinstance(assistant, str) and assistant.startswith("<coroutine"):
         assistant = ''
     return (user + "\n" + assistant).strip()

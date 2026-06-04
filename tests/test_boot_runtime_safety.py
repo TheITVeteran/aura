@@ -206,6 +206,72 @@ def test_rsi_lab_creates_data_dir_without_runtime_globals(monkeypatch, tmp_path)
     assert lab.lab_dir.exists()
 
 
+@pytest.mark.asyncio
+async def test_rsi_lab_requires_validation_evidence_for_promotion(monkeypatch, tmp_path):
+    from research.meta_learning_loop import RSILab
+
+    monkeypatch.setattr(type(config.paths), "_runtime_home_cache", tmp_path)
+    lab = RSILab()
+    weak_id = lab.submit_candidate(
+        "heuristic",
+        "always do the clever thing",
+        "Too vague to promote because it has no validation or rollback evidence.",
+    )
+    strong_id = lab.submit_candidate(
+        "skill",
+        {
+            "steps": ["inspect inputs", "run verifier", "emit receipt"],
+            "tool_contract": {"input": "objective", "output": "verified_plan"},
+            "evidence": {
+                "provenance": "unit-test",
+                "validation_command": "pytest tests/test_boot_runtime_safety.py",
+                "validation_passed": True,
+                "rollback_plan": "remove skill registration",
+                "receipt_id": "receipt_rsi_validation_001",
+                "risk": {"level": "bounded", "blast_radius": "skill registry only"},
+            },
+        },
+        "Promote because the skill has explicit validation, provenance, rollback, and bounded risk.",
+    )
+
+    assert await lab.evaluate_pending_candidates() == 2
+
+    assert lab.candidates[weak_id].status == "failed"
+    assert "validation_passed" in lab.candidates[weak_id].evaluation_report["blocking_failures"]
+    assert lab.candidates[strong_id].status == "passed"
+    assert lab.candidates[strong_id].evaluation_report["checks"]["receipt_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_chaos_fill_disk_creates_bounded_pressure_file(monkeypatch, tmp_path):
+    from tools.chaos import injector
+
+    scheduled = []
+
+    class Tracker:
+        def create_task(self, coro, name=None):
+            scheduled.append((coro, name))
+            return SimpleNamespace(done=lambda: False)
+
+    monkeypatch.setenv("AURA_CHAOS_DISK_TARGET_DIR", str(tmp_path))
+    monkeypatch.setenv("AURA_CHAOS_DISK_MAX_MB", "1")
+    monkeypatch.setenv("AURA_CHAOS_DISK_RESTORE_SECONDS", "0")
+    monkeypatch.setattr(injector, "get_task_tracker", lambda: Tracker())
+
+    result = await injector._fill_disk()
+
+    pressure_file = Path(result["target"])
+    assert result["applied"] is True
+    assert result["bytes_written"] == 1024 * 1024
+    assert pressure_file.exists()
+    assert scheduled and scheduled[0][1] == "chaos.fill_disk.restore_pressure_file"
+
+    await scheduled[0][0]
+
+    assert not pressure_file.exists()
+    assert not pressure_file.parent.exists()
+
+
 def test_inprocess_mlx_metal_disabled_during_safe_boot(monkeypatch):
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
     monkeypatch.delenv("AURA_FORCE_INPROCESS_MLX_METAL", raising=False)

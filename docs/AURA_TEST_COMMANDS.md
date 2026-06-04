@@ -44,7 +44,7 @@ python -m py_compile \
   core/reaper.py \
   core/resilience/sovereign_watchdog.py \
   core/supervisor/tree.py \
-  scripts/one_off/launch_aura_3d.py
+  archive/one_off_scripts/launch_aura_3d.py
 ```
 
 ## Strict Boot / Server Ownership Slice

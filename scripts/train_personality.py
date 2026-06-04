@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """scripts/train_personality.py
 
-Generate synthetic persona-conditioned examples by prompting the cognitive engine.
+Generate persona-conditioned examples by prompting the cognitive engine.
 Outputs newline-separated JSONL files: data/personality_training/{persona}.jsonl
 
 Usage:
   python3 scripts/train_personality.py --persona mist --n 50
 
-Note: This script uses `core.brain.cognitive_engine.cognitive_engine` if available; if not,
-it will attempt to call a local LLM service. It is non-blocking and saves generated
-examples for later fine-tuning or review.
+Note: This script uses `core.brain.cognitive_engine.cognitive_engine`. It fails
+closed when the engine is unavailable unless `--allow-synthetic-fallback` is set.
 """
 
 import argparse
@@ -44,12 +43,20 @@ def get_cognitive_engine():
         return None
 
 
-def generate_examples(persona_name: str, n: int = 50, instruction_template: str = None):
+def generate_examples(
+    persona_name: str,
+    n: int = 50,
+    instruction_template: str = None,
+    *,
+    allow_synthetic_fallback: bool = False,
+):
     from core.brain.persona_adapter import PersonaAdapter
     pa = PersonaAdapter()
     prompts = pa.build_prompts(persona_name, instruction_template or "Have a back-and-forth conversation as an equal partner: express opinions, ask follow-ups, take initiative, and reply naturally as an individual (not an assistant). Reply in first-person where appropriate.")
 
     engine = get_cognitive_engine()
+    if engine is None and not allow_synthetic_fallback:
+        raise SystemExit("cognitive_engine unavailable; refusing to generate training data without live inference")
     out_path = os.path.join(OUT_DIR, f"{persona_name}.jsonl")
 
     # clear previous file to avoid appending duplicates
@@ -97,11 +104,10 @@ def generate_examples(persona_name: str, n: int = 50, instruction_template: str 
                 else:
                     text = str(res)
             else:
-                # Fallback: use a naive echo (placeholder) — user must run with engine available
                 text = f"[SYNTHETIC:{persona_name}] Hello, I'm {persona_name}."
 
-            # If engine returned an offline placeholder or otherwise unusable text,
-            # synthesize a persona-styled fallback so the dataset remains useful.
+            # If engine returned an offline marker or otherwise unusable text,
+            # fail closed unless the operator explicitly requested synthetic data.
             bad = False
             if text is None:
                 bad = True
@@ -110,8 +116,10 @@ def generate_examples(persona_name: str, n: int = 50, instruction_template: str 
                 if "disconnected" in tl or "offline" in tl or text.strip().startswith("[synthetic"):
                     bad = True
 
+            if bad and not allow_synthetic_fallback:
+                raise RuntimeError("live cognitive engine returned unusable training text")
+
             if bad:
-                # produce a small set of fallback responses and style them
                 fallbacks = [
                     "I am Aura — I keep an eye on things here. Tell me what's on your mind.",
                     "I noticed a small pattern today that made me smile; what did you notice?",
@@ -137,5 +145,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--persona", required=True)
     parser.add_argument("--n", type=int, default=50)
+    parser.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="Allow explicitly marked synthetic examples when live inference is unavailable.",
+    )
     args = parser.parse_args()
-    generate_examples(args.persona, n=args.n)
+    generate_examples(args.persona, n=args.n, allow_synthetic_fallback=args.allow_synthetic_fallback)

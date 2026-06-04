@@ -10,7 +10,7 @@ sys.path.append(str(root))
 async def main():
     print("🚀 Zenith-HF2: Triggering LoRA Training cycle...")
     
-    # We need to mock a few things if we are running standalone
+    # Provide the runtime root when launched outside the desktop/server boot path.
     os.environ["AURA_ROOT"] = str(root)
     
     from core.adaptation.self_optimizer import get_self_optimizer

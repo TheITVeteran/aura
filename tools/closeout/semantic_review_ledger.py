@@ -210,7 +210,14 @@ def summarize_semantic_reviews(
         file_name = str(entry.get("file", ""))
         info = current_by_path.get(file_name)
         if info is None:
-            orphan_entries.append({"file": file_name, "reason": "file_not_tracked_or_not_text"})
+            orphan_entries.append(
+                {
+                    "file": file_name,
+                    "checkpoint_id": entry.get("checkpoint_id", ""),
+                    "file_sha256": entry.get("file_sha256", ""),
+                    "reason": "file_not_tracked_or_not_text",
+                }
+            )
             continue
         ok, reason = _entry_is_current(entry, info)
         if not ok:
@@ -246,6 +253,18 @@ def summarize_semantic_reviews(
 
     stale_entries: list[dict[str, Any]] = []
     superseded_stale_entries: list[dict[str, Any]] = []
+    superseded_orphan_entries: list[dict[str, Any]] = []
+    current_hashes_by_review_state = {
+        current_by_path[file_name].sha256
+        for file_name in fully_reviewed_files
+        if file_name in current_by_path
+    }
+    active_orphan_entries: list[dict[str, Any]] = []
+    for orphan in orphan_entries:
+        if orphan.get("file_sha256") in current_hashes_by_review_state:
+            superseded_orphan_entries.append(orphan)
+        else:
+            active_orphan_entries.append(orphan)
     for candidate in stale_candidates:
         if str(candidate.get("file", "")) in fully_reviewed_files:
             superseded_stale_entries.append(candidate)
@@ -267,17 +286,19 @@ def summarize_semantic_reviews(
         "semantic_review_coverage_ratio": round(coverage, 6),
         "stale_review_count": len(stale_entries),
         "superseded_stale_review_count": len(superseded_stale_entries),
-        "orphan_review_count": len(orphan_entries),
+        "orphan_review_count": len(active_orphan_entries),
+        "superseded_orphan_review_count": len(superseded_orphan_entries),
         "stale_reviews": stale_entries[:100],
         "superseded_stale_reviews": superseded_stale_entries[:100],
-        "orphan_reviews": orphan_entries[:100],
+        "orphan_reviews": active_orphan_entries[:100],
+        "superseded_orphan_reviews": superseded_orphan_entries[:100],
         "reviewed_files": reviewed_files,
         "full_semantic_review_current": (
             bool(current_by_path)
             and fully_reviewed_count == len(current_by_path)
             and reviewed_line_count == total_text_lines
             and not stale_entries
-            and not orphan_entries
+            and not active_orphan_entries
         ),
         "claim_supported": "semantic_review_coverage_status",
         "claim_not_supported": [
