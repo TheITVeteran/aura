@@ -1,10 +1,10 @@
 {
   "description": "Aura enterprise gate debt baseline. Reduce counts over time; do not raise them.",
-  "generated_at_unix": 1780572312.431778,
+  "generated_at_unix": 1780577469,
   "max_counts": {
     "broad_exception_review": 0,
     "pass_only_function": 0,
-    "placeholder_stub_mock": 529,
+    "placeholder_stub_mock": 519,
     "pytest_skip_xfail": 0,
     "raise_only_function": 0,
     "subprocess_usage_review": 0,

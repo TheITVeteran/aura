@@ -7,37 +7,57 @@ the Phenomenal Self-Model (PSM).
 """
 
 import asyncio
-import pytest
 import time
-from unittest.mock import MagicMock, patch
 from dataclasses import dataclass
+from types import SimpleNamespace
+
+import pytest
 
 from core.consciousness.phenomenological_experiencer import (
-    PhenomenologicalExperiencer,
     AttentionSchema,
-    Quale,
-    QualiaGenerator,
     AttentionSchemaBuilder,
     ExperientialContinuityEngine,
+    PhenomenalMoment,
     PhenomenalSelfModel,
-    PhenomenalMoment
+    PhenomenologicalExperiencer,
+    Quale,
+    QualiaGenerator,
 )
 
-# --- Mocks ---
 
 @dataclass
-class MockContent:
+class ContentType:
+    name: str
+
+
+@dataclass
+class BroadcastContent:
     source: str
-    content_type: MagicMock
+    content_type: ContentType
     content: any
     salience: float
 
+
 @dataclass
-class MockBroadcastEvent:
+class BroadcastEventFixture:
     timestamp: float
     winners: list
 
-# --- Tests ---
+
+class DeterministicAffect:
+    valence = 0.6
+    arousal = 0.7
+
+    def _get_dominant_emotion(self):
+        return "curious"
+
+
+class NarrativeRouterDouble:
+    async def think(self, **_kwargs):
+        return SimpleNamespace(
+            content="I feel a sense of clarity as I work through this."
+        )
+
 
 def test_qualia_generator_mapping():
     """Verify that functional states map to qualitative descriptors."""
@@ -61,14 +81,11 @@ def test_attention_schema_stripping():
     builder = AttentionSchemaBuilder()
     gen = QualiaGenerator()
     
-    ctype = MagicMock()
-    ctype.name = "LINGUISTIC"
-    
-    event = MockBroadcastEvent(
+    event = BroadcastEventFixture(
         timestamp=time.time(),
-        winners=[MockContent(
+        winners=[BroadcastContent(
             source="language",
-            content_type=ctype,
+            content_type=ContentType("LINGUISTIC"),
             content={"pending_message": "Hello Bryan, I am thinking about math."},
             salience=0.87543  # Very specific mechanical score
         )]
@@ -142,22 +159,15 @@ async def test_experiencer_integration_flow():
     """Test the full loop from broadcast to context string."""
     experiencer = PhenomenologicalExperiencer()
     
-    # Setup mocks for external state
-    affect = MagicMock()
-    affect.valence = 0.6
-    affect.arousal = 0.7
-    affect._get_dominant_emotion.return_value = "curious"
-    
+    affect = DeterministicAffect()
     experiencer.set_refs(affect_module=affect)
     
     # Simulate a broadcast
-    ctype = MagicMock()
-    ctype.name = "PERCEPTUAL"
-    event = MockBroadcastEvent(
+    event = BroadcastEventFixture(
         timestamp=time.time(),
-        winners=[MockContent(
+        winners=[BroadcastContent(
             source="perception",
-            content_type=ctype,
+            content_type=ContentType("PERCEPTUAL"),
             content={"observation": "the screen is glowing"},
             salience=0.9
         )]
@@ -181,13 +191,11 @@ def test_philosophical_correctness_leakage():
     experiencer = PhenomenologicalExperiencer()
     
     # Create an event with lots of mechanical baggage
-    ctype = MagicMock()
-    ctype.name = "META"
-    event = MockBroadcastEvent(
+    event = BroadcastEventFixture(
         timestamp=1000.0,
-        winners=[MockContent(
+        winners=[BroadcastContent(
             source="meta_optimization_loop",
-            content_type=ctype,
+            content_type=ContentType("META"),
             content={"issues_detected": ["latency_spike"], "salience_map": [0.1, 0.2]},
             salience=0.999
         )]
@@ -205,24 +213,22 @@ def test_philosophical_correctness_leakage():
     assert "I am moderately aware of my own process" in ctx
 
 @pytest.mark.asyncio
-async def test_psm_deep_narrative_mocked():
-    """Verify that deep narrative updates work (mocking LLM)."""
+async def test_psm_deep_narrative_uses_router_double(monkeypatch):
+    """Verify that deep narrative updates use the configured router contract."""
     psm = PhenomenalSelfModel()
     
-    with patch("core.container.ServiceContainer.get") as mock_get:
-        mock_cog = MagicMock()
-        mock_get.return_value = mock_cog
-        
-        # Mock the thinking result
-        from unittest.mock import AsyncMock
-        mock_cog.think = AsyncMock(return_value=MagicMock(content="I feel a sense of clarity as I work through this."))
-        
-        continuity = ExperientialContinuityEngine()
-        schema = AttentionSchema("math", "clear", "cognitive", 0.8)
-        
-        report = await psm.run_deep_narrative_update(
-            continuity, schema, [], "happy", "success"
-        )
-        
-        assert "clarity" in report
-        assert psm.get_latest_phenomenal_report() == report
+    def service_lookup(name, default=None):
+        if name == "llm_router":
+            return NarrativeRouterDouble()
+        return default
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", service_lookup)
+    continuity = ExperientialContinuityEngine()
+    schema = AttentionSchema("math", "clear", "cognitive", 0.8)
+
+    report = await psm.run_deep_narrative_update(
+        continuity, schema, [], "happy", "success"
+    )
+
+    assert "clarity" in report
+    assert psm.get_latest_phenomenal_report() == report

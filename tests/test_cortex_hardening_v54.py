@@ -11,11 +11,10 @@ Validates:
 import asyncio
 import time
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 
-class FakeLaneClient:
-    """Minimal mock of MLXLocalClient for lane-state testing."""
+class LaneClientDouble:
+    """Minimal MLXLocalClient-compatible lane object for state-transition tests."""
 
     def __init__(self, alive: bool = False, state: str = "recovering"):
         self._lane_state = state
@@ -139,7 +138,7 @@ class TestStaleStateReset(unittest.TestCase):
 
     def test_resets_mlx_client_state_not_just_dict(self):
         """The critical bug: resetting only lane dict left MLX client in 'recovering'."""
-        client = FakeLaneClient(alive=False, state="recovering")
+        client = LaneClientDouble(alive=False, state="recovering")
         client._lane_transition_at = time.time() - 200  # Stale for >90s
         gate = _make_gate(client)
 
@@ -153,7 +152,7 @@ class TestStaleStateReset(unittest.TestCase):
                          "MLX client _lane_state was NOT reset — infinite loop bug still present")
 
     def test_clears_warmup_in_flight(self):
-        client = FakeLaneClient(alive=False, state="recovering")
+        client = LaneClientDouble(alive=False, state="recovering")
         client._lane_transition_at = time.time() - 200
         client._warmup_in_flight = True
         gate = _make_gate(client)
@@ -164,33 +163,36 @@ class TestStaleStateReset(unittest.TestCase):
 
     def test_schedules_recovery_warmup(self):
         """After resetting to cold, a background prewarm should be scheduled."""
-        client = FakeLaneClient(alive=False, state="recovering")
+        client = LaneClientDouble(alive=False, state="recovering")
         client._lane_transition_at = time.time() - 200
         gate = _make_gate(client)
 
-        with patch.object(gate, '_schedule_background_cortex_prewarm') as mock_prewarm:
-            gate.get_conversation_status()
-            mock_prewarm.assert_called_once()
+        scheduled: list[float] = []
+        gate._schedule_background_cortex_prewarm = lambda delay=12.0: scheduled.append(delay)
+
+        gate.get_conversation_status()
+        self.assertEqual(scheduled, [3.0])
 
     def test_repeated_calls_do_not_spam_logs(self):
         """Multiple rapid calls should NOT produce a log for each one."""
-        client = FakeLaneClient(alive=False, state="recovering")
+        client = LaneClientDouble(alive=False, state="recovering")
         client._lane_transition_at = time.time() - 200
         gate = _make_gate(client)
 
-        with patch.object(gate, '_schedule_background_cortex_prewarm'):
-            # After the first call resets client to cold, subsequent calls
-            # should NOT trigger the stale check again because client is now "cold"
-            gate.get_conversation_status()  # First call — resets to cold
-            # Client is now actually "cold", so subsequent calls won't trigger
-            self.assertEqual(client._lane_state, "cold")
+        gate._schedule_background_cortex_prewarm = lambda delay=12.0: None
 
-            # Re-poison the state to simulate ongoing issue
-            client._set_lane_state("recovering", "test")
-            client._lane_transition_at = time.time() - 200
-            gate.get_conversation_status()  # Second call, should reset again
-            # But should NOT log because rate limit (30s window)
-            self.assertEqual(client._lane_state, "cold")
+        # After the first call resets client to cold, subsequent calls
+        # should NOT trigger the stale check again because client is now "cold"
+        gate.get_conversation_status()  # First call — resets to cold
+        # Client is now actually "cold", so subsequent calls won't trigger
+        self.assertEqual(client._lane_state, "cold")
+
+        # Re-poison the state to simulate ongoing issue
+        client._set_lane_state("recovering", "test")
+        client._lane_transition_at = time.time() - 200
+        gate.get_conversation_status()  # Second call, should reset again
+        # But should NOT log because rate limit (30s window)
+        self.assertEqual(client._lane_state, "cold")
 
 
 class TestRecoveryExhaustion(unittest.TestCase):
@@ -198,7 +200,7 @@ class TestRecoveryExhaustion(unittest.TestCase):
 
     def test_exponential_backoff_not_flat_5min(self):
         """After 5 failures, cooldown should be 30s, not 300s."""
-        client = FakeLaneClient(alive=False, state="cold")
+        client = LaneClientDouble(alive=False, state="cold")
         gate = _make_gate(client)
         gate._cortex_recovery_attempts = 5
         gate._cortex_recovery_exhausted_at = time.monotonic() - 35  # 35s ago
@@ -231,7 +233,7 @@ class TestConversationLaneStatus(unittest.TestCase):
     """Validate get_conversation_status edge cases."""
 
     def test_ready_cortex_returns_conversation_ready(self):
-        client = FakeLaneClient(alive=True, state="ready")
+        client = LaneClientDouble(alive=True, state="ready")
         client._last_ready_at = time.time()
         gate = _make_gate(client)
         lane = gate.get_conversation_status()
@@ -239,7 +241,7 @@ class TestConversationLaneStatus(unittest.TestCase):
 
     def test_dead_cortex_cold_does_not_trigger_stale_reset(self):
         """A cold lane should NOT trigger the stale reset warning."""
-        client = FakeLaneClient(alive=False, state="cold")
+        client = LaneClientDouble(alive=False, state="cold")
         client._lane_transition_at = time.time() - 200
         gate = _make_gate(client)
         lane = gate.get_conversation_status()

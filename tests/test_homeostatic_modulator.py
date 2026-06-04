@@ -1,7 +1,8 @@
 import shutil
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -139,66 +140,80 @@ def test_substrate_logit_projection_pruning(temp_project_dir):
     assert 7 not in proj.weights
 
 
-def test_homeostatic_modulator_no_services():
+def test_homeostatic_modulator_no_services(monkeypatch):
     # Clear container to ensure fresh state
-    with patch.object(ServiceContainer, "get", return_value=None):
-        modulator = HomeostaticModulator(substrate_dim=128)
-        modulation = modulator.compute_modulation()
+    monkeypatch.setattr(ServiceContainer, "get", lambda _name, default=None: None)
 
-        assert modulation.temperature == 0.75  # 0.95 - 0.40 * 0.5
-        assert modulation.repetition_penalty == 1.1
-        assert modulation.top_p == 0.875  # 0.95 - 0.25 * 0.3
-        assert modulation.logit_bias == {}
-        assert np.allclose(modulation.head_weights, np.ones(32, dtype=np.float32))
-        assert modulation.urgency == 0.5
+    modulator = HomeostaticModulator(substrate_dim=128)
+    modulation = modulator.compute_modulation()
+
+    assert modulation.temperature == 0.75  # 0.95 - 0.40 * 0.5
+    assert modulation.repetition_penalty == 1.1
+    assert modulation.top_p == 0.875  # 0.95 - 0.25 * 0.3
+    assert modulation.logit_bias == {}
+    assert np.allclose(modulation.head_weights, np.ones(32, dtype=np.float32))
+    assert modulation.urgency == 0.5
 
 
-def test_homeostatic_modulator_with_mocked_services():
-    mock_precision = MagicMock()
-    mock_precision.fhn.arousal = 0.8
-    mock_precision.fhn.fatigue = 0.2
-    mock_precision.get_head_weights.return_value = np.linspace(
-        0.5, 1.5, 32, dtype=np.float32
-    )
-    mock_precision.get_temperature.return_value = 0.63
+class DeterministicPrecisionEngine:
+    def __init__(self) -> None:
+        self.fhn = SimpleNamespace(arousal=0.8, fatigue=0.2)
 
-    mock_free_energy = MagicMock()
-    mock_free_energy._smoothed_fe = 0.6
-    mock_free_energy.get_action_urgency.return_value = 0.75
+    def get_head_weights(self):
+        return np.linspace(0.5, 1.5, 32, dtype=np.float32)
 
-    mock_substrate = MagicMock()
-    mock_substrate.idx_frustration = 3
-    mock_substrate.x = np.array([0.1, 0.2, 0.3, 0.5, 0.6], dtype=np.float32)
+    def get_temperature(self):
+        return 0.63
+
+
+class DeterministicFreeEnergyEngine:
+    _smoothed_fe = 0.6
+
+    def get_action_urgency(self):
+        return 0.75
+
+
+class DeterministicSubstrate:
+    def __init__(self) -> None:
+        self.idx_frustration = 3
+        self.x = np.array([0.1, 0.2, 0.3, 0.5, 0.6], dtype=np.float32)
+        self.sync_lock = nullcontext()
+
+
+def test_homeostatic_modulator_with_deterministic_services(monkeypatch):
+    precision = DeterministicPrecisionEngine()
+    free_energy = DeterministicFreeEnergyEngine()
+    substrate = DeterministicSubstrate()
 
     def service_lookup(name, default=None):
         if name == "precision_engine":
-            return mock_precision
+            return precision
         if name == "free_energy_engine":
-            return mock_free_energy
+            return free_energy
         if name == "liquid_substrate":
-            return mock_substrate
+            return substrate
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=service_lookup):
-        modulator = HomeostaticModulator(substrate_dim=5)
-        # Seed weights in projection to see biases
-        modulator.projection.weights[42] = np.array(
-            [0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32
-        )
+    monkeypatch.setattr(ServiceContainer, "get", service_lookup)
+    modulator = HomeostaticModulator(substrate_dim=5)
+    # Seed weights in projection to see biases
+    modulator.projection.weights[42] = np.array(
+        [0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32
+    )
 
-        modulation = modulator.compute_modulation()
+    modulation = modulator.compute_modulation()
 
-        assert modulation.temperature == 0.63
-        # frustration is substrate.x[3] = 0.5. Rep pen = 1.1 + 0.3 * 0.5 = 1.25
-        assert modulation.repetition_penalty == 1.25
-        # top_p = max(0.6, min(1.0, 0.95 - 0.25 * 0.6)) = 0.8
-        assert abs(modulation.top_p - 0.8) < 1e-6
-        assert np.allclose(modulation.head_weights, np.linspace(0.5, 1.5, 32))
-        assert modulation.urgency == 0.75
-        # bias dot product = 0.5 * 0.1 + 0.5 * 0.2 = 0.15
-        # bias = clip(dot * 0.5) = 0.075
-        assert 42 in modulation.logit_bias
-        assert abs(modulation.logit_bias[42] - 0.075) < 1e-4
+    assert modulation.temperature == 0.63
+    # frustration is substrate.x[3] = 0.5. Rep pen = 1.1 + 0.3 * 0.5 = 1.25
+    assert modulation.repetition_penalty == 1.25
+    # top_p = max(0.6, min(1.0, 0.95 - 0.25 * 0.6)) = 0.8
+    assert abs(modulation.top_p - 0.8) < 1e-6
+    assert np.allclose(modulation.head_weights, np.linspace(0.5, 1.5, 32))
+    assert modulation.urgency == 0.75
+    # bias dot product = 0.5 * 0.1 + 0.5 * 0.2 = 0.15
+    # bias = clip(dot * 0.5) = 0.075
+    assert 42 in modulation.logit_bias
+    assert abs(modulation.logit_bias[42] - 0.075) < 1e-4
 
 
 def test_modulator_projection_stress_test(temp_project_dir):

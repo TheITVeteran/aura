@@ -2,7 +2,6 @@ import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -20,6 +19,47 @@ from interface.server import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class AsyncFailureCallable:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls: list[tuple[tuple, dict]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        raise self.error
+
+
+class AsyncRecorderCallable:
+    def __init__(self, result=None) -> None:
+        self.result = result
+        self.calls: list[tuple[tuple, dict]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.result
+
+
+class FailingFuture:
+    def __init__(self) -> None:
+        self.result_called = False
+
+    def cancelled(self):
+        return False
+
+    def result(self):
+        self.result_called = True
+        raise RuntimeError("publish future failed")
+
+
+class OfflineWill:
+    def __init__(self) -> None:
+        self.decisions: list[tuple[tuple, dict]] = []
+
+    def decide(self, *_args, **_kwargs):
+        self.decisions.append((_args, _kwargs))
+        raise RuntimeError("will offline")
 
 
 def test_cache_policy_keeps_live_shell_uncached():
@@ -354,15 +394,19 @@ async def test_websocket_manager_uses_task_spawner_for_disconnect_on_overflow(mo
     websocket = object()
     manager.active_connections = {websocket: queue}
 
-    monkeypatch.setattr(manager, "_replace_lowest_priority_item", AsyncMock(side_effect=RuntimeError("overflow")))
-    disconnect = AsyncMock()
+    monkeypatch.setattr(
+        manager,
+        "_replace_lowest_priority_item",
+        AsyncFailureCallable(RuntimeError("overflow")),
+    )
+    disconnect = AsyncRecorderCallable()
     monkeypatch.setattr(manager, "disconnect", disconnect)
 
     await manager.broadcast({"type": "telemetry", "message": "drop-me"})
 
     assert scheduled["name"] == "ws_disconnect"
     await scheduled["task"]
-    disconnect.assert_awaited_once_with(websocket)
+    assert disconnect.calls == [((websocket,), {})]
 
 
 @pytest.mark.asyncio
@@ -371,7 +415,9 @@ async def test_event_bus_optional_redis_publish_failure_keeps_local_bus_healthy(
 
     bus = AuraEventBus()
     bus._use_redis = True
-    bus._redis = SimpleNamespace(publish=AsyncMock(side_effect=ConnectionError("redis offline")))
+    bus._redis = SimpleNamespace(
+        publish=AsyncFailureCallable(ConnectionError("redis offline"))
+    )
 
     await bus.publish("runtime/test", {"ok": True})
 
@@ -390,7 +436,9 @@ async def test_event_bus_required_redis_publish_failure_marks_degraded():
     bus = AuraEventBus()
     bus._use_redis = True
     bus._redis_required = True
-    bus._redis = SimpleNamespace(publish=AsyncMock(side_effect=ConnectionError("redis offline")))
+    bus._redis = SimpleNamespace(
+        publish=AsyncFailureCallable(ConnectionError("redis offline"))
+    )
 
     await bus.publish("runtime/test", {"ok": True})
 
@@ -463,11 +511,7 @@ def test_event_bus_threadsafe_publish_failure_is_recorded():
     from core.event_bus import AuraEventBus
 
     bus = AuraEventBus()
-    future = SimpleNamespace(
-        cancelled=lambda: False,
-        result=Mock(side_effect=RuntimeError("publish future failed")),
-    )
-    bus._threadsafe_publish_done(future)
+    bus._threadsafe_publish_done(FailingFuture())
 
     status = bus.get_status()
     assert bus.degraded is True
@@ -539,7 +583,7 @@ async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(m
         final_score=0.91,
         rationale="selected by test arbiter",
     )
-    arbiter = SimpleNamespace(arbitrate=AsyncMock(return_value=scored))
+    arbiter = SimpleNamespace(arbitrate=AsyncRecorderCallable(scored))
 
     def _service_get(name, default=None):
         if name == "initiative_arbiter":
@@ -552,7 +596,7 @@ async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(m
     monkeypatch.setattr(
         will_module,
         "get_will",
-        lambda: SimpleNamespace(decide=Mock(side_effect=RuntimeError("will offline"))),
+        lambda: OfflineWill(),
     )
 
     result = await synth.synthesize(SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[])))
