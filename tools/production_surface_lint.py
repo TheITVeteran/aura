@@ -144,10 +144,6 @@ EXEMPT_FILES = {
         "justification": "Statically analyzes patch syntax before self-repair actions.",
         "compensating_tests": "tests/test_mutation_safety.py"
     },
-    "core/self_modification/safe_modification_harness.py": {
-        "justification": "Runs isolated subprocess tests for code changes.",
-        "compensating_tests": "tests/test_safe_modification_harness.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"

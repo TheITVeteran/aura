@@ -20,7 +20,6 @@ import logging
 import os
 import py_compile
 import resource
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,6 +27,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("SelfModification.SafeHarness")
 
@@ -177,7 +179,12 @@ class SafeModificationHarness:
             for fpath, content in file_contents.items():
                 tmp_file = Path(tmpdir) / fpath
                 tmp_file.parent.mkdir(parents=True, exist_ok=True)
-                tmp_file.write_text(content, encoding="utf-8")
+                get_file_write_gateway().write_text(
+                    tmp_file,
+                    content,
+                    encoding="utf-8",
+                    source="core.self_modification.safe_modification_harness.compile_temp",
+                )
                 try:
                     py_compile.compile(str(tmp_file), doraise=True)
                 except py_compile.PyCompileError as e:
@@ -186,8 +193,6 @@ class SafeModificationHarness:
 
     async def _check_pytest(self, changed_files: list[str]) -> tuple[bool, list[str]]:
         """Run pytest on related test files without importing the module."""
-        import asyncio
-
         errors: list[str] = []
         test_files: list[str] = []
 
@@ -223,14 +228,13 @@ class SafeModificationHarness:
             env = dict(os.environ)
             existing_pp = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = str(self.codebase_root) + (os.pathsep + existing_pp if existing_pp else "")
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 [sys.executable, "-m", "pytest", "-x"] + test_files,
                 capture_output=True,
-                text=True,
                 timeout=60,
                 cwd=self.codebase_root,
                 env=env,
+                source="core.self_modification.safe_modification_harness.pytest",
             )
             if result.returncode != 0:
                 errors.append(f"pytest failed: stdout={result.stdout[-500:]} stderr={result.stderr[-500:]}")
@@ -286,8 +290,12 @@ class SafeModificationHarness:
                     continue
                 backup_path = backup_dir / fpath
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(abs_path, backup_path)
                 content = abs_path.read_bytes()
+                get_file_write_gateway().write_bytes(
+                    backup_path,
+                    content,
+                    source="core.self_modification.safe_modification_harness.rollback_backup",
+                )
                 fingerprints_before[fpath] = hashlib.sha256(content).hexdigest()
 
             # Restore

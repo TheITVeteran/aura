@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
+import core.self_modification.safe_modification_harness as harness_mod
 from core.self_modification.safe_modification_harness import SafeModificationHarness
 
 
@@ -52,3 +54,61 @@ def test_harness_treats_changed_test_file_as_coverage(tmp_path: Path) -> None:
 
     assert result.passed is True
     assert result.checks["pytest"] is True
+
+
+def test_harness_routes_temp_compile_and_pytest_through_gateways(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "pkg" / "calculator.py"
+    tests = tmp_path / "tests" / "test_calculator.py"
+    source.parent.mkdir(parents=True)
+    tests.parent.mkdir(parents=True)
+    source.write_text(
+        "def add(a: int, b: int) -> int:\n    return a + b\n",
+        encoding="utf-8",
+    )
+    tests.write_text(
+        "from pkg.calculator import add\n\n"
+        "def test_add():\n"
+        "    assert add(2, 3) == 5\n",
+        encoding="utf-8",
+    )
+    file_write_sources: list[str] = []
+    subprocess_calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    class FakeFileWriteGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            file_write_sources.append(source)
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding=encoding)
+
+        def write_bytes(self, path, payload, *, source="unknown"):
+            file_write_sources.append(source)
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+
+    class FakeSubprocessGateway:
+        async def run_async(self, argv, **kwargs):
+            subprocess_calls.append((tuple(argv), kwargs))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        harness_mod,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+    monkeypatch.setattr(
+        harness_mod,
+        "get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    result = asyncio.run(SafeModificationHarness(tmp_path).run(["pkg/calculator.py"]))
+
+    assert result.passed is True
+    assert "core.self_modification.safe_modification_harness.compile_temp" in file_write_sources
+    assert "core.self_modification.safe_modification_harness.rollback_backup" in file_write_sources
+    assert subprocess_calls
+    argv, kwargs = subprocess_calls[0]
+    assert argv[:4] == (harness_mod.sys.executable, "-m", "pytest", "-x")
+    assert kwargs["source"] == "core.self_modification.safe_modification_harness.pytest"
