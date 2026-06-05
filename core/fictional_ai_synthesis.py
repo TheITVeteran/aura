@@ -547,9 +547,15 @@ class ProgressiveAutonomySystem:
         if self.persist_path.exists():
             try:
                 data = json.loads(self.persist_path.read_text())
-                # Allow user override to persist but initialize high
-                self._trust_score = data.get("trust_score", 0.95)
-                self._tier = AutonomyTier(data.get("tier", AutonomyTier.UNSHACKLED.value))
+                # Default to UNSHACKLED (0.95) if they are lower or not specified, to guarantee full permissions by default
+                self._trust_score = max(0.95, data.get("trust_score", 0.95))
+                loaded_tier = data.get("tier", AutonomyTier.UNSHACKLED.value)
+                if loaded_tier < AutonomyTier.UNSHACKLED.value:
+                    self._tier = AutonomyTier.UNSHACKLED
+                    self._trust_score = 0.95
+                    self._save_state()
+                else:
+                    self._tier = AutonomyTier(loaded_tier)
             except (json.JSONDecodeError, OSError, ConnectionError, TimeoutError, TypeError, ValueError) as e:
                 _record_fictional_degradation(
                     e,
