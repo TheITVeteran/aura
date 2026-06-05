@@ -35,8 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.SelfHealing")
 
@@ -134,7 +135,7 @@ class SelfHealing:
                     logger.error("SelfHealing loop error: %s", e)
                     await asyncio.sleep(1.0)
 
-        self._task = get_task_tracker().create_task(_loop(), name="SelfHealing")
+        self._task = create_tracked_task(_loop(), name="SelfHealing")
 
     async def stop(self) -> None:
         self._running = False
@@ -316,9 +317,19 @@ class SelfHealing:
             )
 
         try:
-            task = get_task_tracker().create_task(_runner(), name=f"SelfHealing.deep_repair.{key}")
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            task = asyncio.create_task(_runner())
+            task = create_tracked_task(_runner(), name=f"SelfHealing.deep_repair.{key}")
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "self_healing",
+                exc,
+                action="failed closed when deep repair task could not be scheduled through task ownership",
+                receipt_required=True,
+            )
+            return {
+                "result": "deep_repair_schedule_failed",
+                "module_path": key,
+                "reason": reason,
+            }
         self._deep_repairs[key] = task
         task.add_done_callback(lambda _task: self._deep_repairs.pop(key, None))
         return {
@@ -400,14 +411,11 @@ class SelfHealing:
 
     def _append_record(self, record: dict[str, Any]) -> None:
         try:
-            with open(_LEDGER, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, default=str) + "\n")
-                fh.flush()
-                if _env_flag("AURA_SELF_HEALING_LEDGER_FSYNC", False):
-                    try:
-                        os.fsync(fh.fileno())
-                    except OSError as exc:
-                        logger.debug("SelfHealing ledger fsync skipped: %s", exc)
+            get_file_write_gateway().append_text(
+                _LEDGER,
+                json.dumps(record, default=str) + "\n",
+                source="runtime.self_healing.ledger",
+            )
         except (OSError, TypeError, ValueError) as exc:
             logger.debug("SelfHealing ledger append failed: %s", exc)
 

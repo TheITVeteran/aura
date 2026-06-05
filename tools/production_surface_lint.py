@@ -64,18 +64,6 @@ ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
-    "core/runtime/autonomy_conductor.py": {
-        "justification": "Coordinates autonomous research threads and handles persistent loops.",
-        "compensating_tests": "tests/test_autonomy_conductor.py"
-    },
-    "core/runtime/self_healing.py": {
-        "justification": "Autonomously detects failures and implements local rolling hot-patches.",
-        "compensating_tests": "tests/test_self_healing.py"
-    },
-    "core/resilience/stall_watchdog.py": {
-        "justification": "Implements a non-blocking daemon thread to restart frozen executors.",
-        "compensating_tests": "tests/test_stall_watchdog.py"
-    },
     "core/skills/sovereign_network.py": {
         "justification": "Manages secure socket layers for sovereign network operations.",
         "compensating_tests": "tests/test_sovereign_network.py"

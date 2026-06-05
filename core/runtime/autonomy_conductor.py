@@ -19,7 +19,8 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.task_ownership import create_tracked_task
 
 JobFn = Callable[[], Awaitable[dict[str, Any]] | dict[str, Any]]
 logger = logging.getLogger("core.runtime.autonomy_conductor")
@@ -164,15 +165,19 @@ class AutonomyConductor:
         self._stop = asyncio.Event()
         runner = self._run()
         try:
-            self._task = get_task_tracker().create_task(runner, name="Aura.AutonomyConductor")
+            self._task = create_tracked_task(
+                runner,
+                name="Aura.AutonomyConductor",
+            )
         except _AUTONOMY_RECOVERABLE_ERRORS as exc:
             runner.close()
             _record_autonomy_degradation(
                 exc,
-                action="started conductor with asyncio task after task tracker scheduling failed",
-                stage="start.task_tracker",
+                action="failed closed because task ownership could not schedule autonomy conductor",
+                stage="start.task_ownership",
+                severity="degraded",
             )
-            self._task = asyncio.create_task(self._run(), name="Aura.AutonomyConductor")
+            raise
 
     async def stop(self) -> None:
         self._stop.set()
@@ -249,8 +254,11 @@ class AutonomyConductor:
     def _record(self, job: ConductedJob) -> None:
         entry = {"when": time.time(), "job": job.to_dict()}
         try:
-            with open(self.ledger_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, sort_keys=True, default=str) + "\n")
+            get_file_write_gateway().append_text(
+                self.ledger_path,
+                json.dumps(entry, sort_keys=True, default=str) + "\n",
+                source="runtime.autonomy_conductor.ledger",
+            )
         except _AUTONOMY_RECOVERABLE_ERRORS as exc:
             _record_autonomy_degradation(
                 exc,

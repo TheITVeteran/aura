@@ -71,31 +71,29 @@ def test_ledger_append_failure_keeps_in_memory_job_status(tmp_path):
     asyncio.run(scenario())
 
 
-def test_start_falls_back_to_asyncio_task_when_task_tracker_fails(monkeypatch, tmp_path):
+def test_start_fails_closed_when_task_ownership_fails(monkeypatch, tmp_path):
     async def scenario():
         tracker = get_degradation_tracker()
         tracker.reset()
 
-        class TrackerUnavailable:
-            def __init__(self):
-                self.calls = 0
+        calls = 0
 
-            def create_task(self, *_args, **_kwargs):
-                self.calls += 1
-                raise RuntimeError("tracker unavailable")
+        def task_owner_unavailable(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("task ownership unavailable")
 
-        task_tracker = TrackerUnavailable()
-        monkeypatch.setattr(conductor_module, "get_task_tracker", lambda: task_tracker)
+        monkeypatch.setattr(conductor_module, "create_tracked_task", task_owner_unavailable)
         conductor = AutonomyConductor(tmp_path / "autonomy.jsonl")
         conductor.register("idle", 60, lambda: {}, run_immediately=False)
 
-        await conductor.start()
-        await conductor.stop()
+        with pytest.raises(RuntimeError, match="task ownership unavailable"):
+            await conductor.start()
 
-        assert task_tracker.calls == 1
-        assert conductor._task is not None
+        assert calls == 1
+        assert conductor._task is None
         assert any(
-            "asyncio task" in record.action
+            "failed closed" in record.action
             for record in tracker.recent(subsystem="autonomy_conductor")
         )
         tracker.reset()

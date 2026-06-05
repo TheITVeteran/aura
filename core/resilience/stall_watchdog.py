@@ -14,6 +14,7 @@ Design notes:
 """
 
 import asyncio
+import io
 import logging
 import os
 import sys
@@ -24,6 +25,8 @@ from importlib import import_module
 from pathlib import Path
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Resilience.Watchdog")
 
@@ -231,12 +234,27 @@ class StallWatchdog(threading.Thread):
         dump_dir.mkdir(parents=True, exist_ok=True)
         dump_file = dump_dir / f"stall_{int(time.time())}.txt"
 
-        with open(dump_file, "w") as f:
-            f.write(f"STALL DETECTED: {elapsed:.1f}s\n")
-            f.write("=" * 40 + "\n")
-            for thread_id, frame in sys._current_frames().items():
-                f.write(f"\nThread ID: {thread_id}\n")
-                traceback.print_stack(frame, file=f)
+        buffer = io.StringIO()
+        buffer.write(f"STALL DETECTED: {elapsed:.1f}s\n")
+        buffer.write("=" * 40 + "\n")
+        for thread_id, frame in sys._current_frames().items():
+            buffer.write(f"\nThread ID: {thread_id}\n")
+            traceback.print_stack(frame, file=buffer)
+        try:
+            get_file_write_gateway().write_text(
+                dump_file,
+                buffer.getvalue(),
+                source="resilience.stall_watchdog.traceback_dump",
+            )
+        except _STALL_WATCHDOG_ERRORS as exc:
+            _record_watchdog_degradation(
+                exc,
+                action="continued stall handling after traceback dump write failed",
+                severity="warning",
+                extra={"stage": "traceback_dump", "elapsed_s": elapsed},
+            )
+        finally:
+            buffer.close()
 
         logger.info("💉 [IMMUNE] Stall traceback dumped to: %s", dump_file)
 
@@ -263,12 +281,22 @@ class StallWatchdog(threading.Thread):
         cancelling the hung tasks. If the loop is partially responsive, the
         coroutine runs immediately.
         """
-        try:
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(
-                    self._recover_on_loop(elapsed), loop=self.loop
+        def _schedule_recovery() -> None:
+            try:
+                create_tracked_task(
+                    self._recover_on_loop(elapsed),
+                    name="stall_watchdog.active_recovery",
                 )
-            )
+            except _STALL_WATCHDOG_ERRORS as exc:
+                _record_watchdog_degradation(
+                    exc,
+                    action="continued watchdog reporting after active recovery task ownership failed",
+                    severity="warning",
+                    extra={"stage": "active_recovery_task", "elapsed_s": elapsed},
+                )
+
+        try:
+            self.loop.call_soon_threadsafe(_schedule_recovery)
         except RuntimeError:
             return
         except (AttributeError, TypeError, ValueError) as exc:
