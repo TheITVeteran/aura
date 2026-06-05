@@ -1,6 +1,7 @@
+
 import pexpect
 import pyte
-import sys
+
 
 def main():
     # 80x24 is standard nethack size
@@ -14,7 +15,7 @@ def main():
     try:
         # Give it a second to start
         child.expect(pexpect.TIMEOUT, timeout=1)
-    except:
+    except (OSError, RuntimeError, pexpect.EOF, pexpect.TIMEOUT):
         pass
         
     stream.feed(child.before if child.before else "")

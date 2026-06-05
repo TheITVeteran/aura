@@ -1,7 +1,8 @@
 
-import pexpect
 import os
 import time
+
+import pexpect
 
 __test__ = False
 
@@ -20,7 +21,7 @@ def test_user(name):
             print("FAILED: Too many hacks.")
         else:
             print("SUCCESS: Game started.")
-    except Exception:
+    except (OSError, RuntimeError, pexpect.EOF, pexpect.TIMEOUT):
         print("Timeout/EOF.")
     child.terminate()
 

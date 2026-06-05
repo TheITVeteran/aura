@@ -1,13 +1,14 @@
-import re
 import os
+import re
 
 EXCLUDE = {'.git', 'venv', '__pycache__', 'node_modules', '.aura'}
+_FILE_EDIT_ERRORS = (OSError, UnicodeDecodeError, UnicodeEncodeError)
 
 def fix_asyncio(filepath):
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             content = f.read()
-    except Exception:
+    except _FILE_EDIT_ERRORS:
         return
 
     original = content
@@ -31,9 +32,9 @@ def fix_asyncio(filepath):
 
 def fix_write_text(filepath):
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             content = f.read()
-    except Exception:
+    except _FILE_EDIT_ERRORS:
         return
 
     original = content

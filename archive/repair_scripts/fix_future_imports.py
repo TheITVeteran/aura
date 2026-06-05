@@ -5,6 +5,7 @@ from pathlib import Path
 SOURCE_DIR = Path(os.environ.get("AURA_SOURCE_DIR", Path(__file__).resolve().parents[2])).expanduser().resolve()
 
 FUTURE_IMPORT = "from __future__ import annotations"
+_FILE_READ_ERRORS = (OSError, UnicodeDecodeError)
 
 # Regex to detect a future import line (allow leading whitespace)
 future_pattern = re.compile(r"^(\s*)from __future__ import annotations\s*$")
@@ -13,7 +14,7 @@ future_pattern = re.compile(r"^(\s*)from __future__ import annotations\s*$")
 def fix_file(file_path: Path):
     try:
         text = file_path.read_text(encoding="utf-8")
-    except Exception:
+    except _FILE_READ_ERRORS:
         return False
     lines = text.splitlines()
     # Find the future import line(s)

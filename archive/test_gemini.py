@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+
 import httpx
+
 
 async def test_key():
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -19,7 +21,7 @@ async def test_key():
         print(f"Status: {response.status_code}")
         try:
             print(json.dumps(response.json(), indent=2))
-        except:
+        except (json.JSONDecodeError, ValueError):
             print(response.text)
 
 asyncio.run(test_key())

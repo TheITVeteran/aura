@@ -1,12 +1,12 @@
 import asyncio
 import logging
-import time
 from enum import Enum, auto
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .affect import AffectEngine, AffectState
 
 logger = logging.getLogger("Aura.EmotionShim")
+_EMOTION_SHIM_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 class EmotionType(Enum):
     # Mapping legacy enum to new PAD state is approximate
@@ -45,7 +45,7 @@ class EmotionEngine:
         # We'll just read the internal state directly (it's a dataclass, fairly safe to read).
         return LegacyState(self.engine.state)
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         s = self.engine.state
         return {
             "primary": s.dominant_emotion, # Return string instead of Enum for API
@@ -55,7 +55,7 @@ class EmotionEngine:
             "engagement": round(s.engagement, 2)
         }
 
-    def react(self, trigger: str, context: Dict = None):
+    def react(self, trigger: str, context: dict = None):
         """Forward react call."""
         # Fire-and-forget the async reaction
         try:
@@ -70,7 +70,7 @@ class EmotionEngine:
             else:
                  loop.run_until_complete(self.engine.react(trigger, context))
 
-        except Exception as e:
+        except _EMOTION_SHIM_ERRORS as e:
             logger.error("Failed to forward reaction: %s", e)
 
 # Global Instance (Legacy)

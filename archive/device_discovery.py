@@ -22,6 +22,24 @@ from typing import Any
 
 logger = logging.getLogger("DeviceDiscovery.Advanced")
 
+_NETWORK_DISCOVERY_ERRORS = (
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+)
+_DEVICE_ACCESS_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class EnhancedDeviceScanner:
     """Advanced device discovery on network (Async).
@@ -100,7 +118,7 @@ class EnhancedDeviceScanner:
                             "discovery_method": "arp"
                         })
         
-        except Exception as e:
+        except _NETWORK_DISCOVERY_ERRORS as e:
             logger.error("ARP scan failed: %s", e)
         
         return devices
@@ -137,15 +155,15 @@ class EnhancedDeviceScanner:
                             "discovery_method": "ping",
                             "responsive": True
                         }
-                except (TimeoutError, Exception):
-                    logger.debug('Ignored Exception in device_discovery.py: %s', "unknown_error")
+                except _NETWORK_DISCOVERY_ERRORS as e:
+                    logger.debug("Ping probe failed for %s: %s", ip, e)
                 return None
 
             tasks = [_ping_single(f"{network_prefix}.{i}") for i in range(1, 20) if f"{network_prefix}.{i}" != local_ip]
             results = await asyncio.gather(*tasks)
             devices.extend([r for r in results if r])
         
-        except Exception as e:
+        except _NETWORK_DISCOVERY_ERRORS as e:
             logger.error("Ping sweep failed: %s", e)
         
         return devices
@@ -183,7 +201,7 @@ class EnhancedDeviceScanner:
             writer.close()
             await writer.wait_closed()
             return True
-        except (TimeoutError, Exception):
+        except _NETWORK_DISCOVERY_ERRORS:
             return False
     
     def _identify_services(self, device: dict):
@@ -215,7 +233,7 @@ class EnhancedDeviceScanner:
         try:
             hostname = socket.gethostbyaddr(device["ip"])[0]
             device["hostname"] = hostname
-        except Exception as e:
+        except OSError as e:
             logger.debug("Hostname identification failed for %s: %s", device["ip"], e)
             device["hostname"] = "unknown"
     
@@ -227,7 +245,7 @@ class EnhancedDeviceScanner:
             local_ip = s.getsockname()[0]
             s.close()
             return local_ip
-        except Exception as e:
+        except OSError as e:
             logger.debug("Failed to get local IP: %s", e)
             return None
 
@@ -249,6 +267,16 @@ class DeviceAccessManager:
         logger.info("🔐 Connecting to %s via SSH...", ip)
         try:
             import paramiko
+        except ImportError as e:
+            logger.error("SSH support unavailable: %s", e)
+            return False
+        try:
+            ssh_errors = (
+                paramiko.AuthenticationException,
+                paramiko.BadHostKeyException,
+                paramiko.SSHException,
+                *_DEVICE_ACCESS_ERRORS,
+            )
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
@@ -267,7 +295,7 @@ class DeviceAccessManager:
                         try:
                             client.connect(ip, username=username, key_filename=key_path)
                             break
-                        except Exception as e:
+                        except ssh_errors as e:
                             logger.debug("SSH key connection failed for %s: %s", key_path, e)
                             continue
             
@@ -278,7 +306,7 @@ class DeviceAccessManager:
             }
             logger.info("✅ SSH connection established: %s@%s", username, ip)
             return True
-        except Exception as e:
+        except ssh_errors as e:
             logger.error("SSH connection failed: %s", e)
             return False
     
@@ -299,7 +327,7 @@ class DeviceAccessManager:
             if error:
                 logger.warning("Remote command stderr: %s", error)
             return True, output
-        except Exception as e:
+        except _DEVICE_ACCESS_ERRORS as e:
             logger.error("Remote command failed: %s", e)
             return False, str(e)
     
@@ -316,7 +344,7 @@ class DeviceAccessManager:
             sftp.close()
             logger.info("✅ File transferred: %s → %s:%s", local_path, ip, remote_path)
             return True
-        except Exception as e:
+        except _DEVICE_ACCESS_ERRORS as e:
             logger.error("File transfer failed: %s", e)
             return False
     
@@ -363,7 +391,7 @@ class DeviceAccessManager:
             else:
                 logger.error("Failed to start Aura on remote device")
                 return False
-        except Exception as e:
+        except _DEVICE_ACCESS_ERRORS as e:
             logger.error("Deployment failed: %s", e)
             return False
     

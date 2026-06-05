@@ -166,6 +166,8 @@ class ActuatorResult:
         self.message = message
         self.updates = updates or {{}}
 
+ACTUATOR_RUNTIME_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
+
 {source}
 
 try:
@@ -182,7 +184,7 @@ try:
         "has_test_params": isinstance(test_params, dict),
         "test_params": test_params if isinstance(test_params, dict) else {{}}
     }})
-except Exception as e:
+except ACTUATOR_RUNTIME_ERRORS as e:
     print({{"success": False, "error": "Instantiation error: " + str(e)}})
 """
         try:
@@ -229,6 +231,8 @@ class ActuatorResult:
         self.message = message
         self.updates = updates or {{}}
 
+ACTUATOR_RUNTIME_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
+
 PARAMS = {params_literal}
 
 {source}
@@ -247,7 +251,7 @@ try:
             "message": str(getattr(result, "message", "")),
             "updates": updates,
         }})
-except Exception as e:
+except ACTUATOR_RUNTIME_ERRORS as e:
     print({{"success": False, "error": "Execution error: " + str(e)}})
 """
         try:

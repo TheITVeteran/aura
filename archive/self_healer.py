@@ -2,13 +2,10 @@
 Pattern-based diagnostic and auto-fix system.
 """
 import logging
-import os
 import re
-import subprocess
-import sys
-from typing import Dict, Optional
 
 logger = logging.getLogger("Core.SelfHealer")
+_SELF_HEALER_FIX_ERRORS = (AttributeError, LookupError, OSError, RuntimeError, TypeError, ValueError)
 
 class SelfHealer:
     def __init__(self, container=None):
@@ -31,7 +28,7 @@ class SelfHealer:
                 logger.info("SelfHealer: Detected pattern %s. Attempting fix...", pattern)
                 try:
                     return fixer(match, exception)
-                except Exception:
+                except _SELF_HEALER_FIX_ERRORS:
                     logger.error("SelfHealer: Fixer failed for pattern %s", pattern, exc_info=True)
                     return False
         return False

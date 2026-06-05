@@ -1,7 +1,8 @@
 
-import pexpect
 import os
 import time
+
+import pexpect
 
 nethack_path = "/opt/homebrew/bin/nethack"
 env = os.environ.copy()
@@ -21,7 +22,7 @@ time.sleep(1)
 try:
     out = child.read_nonblocking(size=1000, timeout=0.1)
     print(f"Output: {repr(out)}")
-except:
+except (OSError, RuntimeError, pexpect.EOF, pexpect.TIMEOUT):
     print("Timeout/EOF.")
 print(f"Is alive: {child.isalive()}")
 child.terminate()

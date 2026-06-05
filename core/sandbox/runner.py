@@ -51,6 +51,7 @@ code = params.get("code", "")
 mem_bytes = params.get("mem_bytes", None)
 cpu_seconds = params.get("cpu_seconds", None)
 resource_warning = None
+RUNNER_RUNTIME_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 
 try:
     if resource:
@@ -79,8 +80,8 @@ except (OSError, ValueError) as e:
 import builtins
 safe_builtins = {
     '__build_class__': builtins.__build_class__,
-    'abs': builtins.abs, 'all': builtins.all, 'any': builtins.any, 'ascii': builtins.ascii,
-    'bin': builtins.bin, 'bool': builtins.bool, 'bytearray': builtins.bytearray, 
+	    'abs': builtins.abs, 'all': builtins.all, 'any': builtins.any, 'ascii': builtins.ascii,
+	    'bin': builtins.bin, 'bool': builtins.bool, 'bytearray': builtins.bytearray,
     'bytes': builtins.bytes, 'callable': builtins.callable, 'chr': builtins.chr,
     'complex': builtins.complex, 'dict': builtins.dict, 'dir': builtins.dir,
     'Exception': builtins.Exception,
@@ -121,7 +122,7 @@ except SystemExit as e:
         "stderr": "",
         "resource_warning": resource_warning,
     }))
-except BaseException as e:
+except RUNNER_RUNTIME_ERRORS as e:
     tb = traceback.format_exc()
     print(json.dumps({
         "status": "error",
