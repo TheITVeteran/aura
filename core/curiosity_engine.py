@@ -146,6 +146,39 @@ class CuriosityEngine:
 
     def _get_next(self) -> Optional[CuriosityTopic]:
         if not self.curiosity_queue:
+            kg = getattr(self.orchestrator, "knowledge_graph", None)
+            sparse_nodes = []
+            if kg and hasattr(kg, "get_sparse_nodes"):
+                try:
+                    sparse_nodes = list(kg.get_sparse_nodes() or [])
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "curiosity_engine",
+                        exc,
+                        action="skipped sparse knowledge graph curiosity fallback",
+                    )
+                    logger.debug("Sparse KG curiosity fallback failed: %s", exc)
+            for node in sparse_nodes:
+                if isinstance(node, dict):
+                    topic = str(
+                        node.get("content")
+                        or node.get("label")
+                        or node.get("name")
+                        or node.get("id")
+                        or ""
+                    ).strip()
+                else:
+                    topic = str(node or "").strip()
+                if topic and topic.lower() not in self.explored_topics:
+                    self.curiosity_queue.append(
+                        CuriosityTopic(
+                            topic=topic,
+                            reason="knowledge graph novelty search",
+                            priority=0.7,
+                        )
+                    )
+                    break
+        if not self.curiosity_queue:
             return None
 
         topics = sorted(list(self.curiosity_queue), key=lambda x: x.priority, reverse=True)

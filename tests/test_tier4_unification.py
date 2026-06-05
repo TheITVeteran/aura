@@ -9,8 +9,9 @@ Verifies:
   6. All systems wire together coherently
 """
 import time
+from types import SimpleNamespace
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.initiative_synthesis import (
     Impulse,
@@ -206,14 +207,16 @@ class TestInternalSimulator:
 
     def test_evaluate_candidates(self):
         sim = InternalSimulator()
-        # Create a minimal mock state
-        state = MagicMock()
-        state.affect.valence = 0.5
-        state.affect.arousal = 0.4
-        state.affect.physiology = {"cortisol": 10.0}
-        state.motivation.budgets = {"energy": {"level": 80.0}}
-        state.state_id = "test_123"
-        state.version = 1
+        state = SimpleNamespace(
+            affect=SimpleNamespace(
+                valence=0.5,
+                arousal=0.4,
+                physiology={"cortisol": 10.0},
+            ),
+            motivation=SimpleNamespace(budgets={"energy": {"level": 80.0}}),
+            state_id="test_123",
+            version=1,
+        )
 
         candidates = [
             {"goal": "explore", "variation": {"risk": 0.2}},

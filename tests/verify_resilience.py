@@ -5,7 +5,6 @@ import os
 import shutil
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -16,7 +15,7 @@ from core.orchestrator import RobustOrchestrator
 async def test_resilience():
     print("--- Testing Resilience (State Snapshot) ---")
     
-    # 1. Setup Mock System
+    # 1. Setup real orchestrator state
     print("Initializing Orchestrator...")
     orchestrator = RobustOrchestrator()
     
