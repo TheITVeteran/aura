@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.council.debate import ParliamentDebate
 from core.council.minority_report import MinorityDisagreement, get_minority_report_store
@@ -18,12 +18,20 @@ class GodCouncil:
     def __init__(self) -> None:
         self.report_store = get_minority_report_store()
 
-    async def run_debate(self, objective: str, simulation_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def run_debate(
+        self,
+        objective: str,
+        simulation_data: dict[str, Any] | None = None,
+        memory_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Runs the parliament debate loop, resolves consensus, and logs dissents."""
         logger.info("🏛️  God Council convened for objective: '%s'", objective)
         
         debate = ParliamentDebate(objective)
-        result = await debate.conduct()
+        result = await debate.conduct(
+            simulation_data=simulation_data,
+            memory_context=memory_context,
+        )
 
         # If approved, but there are dissenters, record them in the minority report store
         if result.get("approved"):

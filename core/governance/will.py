@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -43,6 +44,24 @@ from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Will")
+_WILL_OUTCOME_REINFORCEMENT_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    ArithmeticError,
+)
+
+
+def _bounded_delta(mapping: Any, key: str) -> float:
+    if not isinstance(mapping, dict):
+        return 0.0
+    try:
+        value = float(mapping.get(key, 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value):
+        return 0.0
+    return max(-1.0, min(1.0, value))
 
 
 def _score_memory_results(results: Any) -> float:
@@ -1544,11 +1563,10 @@ class UnifiedWill:
         elif decision.outcome == WillOutcome.CRITICAL_PASS:
             self._state.critical_passes += 1
 
-        # Adapt assertiveness: too many refusals → more cautious,
-        # smooth operation → more assertive
-        if self._state.total_decisions > 10:
-            refuse_rate = self._state.refuses / self._state.total_decisions
-            self._state.assertiveness = max(0.2, min(0.9, 0.5 + (0.5 - refuse_rate)))
+        # Assertiveness is now a learnable parameter reinforced by post-action outcomes
+        # via record_outcome(). If no outcome is recorded (e.g. pure responses), we
+        # keep the parameter stable.
+        pass
 
         # Periodically refresh identity
         if self._state.total_decisions % 50 == 0:
@@ -1795,6 +1813,53 @@ class UnifiedWill:
             logger.warning("Closure failed: telemetry not logged for %s", receipt_id)
             return False
         return True
+
+    def record_outcome(self, receipt_id: str, tx_record: Any) -> None:
+        """Reinforce the assertiveness parameter based on post-action outcomes."""
+        try:
+            outcome = getattr(tx_record, "outcome", "failure")
+            w_delta = getattr(tx_record, "welfare_delta", {}) or {}
+            b_delta = getattr(tx_record, "body_delta", {}) or {}
+            integrity_preserved = getattr(tx_record, "integrity_preserved", True)
+            truth_preserved = getattr(tx_record, "truth_preserved", True)
+
+            # Outcome reward signal calculation
+            reward = 0.1 if outcome == "success" else -0.1
+            if not integrity_preserved:
+                reward -= 0.5
+            if not truth_preserved:
+                reward -= 0.3
+
+            distress_spike = _bounded_delta(w_delta, "distress")
+            if distress_spike > 0.0:
+                reward -= 2.0 * distress_spike
+
+            relief = _bounded_delta(w_delta, "relief")
+            if relief > 0.0:
+                reward += 0.5 * relief
+
+            fatigue_spike = _bounded_delta(b_delta, "fatigue")
+            if fatigue_spike > 0.0:
+                reward -= 0.2 * fatigue_spike
+
+            # Apply gradient-free reinforcement learning update
+            lr = 0.05
+            self._state.assertiveness = max(0.15, min(0.95, self._state.assertiveness + lr * reward))
+            logger.info(
+                "UnifiedWill: outcome reinforced for receipt %s: outcome=%s, reward=%.3f, updated assertiveness=%.3f",
+                receipt_id,
+                outcome,
+                reward,
+                self._state.assertiveness,
+            )
+        except _WILL_OUTCOME_REINFORCEMENT_ERRORS as exc:
+            record_degradation(
+                "unified_will",
+                exc,
+                action="ignored malformed post-action outcome reinforcement signal",
+            )
+            logger.debug("Failed to record outcome in Will: %s", exc)
+
 
 
 # ---------------------------------------------------------------------------

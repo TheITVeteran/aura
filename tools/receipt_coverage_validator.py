@@ -302,6 +302,31 @@ def _is_valid_signed_will_receipt(record: dict[str, object]) -> bool:
         return False
 
 
+def _is_valid_post_action_receipt(record: dict[str, object]) -> bool:
+    receipt_id = record.get("receipt_id")
+    will_receipt_id = record.get("will_receipt_id")
+    output_hash = record.get("output_hash")
+    return (
+        isinstance(receipt_id, str)
+        and receipt_id.startswith("post_")
+        and isinstance(will_receipt_id, str)
+        and will_receipt_id.startswith("will_")
+        and isinstance(record.get("executor_name"), str)
+        and bool(str(record.get("executor_name")).strip())
+        and record.get("actual_outcome") in {"success", "failure", "partial", "timeout"}
+        and isinstance(output_hash, str)
+        and output_hash.startswith("sha256:")
+        and len(output_hash) == len("sha256:") + 64
+        and _is_hex_digest(output_hash.removeprefix("sha256:"), length=64)
+        and isinstance(record.get("error_status", ""), str)
+        and isinstance(record.get("welfare_transaction_id"), str)
+        and bool(str(record.get("welfare_transaction_id")).strip())
+        and isinstance(record.get("body_delta", {}), dict)
+        and isinstance(record.get("memory_delta", {}), dict)
+        and isinstance(record.get("timestamp"), (int, float))
+    )
+
+
 def _receipt_files_for(artifacts_dir: Path) -> list[Path]:
     """Return receipt files for the proof currently being validated.
 
@@ -335,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
     broken_chains = 0
     post_action_receipts = 0
     pre_action_authorization_missing = 0
+    signed_will_ids: set[str] = set()
+    post_action_will_ids: list[str] = []
 
     surface_counts = {
         "model_calls": 0,
@@ -355,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                         record = json.loads(line)
                         if isinstance(record, dict) and _is_valid_signed_will_receipt(record):
                             total_receipts += 1
+                            signed_will_ids.add(str(record.get("receipt_id", "")))
                             domain = record.get("domain", "")
                             
                             # Audit by surface
@@ -366,15 +394,21 @@ def main(argv: list[str] | None = None) -> int:
                                 surface_counts["memory_writes"] += 1
                             elif domain in ("state_mutation", "stabilization", "reflection", "semantic_weight_update"):
                                 surface_counts["state_mutations"] += 1
+                        elif isinstance(record, dict) and _is_valid_post_action_receipt(record):
+                            post_action_receipts += 1
+                            post_action_will_ids.append(str(record.get("will_receipt_id", "")))
                         elif isinstance(record, dict) and _is_valid_person_box_receipt(record):
                             person_box_harness_receipts += 1
                         else:
                             invalid_receipts += 1
+
                     except json.JSONDecodeError:
                          invalid_receipts += 1
         except (OSError, UnicodeDecodeError) as exc:
             invalid_receipts += 1
             print(f"Warning: skipped unreadable receipt file {path}: {exc}", file=sys.stderr)
+
+    broken_chains = sum(1 for will_id in post_action_will_ids if will_id not in signed_will_ids)
 
     # Ensure a governance report with 0 receipts fails for any non-trivial proof run
     if total_receipts == 0 and person_box_harness_receipts == 0:

@@ -19,7 +19,7 @@ from core.runtime.task_ownership import create_tracked_task
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 10
-DEFAULT_MEM_BYTES = 200 * 1024 * 1024  # 200MB limit
+DEFAULT_MEM_BYTES = 500 * 1024 * 1024  # 500MB limit
 DEFAULT_OUTPUT_LIMIT = 200 * 1024  # 200KB limit for std output
 DEFAULT_CODE_BYTES = 512 * 1024
 _PIPE = -1

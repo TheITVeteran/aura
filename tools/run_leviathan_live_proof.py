@@ -15,15 +15,62 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.kernel.leviathan_kernel import get_leviathan_kernel
-from core.will import get_will, ActionDomain
-from core.runtime.action_executor import ActionExecutor
-from tools.receipt_material import signed_will_receipt_entry
-from core.epistemics.truth_engine import get_truth_engine
-from core.memory.memory_civilization import get_memory_civilization
-from core.forge.self_improvement_forge import get_self_improvement_forge
 from core.audit.adversarial_auditor import get_adversarial_auditor
 from core.body.cloud_body import CloudBody
+from core.epistemics.truth_engine import get_truth_engine
+from core.forge.self_improvement_forge import get_self_improvement_forge
+from core.kernel.leviathan_kernel import get_leviathan_kernel
+from core.memory.memory_civilization import get_memory_civilization
+from core.runtime.action_executor import ActionExecutor
+from core.will import ActionDomain, get_will
+from tools.receipt_material import signed_will_receipt_entry
+
+
+def _cleanup_file(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
+def _write_receipt_artifacts(will) -> Path:
+    dest_dir = Path("artifacts/current/external_live_validation")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    receipts_file = dest_dir / "RECEIPTS.jsonl"
+
+    from core.runtime.post_action_receipt import get_post_action_receipt_store
+
+    with receipts_file.open("w", encoding="utf-8") as f:
+        written_will_ids: set[str] = set()
+        for decision in will._audit_trail:
+            domain_val = decision.domain
+            outcome_val = decision.outcome
+            receipt_entry = signed_will_receipt_entry(
+                will,
+                decision,
+                task_id="leviathan_live_proof_task",
+                domain=domain_val,
+                outcome=outcome_val,
+                reason=decision.reason,
+                extra={
+                    "source": getattr(decision, "source", ""),
+                    "volition_hash": hashlib.sha256(
+                        f"leviathan_live_proof_task:{decision.receipt_id}".encode()
+                    ).hexdigest(),
+                    "authorization_phase": "pre_action",
+                    "effect_verified": True,
+                    "telemetry_logged": True,
+                    "closure_verified": True,
+                },
+            )
+            f.write(json.dumps(receipt_entry, default=str) + "\n")
+            written_will_ids.add(str(decision.receipt_id))
+
+        store = get_post_action_receipt_store()
+        for receipt in store.list_receipts():
+            if receipt.will_receipt_id not in written_will_ids:
+                continue
+            f.write(json.dumps(receipt.to_dict(), sort_keys=True) + "\n")
+
+    return receipts_file
 
 
 async def main() -> int:
@@ -65,36 +112,11 @@ async def main() -> int:
         source="leviathan_live_proof"
     )
 
-    if proof_file.exists():
-        proof_file.unlink()
+    await asyncio.to_thread(_cleanup_file, proof_file)
 
     # 3. Export signed decision receipts to the canonical location
-    dest_dir = Path("artifacts/current/external_live_validation")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    receipts_file = dest_dir / "RECEIPTS.jsonl"
-    print(f"📝 Writing signed Will receipts to {receipts_file}...")
-
-    with receipts_file.open("w", encoding="utf-8") as f:
-        for decision in will._audit_trail:
-            domain_val = decision.domain
-            outcome_val = decision.outcome
-            receipt_entry = signed_will_receipt_entry(
-                will,
-                decision,
-                task_id="leviathan_live_proof_task",
-                domain=domain_val,
-                outcome=outcome_val,
-                reason=decision.reason,
-                extra={
-                    "source": getattr(decision, "source", ""),
-                    "volition_hash": hashlib.sha256(f"leviathan_live_proof_task:{decision.receipt_id}".encode()).hexdigest(),
-                    "authorization_phase": "pre_action",
-                    "effect_verified": True,
-                    "telemetry_logged": True,
-                    "closure_verified": True,
-                }
-            )
-            f.write(json.dumps(receipt_entry, default=str) + "\n")
+    receipts_file = await asyncio.to_thread(_write_receipt_artifacts, will)
+    print(f"📝 Wrote signed Will receipts to {receipts_file}.")
 
     # 4. Trigger the receipt coverage validator
     print("🔍 Running receipt coverage validator...")

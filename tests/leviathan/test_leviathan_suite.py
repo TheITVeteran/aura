@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import pytest
 
-from core.kernel.leviathan_kernel import get_leviathan_kernel
-from core.actuation import get_world_actuator, FileActuator, BrowserActuator
-from core.tools import get_tool_registry, ToolForge
-from core.epistemics import get_truth_engine
-from core.forge import get_self_improvement_forge
-from core.memory.memory_civilization import get_memory_civilization
+from core.actuation import FileActuator
 from core.audit import get_adversarial_auditor
-from core.evals.eval_arena import get_eval_arena
-from core.twins.digital_twin import DigitalTwin
-from core.science.scientist import Scientist
 from core.body.cloud_body import CloudBody
+from core.epistemics import get_truth_engine
+from core.evals.eval_arena import get_eval_arena
+from core.forge import get_self_improvement_forge
+from core.kernel.leviathan_kernel import LeviathanKernel, get_leviathan_kernel
+from core.memory.memory_civilization import get_memory_civilization
+from core.science.scientist import Scientist
+from core.tools import ToolForge, get_tool_registry
+from core.twins.digital_twin import DigitalTwin
 
 
 @pytest.mark.asyncio
@@ -74,7 +74,7 @@ async def test_truth_and_epistemics():
     
     # Add claims
     c1 = engine.add_claim("c1", "System latency is optimized", ["arxiv.org"])
-    c2 = engine.add_claim("c2", "System latency is not optimized (high latency)", ["reddit.com"])
+    engine.add_claim("c2", "System latency is not optimized (high latency)", ["reddit.com"])
 
     # Recalibrate to link contradictions
     engine.recalibrate()
@@ -166,3 +166,69 @@ async def test_controlled_cloud_body():
     # 10 hours = $100 (exceeds remaining $50 budget)
     ok_fail = body.request_compute_allocation("benchmark", estimated_hours=10.0, node_id="node-1")
     assert ok_fail is False
+
+
+@pytest.mark.asyncio
+async def test_god_council_receives_simulation_and_memory_context(monkeypatch):
+    import core.council.god_council as god_council_module
+    from core.council.god_council import GodCouncil
+
+    captured = {}
+
+    class FakeDebate:
+        def __init__(self, objective):
+            captured["objective"] = objective
+
+        async def conduct(self, *, simulation_data=None, memory_context=None):
+            captured["simulation_data"] = simulation_data
+            captured["memory_context"] = memory_context
+            return {"approved": False, "reason": "unit rejection", "confidence": 0.0}
+
+    monkeypatch.setattr(god_council_module, "ParliamentDebate", FakeDebate)
+
+    result = await GodCouncil().run_debate(
+        "repair a live failure",
+        simulation_data={"predicted": "safe"},
+        memory_context={"previous_failure": "timeout"},
+    )
+
+    assert result["approved"] is False
+    assert captured == {
+        "objective": "repair a live failure",
+        "simulation_data": {"predicted": "safe"},
+        "memory_context": {"previous_failure": "timeout"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_leviathan_fails_closed_when_council_debate_errors():
+    class FailingCouncil:
+        called = False
+
+        async def run_debate(self, objective, *, simulation_data=None, memory_context=None):
+            self.called = True
+            self.objective = objective
+            raise RuntimeError("debate unavailable")
+
+    class MissionEngine:
+        called = False
+
+        async def run_mission(self, plan, *, constraints=None):
+            self.called = True
+            return {"ok": True}
+
+    kernel = LeviathanKernel()
+    mission_engine = MissionEngine()
+    kernel.register_subsystem("council", FailingCouncil())
+    kernel.register_subsystem("mission_engine", mission_engine)
+
+    result = await kernel.execute_mission("patch the production runtime")
+
+    assert result["ok"] is False
+    assert result["reason"] == "council_rejected"
+    assert mission_engine.called is False
+    trace = kernel.get_recent_traces(1)[0]
+    assert trace.error == "council_rejected"
+    assert trace.council_verdict is not None
+    assert trace.council_verdict["approved"] is False
+    assert "Council debate failed" in trace.council_verdict["reason"]

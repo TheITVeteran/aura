@@ -9,21 +9,20 @@ import json
 import logging
 import subprocess
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
-from core.governance.will import ActionDomain, get_will
-from core.governance_context import GovernanceViolation, governed_scope
 from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
-from core.runtime.post_action_receipt import PostActionReceipt, get_post_action_receipt_store
-from core.runtime.errors import record_degradation
-
-from core.runtime.subprocess_gateway import get_subprocess_gateway
-from core.runtime.network_gateway import get_network_gateway
-from core.runtime.file_write_gateway import get_file_write_gateway
-from core.runtime.desktop_action_gateway import get_desktop_action_gateway
+from core.governance.will import ActionDomain, get_will
+from core.governance_context import GovernanceViolation, governed_scope
 from core.memory.memory_write_gateway import get_memory_write_gateway
+from core.runtime.desktop_action_gateway import get_desktop_action_gateway
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.network_gateway import get_network_gateway
+from core.runtime.post_action_receipt import PostActionReceipt, get_post_action_receipt_store
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ActionExecutor")
 _ACTION_EXECUTOR_RECOVERABLE_ERRORS = (
@@ -49,11 +48,11 @@ class ActionExecutor:
         *,
         domain: ActionDomain | str,
         action_name: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         source: str = "unknown",
-        predicted_welfare_delta: Optional[Dict[str, float]] = None,
-        rollback_target: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        predicted_welfare_delta: dict[str, float] | None = None,
+        rollback_target: str | None = None,
+    ) -> dict[str, Any]:
         domain = _coerce_domain(domain)
         action_name = _coerce_action_name(action_name)
         params = _coerce_params(params)
@@ -96,7 +95,7 @@ class ActionExecutor:
         )
 
         # 3. Call the correct backend gateway
-        result: Dict[str, Any] = {"ok": False}
+        result: dict[str, Any] = {"ok": False}
         try:
             async with governed_scope(decision):
                 if domain == ActionDomain.TOOL_EXECUTION:
@@ -213,6 +212,17 @@ class ActionExecutor:
             error=error_msg,
         )
 
+        # Let the UnifiedWill learn from the actual outcome
+        try:
+            will.record_outcome(will_receipt_id, tx_record)
+        except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "action_executor",
+                exc,
+                action=f"continued after Will outcome reinforcement failed for {action_name}",
+            )
+            logger.debug("Failed to record outcome in Will: %s", exc)
+
         # 5. Record PostActionReceipt
         output_data = json.dumps(result, default=str)
         output_hash = "sha256:" + hashlib.sha256(output_data.encode("utf-8")).hexdigest()
@@ -252,7 +262,7 @@ def _coerce_action_name(action_name: str) -> str:
     return text[:160]
 
 
-def _coerce_params(params: Dict[str, Any]) -> Dict[str, Any]:
+def _coerce_params(params: dict[str, Any]) -> dict[str, Any]:
     if params is None:
         return {}
     if not isinstance(params, dict):
@@ -260,7 +270,7 @@ def _coerce_params(params: Dict[str, Any]) -> Dict[str, Any]:
     return dict(params)
 
 
-def _coerce_result(raw_result: Any) -> Dict[str, Any]:
+def _coerce_result(raw_result: Any) -> dict[str, Any]:
     if isinstance(raw_result, dict):
         result = dict(raw_result)
         result.setdefault("ok", bool(result.get("ok", False)))

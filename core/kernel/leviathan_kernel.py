@@ -10,11 +10,10 @@ Spine: perceive → memory → model → council → will → action → verify 
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.action_executor import ActionExecutor
@@ -39,17 +38,17 @@ class SpineTrace:
     cycle_id: str = ""
     started_at: float = 0.0
     objective: str = ""
-    perception_result: Optional[Dict[str, Any]] = None
-    memory_context: Optional[Dict[str, Any]] = None
-    world_model_update: Optional[Dict[str, Any]] = None
-    council_verdict: Optional[Dict[str, Any]] = None
-    will_decision: Optional[Dict[str, Any]] = None
-    action_result: Optional[Dict[str, Any]] = None
-    verification: Optional[Dict[str, Any]] = None
-    commit_status: Optional[Dict[str, Any]] = None
-    learning_outcome: Optional[Dict[str, Any]] = None
+    perception_result: dict[str, Any] | None = None
+    memory_context: dict[str, Any] | None = None
+    world_model_update: dict[str, Any] | None = None
+    council_verdict: dict[str, Any] | None = None
+    will_decision: dict[str, Any] | None = None
+    action_result: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
+    commit_status: dict[str, Any] | None = None
+    learning_outcome: dict[str, Any] | None = None
     completed_at: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -60,7 +59,7 @@ class PermissionBudget:
     max_calls_per_hour: int = 100
     cooldown_seconds: float = 0.0
     reversible: bool = True
-    allowed_domains: List[str] = field(default_factory=list)
+    allowed_domains: list[str] = field(default_factory=list)
     required_proof: bool = False
     budget_remaining: int = 100
     last_used: float = 0.0
@@ -74,17 +73,17 @@ class LeviathanKernel:
     """
 
     def __init__(self) -> None:
-        self.subsystems: Dict[str, Any] = {}
+        self.subsystems: dict[str, Any] = {}
         self.critical_subsystems: set[str] = set()
-        self.startup_failures: Dict[str, str] = {}
-        self.active_missions: List[str] = []
+        self.startup_failures: dict[str, str] = {}
+        self.active_missions: list[str] = []
         self._initialized = False
         self._cycle_count = 0
-        self._spine_history: List[SpineTrace] = []
+        self._spine_history: list[SpineTrace] = []
         self._identity_lock = False
 
         # Permission economy — structured budgets per action class
-        self._permission_economy: Dict[str, PermissionBudget] = {
+        self._permission_economy: dict[str, PermissionBudget] = {
             "file_read": PermissionBudget(risk_tier="low", max_calls_per_hour=1000, reversible=True),
             "file_write": PermissionBudget(risk_tier="medium", max_calls_per_hour=200, reversible=True, required_proof=True),
             "shell_command": PermissionBudget(risk_tier="medium", max_calls_per_hour=100, reversible=False, required_proof=True),
@@ -107,7 +106,7 @@ class LeviathanKernel:
             "self_modifications": 5,
             "external_communications": 20,
         }
-        self._budget_used: Dict[str, float] = {k: 0.0 for k in self._budgets}
+        self._budget_used: dict[str, float] = {k: 0.0 for k in self._budgets}
 
     # ── Subsystem registry ──────────────────────────────────────────────
 
@@ -120,7 +119,7 @@ class LeviathanKernel:
             self.critical_subsystems.add(name)
         logger.info("🔌 Leviathan Kernel registered subsystem: %s", name)
 
-    def get_subsystem(self, name: str) -> Optional[Any]:
+    def get_subsystem(self, name: str) -> Any | None:
         return self.subsystems.get(name)
 
     # ── Permission economy ──────────────────────────────────────────────
@@ -148,7 +147,7 @@ class LeviathanKernel:
             budget.budget_remaining = max(0, budget.budget_remaining - 1)
             budget.last_used = time.time()
 
-    def get_permission_status(self) -> Dict[str, Any]:
+    def get_permission_status(self) -> dict[str, Any]:
         return {
             name: {
                 "risk_tier": b.risk_tier,
@@ -200,7 +199,7 @@ class LeviathanKernel:
 
     # ── Health ──────────────────────────────────────────────────────────
 
-    def health_status(self) -> Dict[str, Any]:
+    def health_status(self) -> dict[str, Any]:
         missing_critical = sorted(name for name in self.critical_subsystems if name not in self.subsystems)
         failed_critical = sorted(name for name in self.critical_subsystems if name in self.startup_failures)
         healthy = self._initialized and not missing_critical and not failed_critical
@@ -217,7 +216,7 @@ class LeviathanKernel:
 
     # ── The Spine: perceive → memory → model → council → will → action → verify → commit → learn
 
-    async def execute_mission(self, objective: str, constraints: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def execute_mission(self, objective: str, constraints: dict[str, Any] | None = None) -> dict[str, Any]:
         """Runs a strategic campaign mission through the unified cognition spine."""
         self._cycle_count += 1
         trace = SpineTrace(
@@ -275,8 +274,14 @@ class LeviathanKernel:
                         memory_context=trace.memory_context,
                     )
                 except _KERNEL_RECOVERABLE_ERRORS as e:
-                    record_degradation("leviathan_kernel", e, action="continued spine with default approval after council failed")
+                    record_degradation("leviathan_kernel", e, action="aborted spine execution after council debate failed")
+                    debate_result = {
+                        "approved": False,
+                        "reason": f"Council debate failed: {e}",
+                        "confidence": 0.0,
+                    }
             trace.council_verdict = debate_result
+
 
             if not debate_result.get("approved"):
                 logger.warning("🚫 Mission rejected by Council: %s", debate_result.get("reason", "no consensus"))
@@ -287,7 +292,7 @@ class LeviathanKernel:
 
             # ── 6. WILL & ACTION: Execute through mission engine or fallback
             mission_engine = self.get_subsystem("mission_engine")
-            result: Dict[str, Any] = {"ok": False}
+            result: dict[str, Any] = {"ok": False}
 
             # Check permission budget before acting
             action_class = (constraints or {}).get("action_class", "tool_execution")
@@ -365,7 +370,7 @@ class LeviathanKernel:
 
     # ── Narrative compression ───────────────────────────────────────────
 
-    def compress_history(self, max_traces: int = 50) -> Dict[str, Any]:
+    def compress_history(self, max_traces: int = 50) -> dict[str, Any]:
         """Post-mission compression: what happened, what changed, what failed,
         what was learned, what should be remembered, what should be forgotten."""
         if len(self._spine_history) <= max_traces:
@@ -389,7 +394,7 @@ class LeviathanKernel:
         logger.info("📦 Compressed %d spine traces: %d ok, %d failed", len(old), successes, failures)
         return summary
 
-    def get_recent_traces(self, n: int = 10) -> List[SpineTrace]:
+    def get_recent_traces(self, n: int = 10) -> list[SpineTrace]:
         return self._spine_history[-n:]
 
 

@@ -112,6 +112,24 @@ def _person_box_receipt(**overrides: object) -> dict[str, object]:
     return receipt
 
 
+def _post_action_receipt(**overrides: object) -> dict[str, object]:
+    receipt = {
+        "actual_outcome": "success",
+        "body_delta": {},
+        "error_status": "",
+        "executor_name": "unit.executor",
+        "memory_delta": {},
+        "output_hash": "sha256:" + "c" * 64,
+        "receipt_id": "post_" + "d" * 12,
+        "rollback_target": None,
+        "timestamp": 1780381150.0,
+        "welfare_transaction_id": "tx_unit",
+        "will_receipt_id": "will_canonical_receipt",
+    }
+    receipt.update(overrides)
+    return receipt
+
+
 def test_receipt_coverage_accepts_person_box_harness_receipts(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
     (tmp_path / "external_live_validation").mkdir()
@@ -154,6 +172,45 @@ def test_receipt_coverage_accepts_canonical_json_will_receipts(tmp_path, monkeyp
     assert report["invalid_receipts"] == 0
     assert report["total_receipts"] == 1
     assert report["surface_counts"]["tool_calls"] == 1
+
+
+def test_receipt_coverage_accepts_chained_post_action_receipts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    (tmp_path / "external_live_validation").mkdir()
+    _write_jsonl(
+        tmp_path / "external_live_validation" / "RECEIPTS.jsonl",
+        [
+            _canonical_will_receipt(),
+            _post_action_receipt(),
+        ],
+    )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 0
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["invalid_receipts"] == 0
+    assert report["broken_chains"] == 0
+    assert report["total_receipts"] == 1
+    assert report["post_action_receipts"] == 1
+
+
+def test_receipt_coverage_rejects_orphaned_post_action_receipts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    (tmp_path / "external_live_validation").mkdir()
+    _write_jsonl(
+        tmp_path / "external_live_validation" / "RECEIPTS.jsonl",
+        [
+            _canonical_will_receipt(),
+            _post_action_receipt(will_receipt_id="will_missing_pre_action"),
+        ],
+    )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["invalid_receipts"] == 0
+    assert report["broken_chains"] == 1
+    assert report["post_action_receipts"] == 1
 
 
 def test_receipt_coverage_rejects_canonical_will_payload_mismatch(tmp_path, monkeypatch) -> None:

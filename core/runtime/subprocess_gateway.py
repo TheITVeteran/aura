@@ -87,6 +87,7 @@ def _validate_offline_tooling_bypass(
     offline_tooling: bool,
     source: str,
     command: Sequence[str],
+    env: Mapping[str, str] | None = None,
 ) -> bool:
     """Allow named repo tooling to launch child processes outside live Aura.
 
@@ -107,7 +108,9 @@ def _validate_offline_tooling_bypass(
         is_certification_harness = any(
             source.startswith(prefix) for prefix in _TEST_MODE_GOVERNANCE_BYPASS_PREFIXES
         )
-        if is_certification_harness and os.getenv("AURA_TEST_MODE", "") == "1":
+        explicit_test_mode = env is not None and str(env.get("AURA_TEST_MODE", "")) == "1"
+        process_test_mode = os.getenv("AURA_TEST_MODE", "") == "1"
+        if is_certification_harness and (process_test_mode or explicit_test_mode):
             logger.info(
                 "offline subprocess tooling bypass (test-mode) source=%s argv0=%s argc=%s",
                 source,
@@ -162,6 +165,7 @@ class SubprocessGateway:
             offline_tooling=offline_tooling,
             source=source,
             command=command,
+            env=env,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.run:{source}")
@@ -229,6 +233,7 @@ class SubprocessGateway:
             offline_tooling=offline_tooling,
             source=source,
             command=command,
+            env=env,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn:{source}")

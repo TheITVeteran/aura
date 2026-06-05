@@ -14,8 +14,11 @@ class Auth:
 
 def test_reddit_adapter_marks_authority_finalize_degraded(monkeypatch):
     async def scenario():
+        from core.being.welfare_transaction import WelfareTransaction
+
         tracker = get_degradation_tracker()
         tracker.reset()
+        WelfareTransaction.reset()
         skill = RedditAdapterSkill()
 
         class Gateway:
@@ -55,6 +58,12 @@ def test_reddit_adapter_marks_authority_finalize_degraded(monkeypatch):
         assert result["authority_finalized"] is False
         assert result["authority_finalization_status"] == "degraded"
         assert result["authority_receipt_id"] == "receipt-reddit"
+        assert result["welfare_transaction_id"]
+        records = WelfareTransaction.recent_records(1)
+        assert records
+        assert records[0].action == "reddit_adapter.browse"
+        assert records[0].outcome == "success"
+        assert records[0].will_receipt_id == "receipt-reddit"
         assert gateway.finalized is True
         assert len(closed) == 1
         assert any(
@@ -62,12 +71,16 @@ def test_reddit_adapter_marks_authority_finalize_degraded(monkeypatch):
             for record in tracker.recent(subsystem="reddit_adapter")
         )
         tracker.reset()
+        WelfareTransaction.reset()
 
     asyncio.run(scenario())
 
 
 def test_reddit_adapter_failure_finalizes_authority_false(monkeypatch):
     async def scenario():
+        from core.being.welfare_transaction import WelfareTransaction
+
+        WelfareTransaction.reset()
         skill = RedditAdapterSkill()
 
         class Gateway:
@@ -111,8 +124,15 @@ def test_reddit_adapter_failure_finalizes_authority_false(monkeypatch):
         assert result["ok"] is False
         assert "reddit page unavailable" in result["error"]
         assert result["authority_finalized"] is True
+        assert result["welfare_transaction_id"]
+        records = WelfareTransaction.recent_records(1)
+        assert records
+        assert records[0].action == "reddit_adapter.read_post"
+        assert records[0].outcome == "failure"
+        assert records[0].error
         assert gateway.finalized_success == [False]
         assert read_attempts == ["called"]
+        WelfareTransaction.reset()
 
     asyncio.run(scenario())
 

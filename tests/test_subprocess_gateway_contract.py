@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 import pytest
@@ -208,6 +209,26 @@ def test_proof_tooling_run_allowed_in_test_mode_with_live_governance(
 
     assert result.returncode == 0
     assert result.stdout.strip() == "proof-ok"
+
+
+def test_proof_tooling_run_allowed_with_explicit_child_test_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.delenv("AURA_TEST_MODE", raising=False)
+    child_env = os.environ.copy()
+    child_env["AURA_TEST_MODE"] = "1"
+
+    result = subprocess_gateway.SubprocessGateway().run(
+        [sys.executable, "-c", "print('proof-env-ok')"],
+        timeout=5,
+        env=child_env,
+        offline_tooling=True,
+        source="certification_tooling:test",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "proof-env-ok"
 
 
 def test_non_proof_tooling_still_denied_in_test_mode_with_live_governance(

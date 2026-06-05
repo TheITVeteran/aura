@@ -139,3 +139,19 @@ def test_reddit_session_save_uses_file_write_gateway(monkeypatch, tmp_path) -> N
 
     assert json.loads(target.read_text(encoding="utf-8"))["cookies"][0]["name"] == "session"
     assert gateway.calls == [(str(target), "utf-8", "core.skills.reddit_adapter.save_session")]
+
+
+def test_file_write_gateway_drain_text_atomically_removes_drained_file(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    gateway = FileWriteGateway()
+    target = tmp_path / "queue.jsonl"
+
+    gateway.append_text(target, '{"one": 1}\n', source="unit.append")
+    gateway.append_text(target, '{"two": 2}\n', source="unit.append")
+
+    drained = gateway.drain_text(target, source="unit.drain")
+
+    assert drained.splitlines() == ['{"one": 1}', '{"two": 2}']
+    assert not target.exists()
+    assert gateway.drain_text(target, source="unit.drain") == ""

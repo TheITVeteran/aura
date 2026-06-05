@@ -1,4 +1,8 @@
-from core.sandbox.runner import DEFAULT_CODE_BYTES, run_untrusted
+from core.sandbox.runner import DEFAULT_CODE_BYTES, DEFAULT_MEM_BYTES, run_untrusted
+
+
+def test_sandbox_default_memory_budget_is_bounded_but_realistic():
+    assert 256 * 1024 * 1024 <= DEFAULT_MEM_BYTES <= 1024 * 1024 * 1024
 
 
 def test_run_untrusted_returns_structured_stdout():

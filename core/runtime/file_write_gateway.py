@@ -5,19 +5,21 @@ All file writing operations should flow through this module to ensure correct go
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.governance_context import (
     governance_runtime_active,
     require_governance,
 )
 from core.runtime.atomic_writer import (
+    PathLike,
     atomic_append_text,
     atomic_write_bytes,
-    atomic_write_text,
     atomic_write_json,
-    PathLike,
+    atomic_write_text,
 )
 
 logger = logging.getLogger("Aura.FileWriteGateway")
@@ -76,14 +78,47 @@ class FileWriteGateway:
             )
         atomic_append_text(target, text, encoding=encoding)
 
+    def drain_text(self, path: PathLike, *, encoding: str = "utf-8", source: str = "unknown") -> str:
+        """Atomically drain a text queue file and return its previous contents.
+
+        The target is first moved aside, then read and deleted. Writers that
+        append during the drain create a fresh target file, so entries are not
+        lost by a read-then-clear race.
+        """
+        target = _coerce_target(path)
+        if not isinstance(encoding, str) or not encoding:
+            raise ValueError("encoding must be a non-empty string")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.drain_text:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        if not target.exists():
+            return ""
+        drain_path = target.with_name(
+            f".aura_drain_{target.name}_{os.getpid()}_{time.time_ns()}"
+        )
+        try:
+            target.replace(drain_path)
+        except FileNotFoundError:
+            return ""
+        try:
+            return drain_path.read_text(encoding=encoding)
+        finally:
+            try:
+                drain_path.unlink()
+            except FileNotFoundError:
+                pass
+
     def write_json(
         self,
         path: PathLike,
         obj: Any,
         *,
         schema_version: int,
-        schema_name: Optional[str] = None,
-        indent: Optional[int] = 2,
+        schema_name: str | None = None,
+        indent: int | None = 2,
         source: str = "unknown",
     ) -> None:
         target = _coerce_target(path)
@@ -111,7 +146,7 @@ def _coerce_target(path: PathLike) -> Path:
     return target
 
 
-_gateway: Optional[FileWriteGateway] = None
+_gateway: FileWriteGateway | None = None
 
 
 def get_file_write_gateway() -> FileWriteGateway:

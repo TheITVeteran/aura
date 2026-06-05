@@ -320,6 +320,46 @@ class AuraKernel:
 
         return True
 
+    def _record_dream_fragment(self, objective: str, phase: Any, phase_name: str) -> None:
+        """Record a dream fragment (interrupted background cognition) to disk for offline dreaming consolidation."""
+        try:
+            from core.config import config
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            fragment_file = config.paths.data_dir / "dream_fragments.jsonl"
+            completed_index = self._phases.index(phase) if phase in self._phases else -1
+            completed_phases = (
+                [p.__class__.__name__ for p in self._phases[: completed_index + 1]]
+                if completed_index != -1
+                else []
+            )
+            affect = getattr(self.state, "affect", None) if self.state else None
+            metabolism = getattr(self.state, "metabolism", None) if self.state else None
+            fragment_entry = {
+                "timestamp": time.time(),
+                "objective": objective,
+                "preempted_at_phase": phase_name,
+                "completed_phases": completed_phases,
+                "state_snapshot": {
+                    "phi": getattr(self.state, "phi", 0.0) if self.state else 0.0,
+                    "valence": getattr(affect, "valence", 0.0) if affect else 0.0,
+                    "energy": getattr(metabolism, "energy", 1.0) if metabolism else 1.0,
+                },
+            }
+            get_file_write_gateway().append_text(
+                fragment_file,
+                json.dumps(fragment_entry) + "\n",
+                source="kernel.preemption.dream_fragment",
+            )
+            logger.info("🌙 Registered preempted background tick as a dream fragment for offline consolidation.")
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            _record_kernel_degradation(
+                exc,
+                action="continued after preempted dream fragment persistence failed",
+                severity="warning",
+            )
+            logger.debug("Failed to write dream fragment: %s", exc)
+
     def _spawn_background_task(self, coro: Any, *, name: str) -> asyncio.Task:
         """Create a supervised kernel-owned background task and retain it for shutdown/restart handling."""
         try:
@@ -986,6 +1026,7 @@ class AuraKernel:
                         "⚡ Background tick yielding to priority user request — aborting remaining phases after %s.",
                         phase_name,
                     )
+                    self._record_dream_fragment(objective, phase, phase_name)
                     break
 
                 # Skip background-only phases during user-facing ticks so the
@@ -1058,12 +1099,14 @@ class AuraKernel:
                                 "⚡ Background tick ending early after %s timeout so stale response generation does not pin the foreground lane.",
                                 phase_name,
                             )
+                            self._record_dream_fragment(objective, phase, phase_name)
                             break
                         if not priority and self._user_priority_pending.is_set():
                             logger.info(
                                 "⚡ Background tick releasing kernel lock after timed-out %s for a waiting priority request.",
                                 phase_name,
                             )
+                            self._record_dream_fragment(objective, phase, phase_name)
                             break
                         # Let the shielded task finish in the background; do not cancel it.
                         continue

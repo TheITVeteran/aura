@@ -35,6 +35,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.being.body_state_service import BodyStateService
+from core.being.welfare_state import WelfareState
+from core.being.welfare_transaction import WelfareTransaction
 from core.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -255,6 +258,57 @@ class RedditAdapterSkill(BaseSkill):
                 "authority_finalization_error": str(finalize_error),
             }
 
+    @staticmethod
+    def _begin_welfare_transaction(params: RedditInput, auth: Any) -> WelfareTransaction | None:
+        try:
+            return WelfareTransaction.begin(
+                domain="tool_execution",
+                action=f"reddit_adapter.{params.mode}",
+                welfare_before=WelfareState.get().last_outputs,
+                body_before=BodyStateService.get().snapshot(),
+                predicted_welfare_delta={"distress": 0.03 if params.mode in {"comment", "post", "reply_inbox"} else 0.01},
+                will_receipt_id=str(getattr(auth, "will_receipt_id", "") or ""),
+            )
+        except _REDDIT_RECOVERABLE_ERRORS as exc:
+            _record_reddit_degradation(
+                exc,
+                action="continued reddit operation without welfare transaction begin",
+                stage="welfare.begin",
+                severity="degraded",
+                extra={"mode": params.mode},
+            )
+            return None
+
+    @staticmethod
+    def _complete_welfare_transaction(
+        tx: WelfareTransaction | None,
+        result: dict[str, Any],
+        *,
+        mode: str,
+    ) -> None:
+        if tx is None:
+            return
+        try:
+            record = tx.complete(
+                outcome="success" if result.get("ok") else "failure",
+                welfare_after=WelfareState.get().last_outputs,
+                body_after=BodyStateService.get().snapshot(),
+                recovery_required=0.0 if result.get("ok") else 0.25,
+                error=str(result.get("error", ""))[:500],
+                integrity_preserved=True,
+                truth_preserved=True,
+                memory_safe=True,
+            )
+            result["welfare_transaction_id"] = record.tx_id
+        except _REDDIT_RECOVERABLE_ERRORS as exc:
+            _record_reddit_degradation(
+                exc,
+                action="continued reddit operation after welfare transaction completion failed",
+                stage="welfare.complete",
+                severity="degraded",
+                extra={"mode": mode, "ok": bool(result.get("ok"))},
+            )
+
     async def _create_browser(self) -> PhantomBrowser:
         """Create browser with persistent login state."""
         browser = PhantomBrowser(visible=False, browser_type="chromium")
@@ -449,6 +503,7 @@ class RedditAdapterSkill(BaseSkill):
         browser = None
         auth = None
         gateway = None
+        welfare_tx = None
         try:
             from core.executive.authority_gateway import get_authority_gateway
 
@@ -470,6 +525,7 @@ class RedditAdapterSkill(BaseSkill):
             if not gateway.verify_tool_access("reddit_adapter", auth.capability_token_id):
                 return {"ok": False, "error": "Reddit authority token verification failed"}
 
+            welfare_tx = self._begin_welfare_transaction(params, auth)
             browser = await self._create_browser()
 
             if params.mode == "browse":
@@ -500,6 +556,11 @@ class RedditAdapterSkill(BaseSkill):
             )
             if isinstance(result, dict):
                 result.setdefault("authority_receipt_id", getattr(auth, "will_receipt_id", None))
+            self._complete_welfare_transaction(
+                welfare_tx,
+                result,
+                mode=params.mode,
+            )
             return result
         except _REDDIT_RECOVERABLE_ERRORS as e:
             finalize_result = self._finalize_authority(
@@ -538,12 +599,18 @@ class RedditAdapterSkill(BaseSkill):
                                 mlx_vision.stop()
                         except (ImportError, AttributeError, RuntimeError) as ve:
                             logger.debug("Visual cortex failed to analyze CAPTCHA: %s", ve)
-                        return {
+                        result = {
                             "ok": False,
                             "error": "CAPTCHA_DETECTED",
                             "message": f"Reddit has presented a CAPTCHA. Operation halted.{visual_note}",
                             **finalize_result,
                         }
+                        self._complete_welfare_transaction(
+                            welfare_tx,
+                            result,
+                            mode=getattr(params, "mode", "unknown"),
+                        )
+                        return result
                 except (AttributeError, RuntimeError) as captcha_probe_error:
                     logger.debug("Reddit CAPTCHA probe unavailable: %s", captcha_probe_error)
             _record_reddit_degradation(
@@ -553,7 +620,13 @@ class RedditAdapterSkill(BaseSkill):
                 severity="degraded",
             )
             logger.error("Reddit operation failed: %s", e)
-            return {"ok": False, "error": str(e), **finalize_result}
+            result = {"ok": False, "error": str(e), **finalize_result}
+            self._complete_welfare_transaction(
+                welfare_tx,
+                result,
+                mode=getattr(params, "mode", "unknown"),
+            )
+            return result
         finally:
             await self._safe_close(browser)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import math
 import re
@@ -15,8 +16,10 @@ import time
 from collections import Counter
 from typing import Any
 
+from core.config import config
 from core.container import ServiceContainer
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Consciousness.Dreaming")
@@ -439,26 +442,22 @@ class DreamingProcess:
 
     async def _get_recent_summary(self) -> str:
         """Extract a summary of recent activity using the Episodic Memory system."""
+        summary = []
         try:
             from core.memory.episodic_memory import get_episodic_memory
 
             episodic = get_episodic_memory()
             # Recall the last 10 episodes for deep reflection
             episodes = await episodic.recall_recent_async(limit=10)
-            if not episodes:
-                return ""
-
-            summary = []
-            for ep in episodes:
-                summary.append(
-                    "Context: "
-                    f"{getattr(ep, 'context', '')} | "
-                    f"Action: {getattr(ep, 'action', '')} | "
-                    f"Outcome: {getattr(ep, 'outcome', '')} "
-                    f"(Valence: {_finite_float(getattr(ep, 'emotional_valence', 0.0))})"
-                )
-
-            return "\n".join(summary)
+            if episodes:
+                for ep in episodes:
+                    summary.append(
+                        "Context: "
+                        f"{getattr(ep, 'context', '')} | "
+                        f"Action: {getattr(ep, 'action', '')} | "
+                        f"Outcome: {getattr(ep, 'outcome', '')} "
+                        f"(Valence: {_finite_float(getattr(ep, 'emotional_valence', 0.0))})"
+                    )
         except _DREAMING_RECOVERABLE_ERRORS as e:
             _record_dreaming_degradation(
                 e,
@@ -466,7 +465,54 @@ class DreamingProcess:
                 severity="warning",
             )
             logger.debug("Failed to get recent summary: %s", e)
-            return ""
+
+        fragments_summary: list[str] = []
+        invalid_fragments = 0
+        try:
+            fragment_file = config.paths.data_dir / "dream_fragments.jsonl"
+            fragment_text = await asyncio.to_thread(
+                get_file_write_gateway().drain_text,
+                fragment_file,
+                source="dreaming.recent_summary.drain_fragments",
+            )
+            if fragment_text:
+                for line in fragment_text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        obj = data.get("objective", "unknown objective")
+                        phase = data.get("preempted_at_phase", "unknown phase")
+                        completed = ", ".join(data.get("completed_phases", []))
+                        fragments_summary.append(
+                            f"[Dream Fragment] My train of thought on objective '{obj}' was interrupted at phase '{phase}' "
+                            f"after completing [{completed}]."
+                        )
+                    except json.JSONDecodeError:
+                        invalid_fragments += 1
+            if invalid_fragments:
+                _record_dreaming_degradation(
+                    ValueError(f"{invalid_fragments} invalid dream fragment record(s)"),
+                    action="ignored corrupt dream fragment records during consolidation",
+                    severity="warning",
+                    extra={"invalid_fragments": invalid_fragments},
+                )
+        except _DREAMING_RECOVERABLE_ERRORS as exc:
+            _record_dreaming_degradation(
+                exc,
+                action="continued dream cycle without interrupted dream fragments",
+                severity="warning",
+            )
+            logger.debug("Failed to drain dream fragments: %s", exc)
+
+        summary_str = "\n".join(summary)
+        if fragments_summary:
+            if summary_str:
+                summary_str += "\n\n"
+            summary_str += "Dream Fragments (Interrupted Cognitions):\n" + "\n".join(fragments_summary)
+
+        return summary_str
 
     def _process_growth(self, events: str, patterns: list[dict[str, Any]] | None = None):
         """Evolve identity based on experienced events and extracted patterns."""
