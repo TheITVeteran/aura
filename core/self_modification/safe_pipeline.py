@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,8 @@ logger = logging.getLogger("Aura.SelfModSafePipeline")
 _LEDGER_DIR = Path.home() / ".aura" / "data" / "selfmod"
 _LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _LEDGER_DIR / "pipeline.jsonl"
+_STAGING_DIR = _LEDGER_DIR / "staged"
+_SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
 
 
 class Stage(StrEnum):
@@ -85,6 +88,7 @@ class PipelineProposal:
     diff_explanation: str | None = None
     rollback_plan: str | None = None
     will_receipt_id: str | None = None
+    promotion_artifact_path: str | None = None
     started_at: float = field(default_factory=time.time)
     stages_completed: list[str] = field(default_factory=list)
     blocked_at: str | None = None
@@ -107,6 +111,20 @@ def _record(p: PipelineProposal, event: str, payload: dict[str, Any] | None = No
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('safe_pipeline', exc)
         logger.warning("self-mod pipeline ledger append failed: %s", exc)
+
+
+def _supervised_source_deploy_enabled(owner_approved: bool) -> bool:
+    """Return True only for explicit owner-approved supervised source deployment.
+
+    The normal live runtime path may generate and validate patches, but it must
+    not overwrite source files under the running interpreter. Promotion remains
+    an operator action unless both a fresh owner approval and the supervised
+    environment switch are present.
+    """
+    if not owner_approved:
+        return False
+    raw = os.getenv(_SUPERVISED_SELF_MODIFICATION_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ─── pipeline ──────────────────────────────────────────────────────────────
@@ -249,8 +267,24 @@ class SafePipeline:
             proposal.stages_completed.append(Stage.APPROVAL.value)
             _record(proposal, "approved", {"will_receipt_id": proposal.will_receipt_id})
 
-            # 9. STAGED_DEPLOY — write to the real path and start monitor
+            # 9. STAGED_DEPLOY — default to quarantine-only. Live source
+            # overwrite requires explicit owner approval plus supervised env.
             target = Path(file_path)
+            if not _supervised_source_deploy_enabled(owner_approved):
+                proposal.promotion_artifact_path = self._stage_for_operator_promotion(
+                    proposal,
+                    target,
+                    after_source,
+                )
+                return self._block(
+                    proposal,
+                    Stage.STAGED_DEPLOY,
+                    (
+                        "operator_promotion_required:"
+                        f"{_SUPERVISED_SELF_MODIFICATION_ENV}=1 and owner_approved=True"
+                    ),
+                )
+
             atomic_write_text(target, after_source, encoding="utf-8")
             proposal.stages_completed.append(Stage.STAGED_DEPLOY.value)
             _record(proposal, "staged_deployed")
@@ -272,6 +306,33 @@ class SafePipeline:
                 logger.debug("self-mod pipeline sandbox cleanup failed: %s", exc)
 
     # ─── helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _stage_for_operator_promotion(
+        proposal: PipelineProposal,
+        target: Path,
+        after_source: str,
+    ) -> str:
+        safe_parts = [part for part in target.parts if part not in {"", ".", "/"}]
+        if target.is_absolute():
+            safe_parts = list(target.parts[1:])
+        artifact_path = _STAGING_DIR / proposal.proposal_id / Path(*safe_parts)
+        get_file_write_gateway().write_text(
+            artifact_path,
+            after_source,
+            encoding="utf-8",
+            source="self_modification.safe_pipeline.operator_promotion_artifact",
+        )
+        _record(
+            proposal,
+            "staged_for_operator_promotion",
+            {
+                "artifact_path": str(artifact_path),
+                "target": str(target),
+                "supervised_env": _SUPERVISED_SELF_MODIFICATION_ENV,
+            },
+        )
+        return str(artifact_path)
 
     def _block(self, proposal: PipelineProposal, stage: Stage, reason: str) -> PipelineProposal:
         proposal.blocked_at = stage.value
