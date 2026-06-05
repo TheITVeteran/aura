@@ -9,7 +9,6 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,7 +23,7 @@ from core.self_improvement.interface_contract import (
 )
 from core.self_improvement.spec_extractor import SpecExtractor
 from core.self_improvement.blinded_workspace import BlindedWorkspaceFactory, BlindedWorkspace
-from core.self_improvement.candidate_builder import CandidateBuilder, StubGenerator
+from core.self_improvement.candidate_builder import CandidateBuilder, InterfaceEchoGenerator
 from core.self_improvement.deterministic_comparator import DeterministicComparator
 from core.self_improvement.discrepancy_attributor import DiscrepancyAttributor
 from core.self_improvement.hardcoding_auditor import HardcodingAuditor
@@ -135,10 +134,10 @@ class TestBlindedWorkspace:
         ws = factory.create(sample_spec, "core/sample/module.py")
         try:
             assert ws.workspace_dir.exists()
-            assert ws.stub_path.exists()
-            stub = ws.stub_path.read_text()
-            assert "NotImplementedError" in stub
-            assert "add" in stub
+            assert ws.interface_path.exists()
+            interface_text = ws.interface_path.read_text()
+            assert "NotImplementedError" in interface_text
+            assert "add" in interface_text
         finally:
             ws.cleanup()
 
@@ -182,11 +181,11 @@ class TestBlindedWorkspace:
 
 class TestCandidateBuilder:
     @pytest.mark.asyncio
-    async def test_stub_generator(self, sample_spec, project_root):
+    async def test_interface_echo_generator(self, sample_spec, project_root):
         factory = BlindedWorkspaceFactory(project_root=project_root)
         ws = factory.create(sample_spec, "core/sample/module.py")
         try:
-            builder = CandidateBuilder(generator=StubGenerator())
+            builder = CandidateBuilder(generator=InterfaceEchoGenerator())
             candidate = await builder.build(sample_spec, ws, attempt=1)
             assert candidate.source_code
             assert candidate.module_path == sample_spec.module_path
@@ -500,16 +499,14 @@ class TestDeterministicComparator:
 
 class TestReimplementationLabIntegration:
     @pytest.mark.asyncio
-    async def test_full_pipeline_with_stub_generator(self, project_root):
+    async def test_full_pipeline_with_interface_echo_generator(self, project_root):
         """End-to-end: spec→blind→build→audit→compare→attribute→decide."""
         lab = ReimplementationLab(
             project_root=project_root,
-            generator=StubGenerator(),
+            generator=InterfaceEchoGenerator(),
             max_attempts=1,
         )
-        # Use a real module but StubGenerator won't produce working code
         result = await lab.run_reconstruction("core/promotion/behavioral_contracts.py")
-        # StubGenerator produces stubs, so it won't pass tests
         assert isinstance(result, LabResult)
         assert result.module_path == "core/promotion/behavioral_contracts.py"
         assert result.attempts >= 1
@@ -517,7 +514,7 @@ class TestReimplementationLabIntegration:
 
     @pytest.mark.asyncio
     async def test_pipeline_nonexistent_module(self, project_root):
-        lab = ReimplementationLab(project_root=project_root, generator=StubGenerator())
+        lab = ReimplementationLab(project_root=project_root, generator=InterfaceEchoGenerator())
         result = await lab.run_reconstruction("core/nonexistent.py")
         assert not result.success
         assert result.verdict == PromotionVerdict.REJECT
@@ -525,7 +522,7 @@ class TestReimplementationLabIntegration:
     @pytest.mark.asyncio
     async def test_lab_result_serialization(self, project_root):
         lab = ReimplementationLab(
-            project_root=project_root, generator=StubGenerator(), max_attempts=1,
+            project_root=project_root, generator=InterfaceEchoGenerator(), max_attempts=1,
         )
         result = await lab.run_reconstruction("core/promotion/behavioral_contracts.py")
         d = result.to_dict()

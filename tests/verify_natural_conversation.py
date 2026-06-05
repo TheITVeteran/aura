@@ -1,66 +1,90 @@
-import asyncio
 import sys
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+import asyncio
 
-# Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.brain.personality_engine import get_personality_engine
-from core.orchestrator import RobustOrchestrator
+from core.orchestrator.mixins.autonomy import AutonomyMixin
 
-async def test_time_awareness():
-    print("--- Testing Time Awareness ---")
+
+class AutonomousBrainProbe:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
+
+
+class CognitiveEngineProbe:
+    def __init__(self, response):
+        self.autonomous_brain = AutonomousBrainProbe(response)
+
+
+class NaturalConversationHarness(AutonomyMixin):
+    def __init__(self, response):
+        self.cognitive_engine = CognitiveEngineProbe(response)
+        self.conversation_history = [
+            {"role": "user", "content": "I am wrapping up late tonight."},
+        ]
+        self.status = type("StatusProbe", (), {"start_time": 0.0})()
+        self.boredom = 600
+        self.thoughts = []
+        self.spoken_messages = []
+        self.executed_tools = []
+
+    def _emit_thought_stream(self, thought):
+        self.thoughts.append(str(thought))
+
+    async def _store_autonomous_insight(self, internal_msg, response):
+        self.thoughts.append(f"stored:{internal_msg}:{response[:40]}")
+
+    async def emit_spontaneous_message(self, message, **kwargs):
+        self.spoken_messages.append({"message": message, "kwargs": kwargs})
+        return {"ok": True, "target": "chat"}
+
+    async def execute_tool(self, name, args):
+        self.executed_tools.append((name, args))
+        return {"ok": True}
+
+
+def test_time_awareness():
     personality = get_personality_engine()
     ctx = personality.get_time_context()
-    print(f"Current Time Context: {ctx}")
-    
+
     assert "period" in ctx
     assert "formatted" in ctx
     assert "energy_level" in ctx
-    print("✓ Time context structure valid")
 
-async def test_spontaneous_speech_handling():
-    print("\n--- Testing Spontaneous Speech Handling ---")
-    orch = RobustOrchestrator()
-    orch.reply_queue = MagicMock()
-    orch._emit_thought_stream = MagicMock()
-    orch.execute_tool = AsyncMock()
-    
-    # Mock cognitive engine and brain
-    orch.cognitive_engine = MagicMock()
-    orch.cognitive_engine.autonomous_brain = MagicMock()
-    
-    # Mock a "check" where the brain decides to speak
-    check_result = {
-        "content": "I should say goodnight.",
-        "tool_calls": [
-            {"name": "speak", "args": {"message": "It's getting late, you should sleep."}}
+
+def test_spontaneous_speech_handling():
+    async def run_probe():
+        response = {
+            "content": "I should say goodnight.",
+            "tool_calls": [
+                {"name": "speak", "args": {"message": "It's getting late, you should sleep."}},
+            ],
+        }
+        harness = NaturalConversationHarness(response)
+        completed = await harness._run_autonomous_brain_reflection(boredom_seconds=600)
+
+        assert completed is True
+        assert harness.cognitive_engine.autonomous_brain.calls
+        assert any("letting my mind wander" in thought for thought in harness.thoughts)
+        assert any("goodnight" in thought for thought in harness.thoughts)
+        assert harness.spoken_messages == [
+            {
+                "message": "It's getting late, you should sleep.",
+                "kwargs": {"origin": "autonomy_reflection"},
+            }
         ]
-    }
-    
-    orch.cognitive_engine.autonomous_brain.think = AsyncMock(return_value=check_result)
-    
-    # Force boredom to trigger
-    orch.boredom = 10
-    
-    await orch._perform_autonomous_thought()
-    
-    # Verify speech was queued
-    if orch.reply_queue.put.called:
-        args = orch.reply_queue.put.call_args[0][0]
-        print(f"✓ Speech queued: {args}")
-        assert "sleep" in args
-    else:
-        print("❌ Speech NOT queued")
+        assert harness.boredom == 0
+        assert harness.executed_tools == []
 
-    # Verify thought emitted
-    if orch._emit_thought_stream.called:
-        print("✓ Thought emitted")
-    else:
-        print("❌ Thought NOT emitted")
+    asyncio.run(run_probe())
 
 if __name__ == "__main__":
-    asyncio.run(test_time_awareness())
-    asyncio.run(test_spontaneous_speech_handling())
+    test_time_awareness()
+    test_spontaneous_speech_handling()
