@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import zlib
 
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Core.Resilience.StateManager")
 
@@ -74,29 +75,34 @@ class StateManager:
             # 1. Save "latest" snapshot (for quick recovery)
             latest_path = self.snapshot_dir / "latest_snapshot.json"
             
-            # Write to temp file first for atomicity (with Checksum)
-            temp_path = latest_path.with_suffix(".tmp")
-            
             # 1a. Serialize payload to bytes
             data_bytes = json.dumps(snapshot, indent=2, cls=_SafeEncoder).encode('utf-8')
             checksum = zlib.crc32(data_bytes) & 0xffffffff # Force unsigned
-            
-            with open(temp_path, 'wb') as f:
-                f.write(checksum.to_bytes(4, 'big'))
-                f.write(data_bytes)
+            payload = checksum.to_bytes(4, 'big') + data_bytes
             
             if reason == "existential":
                 existential_path = self.snapshot_dir / "existential_snapshot.json"
-                shutil.copy2(temp_path, existential_path)
+                get_file_write_gateway().write_bytes(
+                    existential_path,
+                    payload,
+                    source="resilience.state_manager.existential_snapshot",
+                )
                 logger.info("🛡️ Hardened Existential Snapshot secured.")
 
             # specific snapshot for history if it's significant
             if reason in ["shutdown", "error", "manual"]:
                 history_path = self.snapshot_dir / f"snapshot_{timestamp}_{reason}.json"
-                shutil.copy2(temp_path, history_path)
+                get_file_write_gateway().write_bytes(
+                    history_path,
+                    payload,
+                    source="resilience.state_manager.history_snapshot",
+                )
                 
-            # Rename temp to latest
-            temp_path.replace(latest_path)
+            get_file_write_gateway().write_bytes(
+                latest_path,
+                payload,
+                source="resilience.state_manager.latest_snapshot",
+            )
             
             # Wire EternalRecord for long-term persistence
             if reason in ["manual", "existential", "shutdown"]:

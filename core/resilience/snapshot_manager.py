@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.SnapshotManager")
 
@@ -90,12 +91,13 @@ class SnapshotManager:
                 "cognitive_load": getattr(self._orch, "cognitive_load", 0.0)
             }
 
-            # Write atomically
+            # Write through the canonical durable gateway.
             self.snapshot_dir.mkdir(parents=True, exist_ok=True)
-            temp_file = str(self.snapshot_file) + ".tmp"
-            with open(temp_file, "w") as f:
-                json.dump(state, f, indent=2)
-            os.replace(temp_file, self.snapshot_file)
+            get_file_write_gateway().write_text(
+                self.snapshot_file,
+                json.dumps(state, indent=2),
+                source="resilience.snapshot_manager.snapshot",
+            )
             
             logger.info("✅ Cognitive state frozen to disk: %s", self.snapshot_file)
             return True

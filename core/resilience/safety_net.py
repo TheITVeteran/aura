@@ -1,10 +1,12 @@
 from core.runtime.errors import record_degradation
 import datetime
+import io
 import logging
 import sys
 import traceback
 from pathlib import Path
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("SafetyNet")
 
@@ -27,12 +29,17 @@ def panic_handler(exc_type, exc_value, exc_traceback):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         report_path = crash_dir / f"crash_{timestamp}.txt"
         
-        with open(report_path, "w") as f:
-            f.write("=== AURA POST-MORTEM ===\n")
-            f.write(f"Time: {timestamp}\n")
-            f.write(f"Error: {exc_value}\n")
-            f.write("\nTraceback:\n")
-            traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
+        buffer = io.StringIO()
+        buffer.write("=== AURA POST-MORTEM ===\n")
+        buffer.write(f"Time: {timestamp}\n")
+        buffer.write(f"Error: {exc_value}\n")
+        buffer.write("\nTraceback:\n")
+        traceback.print_exception(exc_type, exc_value, exc_traceback, file=buffer)
+        get_file_write_gateway().write_text(
+            report_path,
+            buffer.getvalue(),
+            source="resilience.safety_net.post_mortem",
+        )
         
         logger.info("Crash report saved to %s", report_path)
     except (OSError, IOError) as e:

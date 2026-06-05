@@ -25,6 +25,8 @@ import psutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 _TRACE_FILE = Path.home() / ".aura" / "run" / "omni_trace.jsonl"
 _OMNI_LOCK = threading.Lock()
 logger = logging.getLogger("Aura.OmniTracer")
@@ -113,10 +115,11 @@ def _omni_writer_loop():
                 continue
             
             _ensure_trace_dir()
-            with open(_TRACE_FILE, "a", encoding="utf-8") as f:
-                for line in batch:
-                    f.write(line + "\n")
-                f.flush()
+            get_file_write_gateway().append_text(
+                _TRACE_FILE,
+                "".join(line + "\n" for line in batch),
+                source="resilience.omni_tracer.trace",
+            )
             del batch
         except (OSError, IOError):
             time.sleep(1)

@@ -21,6 +21,8 @@ from typing import Any
 from core.config import config
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .boot_validator import GhostBootValidator
 from .mutation_tiers import MutationTier, classify_mutation_path
@@ -93,11 +95,16 @@ class GitIntegration:
         if shutil.which("git") is None:
             return False
         try:
-            result = subprocess.run(
-                ["git", "status"], cwd=self.repo_path, capture_output=True, timeout=5
+            result = get_subprocess_gateway().run(
+                ["git", "status"],
+                cwd=self.repo_path,
+                capture_output=True,
+                read_only=True,
+                timeout=5,
+                source="self_modification.safe_modification.git_status",
             )
             return result.returncode == 0
-        except (subprocess.SubprocessError, OSError):
+        except (OSError, RuntimeError, TimeoutError, ValueError):
             return False
 
     @staticmethod
@@ -392,8 +399,11 @@ class BackupSystem:
             }
 
             metadata_path = self.backup_dir / f"{backup_id}.meta"
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f)
+            get_file_write_gateway().write_text(
+                metadata_path,
+                json.dumps(metadata),
+                source="self_modification.safe_modification.backup_metadata",
+            )
 
             return backup_id
 
@@ -1086,8 +1096,11 @@ class SafeSelfModification:
     def _log_modification(self, record: ModificationRecord):
         """Log modification attempt"""
         try:
-            with open(self.modification_log, "a") as f:
-                f.write(json.dumps(record.to_dict()) + "\n")
+            get_file_write_gateway().append_text(
+                self.modification_log,
+                json.dumps(record.to_dict()) + "\n",
+                source="self_modification.safe_modification.modification_log",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation("safe_modification", e)
             logger.error("Failed to log modification: %s", e)

@@ -64,6 +64,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.EmergencyProtocol")
 try:
@@ -557,8 +558,11 @@ class EmergencyProtocol:
                 "severity": signal.severity,
                 "threat_score": self._threat_score,
             }
-            with open(THREAT_LOG_PATH, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().append_text(
+                THREAT_LOG_PATH,
+                json.dumps(entry) + "\n",
+                source="security.emergency_protocol.threat",
+            )
         except _EMERGENCY_RECOVERABLE_ERRORS as exc:
             record_degradation("emergency_protocol", exc)
             logger.debug("Threat log write failed: %s", exc)

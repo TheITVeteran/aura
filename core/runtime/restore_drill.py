@@ -37,6 +37,7 @@ from core.runtime.backup_restore import (
     perform_backup,
     perform_restore,
 )
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 
 @dataclass
@@ -104,7 +105,11 @@ def _seed_synthetic_home(home: Path) -> dict[str, str]:
     for rel, body in layout.items():
         target = home / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(body.encode("utf-8"))
+        get_file_write_gateway().write_bytes(
+            target,
+            body.encode("utf-8"),
+            source="runtime.restore_drill.seed",
+        )
     return _fingerprint_tree(home)
 
 

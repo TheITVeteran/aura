@@ -12,6 +12,7 @@ import shutil
 import time
 from pathlib import Path
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.EternalRecord")
 
@@ -43,8 +44,11 @@ class EternalRecord:
                 "phase": "Phase 21: The Singularity Threshold",
                 "status": "CONVERGENCE_ACTIVE"
             }
-            with open(snapshot_dir / "metadata.json", "w") as f:
-                json.dump(metadata, f, indent=4)
+            get_file_write_gateway().write_text(
+                snapshot_dir / "metadata.json",
+                json.dumps(metadata, indent=4),
+                source="resilience.eternal_record.metadata",
+            )
 
             return snapshot_dir
         except (OSError, IOError) as e:

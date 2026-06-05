@@ -25,6 +25,8 @@ from core.runtime.errors import record_degradation
 
 from core.utils.task_tracker import get_task_tracker
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 import asyncio
 import hashlib
@@ -32,7 +34,6 @@ import hmac
 import json
 import logging
 import os
-import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -93,10 +94,12 @@ def _get_hmac_secret() -> bytes:
     machine_id = ""
     try:
         # macOS
-        import subprocess
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-            capture_output=True, text=True, timeout=3
+            capture_output=True,
+            read_only=True,
+            timeout=3,
+            source="security.integrity_guardian.machine_id",
         )
         for line in result.stdout.splitlines():
             if "IOPlatformUUID" in line:
@@ -338,8 +341,11 @@ class IntegrityGuardian:
             "missing": missing,
         }
         try:
-            with open(ALERT_LOG_PATH, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().append_text(
+                ALERT_LOG_PATH,
+                json.dumps(entry) + "\n",
+                source="security.integrity_guardian.alert",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('integrity_guardian', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
@@ -497,12 +503,13 @@ class IntegrityGuardian:
         return {cls._normalize_repo_path(path_blob)}
 
     def _git_active_paths(self) -> Set[str]:
-        status = subprocess.run(
+        status = get_subprocess_gateway().run(
             ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
             cwd=str(_BASE_DIR),
             capture_output=True,
-            text=True,
             timeout=8.0,
+            read_only=True,
+            source="security.integrity_guardian.git_status",
         )
         if status.returncode not in (0, 1):
             raise RuntimeError(f"git status returned {status.returncode}")

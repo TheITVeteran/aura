@@ -14,6 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("SelfModification.ErrorIntelligence")
 
 
@@ -177,12 +180,18 @@ class StructuredErrorLogger:
         except RuntimeError:
             self._append_to_log_sync(self.execution_log_path, execution_event)
         else:
-            loop.create_task(self._append_to_log(self.execution_log_path, execution_event))
+            get_task_tracker().create_task(
+                self._append_to_log(self.execution_log_path, execution_event),
+                name="error_intelligence.log_execution",
+            )
 
     def _append_to_log_sync(self, path: Path, data: Dict[str, Any]) -> None:
         line = json.dumps(data) + '\n'
-        with open(path, 'a', encoding='utf-8') as f:
-            f.write(line)
+        get_file_write_gateway().append_text(
+            path,
+            line,
+            source="self_modification.error_intelligence.execution_log",
+        )
 
     async def _append_to_log(self, path: Path, data: Dict[str, Any]) -> None:
         """Append JSON line to log file without blocking the event loop."""

@@ -37,7 +37,6 @@ import json
 import logging
 import os
 import shutil
-import tarfile
 import tempfile
 import time
 import uuid
@@ -46,6 +45,9 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from core.runtime.archive_gateway import get_archive_gateway
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.UpdateManager")
 
@@ -133,7 +135,11 @@ class UpdateManager:
             return self._key_path.read_bytes().strip()
         import secrets
         raw = secrets.token_bytes(32)
-        self._key_path.write_bytes(raw)
+        get_file_write_gateway().write_bytes(
+            self._key_path,
+            raw,
+            source="runtime.update_manager.key",
+        )
         try:
             os.chmod(self._key_path, 0o600)
         except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -171,10 +177,14 @@ class UpdateManager:
 
         # 1. backup
         backup = _BACKUP_DIR / f"aura-pre-{release.version}-{int(time.time())}.tar.gz"
-        with tarfile.open(backup, "w:gz") as tar:
-            if _LIVE_LINK.exists():
-                tar.add(_LIVE_LINK.resolve(), arcname="live-source")
-        attempt.backed_up_to = str(backup)
+        if _LIVE_LINK.exists():
+            get_archive_gateway().create_tar_gz(
+                backup,
+                _LIVE_LINK.resolve(),
+                arcname="live-source",
+                source_label="runtime.update_manager.backup",
+            )
+            attempt.backed_up_to = str(backup)
 
         # 2. capture pre-hash
         attempt.continuity_hash_before = self._continuity_hash()
@@ -185,8 +195,11 @@ class UpdateManager:
             shutil.rmtree(staged)
         staged.mkdir(parents=True)
         try:
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(staged)
+            get_archive_gateway().extract_tar_gz(
+                archive_path,
+                staged,
+                source_label="runtime.update_manager.release_extract",
+            )
         except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             attempt.failed_reason = f"unpack_failed:{exc}"
@@ -228,8 +241,11 @@ class UpdateManager:
         if not attempt.backed_up_to:
             return
         try:
-            with tarfile.open(attempt.backed_up_to, "r:gz") as tar:
-                tar.extractall(_LIVE_LINK.parent)
+            get_archive_gateway().extract_tar_gz(
+                attempt.backed_up_to,
+                _LIVE_LINK.parent,
+                source_label="runtime.update_manager.rollback_extract",
+            )
             self._record(attempt, "rolled_back")
         except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
@@ -253,13 +269,11 @@ class UpdateManager:
     @staticmethod
     def _record(attempt: UpdateAttempt, event: str) -> None:
         try:
-            with open(_BACKUP_DIR / "updates.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"when": time.time(), "event": event, "attempt": asdict(attempt)}, default=str) + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+            get_file_write_gateway().append_text(
+                _BACKUP_DIR / "updates.jsonl",
+                json.dumps({"when": time.time(), "event": event, "attempt": asdict(attempt)}, default=str) + "\n",
+                source="runtime.update_manager.record",
+            )
         except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 

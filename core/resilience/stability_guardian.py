@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 try:
     import psutil
@@ -1227,8 +1228,11 @@ class StabilityGuardian:
 
     def _persist_report(self, report: SystemHealthReport) -> None:
         try:
-            with open(self._log_path, "a") as f:
-                f.write(json.dumps(report.to_dict()) + "\n")
+            get_file_write_gateway().append_text(
+                self._log_path,
+                json.dumps(report.to_dict()) + "\n",
+                source="resilience.stability_guardian.health_report",
+            )
             # Rotate if too large
             try:
                 if self._log_path.stat().st_size > self._HEALTH_LOG_MAX_BYTES:

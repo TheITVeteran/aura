@@ -17,10 +17,11 @@ import logging
 logger = logging.getLogger("core.runtime.backup_restore")
 import os
 import shutil
-import tarfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+
+from core.runtime.archive_gateway import get_archive_gateway
 
 
 BACKUP_INCLUDED_DIRS: List[str] = [
@@ -81,8 +82,12 @@ def perform_backup(*, target: Path) -> Dict[str, Any]:
             included.append(rel)
 
     archive = snapshot_dir.with_suffix(".tar.gz")
-    with tarfile.open(archive, "w:gz") as tf:
-        tf.add(snapshot_dir, arcname=snapshot_dir.name)
+    get_archive_gateway().create_tar_gz(
+        archive,
+        snapshot_dir,
+        arcname=snapshot_dir.name,
+        source_label="runtime.backup_restore.perform_backup",
+    )
     _delete_tree(snapshot_dir, cause="perform_backup.cleanup")
 
     return {
@@ -104,11 +109,11 @@ def perform_restore(*, snapshot: Path) -> Dict[str, Any]:
     _delete_tree(extract_dir, cause="perform_restore.cleanup_extract")
     _ensure_dir(extract_dir, cause="perform_restore.extract")
 
-    with tarfile.open(snapshot, "r:gz") as tf:
-        try:
-            tf.extractall(extract_dir, filter="data")  # Python 3.12+
-        except TypeError:
-            tf.extractall(extract_dir)
+    get_archive_gateway().extract_tar_gz(
+        snapshot,
+        extract_dir,
+        source_label="runtime.backup_restore.perform_restore",
+    )
 
     inner = next(extract_dir.iterdir(), None)
     if inner is None or not inner.is_dir():

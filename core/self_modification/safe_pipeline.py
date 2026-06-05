@@ -50,6 +50,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
 
 logger = logging.getLogger("Aura.SelfModSafePipeline")
@@ -92,19 +93,17 @@ class PipelineProposal:
 
 def _record(p: PipelineProposal, event: str, payload: dict[str, Any] | None = None) -> None:
     try:
-        with open(_LEDGER_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
+        get_file_write_gateway().append_text(
+            _LEDGER_PATH,
+            json.dumps({
                 "when": time.time(),
                 "event": event,
                 "proposal_id": p.proposal_id,
                 "snapshot": asdict(p),
                 "payload": payload or {},
-            }, default=str) + "\n")
-            fh.flush()
-            try:
-                os.fsync(fh.fileno())
-            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                logger.debug("self-mod pipeline ledger fsync failed: %s", exc)
+            }, default=str) + "\n",
+            source="self_modification.safe_pipeline.ledger",
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('safe_pipeline', exc)
         logger.warning("self-mod pipeline ledger append failed: %s", exc)

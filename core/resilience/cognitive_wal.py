@@ -5,6 +5,7 @@ Ensures Aura never loses her train of thought during a power loss or system cras
 Implements a Write-Ahead Log (WAL) for cognitive intents.
 """
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.exceptions import capture_and_log
 from pathlib import Path
 import json
@@ -40,11 +41,11 @@ class CognitiveWAL:
         self._pending_intents[turn_id] = entry
         
         try:
-            with open(self.filepath, "a") as f:
-                f.write(json.dumps(entry) + "\n")
-                if blocking:
-                    f.flush()
-                    os.fsync(f.fileno())  # Force OS to write to disk
+            get_file_write_gateway().append_text(
+                self.filepath,
+                json.dumps(entry) + "\n",
+                source="resilience.cognitive_wal.intent",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('cognitive_wal', e)
             logger.error("Failed to write to WAL: %s", e)
@@ -57,8 +58,11 @@ class CognitiveWAL:
             entry["time"] = time.time()
             
             try:
-                with open(self.filepath, "a") as f:
-                    f.write(json.dumps(entry) + "\n")
+                get_file_write_gateway().append_text(
+                    self.filepath,
+                    json.dumps(entry) + "\n",
+                    source="resilience.cognitive_wal.commit",
+                )
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('cognitive_wal', e)
                 logger.error("Failed to commit WAL entry: %s", e)
@@ -126,13 +130,11 @@ class CognitiveWAL:
                 capture_and_log(e, {'module': __name__})
             
             # Atomic rewrite with only pending entries
-            tmp_path = str(self.filepath) + ".tmp"
-            with open(tmp_path, "w") as f:
-                for entry_line in pending_entries:
-                    f.write(entry_line + "\n")
-            
-            import shutil
-            shutil.move(tmp_path, str(self.filepath))
+            get_file_write_gateway().write_text(
+                self.filepath,
+                "".join(entry_line + "\n" for entry_line in pending_entries),
+                source="resilience.cognitive_wal.prune",
+            )
             logger.info("💾 WAL: Pruned successfully. %d pending intents preserved.", len(pending_entries))
             
         except (ImportError, AttributeError, RuntimeError) as e:

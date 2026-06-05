@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_bytes
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.StemCell")
 
@@ -100,7 +101,11 @@ def _key() -> bytes:
     if _STEM_KEY_FILE.exists():
         return _STEM_KEY_FILE.read_bytes().strip()
     raw = secrets.token_bytes(32)
-    _STEM_KEY_FILE.write_bytes(raw)
+    get_file_write_gateway().write_bytes(
+        _STEM_KEY_FILE,
+        raw,
+        source="resilience.stem_cell.key",
+    )
     try:
         os.chmod(_STEM_KEY_FILE, 0o600)
     except (RuntimeError, AttributeError, TypeError, ValueError):

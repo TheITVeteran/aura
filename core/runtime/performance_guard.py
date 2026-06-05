@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.PerformanceGuard")
@@ -160,8 +161,11 @@ class PerformanceGuard:
     @staticmethod
     def _persist(row: Dict[str, Any]) -> None:
         try:
-            with open(_SAMPLES_PATH, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row, default=str) + "\n")
+            get_file_write_gateway().append_text(
+                _SAMPLES_PATH,
+                json.dumps(row, default=str) + "\n",
+                source="runtime.performance_guard.samples",
+            )
         except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 

@@ -43,6 +43,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.TrustEngine")
 
@@ -414,8 +415,11 @@ class TrustEngine:
     def _log_event(self, event_type: str, data: dict):
         try:
             entry = {"timestamp": time.time(), "event": event_type, **data}
-            with open(TRUST_LOG_PATH, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().append_text(
+                TRUST_LOG_PATH,
+                json.dumps(entry) + "\n",
+                source="security.trust_engine.event",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('trust_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)

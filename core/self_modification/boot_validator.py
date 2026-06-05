@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("SelfEvolution.GhostBoot")
 
@@ -260,5 +261,8 @@ except (ImportError, AttributeError, RuntimeError) as e:
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 """
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        get_file_write_gateway().write_text(
+            script_path,
+            content,
+            source="self_modification.boot_validator.script",
+        )

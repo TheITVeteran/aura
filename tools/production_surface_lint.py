@@ -287,6 +287,7 @@ APPROVED_NETWORK_SINKS = {
     "core/runtime/network_gateway.py",
 }
 APPROVED_FILE_WRITE_SINKS = {
+    "core/runtime/archive_gateway.py",
     "core/runtime/action_executor.py",
     "core/runtime/atomic_writer.py",
     "core/runtime/file_write_gateway.py",
