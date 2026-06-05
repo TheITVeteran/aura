@@ -136,10 +136,6 @@ EXEMPT_FILES = {
         "justification": "Builds hash-chained governance ledger files.",
         "compensating_tests": "tests/test_audit_chain.py"
     },
-    "core/self_improvement/blinded_workspace.py": {
-        "justification": "Provides isolated filesystem scopes for un-mocked self-debug runs.",
-        "compensating_tests": "tests/test_blinded_workspace.py"
-    },
     "core/adaptation/safe_optimizer.py": {
         "justification": "Applies safe parameter adjustments to plastic network layers.",
         "compensating_tests": "tests/test_safe_optimizer.py"

@@ -15,8 +15,8 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set
 
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.self_improvement.interface_contract import (
     ClassSignature,
     FunctionSignature,
@@ -32,8 +32,8 @@ class BlindedWorkspace:
 
     workspace_dir: Path
     spec: ModuleSpec
-    forbidden_paths: Set[str] = field(default_factory=set)
-    access_log: List[str] = field(default_factory=list)
+    forbidden_paths: set[str] = field(default_factory=set)
+    access_log: list[str] = field(default_factory=list)
     _created: bool = False
 
     @property
@@ -77,7 +77,7 @@ class BlindedWorkspace:
 class BlindedWorkspaceFactory:
     """Creates blinded workspaces for clean-room reconstruction."""
 
-    def __init__(self, project_root: Optional[str] = None):
+    def __init__(self, project_root: str | None = None):
         self.project_root = Path(project_root or ".").resolve()
 
     def create(self, spec: ModuleSpec, original_module_path: str) -> BlindedWorkspace:
@@ -107,7 +107,12 @@ class BlindedWorkspaceFactory:
         stub_code = self._generate_stub(spec)
         stub_path = workspace_dir / spec.module_path
         stub_path.parent.mkdir(parents=True, exist_ok=True)
-        stub_path.write_text(stub_code, encoding="utf-8")
+        get_file_write_gateway().write_text(
+            stub_path,
+            stub_code,
+            encoding="utf-8",
+            source="core.self_improvement.blinded_workspace.interface_stub",
+        )
 
         # 2. Write __init__.py files for package structure
         self._write_init_files(workspace_dir, spec.module_path)
@@ -117,14 +122,19 @@ class BlindedWorkspaceFactory:
 
         # 4. Write spec reference
         spec_ref_path = workspace_dir / "SPEC.txt"
-        spec_ref_path.write_text(spec.summary(), encoding="utf-8")
+        get_file_write_gateway().write_text(
+            spec_ref_path,
+            spec.summary(),
+            encoding="utf-8",
+            source="core.self_improvement.blinded_workspace.spec_reference",
+        )
 
         logger.info("Created blinded workspace at %s for %s", workspace_dir, spec.module_path)
         return workspace
 
     def _generate_stub(self, spec: ModuleSpec) -> str:
         """Generate a Python stub with signatures and docstrings only."""
-        lines: List[str] = []
+        lines: list[str] = []
 
         # Module docstring
         if spec.module_docstring:
@@ -163,7 +173,7 @@ class BlindedWorkspaceFactory:
 
     def _stub_function(self, func: FunctionSignature, indent: str = "") -> str:
         """Generate a stub for a single function."""
-        parts: List[str] = []
+        parts: list[str] = []
         for dec in func.decorators:
             parts.append(f"{indent}@{dec}")
         keyword = "async def" if func.is_async else "def"
@@ -177,7 +187,7 @@ class BlindedWorkspaceFactory:
 
     def _stub_class(self, cls: ClassSignature) -> str:
         """Generate a stub for a single class."""
-        parts: List[str] = []
+        parts: list[str] = []
         for dec in cls.decorators:
             parts.append(f"@{dec}")
         bases = f"({', '.join(cls.bases)})" if cls.bases else ""
@@ -201,13 +211,23 @@ class BlindedWorkspaceFactory:
             current.mkdir(parents=True, exist_ok=True)
             init = current / "__init__.py"
             if not init.exists():
-                init.write_text("", encoding="utf-8")
+                get_file_write_gateway().write_text(
+                    init,
+                    "",
+                    encoding="utf-8",
+                    source="core.self_improvement.blinded_workspace.package_init",
+                )
 
     def _copy_tests(self, workspace: BlindedWorkspace, spec: ModuleSpec) -> None:
         """Copy test files into the workspace."""
         test_dir = workspace.test_dir
         test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "__init__.py").write_text("", encoding="utf-8")
+        get_file_write_gateway().write_text(
+            test_dir / "__init__.py",
+            "",
+            encoding="utf-8",
+            source="core.self_improvement.blinded_workspace.tests_init",
+        )
 
         for tc in spec.test_cases:
             if tc.file_path:
@@ -215,8 +235,12 @@ class BlindedWorkspaceFactory:
                 if src.exists():
                     dst = test_dir / Path(tc.file_path).name
                     try:
-                        shutil.copy2(src, dst)
-                    except (OSError, IOError) as e:
+                        get_file_write_gateway().write_bytes(
+                            dst,
+                            src.read_bytes(),
+                            source="core.self_improvement.blinded_workspace.copied_test",
+                        )
+                    except OSError as e:
                         logger.debug("Could not copy test %s: %s", tc.file_path, e)
 
 
