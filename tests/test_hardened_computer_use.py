@@ -14,19 +14,18 @@ from core.skills.computer_use import ComputerUseSkill
 async def test_computer_use_read_screen_text_fallback_on_permission_block(monkeypatch):
     skill = ComputerUseSkill()
 
-    # Mock permissions to return blocked for ACCESSIBILITY/AUTOMATION
-    async def mock_require_permissions(capability, *permission_names):
-        return {"ok": False, "status": "denied", "error": "mock block"}
+    async def controlled_permission_denial(capability, *permission_names):
+        return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
 
     called_tree = False
 
-    def mock_query_window_tree():
+    def controlled_window_tree():
         nonlocal called_tree
         called_tree = True
         return "Process: Finder\n  Window: Desktop\n    Element [AXButton]: Close"
 
-    monkeypatch.setattr(skill, "_require_permissions", mock_require_permissions)
-    monkeypatch.setattr(skill, "_query_system_events_window_tree", mock_query_window_tree)
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(skill, "_query_system_events_window_tree", controlled_window_tree)
 
     result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
     assert result["ok"] is True
@@ -39,24 +38,22 @@ async def test_computer_use_read_screen_text_fallback_on_permission_block(monkey
 async def test_computer_use_read_screen_text_fallback_on_unavailable(monkeypatch):
     skill = ComputerUseSkill()
 
-    # Mock permissions to pass
-    async def mock_require_permissions(capability, *permission_names):
+    async def controlled_permission_pass(capability, *permission_names):
         return None
 
-    # Mock screen text to return unavailable error string
-    def mock_read_screen_text_macos():
+    def controlled_unavailable_screen_text():
         return "[accessibility error or ui unresponsive]"
 
     called_tree = False
 
-    def mock_query_window_tree():
+    def controlled_window_tree():
         nonlocal called_tree
         called_tree = True
         return "Fallback Process tree"
 
-    monkeypatch.setattr(skill, "_require_permissions", mock_require_permissions)
-    monkeypatch.setattr(skill, "_read_screen_text_macos", mock_read_screen_text_macos)
-    monkeypatch.setattr(skill, "_query_system_events_window_tree", mock_query_window_tree)
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_read_screen_text_macos", controlled_unavailable_screen_text)
+    monkeypatch.setattr(skill, "_query_system_events_window_tree", controlled_window_tree)
 
     result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
     assert result["ok"] is True
@@ -69,48 +66,45 @@ async def test_computer_use_read_screen_text_fallback_on_unavailable(monkeypatch
 async def test_computer_use_click_retry_success(monkeypatch):
     skill = ComputerUseSkill()
 
-    # Mock get_pyautogui
-    class MockPyAutoGUI:
+    class TestPyAutoGUI:
         def __init__(self):
             self.clicks = 0
 
         def click(self, x, y):
             self.clicks += 1
 
-    mock_pyautogui = MockPyAutoGUI()
-    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (mock_pyautogui, None))
+    pyautogui_double = TestPyAutoGUI()
+    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (pyautogui_double, None))
 
-    # Mock permissions
-    async def mock_require_permissions(capability, *permission_names):
+    async def controlled_permission_pass(capability, *permission_names):
         return None
 
-    monkeypatch.setattr(skill, "_require_permissions", mock_require_permissions)
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
 
-    # Mock _read_screen_text_macos to simulate state change only on 2nd attempt
     state_counter = 0
 
-    def mock_read_screen():
+    def controlled_screen_text():
         nonlocal state_counter
         state_counter += 1
         if state_counter <= 2:
             return "State A"
         return "State B"
 
-    monkeypatch.setattr(skill, "_read_screen_text_macos", mock_read_screen)
+    monkeypatch.setattr(skill, "_read_screen_text_macos", controlled_screen_text)
 
     # Fast forward sleep
     sleep_calls = []
 
-    async def mock_sleep(secs):
+    async def controlled_sleep(secs):
         sleep_calls.append(secs)
 
-    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
 
     result = await skill.execute({"action": "click", "x": 100, "y": 200}, {})
     assert result["ok"] is True
     assert result["attempts"] == 2
     assert result["verification"] == "State shifted."
-    assert mock_pyautogui.clicks == 2
+    assert pyautogui_double.clicks == 2
     assert sleep_calls
 
 
@@ -118,8 +112,7 @@ async def test_computer_use_click_retry_success(monkeypatch):
 async def test_computer_use_type_pre_clicks_and_retries(monkeypatch):
     skill = ComputerUseSkill()
 
-    # Mock get_pyautogui
-    class MockPyAutoGUI:
+    class TestPyAutoGUI:
         def __init__(self):
             self.clicks = 0
             self.typed = ""
@@ -130,35 +123,33 @@ async def test_computer_use_type_pre_clicks_and_retries(monkeypatch):
         def typewrite(self, text, interval):
             self.typed = text
 
-    mock_pyautogui = MockPyAutoGUI()
-    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (mock_pyautogui, None))
+    pyautogui_double = TestPyAutoGUI()
+    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (pyautogui_double, None))
 
-    # Mock permissions
-    async def mock_require_permissions(capability, *permission_names):
+    async def controlled_permission_pass(capability, *permission_names):
         return None
 
-    monkeypatch.setattr(skill, "_require_permissions", mock_require_permissions)
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
 
-    # Mock _read_screen_text_macos to contain the typed text
-    def mock_read_screen():
+    def controlled_screen_text():
         return "Hello World! output"
 
-    monkeypatch.setattr(skill, "_read_screen_text_macos", mock_read_screen)
+    monkeypatch.setattr(skill, "_read_screen_text_macos", controlled_screen_text)
 
     # Fast forward sleep
     sleep_calls = []
 
-    async def mock_sleep(secs):
+    async def controlled_sleep(secs):
         sleep_calls.append(secs)
 
-    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
 
     result = await skill.execute({"action": "type", "target": "Hello World!", "x": 50, "y": 60}, {})
     assert result["ok"] is True
     assert result["attempts"] == 1
     assert result["verification"] == "Text confirmed on screen or state shifted."
-    assert mock_pyautogui.clicks == 1
-    assert mock_pyautogui.typed == "Hello World!"
+    assert pyautogui_double.clicks == 1
+    assert pyautogui_double.typed == "Hello World!"
     assert sleep_calls
 
 

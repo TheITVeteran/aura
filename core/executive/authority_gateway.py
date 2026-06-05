@@ -116,7 +116,7 @@ class AuthorityGateway:
                     ),
                     decision,
                 )
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (ImportError, AttributeError) as exc:
             record_degradation('authority_gateway', exc)
             logger.warning("UnifiedWill gate unavailable; failing closed: %s", exc)
             return (
@@ -124,6 +124,25 @@ class AuthorityGateway:
                     approved=False,
                     outcome="will_unavailable",
                     reason=f"UnifiedWill unavailable: {exc}",
+                    domain=domain_str,
+                    source=source,
+                ),
+                None,
+            )
+        except RuntimeError as exc:
+            # Will crash, tamper, or service failure must become a clean
+            # will_unavailable denial instead of cascading past governance.
+            record_degradation(
+                'authority_gateway', exc,
+                severity='warning',
+                action='will_gate returned will_unavailable after Will crash',
+            )
+            logger.warning("UnifiedWill gate crashed; failing closed: %s", exc)
+            return (
+                AuthorityDecision(
+                    approved=False,
+                    outcome="will_unavailable",
+                    reason=f"UnifiedWill crashed: {exc}",
                     domain=domain_str,
                     source=source,
                 ),

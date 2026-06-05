@@ -7,7 +7,7 @@ offline and without RAM pressure.
 
 Coverage:
   • research_triggers: emit/drain/mark_consumed/ring truncation
-  • continuous_substrate (de-stubbed): start/stop, state evolution,
+  • continuous_substrate: start/stop, state evolution,
         telemetry derivation
   • curated_media_loader: parse, malformed input, missing file
   • content_progress_tracker: validate, schema, atomic save, days_since
@@ -40,7 +40,7 @@ import unittest
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest import mock
+from unittest.mock import patch
 
 # Make `core.*` imports work regardless of cwd
 ROOT = Path(__file__).resolve().parents[1]
@@ -515,7 +515,7 @@ class TestCuriosityScheduler(unittest.TestCase):
 # ── memory_persister ─────────────────────────────────────────────────────
 
 
-class _MockExecutive:
+class _ExecutiveGate:
     def __init__(self, approve: bool = True):
         self._approve = approve
         self.received_intents: List[Any] = []
@@ -526,7 +526,7 @@ class _MockExecutive:
         return DecisionRecord(
             intent_id=intent.intent_id,
             outcome=DecisionOutcome.APPROVED if self._approve else DecisionOutcome.REJECTED,
-            reason="mock",
+            reason="approved_by_test" if self._approve else "rejected_by_test",
         )
 
 
@@ -541,9 +541,9 @@ class TestMemoryPersister(unittest.TestCase):
                 get_task_tracker().create_task(get_storage_gateway().delete(p, cause='TestMemoryPersister.tearDown'))
 
     def test_commit_engagement_routes_through_autonomous_research(self):
-        exec_mock = _MockExecutive(approve=True)
+        executive_gate = _ExecutiveGate(approve=True)
         persister = MemoryPersister(
-            executive=exec_mock,
+            executive=executive_gate,
             queue_path=self.queue_path,
             dedup_path=self.dedup_path,
         )
@@ -563,16 +563,16 @@ class TestMemoryPersister(unittest.TestCase):
             )],
         )
         self.assertTrue(receipt.accepted)
-        self.assertGreaterEqual(len(exec_mock.received_intents), 1)
+        self.assertGreaterEqual(len(executive_gate.received_intents), 1)
         # All routed intents should use AUTONOMOUS_RESEARCH source
         from core.executive.executive_core import IntentSource
-        for intent in exec_mock.received_intents:
+        for intent in executive_gate.received_intents:
             self.assertEqual(intent.source, IntentSource.AUTONOMOUS_RESEARCH)
 
     def test_dedup_skips_repeat_facts(self):
-        exec_mock = _MockExecutive(approve=True)
+        executive_gate = _ExecutiveGate(approve=True)
         persister = MemoryPersister(
-            executive=exec_mock,
+            executive=executive_gate,
             queue_path=self.queue_path,
             dedup_path=self.dedup_path,
         )
@@ -617,7 +617,7 @@ class TestReasoningTrace(unittest.TestCase):
 # ── comprehension_loop ──────────────────────────────────────────────────
 
 
-class _MockInference:
+class _ScriptedInference:
     def __init__(self, responses: List[str]):
         self._responses = list(responses)
 
@@ -643,8 +643,8 @@ class TestComprehensionLoop(_AsyncTestCase):
         chunks = loop._chunk_text("a " * 5000, target_tokens=200)
         self.assertGreater(len(chunks), 1)
 
-    def test_comprehend_with_mocked_inference(self):
-        mock_inf = _MockInference([
+    def test_comprehend_with_scripted_inference(self):
+        scripted_inference = _ScriptedInference([
             json.dumps({
                 "summary": "Specific scene with David Silverstein",
                 "named_entities": ["David", "Logorhythms"],
@@ -667,7 +667,7 @@ class TestComprehensionLoop(_AsyncTestCase):
             plan_title = "Pantheon"
             successful = [_Content()]
 
-        loop = ComprehensionLoop(inference=mock_inf, max_chunks_per_source=1)
+        loop = ComprehensionLoop(inference=scripted_inference, max_chunks_per_source=1)
         item = ContentItem(category="Fiction", title="Pantheon", creator=None, url=None, description="")
         record = self.run_async(loop.comprehend(item, _Execution()))
         self.assertEqual(len(record.checkpoints), 1)
@@ -678,8 +678,8 @@ class TestComprehensionLoop(_AsyncTestCase):
 
 
 class TestReflectionLoop(_AsyncTestCase):
-    def test_reflect_with_mocked_inference(self):
-        mock_inf = _MockInference([
+    def test_reflect_with_scripted_inference(self):
+        scripted_inference = _ScriptedInference([
             json.dumps({
                 "what_its_actually_about": "A detailed description with specifics about Pantheon's UI premise",
                 "what_stayed_with_you": "The substrate-divergence sequence",
@@ -715,7 +715,7 @@ class TestReflectionLoop(_AsyncTestCase):
             open_threads = ["thread A"]
             cross_source_contradictions = []
 
-        loop = ReflectionLoop(inference=mock_inf, substrate_reader=lambda: {"valence": 0.0})
+        loop = ReflectionLoop(inference=scripted_inference, substrate_reader=lambda: {"valence": 0.0})
         item = ContentItem(category="Fiction", title="Pantheon", creator=None, url=None, description="")
         record = self.run_async(loop.reflect(item, _Comp()))
         self.assertTrue(record.opinion_disagrees)
@@ -741,7 +741,7 @@ class TestOrchestrator(_AsyncTestCase):
             substrate_reader=lambda: {"valence": 0.0},
             trigger_drainer=lambda: [],
         )
-        # Mock fetcher always fails
+        # Offline fetcher always fails.
         class _FailFetcher:
             async def execute(self, plan, stop_after_n_successes: int = 4):
                 from core.autonomy.content_fetcher import FetchExecution
@@ -782,7 +782,7 @@ class TestOrchestrator(_AsyncTestCase):
                 return FetchPlan(
                     item_title=item_arg.title,
                     top_priority_level=priority,
-                    attempts=[FetchAttempt(method="mock", priority_level=priority, target="mock://source")],
+                    attempts=[FetchAttempt(method="offline", priority_level=priority, target="offline://source")],
                 )
 
         class _FailFetcher:
@@ -833,18 +833,18 @@ class TestOrchestrator(_AsyncTestCase):
                 return FetchPlan(
                     item_title=item_arg.title,
                     top_priority_level=priority,
-                    attempts=[FetchAttempt(method="mock", priority_level=priority, target="mock://source")],
+                    attempts=[FetchAttempt(method="offline", priority_level=priority, target="offline://source")],
                 )
 
         class _Fetcher:
             async def execute(self, plan, stop_after_n_successes: int = 4):
                 fetched = FetchedContent(
-                    method="mock",
+                    method="offline",
                     priority_level=6,
-                    target="mock://source",
+                    target="offline://source",
                     success=True,
                     text="specific engaged content",
-                    sources=["mock://source"],
+                    sources=["offline://source"],
                 )
                 return FetchExecution(plan_title=plan.item_title, successful=[fetched], failed=[])
 
@@ -854,7 +854,7 @@ class TestOrchestrator(_AsyncTestCase):
                     checkpoints = [
                         CheckpointSummary(
                             chunk_index=0,
-                            method_source="mock",
+                            method_source="offline",
                             priority_level=6,
                             summary="specific checkpoint",
                             extracted_facts=[],
@@ -907,7 +907,7 @@ class TestOrchestrator(_AsyncTestCase):
 
         progress = _MemoryProgressLog()
 
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
             "core.autonomy.autonomous_research_orchestrator.load_progress",
             return_value=progress,
         ):

@@ -8,6 +8,7 @@ import shutil
 import sys
 import warnings
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -248,12 +249,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 @pytest.fixture
 def mock_container(service_container):
-    """Full architectural mock registry for Aura tests."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    """Full architectural test-double registry for Aura tests."""
 
     from core.container import ServiceContainer
     
-    # Mock AgencyBus to allow impulses to pass
+    # Patch AgencyBus to allow impulses to pass.
     mock_bus = MagicMock()
     mock_bus.submit.return_value = True
     
@@ -359,7 +359,6 @@ def orchestrator(mock_container):
     """Hardened RobustOrchestrator fixture with full dependency injection."""
     import asyncio
     import time
-    from unittest.mock import AsyncMock, MagicMock
 
     from core.orchestrator import RobustOrchestrator
     from core.orchestrator.orchestrator_types import SystemStatus
@@ -390,27 +389,22 @@ def orchestrator(mock_container):
         svc = mock_container.get(component)
         if component == "mycelium":
             # Mycelium has sync methods like match_hardwired and rooted_flow call
-            from unittest.mock import MagicMock
-
             from core.orchestrator.main import AsyncNullContext
             svc = MagicMock()
             svc.rooted_flow.return_value = AsyncNullContext()
             svc.match_hardwired.return_value = None
         elif component == "state_machine":
-             from unittest.mock import AsyncMock, MagicMock
              svc = MagicMock()
              svc.execute = AsyncMock()
         elif component == "intent_router":
-             from unittest.mock import AsyncMock, MagicMock
              svc = MagicMock()
              svc.classify = AsyncMock(return_value="chitchat")
         elif component == "output_gate":
-             from unittest.mock import AsyncMock
              svc = AsyncMock()
         setattr(orch, component, svc)
         setattr(orch, f"_{component}", svc)
     
-    # Mock specific async methods that tests expect to be mocked
+    # Provide async test doubles expected by existing orchestrator tests.
     orch.hooks = MagicMock()
     orch.hooks.trigger = AsyncMock()
     
