@@ -14,25 +14,16 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
-import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any
 
 from core.promotion.dynamic_benchmark import Task
+from core.runtime.atomic_writer import atomic_write_text
 
 
-def _atomic_write_text(path: Union[str, Path], text: str) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    os.close(fd)
-    try:
-        Path(tmp).write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+def _atomic_write_text(path: str | Path, text: str) -> None:
+    atomic_write_text(path, text, encoding="utf-8")
 
 
 class VaultMissError(KeyError):
@@ -42,9 +33,9 @@ class VaultMissError(KeyError):
 class HoldoutVault:
     """Append-only JSON store of (task_hash -> task_dict)."""
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.records: Dict[str, Dict[str, Any]] = {}
+        self.records: dict[str, dict[str, Any]] = {}
         if self.path.exists():
             try:
                 self.records = json.loads(self.path.read_text(encoding="utf-8"))
@@ -53,8 +44,8 @@ class HoldoutVault:
             except json.JSONDecodeError:
                 self.records = {}
 
-    def add(self, tasks: Sequence[Task]) -> List[str]:
-        ids: List[str] = []
+    def add(self, tasks: Sequence[Task]) -> list[str]:
+        ids: list[str] = []
         for task in tasks:
             tid = task.hash_public()
             self.records[tid] = dataclasses.asdict(task)
@@ -62,8 +53,8 @@ class HoldoutVault:
         self._flush()
         return ids
 
-    def public_manifest(self) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    def public_manifest(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for tid, payload in self.records.items():
             out.append(
                 {
@@ -109,15 +100,15 @@ class LeakageDetector:
         return {text[i : i + self.ngram] for i in range(len(text) - self.ngram + 1)}
 
     def similarity(self, a: str, b: str) -> float:
-        A = self._ngrams(a)
-        B = self._ngrams(b)
-        if not A or not B:
+        left_ngrams = self._ngrams(a)
+        right_ngrams = self._ngrams(b)
+        if not left_ngrams or not right_ngrams:
             return 0.0
-        return len(A & B) / len(A | B)
+        return len(left_ngrams & right_ngrams) / len(left_ngrams | right_ngrams)
 
     def contaminated(
         self, task: Task, training_texts: Sequence[str]
-    ) -> Tuple[bool, float]:
+    ) -> tuple[bool, float]:
         best = 0.0
         for text in training_texts:
             score = self.similarity(task.prompt, text)
@@ -129,5 +120,5 @@ class LeakageDetector:
 
     def filter_clean(
         self, tasks: Sequence[Task], training_texts: Sequence[str]
-    ) -> List[Task]:
+    ) -> list[Task]:
         return [t for t in tasks if not self.contaminated(t, training_texts)[0]]

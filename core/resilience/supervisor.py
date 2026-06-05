@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 try:
@@ -115,11 +116,12 @@ class SovereignSupervisor:
         cmd = [sys.executable, str(self.target_script)] + self.args
         logger.info("🚀 Launching %s...", self.target_script.name)
         
-        self.process = await asyncio.create_subprocess_exec(
-            *cmd,
+        self.process = await get_subprocess_gateway().spawn_async(
+            cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path.cwd())
+            cwd=str(Path.cwd()),
+            source="environment_action:resilience_supervisor.launch",
         )
 
         if self.process.stdout is not None:

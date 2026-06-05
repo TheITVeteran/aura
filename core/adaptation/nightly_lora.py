@@ -1,10 +1,12 @@
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
-import asyncio
-import json
-from pathlib import Path
-from datetime import datetime, timedelta
-import logging
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 from ..state.state_repository import StateRepository
 
 logger = logging.getLogger("Aura.NightlyLoRA")
@@ -97,13 +99,23 @@ class NightlyLoRATrainer:
         logger.info("🌙 Nightly LoRA: Triggering mlx_lm.lora fine-tune on %s", self.model_path)
         adapter_path = f"data/lora_adapters/{datetime.now().date()}"
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "python", "-m", "mlx_lm.lora",
-                "--model", self.model_path,
-                "--data", str(data_path),
-                "--iters", "100",
-                "--learning-rate", "1e-5",
-                "--adapter-path", adapter_path,
+            proc = await get_subprocess_gateway().spawn_async(
+                [
+                    "python",
+                    "-m",
+                    "mlx_lm.lora",
+                    "--model",
+                    self.model_path,
+                    "--data",
+                    str(data_path),
+                    "--iters",
+                    "100",
+                    "--learning-rate",
+                    "1e-5",
+                    "--adapter-path",
+                    adapter_path,
+                ],
+                source="tool_execution:nightly_lora.training",
             )
             await proc.communicate()
             logger.info("✅ Nightly LoRA: Fine-tuning pass complete.")

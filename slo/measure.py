@@ -13,16 +13,18 @@ from __future__ import annotations
 import argparse
 import json
 import platform
-import statistics
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
 
 
-def _percentile(values: List[float], pct: float) -> float:
+def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
     if pct <= 0:
@@ -193,7 +195,7 @@ def measure_doctor_bundle_p95_ms(samples: int = 10, warmup: int = 2) -> float:
 # ---------------------------------------------------------------------------
 # orchestration
 # ---------------------------------------------------------------------------
-MEASUREMENTS: Dict[str, Dict[str, Any]] = {
+MEASUREMENTS: dict[str, dict[str, Any]] = {
     "audit_chain_append_p95_ms": {
         "fn": measure_audit_chain_append_p95_ms,
         "unit": "ms",
@@ -221,15 +223,15 @@ MEASUREMENTS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def run_all() -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
+def run_all() -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
     for name, spec in MEASUREMENTS.items():
         value = float(spec["fn"]())
         out[name] = {"value": value, "unit": spec["unit"]}
     return out
 
 
-def emit_baseline(measured: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def emit_baseline(measured: dict[str, dict[str, Any]]) -> dict[str, Any]:
     # Per-SLO tolerance: the doctor bundle is heavy file-I/O and runs
     # on whatever the host box is doing at the time, so we widen its
     # tolerance.  All other surfaces are tight numerics on small data.
@@ -239,7 +241,7 @@ def emit_baseline(measured: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     }
     return {
         "schema_version": 1,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": datetime.now(UTC).isoformat(),
         "platform": f"{platform.system().lower()}-{platform.machine()}-py{platform.python_version()}",
         "slos": {
             name: {
@@ -257,7 +259,7 @@ def emit_baseline(measured: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--emit",
@@ -278,7 +280,7 @@ def main(argv: List[str] | None = None) -> int:
         payload = emit_baseline(measured)
         text = json.dumps(payload, indent=2) + "\n"
         if args.out:
-            Path(args.out).write_text(text, encoding="utf-8")
+            atomic_write_text(args.out, text, encoding="utf-8")
         else:
             sys.stdout.write(text)
     else:

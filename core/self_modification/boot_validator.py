@@ -13,6 +13,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("SelfEvolution.GhostBoot")
 
@@ -130,13 +131,13 @@ class GhostBootValidator:
             env["PYTHONPATH"] = str(sandbox_path)
             env["AURA_GHOST_BOOT"] = "1"  # Flag to skip heavy systems
 
-            process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                str(boot_script),
+            process = await get_subprocess_gateway().spawn_async(
+                [sys.executable, str(boot_script)],
                 cwd=str(sandbox_path),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                source="self_modification:ghost_boot_validator",
             )
 
             try:

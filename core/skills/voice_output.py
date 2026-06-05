@@ -319,14 +319,20 @@ class VoiceOutputSkill(BaseSkill):
 
         try:
             # Piper reads from stdin, writes to file
-            process = await asyncio.create_subprocess_exec(
-                self._piper_command or _resolve_piper_command() or "piper",
-                "--model", voice,
-                "--output_file", str(output_path),
-                "--length_scale", str(1.0 / rate),
+            process = await get_subprocess_gateway().spawn_async(
+                [
+                    self._piper_command or _resolve_piper_command() or "piper",
+                    "--model",
+                    voice,
+                    "--output_file",
+                    str(output_path),
+                    "--length_scale",
+                    str(1.0 / rate),
+                ],
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                source="tool_execution:voice_output.piper",
             )
 
             stdout, stderr = await asyncio.wait_for(
@@ -381,10 +387,11 @@ class VoiceOutputSkill(BaseSkill):
 
             cmd.append(text)
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
+            process = await get_subprocess_gateway().spawn_async(
+                cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                source="tool_execution:voice_output.macos_say",
             )
 
             stdout, stderr = await asyncio.wait_for(
@@ -487,20 +494,22 @@ class VoiceOutputSkill(BaseSkill):
 
         try:
             if sys.platform == "darwin":
-                process = await asyncio.create_subprocess_exec(
-                    "afplay", str(path),
+                process = await get_subprocess_gateway().spawn_async(
+                    ["afplay", str(path)],
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    source="tool_execution:voice_output.afplay",
                 )
                 await asyncio.wait_for(process.communicate(), timeout=60.0)
             else:
                 # Linux: try aplay, then paplay
                 for player in ("aplay", "paplay"):
                     try:
-                        process = await asyncio.create_subprocess_exec(
-                            player, str(path),
+                        process = await get_subprocess_gateway().spawn_async(
+                            [player, str(path)],
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
+                            source="tool_execution:voice_output.linux_player",
                         )
                         await asyncio.wait_for(
                             process.communicate(), timeout=60.0

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.Tasks.Command")
 
@@ -146,11 +147,12 @@ def _run_async_blocking(coro_factory):
 
 async def _run_project_command_async(command: tuple[str, ...], *, timeout_s: float) -> ManagedCommandResult:
     started = time.perf_counter()
-    process = await asyncio.create_subprocess_exec(
-        *command,
+    process = await get_subprocess_gateway().spawn_async(
+        command,
         cwd=PROJECT_ROOT,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        source="self_modification:managed_project_command",
     )
 
     timed_out = False

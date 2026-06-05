@@ -17,19 +17,20 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
 from slo.measure import run_all
 
 
 def compare(
-    baseline: Dict[str, Any],
-    measured: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
+    baseline: dict[str, Any],
+    measured: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     slos = baseline.get("slos", {})
     hard_limits = baseline.get("hard_limits", {}) or {}
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     overall_ok = True
 
     for name, slo in slos.items():
@@ -71,7 +72,7 @@ def compare(
             ok_soft = actual <= soft_ceiling
             ok_hard = actual <= hard
             ok = ok_soft and ok_hard
-            reason_parts: List[str] = []
+            reason_parts: list[str] = []
             if not ok_soft:
                 reason_parts.append(
                     f"soft regression: {actual:.4f} > {soft_ceiling:.4f} "
@@ -100,7 +101,7 @@ def compare(
     return {"ok": overall_ok, "results": results}
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", default="slo/baseline.json")
     parser.add_argument(
@@ -130,9 +131,7 @@ def main(argv: List[str] | None = None) -> int:
             print(f"           reason: {r['reason']}")
 
     if args.report:
-        Path(args.report).write_text(
-            json.dumps(report, indent=2, default=str), encoding="utf-8"
-        )
+        atomic_write_text(args.report, json.dumps(report, indent=2, default=str), encoding="utf-8")
 
     return 0 if report["ok"] else 1
 

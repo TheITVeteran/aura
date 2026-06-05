@@ -37,6 +37,7 @@ from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.tasks.managed_command import ManagedCommandResult
 
 from .identity_guard import get_identity_guard
@@ -72,11 +73,12 @@ async def _default_command_runner(
     timeout_s: float,
 ) -> ManagedCommandResult:
     started = time.perf_counter()
-    process = await asyncio.create_subprocess_exec(
-        *command,
+    process = await get_subprocess_gateway().spawn_async(
+        command,
         cwd=str(cwd),
         stdout=-1,
         stderr=-1,
+        source="self_modification:sandboxed_modifier",
     )
     timed_out = False
     try:

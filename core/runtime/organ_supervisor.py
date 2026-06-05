@@ -34,14 +34,15 @@ import json
 import logging
 import os
 import signal
-import subprocess
 import struct
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.OrganSupervisor")
@@ -148,13 +149,14 @@ class OrganSupervisor:
         env["AURA_ORGAN_SOCK"] = record.sock_path
         env["AURA_ORGAN_NAME"] = record.name
         try:
-            record.proc = await asyncio.create_subprocess_exec(
-                *record.cmd,
+            record.proc = await get_subprocess_gateway().spawn_async(
+                record.cmd,
                 cwd=record.cwd,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.DEVNULL,
+                source="environment_action:organ_supervisor.launch",
             )
             record.started_at = time.time()
             logger.info("🩻 organ '%s' launched (pid=%s)", record.name, record.proc.pid)

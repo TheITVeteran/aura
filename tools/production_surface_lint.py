@@ -49,6 +49,18 @@ EXCLUDED_DIRS = {
     "scripts",
     "aura_bench",
 }
+ALWAYS_EXCLUDED_DIRS = {
+    ".git",
+    ".venv",
+    ".venv_aura",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    "node_modules",
+}
+ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
@@ -265,12 +277,20 @@ class LintFinding:
 
 
 def iter_files(scope: str) -> Iterable[Path]:
-    prune_dirs = set(EXCLUDED_DIRS)
+    root_prune_dirs = set(ROOT_EXCLUDED_DIRS)
     if scope == "repo":
-        prune_dirs.discard("tests")
-        prune_dirs.discard("tools")
+        root_prune_dirs.discard("tests")
+        root_prune_dirs.discard("tools")
     for root, dirs, files in os.walk(ROOT):
-        dirs[:] = [d for d in dirs if d not in prune_dirs]
+        rel_root = Path(root).resolve().relative_to(ROOT)
+        kept_dirs: list[str] = []
+        for dirname in dirs:
+            if dirname in ALWAYS_EXCLUDED_DIRS:
+                continue
+            if rel_root == Path(".") and dirname in root_prune_dirs:
+                continue
+            kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
         for f in files:
             if f.endswith(".py"):
                 yield Path(root) / f
@@ -386,8 +406,18 @@ class AstLinter(ast.NodeVisitor):
 
         # Check direct subprocess/command calls
         if name in {
-            "subprocess.run", "subprocess.Popen", "subprocess.check_output", "subprocess.check_call",
-            "os.system", "os.popen"
+            "subprocess.run",
+            "subprocess.Popen",
+            "subprocess.check_output",
+            "subprocess.check_call",
+            "os.system",
+            "os.popen",
+        } or name.endswith((
+            ".create_subprocess_exec",
+            ".create_subprocess_shell",
+        )) or name in {
+            "create_subprocess_exec",
+            "create_subprocess_shell",
         }:
             self.add(
                 "high",
@@ -426,9 +456,12 @@ class AstLinter(ast.NodeVisitor):
                     node,
                     "Direct write open() is prohibited outside approved gateways.",
                 )
-        elif name.endswith(".write_text") or name.endswith(".write_bytes"):
-            receiver = self._attribute_receiver_name(node)
-            if receiver in self.file_gateway_vars:
+        elif (
+            name.endswith(".write_text")
+            or name.endswith(".write_bytes")
+            or name in {"write_text", "write_bytes"}
+        ):
+            if self._is_file_gateway_write_call(node):
                 self.generic_visit(node)
                 return
             self.add(
@@ -458,6 +491,16 @@ class AstLinter(ast.NodeVisitor):
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             return node.func.value.id
         return ""
+
+    def _is_file_gateway_write_call(self, node: ast.Call) -> bool:
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        receiver = node.func.value
+        if isinstance(receiver, ast.Name):
+            return receiver.id in self.file_gateway_vars
+        if isinstance(receiver, ast.Call):
+            return self._call_name(receiver) == "get_file_write_gateway"
+        return False
 
 
 def scan_file(path: Path) -> list[LintFinding]:

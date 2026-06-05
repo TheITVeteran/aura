@@ -9,6 +9,7 @@ from pathlib import Path
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from infrastructure import BaseSkill
 
 logger = logging.getLogger("Skills.Shell")
@@ -55,7 +56,7 @@ class ShellSkill(BaseSkill):
     def _is_safe_command(self, cmd_str: str) -> tuple:
         """Validate command against blocklist and per-command restrictions.
 
-        Returns (safe, reason). Note: we use create_subprocess_exec with a
+        Returns (safe, reason). Note: execution uses the subprocess gateway with a
         pre-split argument list (no shell=True), so shell metacharacters
         are not a concern — they're treated as literal strings by the OS.
         """
@@ -176,11 +177,12 @@ class ShellSkill(BaseSkill):
                 }
 
             # Normal Async Execution
-            process = await asyncio.create_subprocess_exec(
-                *shlex.split(cmd_str),
+            process = await get_subprocess_gateway().spawn_async(
+                shlex.split(cmd_str),
                 cwd=self.cwd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="tool_execution:shell.skill",
             )
             
             if background:

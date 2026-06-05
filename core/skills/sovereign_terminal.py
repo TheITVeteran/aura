@@ -1,24 +1,36 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import os
 import platform
 import shlex
 import subprocess
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from core.config import config
-from core.utils.task_tracker import task_tracker
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
+from core.utils.task_tracker import task_tracker
 
 logger = logging.getLogger("Skills.SovereignTerminal")
 
+
+def _resolve_terminal_path(base: str, target: str) -> Path:
+    return (Path(base) / target).expanduser().resolve()
+
+
+def _resolve_allowed_root() -> Path:
+    return Path(getattr(config.paths, "base_dir", "/")).expanduser().resolve()
+
+
 class TerminalInput(BaseModel):
     action: str = Field("execute", description="Action: 'execute', 'open_app', 'open_file', 'cd'")
-    command: Optional[str] = Field(None, description="Shell command to run (for 'execute').")
-    target: Optional[str] = Field(None, description="App name or file path (for 'open' actions).")
-    cwd: Optional[str] = Field(None, description="Current working directory for execution or 'cd'.")
+    command: str | None = Field(None, description="Shell command to run (for 'execute').")
+    target: str | None = Field(None, description="App name or file path (for 'open' actions).")
+    cwd: str | None = Field(None, description="Current working directory for execution or 'cd'.")
     timeout: int = Field(15, description="Timeout in seconds for execution.")
 
 class SovereignTerminalSkill(BaseSkill):
@@ -35,7 +47,7 @@ class SovereignTerminalSkill(BaseSkill):
         # Use workspace root as default CWD if available
         self.default_cwd = str(getattr(config.paths, "base_dir", os.getcwd()))
 
-    async def execute(self, params: TerminalInput, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: TerminalInput, context: dict[str, Any]) -> dict[str, Any]:
         """Unified entry point for all system operations."""
         if isinstance(params, dict):
             try:
@@ -53,17 +65,17 @@ class SovereignTerminalSkill(BaseSkill):
             elif action in ["open_app", "open_file"]:
                 return await self._open_target(params.target, action)
             elif action == "cd":
-                new_path = os.path.abspath(os.path.join(cwd, params.target or "."))
+                new_path = str(await asyncio.to_thread(_resolve_terminal_path, cwd, params.target or "."))
                 # Security shortcut: Ensure we stay in workspace if it's strictly enforced (optional for sovereign)
                 return {"ok": True, "new_cwd": new_path, "message": f"Directory changed to {new_path}"}
             else:
                 return {"ok": False, "error": f"Unsupported terminal action: {action}"}
-        except (OSError, IOError) as e:
+        except OSError as e:
             record_degradation('sovereign_terminal', e)
             logger.error("Terminal skill failed: %s", e)
             return {"ok": False, "error": str(e)}
 
-    async def _run_command(self, cmd: str, cwd: str, timeout: int) -> Dict[str, Any]:
+    async def _run_command(self, cmd: str, cwd: str, timeout_s: int) -> dict[str, Any]:
         if not cmd:
             return {"ok": False, "error": "Execute action requires a 'command'."}
         
@@ -88,25 +100,27 @@ class SovereignTerminalSkill(BaseSkill):
         # RM Specific Guard: rm must only operate on relative paths within workspace
         # We parse the command for 'rm' but 'execute' can be anything, so we look for 'rm ' anywhere
         if "rm " in normalized_cmd:
-             tokens = shlex.split(cmd)
-             for i, tok in enumerate(tokens):
-                 if tok == "rm":
-                     for arg in tokens[i+1:]:
-                         if arg.startswith("-"): continue
-                         resolved = os.path.realpath(os.path.join(cwd, arg))
-                         allowed_root = str(getattr(config.paths, "base_dir", "/")) # Default to root if not set
-                         if not resolved.startswith(allowed_root) and allowed_root != "/":
-                             logger.warning("🛡️ RM blocked: path %s is outside %s", resolved, allowed_root)
-                             return {"ok": False, "error": f"rm blocked: '{arg}' resolves outside sanctioned path."}
+            tokens = shlex.split(cmd)
+            for i, tok in enumerate(tokens):
+                if tok == "rm":
+                    for arg in tokens[i + 1:]:
+                        if arg.startswith("-"):
+                            continue
+                        resolved = await asyncio.to_thread(_resolve_terminal_path, cwd, arg)
+                        allowed_root = await asyncio.to_thread(_resolve_allowed_root)
+                        if allowed_root != Path("/") and resolved != allowed_root and allowed_root not in resolved.parents:
+                            logger.warning("🛡️ RM blocked: path %s is outside %s", resolved, allowed_root)
+                            return {"ok": False, "error": f"rm blocked: '{arg}' resolves outside sanctioned path."}
 
         logger.info("🐚 Shell Execute: %s (CWD: %s)", cmd, cwd)
         
         try:
-            process = await asyncio.create_subprocess_shell(
+            process = await get_subprocess_gateway().spawn_shell_async(
                 cmd,
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="tool_execution:sovereign_terminal.shell",
             )
             
             stdout_chunks = []
@@ -136,9 +150,9 @@ class SovereignTerminalSkill(BaseSkill):
                         read_stream(process.stderr, stderr_chunks),
                         process.wait()
                     ),
-                    timeout=float(timeout)
+                    timeout=float(timeout_s)
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     process.kill()
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -207,7 +221,7 @@ class SovereignTerminalSkill(BaseSkill):
         stdout: str,
         stderr: str,
         *,
-        return_code: Optional[int],
+        return_code: int | None,
     ) -> str:
         signal = ""
         for candidate in (stderr, stdout):
@@ -224,7 +238,7 @@ class SovereignTerminalSkill(BaseSkill):
             summary = f"{summary} ({signal[:140]})"
         return summary[:220]
 
-    async def _open_target(self, target: str, action: str) -> Dict[str, Any]:
+    async def _open_target(self, target: str, action: str) -> dict[str, Any]:
         if not target:
             return {"ok": False, "error": "Open action requires a 'target'."}
         
@@ -244,7 +258,10 @@ class SovereignTerminalSkill(BaseSkill):
         try:
             # Tracking open actions too
             with task_tracker.track("system_open", details={"target": target}):
-                process = await asyncio.create_subprocess_exec(*cmd)
+                process = await get_subprocess_gateway().spawn_async(
+                    cmd,
+                    source="tool_execution:sovereign_terminal.open",
+                )
                 await process.wait()
                 return {"ok": True, "summary": f"Target {target} opened successfully."}
         except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:

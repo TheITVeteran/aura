@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Cybernetics.OmniTool")
@@ -233,10 +234,11 @@ class OmniTool:
         self._daemons[name] = metadata
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
+            process = await get_subprocess_gateway().spawn_async(
+                argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                source="tool_execution:omni_tool.daemon",
             )
         except _OMNI_ERRORS as exc:
             metadata["status"] = "failed_to_start"

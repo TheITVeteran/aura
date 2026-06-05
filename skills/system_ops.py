@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from infrastructure import BaseSkill
 
 logger = logging.getLogger("Skills.SystemOps")
@@ -54,16 +55,25 @@ class SystemOpsSkill(BaseSkill):
         try:
             if platform.system() == "Darwin": # macOS
                 if action == "open_app":
-                    await asyncio.create_subprocess_exec("open", "-a", target)
+                    await get_subprocess_gateway().spawn_async(
+                        ["open", "-a", target],
+                        source="tool_execution:system_ops.open_app",
+                    )
                     return {"ok": True, "summary": f"Launched {target}"}
                 
                 elif action == "open_file":
-                    await asyncio.create_subprocess_exec("open", target)
+                    await get_subprocess_gateway().spawn_async(
+                        ["open", target],
+                        source="tool_execution:system_ops.open_file",
+                    )
                     return {"ok": True, "summary": f"Opened {target}"}
             
             else: 
                 if action == "open_app" or action == "open_file":
-                    await asyncio.create_subprocess_exec("xdg-open", target)
+                    await get_subprocess_gateway().spawn_async(
+                        ["xdg-open", target],
+                        source="tool_execution:system_ops.xdg_open",
+                    )
                     return {"ok": True, "summary": f"Opened {target} (Linux)"}
 
             return {"ok": False, "error": f"Unsupported action or OS: {action} on {platform.system()}"}

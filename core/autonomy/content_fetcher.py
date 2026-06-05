@@ -44,6 +44,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ContentFetcher")
 
@@ -866,10 +867,11 @@ class ContentFetcher:
 
 async def _run_subprocess(cmd: list[str], timeout_seconds: int) -> tuple[bool, str, str]:
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
+        proc = await get_subprocess_gateway().spawn_async(
+            cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            source="external_action:content_fetcher.subprocess",
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)

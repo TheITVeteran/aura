@@ -28,6 +28,7 @@ from core.runtime.errors import (
     TimeoutBudgetExceeded,
     record_degradation,
 )
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ToolOrchestrator")
 
@@ -71,15 +72,12 @@ class ToolOrchestrator:
             return
 
         sandbox_exec, python_bin, daemon_path, policy = self._build_repl_launch_config()
-        self._repl_process = await asyncio.create_subprocess_exec(
-            sandbox_exec,
-            "-p",
-            policy,
-            python_bin,
-            daemon_path,
+        self._repl_process = await get_subprocess_gateway().spawn_async(
+            [sandbox_exec, "-p", policy, python_bin, daemon_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            source="tool_execution:tool_orchestrator.repl_daemon",
         )
 
     def _terminate_repl(self) -> None:

@@ -37,6 +37,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.TerminalFallback")
@@ -434,10 +435,11 @@ class TerminalFallbackChat:
         sys.stdout.write(f"[Aura] Running: {cmd}\n")
         sys.stdout.flush()
         try:
-            proc = await asyncio.create_subprocess_shell(
+            proc = await get_subprocess_gateway().spawn_shell_async(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                source="tool_execution:terminal_chat.shell",
             )
             try:
                 stdout, _ = await asyncio.wait_for(

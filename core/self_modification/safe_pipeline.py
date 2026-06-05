@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
@@ -51,6 +50,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
 
 logger = logging.getLogger("Aura.SelfModSafePipeline")
@@ -301,11 +301,12 @@ class SafePipeline:
         # primary backstop.
         cmd = [sys.executable, "-B", str(sandbox_file)]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
+            proc = await get_subprocess_gateway().spawn_async(
+                cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(sandbox_file.parent),
+                source="self_modification:safe_pipeline.shadow_runtime",
             )
             try:
                 out, err = await asyncio.wait_for(proc.communicate(), timeout=self.SHADOW_TIMEOUT_S)

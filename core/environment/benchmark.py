@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
+
 
 @dataclass
 class EnvironmentBenchmarkResult:
@@ -23,7 +25,7 @@ class ProofPack:
     shared_requirements: dict[str, Any]
 
     @staticmethod
-    def load(path: str | Path) -> "ProofPack":
+    def load(path: str | Path) -> ProofPack:
         text = Path(path).read_text(encoding="utf-8")
         try:
             import yaml  # type: ignore
@@ -70,8 +72,7 @@ def _tiny_yaml(text: str) -> dict[str, Any]:
 
 
 def write_result(path: str | Path, result: EnvironmentBenchmarkResult) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(result.__dict__, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_text(path, json.dumps(result.__dict__, indent=2, sort_keys=True), encoding="utf-8")
 
 
 __all__ = ["EnvironmentBenchmarkResult", "ProofPack", "write_result"]

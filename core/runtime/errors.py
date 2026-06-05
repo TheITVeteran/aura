@@ -34,7 +34,7 @@ import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 logger = logging.getLogger("Aura.Errors")
@@ -42,7 +42,7 @@ logger = logging.getLogger("Aura.Errors")
 Severity = Literal["debug", "warning", "degraded", "critical"]
 
 
-class FallbackClassification(str, Enum):
+class FallbackClassification(StrEnum):
     SAFE_FALLBACK = "SAFE_FALLBACK"
     SILENT_LOSS_OF_CAPABILITY = "SILENT_LOSS_OF_CAPABILITY"
     GOVERNANCE_BYPASS = "GOVERNANCE_BYPASS"
@@ -350,10 +350,14 @@ def record_degradation(
                 extra_data=extra or {},
             )
             store.emit(receipt)
-        except (ImportError, AttributeError, RuntimeError):
+        except (ImportError, AttributeError, RuntimeError) as receipt_exc:
             # If receipt emission itself fails, at least the in-memory
             # record and log are already captured.
-            pass  # no-op: intentional
+            logger.debug(
+                "Degradation receipt emission unavailable for %s: %s",
+                subsystem,
+                receipt_exc,
+            )
 
     # ── Incident Manager integration ──────────────────────────────
     # Critical and degraded-severity events are auto-reported as incidents
@@ -377,8 +381,12 @@ def record_degradation(
                 mitigation_taken=action or "no recovery action specified",
                 metadata={"extra": extra} if extra else {},
             )
-        except (ImportError, AttributeError, RuntimeError):
-            pass  # Incident manager unavailable — already logged
+        except (ImportError, AttributeError, RuntimeError) as incident_exc:
+            logger.debug(
+                "Incident manager unavailable for degradation %s: %s",
+                subsystem,
+                incident_exc,
+            )
 
     # ── Repair routing integration ─────────────────────────────────────
     if severity in ("critical", "degraded"):
@@ -404,8 +412,12 @@ def record_degradation(
     try:
         from core.observability.metrics import get_metrics
         get_metrics().increment_counter(f"degradation_{subsystem}_{severity}")
-    except (ImportError, AttributeError, RuntimeError):
-        pass  # Metrics unavailable — already logged
+    except (ImportError, AttributeError, RuntimeError) as metrics_exc:
+        logger.debug(
+            "Metrics unavailable for degradation %s: %s",
+            subsystem,
+            metrics_exc,
+        )
 
     if failure_policy_violation and enforce_failure_policy:
         raise RuntimeError(failure_policy_error)

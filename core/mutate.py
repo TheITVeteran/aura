@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Kernel.Mutate")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,10 +34,11 @@ async def _run_tests_async() -> tuple[bool, str]:
     """Return (ok, msg)."""
     try:
         # Runs pytest in the current environment asynchronously.
-        process = await asyncio.create_subprocess_exec(
-            "pytest", "-q",
+        process = await get_subprocess_gateway().spawn_async(
+            ["pytest", "-q"],
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            source="self_modification:mutate.pytest",
         )
         stdout, stderr = await process.communicate()
         
@@ -88,12 +90,19 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
         # 4. Commit mutation (Finalize). Only stage the target file.
         logger.info("Trial Passed. Committing changes.")
         rel_path = str(path.relative_to(PROJECT_ROOT))
-        proc_add = await asyncio.create_subprocess_exec("git", "add", rel_path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        proc_add = await get_subprocess_gateway().spawn_async(
+            ["git", "add", rel_path],
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            source="self_modification:mutate.git_add",
+        )
         await proc_add.communicate()
         
-        proc_commit = await asyncio.create_subprocess_exec(
-            "git", "commit", "-m", f"Mutation Applied: {path.name}",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        proc_commit = await get_subprocess_gateway().spawn_async(
+            ["git", "commit", "-m", f"Mutation Applied: {path.name}"],
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            source="self_modification:mutate.git_commit",
         )
         await proc_commit.communicate()
         return True

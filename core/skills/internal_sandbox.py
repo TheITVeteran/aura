@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 
 # Prevent basic unsafe operations inside the sandbox
@@ -205,12 +206,12 @@ class SandboxSkill(BaseSkill):
 
             try:
                 # Run in subprocess with timeout
-                process = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    temp_path,
+                process = await get_subprocess_gateway().spawn_async(
+                    [sys.executable, temp_path],
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=resolved_cwd,
+                    source="tool_execution:internal_sandbox.execute",
                 )
 
                 try:

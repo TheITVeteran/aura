@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.container import ServiceContainer
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.TestGen")
@@ -275,15 +276,12 @@ class TestGeneratorSkill(BaseSkill):
                         "LocalSandbox unavailable, running tests via subprocess for %s", target_file
                     )
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        sys.executable,
-                        "-m",
-                        "pytest",
-                        "-q",
-                        str(test_file),
+                    proc = await get_subprocess_gateway().spawn_async(
+                        [sys.executable, "-m", "pytest", "-q", str(test_file)],
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=str(target_path.parent),
+                        source="tool_execution:test_generator.pytest",
                     )
                     try:
                         stdout, stderr = await asyncio.wait_for(

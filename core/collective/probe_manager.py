@@ -2,21 +2,22 @@
 Phase 16.4: Ghost Deployment - Resource Monitoring Probes.
 Spawns and manages lightweight monitoring scripts.
 """
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import json
 import logging
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
-import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from core.container import ServiceContainer
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Collective.ProbeManager")
 
@@ -25,8 +26,8 @@ class ProbeManager:
 
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
-        self.probes: Dict[str, asyncio.subprocess.Process] = {}
-        self.probe_metadata: Dict[str, Dict[str, Any]] = {}
+        self.probes: dict[str, asyncio.subprocess.Process] = {}
+        self.probe_metadata: dict[str, dict[str, Any]] = {}
         self._running = True
 
     async def deploy_probe(self, probe_id: str, target: str, type: str = "file", duration: int = 3600) -> bool:
@@ -76,11 +77,12 @@ except (OSError, IOError) as e:
         
         try:
             # Spawn in background with asyncio
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, str(probe_path),
+            process = await get_subprocess_gateway().spawn_async(
+                [sys.executable, str(probe_path)],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                start_new_session=True
+                start_new_session=True,
+                source="tool_execution:probe_manager.ghost_probe",
             )
             
             self.probes[probe_id] = process
@@ -105,11 +107,13 @@ except (OSError, IOError) as e:
     async def _listen_to_probe(self, probe_id: str):
         """Listen for telemetry from a specific probe."""
         process = self.probes.get(probe_id)
-        if not process: return
+        if not process:
+            return
 
         while process.returncode is None:
             line_bytes = await process.stdout.readline()
-            if not line_bytes: break
+            if not line_bytes:
+                break
             
             line = line_bytes.decode().strip()
             if line.startswith("ghost_update:"):
@@ -136,7 +140,7 @@ except (OSError, IOError) as e:
                     os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                         await asyncio.wait_for(proc.wait(), timeout=5.0)
             except ProcessLookupError:
@@ -150,7 +154,7 @@ except (OSError, IOError) as e:
         path = meta.get("path")
         if path:
             try:
-                Path(path).unlink(missing_ok=True)
+                await asyncio.to_thread(Path(path).unlink, missing_ok=True)
             except OSError as e:
                 ok = False
                 record_degradation('probe_manager', e)

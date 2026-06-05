@@ -16,6 +16,7 @@ from core.runtime.errors import (
     TimeoutBudgetExceeded,
     record_degradation,
 )
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import fire_and_track, get_task_tracker
 
 _NUMPY_IMPORT_ERROR: BaseException | None = None
@@ -548,10 +549,11 @@ class LocalVoiceCortex:
         if voice:
             command.extend(["-v", voice])
         command.append(text)
-        process = await asyncio.create_subprocess_exec(
-            *command,
+        process = await get_subprocess_gateway().spawn_async(
+            command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            source="tool_execution:local_voice.system_say",
         )
         try:
             _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._say_timeout)

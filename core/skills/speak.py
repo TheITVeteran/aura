@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.Voice")
@@ -102,15 +103,11 @@ class SpeakSkill(BaseSkill):
         return self._voice_engine
 
     async def _speak_with_macos_say(self, text: str, voice: str, rate: int) -> None:
-        process = await asyncio.create_subprocess_exec(
-            "say",
-            "-v",
-            voice,
-            "-r",
-            str(rate),
-            text,
+        process = await get_subprocess_gateway().spawn_async(
+            ["say", "-v", voice, "-r", str(rate), text],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            source="tool_execution:speak.macos_say",
         )
         try:
             _stdout, stderr = await asyncio.wait_for(

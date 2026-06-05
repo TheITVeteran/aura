@@ -1,19 +1,19 @@
 """core/embodiment/voice_presence.py — Voice Presence.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import asyncio.subprocess
-import subprocess
 import logging
-import time
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional
-
-import sys
 import os
+import shlex
+import subprocess
+import sys
+from abc import ABC, abstractmethod
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.VoicePresence")
 
@@ -30,7 +30,7 @@ class TTSEngine(ABC):
 
 class MacOSTTS(TTSEngine):
     def __init__(self):
-        self._speaking_proc: Optional[asyncio.subprocess.Process] = None
+        self._speaking_proc: asyncio.subprocess.Process | None = None
 
     async def speak(self, text: str) -> None:
         # Check proc and returncode safely
@@ -45,11 +45,15 @@ class MacOSTTS(TTSEngine):
                 logger.debug("MacOSTTS: Cleanup of previous process failed: %s", e)
             
         clean = self._clean(text)
-        if not clean: return
+        if not clean:
+            return
         try:
             # v Zenith: Use subprocess.DEVNULL for redirection to avoid asyncio.subprocess issues
-            self._speaking_proc = await asyncio.create_subprocess_exec(
-                "say", clean, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            self._speaking_proc = await get_subprocess_gateway().spawn_async(
+                ["say", clean],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                source="tool_execution:voice_presence.macos_say",
             )
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
@@ -76,17 +80,22 @@ class MacOSTTS(TTSEngine):
 class LinuxTTS(TTSEngine):
     async def speak(self, text: str) -> None:
         clean = MacOSTTS._clean(text)
-        if not clean: return
+        if not clean:
+            return
         try:
             # Try espeak first, then festival
             for cmd in ["espeak", "festival --tts"]:
                 try:
-                    proc = await asyncio.create_subprocess_shell(
-                        f"{cmd} '{clean}'", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    proc = await get_subprocess_gateway().spawn_shell_async(
+                        f"{cmd} {shlex.quote(clean)}",
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        source="tool_execution:voice_presence.linux_tts",
                     )
                     await proc.wait()
                     return
-                except (subprocess.SubprocessError, OSError): continue
+                except (subprocess.SubprocessError, OSError):
+                    continue
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
             logger.error("🔊 LinuxTTS: Speak failed: %s", e)
@@ -94,11 +103,16 @@ class LinuxTTS(TTSEngine):
 class WindowsTTS(TTSEngine):
     async def speak(self, text: str) -> None:
         clean = MacOSTTS._clean(text)
-        if not clean: return
+        if not clean:
+            return
         try:
-            ps_cmd = f"Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speak.Speak('{clean}')"
-            proc = await asyncio.create_subprocess_exec(
-                "powershell", "-Command", ps_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            escaped = clean.replace("'", "''")
+            ps_cmd = f"Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speak.Speak('{escaped}')"
+            proc = await get_subprocess_gateway().spawn_async(
+                ["powershell", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                source="tool_execution:voice_presence.windows_tts",
             )
             await proc.wait()
         except (subprocess.SubprocessError, OSError) as e:
@@ -137,7 +151,8 @@ class VoicePresence:
         await self._tts.stop()
 
     async def speak(self, text: str) -> None:
-        if not self._voice_enabled or not text: return
+        if not self._voice_enabled or not text:
+            return
         await self._tts.speak(text)
 
     async def speak_response(self, response: str, phi: float = 0.0) -> None:

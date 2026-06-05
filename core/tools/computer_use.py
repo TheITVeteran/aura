@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +126,11 @@ class ComputerUseSkill:
         try:
             fd, temp_path = tempfile.mkstemp(suffix=".png")
             os.close(fd)
-            proc = await asyncio.create_subprocess_exec(
-                "screencapture",
-                "-x",
-                temp_path,
+            proc = await get_subprocess_gateway().spawn_async(
+                ["screencapture", "-x", temp_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                source="tool_execution:computer_use.screenshot",
             )
             await asyncio.wait_for(proc.wait(), timeout=10.0)
             if proc.returncode != 0:

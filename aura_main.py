@@ -30,6 +30,7 @@ import httpx
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.singleton import (
     acquire_instance_lock,
     instance_lock_metadata_path,
@@ -1419,12 +1420,13 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                 max_restarts = 5
                 restart_count = 0
                 while restart_count < max_restarts:
-                    proc = await asyncio.create_subprocess_exec(
-                        _launcher_python_executable(), "interface/gui_actor.py", str(port),
+                    proc = await get_subprocess_gateway().spawn_async(
+                        [_launcher_python_executable(), "interface/gui_actor.py", str(port)],
                         cwd=str(PROJECT_ROOT),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
-                        start_new_session=True
+                        start_new_session=True,
+                        source="environment_action:gui_actor_reaper",
                     )
                     logger.info("🎨 GUI Process Started (PID: %s)", proc.pid)
                     
@@ -1582,8 +1584,11 @@ async def run_watchdog(args: argparse.Namespace | None = None):
             logger.info("🛡️  Watchdog: Launching Aura (Attempt %s)", restart_count+1)
             start_time = time.time()
             
-            # Use asyncio.create_subprocess_exec for non-blocking wait
-            proc = await asyncio.create_subprocess_exec(_launcher_python_executable(), __file__, *child_args)
+            # Use the canonical gateway for non-blocking child supervision.
+            proc = await get_subprocess_gateway().spawn_async(
+                [_launcher_python_executable(), __file__, *child_args],
+                source="environment_action:watchdog_supervisor",
+            )
             await proc.wait()
             
             # Perplexity Audit Fix: Detect deterministic config errors (Exit 1)

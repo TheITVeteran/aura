@@ -14,11 +14,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import IO, Any
 
-from core.governance_context import (
-    GovernanceViolation,
-    governance_runtime_active,
-    require_governance,
-)
+from core import governance_context as _governance_context
+
+GovernanceViolation = _governance_context.GovernanceViolation
 
 _EFFECT_DOMAINS = (
     "environment_action",
@@ -42,6 +40,14 @@ _TEST_MODE_GOVERNANCE_BYPASS_PREFIXES = (
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
+def governance_runtime_active() -> bool:
+    return _governance_context.governance_runtime_active()
+
+
+def require_governance(*args: Any, **kwargs: Any) -> Any:
+    return _governance_context.require_governance(*args, **kwargs)
+
+
 def _coerce_argv(argv: Sequence[str]) -> list[str]:
     if not isinstance(argv, (list, tuple)) or not argv:
         raise ValueError("argv must be a non-empty list or tuple")
@@ -55,6 +61,13 @@ def _coerce_cwd(cwd: str | os.PathLike[str] | None) -> str | None:
     if cwd is None:
         return None
     return str(Path(cwd).expanduser().resolve())
+
+
+def _validate_read_only_source(source: str) -> None:
+    if not isinstance(source, str) or source.strip() in {"", "unknown"}:
+        raise ValueError("read-only subprocess probes require a specific source label")
+    if "\n" in source or "\r" in source:
+        raise ValueError("subprocess source label must be single-line")
 
 
 def _open_spawn_stream(path: str | os.PathLike[str], *, text: bool) -> IO[Any]:
@@ -114,6 +127,17 @@ def _validate_offline_tooling_bypass(
     return True
 
 
+def _require_effect_governance(operation: str) -> None:
+    should_fail_closed = governance_runtime_active()
+    token = require_governance(
+        operation,
+        strict=True,
+        allowed_domains=_EFFECT_DOMAINS,
+    )
+    if should_fail_closed and (token is None or getattr(token, "domain", "") == "degraded"):
+        raise GovernanceViolation(f"{operation} called outside governed context")
+
+
 class SubprocessGateway:
     """Single owner for subprocess execution and spawning."""
 
@@ -131,17 +155,15 @@ class SubprocessGateway:
         source: str = "unknown",
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
+        if read_only and not offline_tooling:
+            _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
             offline_tooling=offline_tooling,
             source=source,
             command=command,
         )
         if not read_only and not offline_bypass:
-            require_governance(
-                f"subprocess_gateway.run:{source}",
-                strict=True,
-                allowed_domains=_EFFECT_DOMAINS,
-            )
+            _require_effect_governance(f"subprocess_gateway.run:{source}")
         return subprocess.run(
             command,
             cwd=_coerce_cwd(cwd),
@@ -166,21 +188,20 @@ class SubprocessGateway:
         env: Mapping[str, str] | None = None,
         text: bool = True,
         start_new_session: bool = True,
+        read_only: bool = False,
         offline_tooling: bool = False,
         source: str = "unknown",
     ) -> subprocess.Popen[Any]:
         command = _coerce_argv(argv)
+        if read_only and not offline_tooling:
+            _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
             offline_tooling=offline_tooling,
             source=source,
             command=command,
         )
-        if not offline_bypass:
-            require_governance(
-                f"subprocess_gateway.spawn:{source}",
-                strict=True,
-                allowed_domains=_EFFECT_DOMAINS,
-            )
+        if not read_only and not offline_bypass:
+            _require_effect_governance(f"subprocess_gateway.spawn:{source}")
         if stdout is not None and stdout_path is not None:
             raise ValueError("stdout and stdout_path are mutually exclusive")
         if stderr is not None and stderr_path is not None:
@@ -205,14 +226,14 @@ class SubprocessGateway:
                 text=text,
                 start_new_session=start_new_session,
             )
-            setattr(proc, "_aura_gateway_streams", tuple(opened_streams))
+            proc._aura_gateway_streams = tuple(opened_streams)  # type: ignore[attr-defined]
             return proc
         except (OSError, subprocess.SubprocessError, ValueError):
             for stream in opened_streams:
                 try:
                     stream.close()
-                except OSError:
-                    pass
+                except OSError as close_exc:
+                    logger.debug("failed to close gateway-owned subprocess stream: %s", close_exc)
             raise
 
     async def spawn_async(
@@ -225,23 +246,56 @@ class SubprocessGateway:
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
         start_new_session: bool = True,
+        read_only: bool = False,
         offline_tooling: bool = False,
         source: str = "unknown",
     ) -> asyncio.subprocess.Process:
         command = _coerce_argv(argv)
+        if read_only and not offline_tooling:
+            _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
             offline_tooling=offline_tooling,
             source=source,
             command=command,
         )
-        if not offline_bypass:
-            require_governance(
-                f"subprocess_gateway.spawn_async:{source}",
-                strict=True,
-                allowed_domains=_EFFECT_DOMAINS,
-            )
+        if not read_only and not offline_bypass:
+            _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
         return await asyncio.create_subprocess_exec(
             *command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            cwd=_coerce_cwd(cwd),
+            env=dict(env) if env is not None else None,
+            start_new_session=start_new_session,
+        )
+
+    async def spawn_shell_async(
+        self,
+        command: str,
+        *,
+        stdin: Any = None,
+        stdout: Any = None,
+        stderr: Any = None,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        start_new_session: bool = True,
+        offline_tooling: bool = False,
+        source: str = "unknown",
+    ) -> asyncio.subprocess.Process:
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("shell command must be a non-empty string")
+        if "\x00" in command:
+            raise ValueError("shell command must not contain NUL bytes")
+        offline_bypass = _validate_offline_tooling_bypass(
+            offline_tooling=offline_tooling,
+            source=source,
+            command=("/bin/sh", "-lc"),
+        )
+        if not offline_bypass:
+            _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
+        return await asyncio.create_subprocess_shell(
+            command,
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,

@@ -16,6 +16,7 @@ from typing import Any
 from core.config import config
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.tasks.managed_command import ManagedCommandResult
 
 logger = logging.getLogger("Aura.Airlock")
@@ -191,11 +192,12 @@ class AirlockProtocol:
         timeout_s: float,
     ) -> ManagedCommandResult:
         started = time.perf_counter()
-        process = await asyncio.create_subprocess_exec(
-            *command,
+        process = await get_subprocess_gateway().spawn_async(
+            command,
             cwd=str(cwd),
             stdout=_PIPE,
             stderr=_PIPE,
+            source="self_modification:airlock_command_runner",
         )
         timed_out = False
         try:

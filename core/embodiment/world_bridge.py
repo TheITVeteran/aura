@@ -36,20 +36,21 @@ This module deliberately does NOT implement the network/IoT clients
 itself — that's `core/embodiment/iot_bridge.py` — it provides the gate.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import json
 import logging
 import os
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.WorldBridge")
 
@@ -60,7 +61,7 @@ _WORKSPACE_DIR = _WORLD_DIR / "workspace"
 _WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class Channel(str, Enum):
+class Channel(StrEnum):
     SCREEN_PERCEPTION = "screen_perception"
     FILE_WORKSPACE = "file_workspace"
     CALENDAR_AWARENESS = "calendar_awareness"
@@ -83,7 +84,7 @@ class Permission:
     granted: bool
     granted_at: float = field(default_factory=time.time)
     notes: str = ""
-    expires_at: Optional[float] = None
+    expires_at: float | None = None
     fresh_auth_required: bool = False
 
     def is_active(self) -> bool:
@@ -97,7 +98,7 @@ class Permission:
 class PermissionStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._cache: Dict[str, Permission] = {}
+        self._cache: dict[str, Permission] = {}
         self._load()
 
     def _load(self) -> None:
@@ -118,7 +119,7 @@ class PermissionStore:
             atomic_write_text(tmp, json.dumps({c: asdict(p) for c, p in self._cache.items()}, indent=2), encoding="utf-8")
             os.replace(tmp, _PERMS_PATH)
 
-    def grant(self, channel: Channel, *, notes: str = "", expires_in_s: Optional[float] = None, fresh_auth_required: bool = False) -> Permission:
+    def grant(self, channel: Channel, *, notes: str = "", expires_in_s: float | None = None, fresh_auth_required: bool = False) -> Permission:
         with self._lock:
             perm = Permission(
                 channel=channel.value,
@@ -137,11 +138,11 @@ class PermissionStore:
                 self._cache[channel.value].granted = False
                 self._save()
 
-    def status(self, channel: Channel) -> Optional[Permission]:
+    def status(self, channel: Channel) -> Permission | None:
         with self._lock:
             return self._cache.get(channel.value)
 
-    def all_channels(self) -> Dict[str, Permission]:
+    def all_channels(self) -> dict[str, Permission]:
         with self._lock:
             return dict(self._cache)
 
@@ -162,7 +163,7 @@ class WorldActionResult:
     ok: bool
     receipt_id: str
     data: Any = None
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class WorldBridge:
@@ -177,7 +178,7 @@ class WorldBridge:
     """
 
     def __init__(self) -> None:
-        self._handlers: Dict[Channel, Callable[..., Awaitable[Any]]] = {}
+        self._handlers: dict[Channel, Callable[..., Awaitable[Any]]] = {}
 
     def register(self, channel: Channel, handler: Callable[..., Awaitable[Any]]) -> None:
         self._handlers[channel] = handler
@@ -188,13 +189,14 @@ class WorldBridge:
         *,
         action: str,
         intent: str,
-        payload: Optional[Dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
     ) -> WorldActionResult:
         perm = _PERMS.status(channel)
         if perm is None or not perm.is_active():
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="permission_denied")
 
-        from core.ethics.conscience import get_conscience, Verdict as CV
+        from core.ethics.conscience import Verdict as ConscienceVerdict
+        from core.ethics.conscience import get_conscience
         conscience = get_conscience()
         c_decision = conscience.evaluate(
             action=action,
@@ -202,9 +204,9 @@ class WorldBridge:
             intent=intent,
             context={"channel": channel.value, "payload": payload},
         )
-        if c_decision.verdict == CV.REFUSE:
+        if c_decision.verdict == ConscienceVerdict.REFUSE:
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error=f"conscience_refused:{c_decision.rule_id}")
-        if c_decision.verdict == CV.REQUIRE_FRESH_USER_AUTH:
+        if c_decision.verdict == ConscienceVerdict.REQUIRE_FRESH_USER_AUTH:
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="require_fresh_user_auth")
 
         try:
@@ -254,7 +256,7 @@ class WorldBridge:
 # ─── Default handlers ───────────────────────────────────────────────────────
 
 
-async def _file_workspace_handler(payload: Dict[str, Any], *, capability_token: str) -> Dict[str, Any]:
+async def _file_workspace_handler(payload: dict[str, Any], *, capability_token: str) -> dict[str, Any]:
     op = str(payload.get("op", "list"))
     if op == "list":
         files = sorted(p.relative_to(_WORKSPACE_DIR).as_posix() for p in _WORKSPACE_DIR.rglob("*") if p.is_file())
@@ -279,7 +281,7 @@ async def _file_workspace_handler(payload: Dict[str, Any], *, capability_token: 
     raise ValueError(f"unknown_op:{op}")
 
 
-async def _shell_sandbox_handler(payload: Dict[str, Any], *, capability_token: str) -> Dict[str, Any]:
+async def _shell_sandbox_handler(payload: dict[str, Any], *, capability_token: str) -> dict[str, Any]:
     """Minimal sandboxed shell. Refuses any command containing shell-control
     metacharacters; runs with the current PATH but inside the workspace dir,
     with a 5s wall clock and 1MB output cap. The full implementation should
@@ -293,17 +295,19 @@ async def _shell_sandbox_handler(payload: Dict[str, Any], *, capability_token: s
     forbidden = {";", "&&", "||", "|", ">", "<", "`", "$(", "rm", "mkfs", "dd"}
     if any(any(b in str(a) for b in forbidden) for a in cmd):
         raise PermissionError("forbidden_metachars")
-    proc = await _asyncio.create_subprocess_exec(
-        *cmd,
+    proc = await get_subprocess_gateway().spawn_async(
+        cmd,
         cwd=str(_WORKSPACE_DIR),
         stdout=_asyncio.subprocess.PIPE,
         stderr=_asyncio.subprocess.PIPE,
+        read_only=True,
+        source="tool_execution:world_bridge.shell_sandbox",
     )
     try:
         stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=5.0)
-    except _asyncio.TimeoutError:
+    except TimeoutError as exc:
         proc.kill()
-        raise TimeoutError("shell_timeout")
+        raise TimeoutError("shell_timeout") from exc
     return {
         "rc": proc.returncode,
         "stdout": stdout[:1_000_000].decode("utf-8", errors="replace"),
@@ -311,7 +315,7 @@ async def _shell_sandbox_handler(payload: Dict[str, Any], *, capability_token: s
     }
 
 
-_BRIDGE: Optional[WorldBridge] = None
+_BRIDGE: WorldBridge | None = None
 
 
 def get_world_bridge() -> WorldBridge:
