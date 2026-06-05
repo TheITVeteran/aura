@@ -65,6 +65,60 @@ async def main():
     assert "unapproved_direct_network" in kinds
 
 
+def test_lint_blocks_network_callable_import_alias_wrapped_in_to_thread() -> None:
+    kinds = _findings(
+        """
+import asyncio
+from requests import get as http_get
+
+async def main():
+    await asyncio.to_thread(http_get, "https://example.com")
+"""
+    )
+
+    assert "unapproved_direct_network" in kinds
+
+
+def test_lint_blocks_urllib_request_module_alias() -> None:
+    kinds = _findings(
+        """
+import urllib.request as ureq
+
+def main():
+    return ureq.urlopen("https://example.com")
+"""
+    )
+
+    assert "unapproved_direct_network" in kinds
+
+
+def test_lint_blocks_urllib_urlretrieve_alias() -> None:
+    kinds = _findings(
+        """
+from urllib.request import urlretrieve
+
+def main():
+    urlretrieve("https://example.com/model.onnx", "model.onnx")
+"""
+    )
+
+    assert "unapproved_direct_network" in kinds
+
+
+def test_lint_blocks_subprocess_import_alias_wrapped_in_to_thread() -> None:
+    kinds = _findings(
+        """
+import asyncio
+from subprocess import run as proc_run
+
+async def main():
+    await asyncio.to_thread(proc_run, ["python", "-V"])
+"""
+    )
+
+    assert "unapproved_direct_subprocess" in kinds
+
+
 def test_lint_blocks_path_constructor_write_text() -> None:
     kinds = _findings(
         """

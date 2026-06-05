@@ -26,6 +26,7 @@ from typing import Any
 
 from core.container import ServiceContainer, ServiceLifetime
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.Environment")
 
@@ -343,18 +344,22 @@ class LocationInfo:
 async def get_location_from_ip() -> LocationInfo:
     """Get approximate location via IP geolocation (Async)."""
     loc = LocationInfo(source="ip_geolocation", collected_at=time.time())
-    
-    def _fetch_loc():
-        import urllib.request
-        req = urllib.request.Request(
-            "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon,timezone,query",
-            headers={"User-Agent": "Aura/5.1"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            return json.loads(response.read().decode())
-            
+
     try:
-        data = await asyncio.to_thread(_fetch_loc)
+        response = await get_network_gateway().request_async(
+            "GET",
+            "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon,timezone,query",
+            headers={"User-Agent": "Aura/5.1"},
+            timeout=5,
+            read_only=True,
+            source="core.environment_awareness.get_location_from_ip",
+        )
+        if not response.get("ok"):
+            raise OSError(response.get("error") or "IP geolocation request failed")
+        content = response.get("content")
+        if not isinstance(content, bytes):
+            raise TypeError("network gateway returned non-bytes geolocation payload")
+        data = json.loads(content.decode("utf-8"))
                 
         if data.get("status") == "success":
             loc.city = data.get("city", "")

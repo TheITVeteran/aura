@@ -28,7 +28,6 @@ import queue
 import subprocess
 import threading
 import time
-import urllib.request
 import wave
 from collections.abc import Awaitable, Callable
 from enum import Enum, auto
@@ -37,6 +36,8 @@ from pathlib import Path
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.network_gateway import get_network_gateway
 from core.utils.concurrency import RobustLock
 from core.utils.exceptions import capture_and_log
 
@@ -585,7 +586,7 @@ class SovereignVoiceEngine:
                 logger.info("✅ Piper Voice '%s' loaded (High Fidelity)", self.piper_voice_name)
                 self._pulse_hypha("cognition", "voice_engine", success=True)
                 return
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.warning("Failed to init Piper: %s. Falling back to pyttsx3.", e)
 
@@ -616,12 +617,44 @@ class SovereignVoiceEngine:
             if not dest.exists():
                 url = f"{base_url}/{vpath}/{fname}"
                 logger.info("Downloading %s...", fname)
-                try:
-                    urllib.request.urlretrieve(url, str(dest))
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    # Fallback to direct HF link if structure differs
-                    alt_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{vpath}/{fname}"
-                    urllib.request.urlretrieve(alt_url, str(dest))
+                payload = self._download_piper_asset(
+                    url,
+                    fallback_url=f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{vpath}/{fname}",
+                    fname=fname,
+                )
+                get_file_write_gateway().write_bytes(
+                    dest,
+                    payload,
+                    source="core.senses.voice_engine.download_piper_voice",
+                )
+
+    @staticmethod
+    def _download_piper_asset(url: str, *, fallback_url: str, fname: str) -> bytes:
+        headers = {"User-Agent": "Aura/5.1 voice-engine"}
+        gateway = get_network_gateway()
+        response = gateway.request(
+            "GET",
+            url,
+            headers=headers,
+            timeout=60,
+            read_only=True,
+            source="core.senses.voice_engine.download_piper_asset",
+        )
+        if not response.get("ok"):
+            response = gateway.request(
+                "GET",
+                fallback_url,
+                headers=headers,
+                timeout=60,
+                read_only=True,
+                source="core.senses.voice_engine.download_piper_asset.fallback",
+            )
+        if not response.get("ok"):
+            raise OSError(response.get("error") or f"failed to download Piper asset {fname}")
+        content = response.get("content")
+        if not isinstance(content, bytes) or not content:
+            raise ValueError(f"downloaded Piper asset {fname} was empty or invalid")
+        return content
 
     def _init_xtts(self):
         """Initialize the Sara v3 XTTS-v2 voice clone."""

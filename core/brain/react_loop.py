@@ -11,6 +11,7 @@ from html.parser import HTMLParser
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.runtime.governance_policy import allow_simple_query_bypass
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.ReActLoop")
 
@@ -62,6 +63,15 @@ def _html_text_fallback(raw_html: str) -> str:
         return text
     without_tags = re.sub(r"<[^>]+>", " ", raw_html)
     return " ".join(without_tags.split())
+
+
+def _network_response_text(response: dict[str, Any], *, context: str) -> str:
+    if not response.get("ok"):
+        raise OSError(response.get("error") or f"{context} network request failed")
+    content = response.get("content")
+    if not isinstance(content, bytes):
+        raise TypeError(f"{context} network response content was not bytes")
+    return content.decode("utf-8", errors="replace")
 
 
 def _thinking_mode_default():
@@ -415,7 +425,6 @@ class ActionExecutor:
             logger.info("Executing Fallback 2: Deep Crawler (legacy HTML search + BeautifulSoup) for '%s'", query)
             
             def _deep_crawl():
-                import httpx
                 from core.search.research_pipeline import ResearchSearchPipeline
                 
                 try:
@@ -433,8 +442,17 @@ class ActionExecutor:
                         from urllib.parse import quote_plus
 
                         search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
-                        resp = httpx.get(search_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10.0, follow_redirects=True)
-                        text = _html_text_fallback(resp.text)
+                        resp = get_network_gateway().request(
+                            "GET",
+                            search_url,
+                            headers={"User-Agent": "Mozilla/5.0"},
+                            timeout=10.0,
+                            read_only=True,
+                            source="core.brain.react_loop.web_search_html_fallback",
+                        )
+                        text = _html_text_fallback(
+                            _network_response_text(resp, context="duckduckgo html fallback")
+                        )
                         if text.strip():
                             return Observation(
                                 content=f"Search page fallback for {query}:\n\n{text[:2500]}",
@@ -467,17 +485,30 @@ class ActionExecutor:
                 
                 # Fetch specific page
                 try:
-                    resp = httpx.get(target_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, timeout=15.0, follow_redirects=True)
+                    resp = get_network_gateway().request(
+                        "GET",
+                        target_url,
+                        headers={
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36"
+                            )
+                        },
+                        timeout=15.0,
+                        read_only=True,
+                        source="core.brain.react_loop.web_deep_crawl",
+                    )
+                    html = _network_response_text(resp, context="web deep crawl")
                     try:
                         from bs4 import BeautifulSoup
 
-                        soup = BeautifulSoup(resp.text, "html.parser")
+                        soup = BeautifulSoup(html, "html.parser")
                         paragraphs = soup.find_all("p")
                         content_body = "\n\n".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 30])
                         if not content_body.strip():
                             content_body = soup.get_text(separator=' ', strip=True)
                     except (ImportError, ModuleNotFoundError):
-                        content_body = _html_text_fallback(resp.text)
+                        content_body = _html_text_fallback(html)
 
                     return Observation(
                         content=f"Title: {chosen_title}\nSource: {target_url}\n\nContent:\n{content_body[:4500]}",

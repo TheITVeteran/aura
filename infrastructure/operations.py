@@ -11,11 +11,10 @@ from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Infra.Operations")
 
@@ -43,10 +42,10 @@ _INSTALL_RECOVERABLE_ERRORS = (
     ValueError,
 )
 _WEB_RECOVERABLE_ERRORS = (
-    HTTPError,
+    OSError,
     TimeoutError,
     UnicodeDecodeError,
-    URLError,
+    TypeError,
     ValueError,
 )
 _FILE_RECOVERABLE_ERRORS = (
@@ -208,10 +207,25 @@ def _validate_http_url(url: str) -> None:
 
 
 def _fetch_url_text(url: str, timeout_seconds: float, max_bytes: int) -> str:
-    request = Request(url, headers={"User-Agent": "Aura/3.5"})
-    with urlopen(request, timeout=timeout_seconds) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        payload = response.read(max_bytes + 1)
+    response = get_network_gateway().request(
+        "GET",
+        url,
+        headers={"User-Agent": "Aura/3.5"},
+        timeout=timeout_seconds,
+        read_only=True,
+        source="infrastructure.operations.fetch_url_text",
+    )
+    if not response.get("ok"):
+        raise OSError(response.get("error") or "fetch URL request failed")
+    headers = response.get("headers") or {}
+    charset = "utf-8"
+    content_type = str(headers.get("Content-Type") or headers.get("content-type") or "")
+    if "charset=" in content_type:
+        charset = content_type.rsplit("charset=", 1)[-1].split(";", 1)[0].strip() or charset
+    payload = response.get("content")
+    if not isinstance(payload, bytes):
+        raise TypeError("network gateway returned non-bytes fetch payload")
+    payload = payload[: max_bytes + 1]
     if len(payload) > max_bytes:
         payload = payload[:max_bytes]
     return payload.decode(charset, errors="replace")

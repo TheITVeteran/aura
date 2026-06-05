@@ -2,6 +2,7 @@ import asyncio
 from importlib import metadata
 from pathlib import Path
 
+import infrastructure.operations as operations
 from infrastructure.operations import DepOps, FileOps, WebOps
 
 
@@ -78,6 +79,49 @@ def test_web_ops_fetches_with_injected_fetcher() -> None:
 
     assert result == "<html>Aura</html>"
     assert calls == [("https://example.com", 2.0, 1024)]
+
+
+def test_web_ops_default_fetcher_uses_network_gateway(monkeypatch) -> None:
+    calls: list[tuple[str, str, float, bool, str]] = []
+
+    class Gateway:
+        def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            timeout: float,
+            read_only: bool,
+            source: str,
+            **_,
+        ):
+            calls.append((method, url, timeout, read_only, source))
+            return {
+                "ok": True,
+                "headers": {"Content-Type": "text/plain; charset=utf-8"},
+                "content": b"Aura default fetch",
+            }
+
+    monkeypatch.setattr(operations, "get_network_gateway", lambda: Gateway())
+
+    result = asyncio.run(
+        WebOps.fetch_page_text(
+            "https://example.com/default",
+            timeout_seconds=3,
+            max_bytes=128,
+        )
+    )
+
+    assert result == "Aura default fetch"
+    assert calls == [
+        (
+            "GET",
+            "https://example.com/default",
+            3.0,
+            True,
+            "infrastructure.operations.fetch_url_text",
+        )
+    ]
 
 
 def test_web_ops_rejects_non_http_url() -> None:

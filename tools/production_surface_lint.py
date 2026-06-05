@@ -308,6 +308,7 @@ class AstLinter(ast.NodeVisitor):
         self.async_depth = 0
         self.func_depth = 0
         self.file_gateway_vars: set[str] = set()
+        self.import_aliases: dict[str, str] = {}
 
     def add(self, severity: str, kind: str, node: ast.AST, message: str) -> None:
         if self.rel in EXEMPT_FILES:
@@ -330,6 +331,21 @@ class AstLinter(ast.NodeVisitor):
         self.func_depth += 1
         self.generic_visit(node)
         self.func_depth -= 1
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name in {"asyncio", "httpx", "os", "requests", "subprocess", "time", "urllib.request"}:
+                if alias.asname:
+                    self.import_aliases[alias.asname] = alias.name
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module in {"asyncio", "httpx", "os", "requests", "subprocess", "time", "urllib.request"}:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                self.import_aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if isinstance(node.value, ast.Call) and self._call_name(node.value) == "get_file_write_gateway":
@@ -406,7 +422,7 @@ class AstLinter(ast.NodeVisitor):
         # Check direct network calls
         elif name in {
             "requests.get", "requests.post", "requests.put", "requests.delete", "requests.patch", "requests.request",
-            "urllib.request.urlopen", "urllib.request.Request",
+            "urllib.request.urlopen", "urllib.request.Request", "urllib.request.urlretrieve",
             "httpx.get", "httpx.post", "httpx.request", "httpx.Client", "httpx.AsyncClient"
         } or self._has_network_callable_arg(node):
             self.add(
@@ -449,9 +465,17 @@ class AstLinter(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
-    @staticmethod
-    def _call_name(node: ast.Call) -> str:
-        return AstLinter._call_name_from_func(node.func)
+    def _call_name(self, node: ast.Call) -> str:
+        return self._canonical_call_name(self._call_name_from_func(node.func))
+
+    def _canonical_call_name(self, name: str) -> str:
+        if not name:
+            return name
+        parts = name.split(".")
+        mapped_root = self.import_aliases.get(parts[0])
+        if mapped_root is None:
+            return name
+        return ".".join([mapped_root, *parts[1:]])
 
     @staticmethod
     def _call_name_from_func(func: ast.AST) -> str:
@@ -463,8 +487,7 @@ class AstLinter(ast.NodeVisitor):
             parts.append(func.id)
         return ".".join(reversed(parts))
 
-    @staticmethod
-    def _has_subprocess_callable_arg(node: ast.Call) -> bool:
+    def _has_subprocess_callable_arg(self, node: ast.Call) -> bool:
         forbidden = {
             "subprocess.run",
             "subprocess.Popen",
@@ -475,12 +498,11 @@ class AstLinter(ast.NodeVisitor):
             "asyncio.create_subprocess_shell",
         }
         for arg in node.args:
-            if AstLinter._call_name_from_func(arg) in forbidden:
+            if self._canonical_call_name(AstLinter._call_name_from_func(arg)) in forbidden:
                 return True
         return False
 
-    @staticmethod
-    def _has_network_callable_arg(node: ast.Call) -> bool:
+    def _has_network_callable_arg(self, node: ast.Call) -> bool:
         forbidden = {
             "requests.get",
             "requests.post",
@@ -493,9 +515,10 @@ class AstLinter(ast.NodeVisitor):
             "httpx.request",
             "urllib.request.urlopen",
             "urllib.request.Request",
+            "urllib.request.urlretrieve",
         }
         for arg in node.args:
-            if AstLinter._call_name_from_func(arg) in forbidden:
+            if self._canonical_call_name(AstLinter._call_name_from_func(arg)) in forbidden:
                 return True
         return False
 
