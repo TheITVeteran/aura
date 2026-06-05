@@ -1,64 +1,130 @@
+import importlib
 import os
-import unittest
-from unittest.mock import MagicMock, patch
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
-# Add project root to sys.path
-sys.path.append(str(Path(__file__).parent.parent))
+import pytest
+from fastapi import HTTPException
 
-# Mock out heavy dependencies before imports to avoid model downloads/connection errors
-mock_whisper = MagicMock()
-mock_docker = MagicMock()
-sys.modules["faster_whisper"] = mock_whisper
-sys.modules["docker"] = mock_docker
 
-class TestSovereignAura(unittest.TestCase):
+class RequestProbe:
+    def __init__(self, path="/api/chat", host="203.0.113.10", headers=None):
+        self.url = SimpleNamespace(path=path)
+        self.client = SimpleNamespace(host=host)
+        self.headers = headers or {}
 
-    def test_config_firewall(self):
-        """Verify that AuraConfig mirrors the explicit owner-autonomous posture."""
-        from core.config import config
-        self.assertEqual(os.environ.get("AURA_SECURITY_PROFILE"), "owner_autonomous")
-        self.assertEqual(os.environ.get("AURA_INTERNAL_ONLY"), "0")
-        self.assertEqual(os.environ.get("AURA_ALLOW_NETWORK_ACCESS"), "1")
-        self.assertEqual(config.security.security_profile, "owner_autonomous")
-        self.assertEqual(config.security.internal_only_mode, False)
-        self.assertEqual(config.security.allow_network_access, True)
 
-    def test_server_auth_logic(self):
-        """Verify server auth logic in server.py (simulated)."""
-        from interface.server import _check_auth
-        
-        # Scenario 1: No token set, allow_localhost_only = 0 -> Should fail
-        with patch.dict(os.environ, {"AURA_API_TOKEN": "", "AURA_ALLOW_LOCALHOST_ONLY": "0"}):
-            self.assertFalse(_check_auth("Bearer test"))
-            
-        # Scenario 2: Token set, matches -> Should pass
-        with patch.dict(os.environ, {"AURA_API_TOKEN": "secret_key"}):
-            self.assertTrue(_check_auth("Bearer secret_key"))
-            self.assertFalse(_check_auth("Bearer wrong"))
+class ContainerProbe:
+    def __init__(self):
+        self.removed = False
+        self.killed = False
 
-    def test_local_llm_logic(self):
-        """Verify the local brain construct prompt correctly."""
-        from core.brain.local_llm import LocalBrain
-        brain = LocalBrain(model_name="test-model")
-        self.assertEqual(brain.model, "test-model")
-        
-    def test_sandbox_isolation_config(self):
-        """Verify that SecureDockerSandbox forces network_disabled=True."""
-        from core.skills.secure_sandbox import SecureDockerSandbox
-        
-        mock_client = MagicMock()
-        mock_docker.from_env.return_value = mock_client
-        
-        sandbox = SecureDockerSandbox()
-        # Test code execution call
-        sandbox.execute_code("print('hello')", "/tmp")
-        
-        # Verify docker-py was called with network_disabled=True
-        args, kwargs = mock_client.containers.run.call_args
-        self.assertTrue(kwargs.get("network_disabled"))
-        self.assertEqual(kwargs.get("mem_limit"), "256m")
+    def wait(self, timeout):
+        self.wait_timeout = timeout
+        return {"StatusCode": 0}
+
+    def logs(self):
+        return b"ok"
+
+    def kill(self):
+        self.killed = True
+
+    def remove(self, force=False):
+        self.removed = True
+        self.remove_force = force
+
+
+class ContainerRunnerProbe:
+    def __init__(self):
+        self.calls = []
+        self.last_container = None
+
+    def run(self, **kwargs):
+        self.calls.append(kwargs)
+        self.last_container = ContainerProbe()
+        return self.last_container
+
+
+class DockerClientProbe:
+    def __init__(self):
+        self.containers = ContainerRunnerProbe()
+
+
+class DockerModuleProbe:
+    def __init__(self):
+        self.client = DockerClientProbe()
+        self.from_env_calls = 0
+
+    def from_env(self):
+        self.from_env_calls += 1
+        return self.client
+
+
+def test_config_firewall():
+    """Verify that AuraConfig mirrors the explicit owner-autonomous posture."""
+    from core.config import config
+
+    assert os.environ.get("AURA_SECURITY_PROFILE") == "owner_autonomous"
+    assert os.environ.get("AURA_INTERNAL_ONLY") == "0"
+    assert os.environ.get("AURA_ALLOW_NETWORK_ACCESS") == "1"
+    assert config.security.security_profile == "owner_autonomous"
+    assert config.security.internal_only_mode is False
+    assert config.security.allow_network_access is True
+
+
+def test_server_auth_logic(monkeypatch):
+    """Verify extracted interface auth fails closed and accepts valid bearer tokens."""
+    from interface import auth
+
+    monkeypatch.setattr(auth.config.security, "internal_only_mode", False, raising=False)
+    monkeypatch.setattr(auth.config, "api_token", None, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        auth.validate_runtime_security_request(RequestProbe())
+    assert exc.value.status_code == 503
+
+    monkeypatch.setattr(auth.config, "api_token", "secret_key", raising=False)
+    auth.validate_runtime_security_request(
+        RequestProbe(headers={"Authorization": "Bearer secret_key"})
+    )
+    with pytest.raises(HTTPException) as exc:
+        auth.validate_runtime_security_request(
+            RequestProbe(headers={"Authorization": "Bearer wrong"})
+        )
+    assert exc.value.status_code == 401
+
+
+def test_local_llm_logic():
+    """Verify the local brain constructs the configured model handle."""
+    from core.brain.local_llm import LocalBrain
+
+    brain = LocalBrain(model_name="test-model")
+    assert brain.model == "test-model"
+
+
+def test_sandbox_isolation_config(monkeypatch):
+    """Verify that SecureDockerSandbox forces network and resource limits."""
+    docker_probe = DockerModuleProbe()
+    monkeypatch.setitem(sys.modules, "docker", docker_probe)
+    sys.modules.pop("core.skills.secure_sandbox", None)
+    secure_sandbox = importlib.import_module("core.skills.secure_sandbox")
+    monkeypatch.setattr(secure_sandbox, "docker", docker_probe)
+
+    sandbox = secure_sandbox.SecureDockerSandbox()
+    result = sandbox.execute_code("print('hello')", "/tmp")
+
+    assert result == {"ok": True, "exit_code": 0, "output": "ok"}
+    assert docker_probe.from_env_calls == 1
+
+    call = docker_probe.client.containers.calls[-1]
+    assert call["network_disabled"] is True
+    assert call["mem_limit"] == "1g"
+    assert call["nano_cpus"] == 2_000_000_000
+    assert call["detach"] is True
+    assert call["remove"] is False
+    assert docker_probe.client.containers.last_container.removed is True
+    assert docker_probe.client.containers.last_container.remove_force is True
+
 
 if __name__ == "__main__":
-    unittest.main()
+    raise SystemExit(pytest.main([str(Path(__file__))]))

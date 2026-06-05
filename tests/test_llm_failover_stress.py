@@ -3,7 +3,7 @@ test_llm_failover_stress.py
 ============================
 Stress test for the 5-tier LLM failover system.
 
-Mocks actual LLM calls but exercises the full routing logic including:
+Uses local async client probes while exercising the full routing logic including:
   - Circuit breaker state transitions (CLOSED -> OPEN -> HALF_OPEN -> CLOSED)
   - Failover chain traversal when endpoints are degraded
   - Cascade failure reaching emergency tier
@@ -16,11 +16,9 @@ No live LLM or network calls required.
 from __future__ import annotations
 
 
-import asyncio
 import sys
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -37,12 +35,6 @@ from core.brain.llm_health_router import (
     HealthAwareLLMRouter,
     validate_response,
 )
-from core.brain.llm.model_registry import (
-    BRAINSTEM_ENDPOINT,
-    DEEP_ENDPOINT,
-    FALLBACK_ENDPOINT,
-    PRIMARY_ENDPOINT,
-)
 from core.container import ServiceContainer
 
 
@@ -50,80 +42,88 @@ from core.container import ServiceContainer
 # Helpers
 # ---------------------------------------------------------------------------
 
+class LLMClientProbe:
+    def __init__(self, response: str):
+        self.response = response
+        self.calls = []
+        self.error: BaseException | None = None
+
+    async def think(self, prompt: str, **kwargs):
+        self.calls.append((prompt, kwargs))
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
 def _make_router_with_5_tiers() -> tuple:
-    """Build a HealthAwareLLMRouter with 5 mock endpoints spanning the full
+    """Build a HealthAwareLLMRouter with 5 probe endpoints spanning the full
     failover chain: Cortex (primary), Solver (deep), Brainstem (fast),
     Reflex (emergency fallback), Gemini-Fast (cloud).
 
-    Returns (router, mock_clients_dict).
+    Returns (router, client probes by endpoint name).
     """
     router = HealthAwareLLMRouter()
 
     clients = {}
 
     # Tier 1: Cortex (primary local 32B)
-    mock_cortex = MagicMock()
-    mock_cortex.think = AsyncMock(return_value="Cortex response")
-    clients["Cortex"] = mock_cortex
+    cortex = LLMClientProbe("Cortex response")
+    clients["Cortex"] = cortex
     router.register(
         name="Cortex",
         url="internal",
         model="cortex-32b",
         is_local=True,
         tier="local",
-        client=mock_cortex,
+        client=cortex,
     )
 
     # Tier 2: Solver (deep local 72B)
-    mock_solver = MagicMock()
-    mock_solver.think = AsyncMock(return_value="Solver response")
-    clients["Solver"] = mock_solver
+    solver = LLMClientProbe("Solver response")
+    clients["Solver"] = solver
     router.register(
         name="Solver",
         url="internal",
         model="solver-72b",
         is_local=True,
         tier="local_deep",
-        client=mock_solver,
+        client=solver,
     )
 
     # Tier 3: Brainstem (fast local 7B)
-    mock_brainstem = MagicMock()
-    mock_brainstem.think = AsyncMock(return_value="Brainstem response")
-    clients["Brainstem"] = mock_brainstem
+    brainstem = LLMClientProbe("Brainstem response")
+    clients["Brainstem"] = brainstem
     router.register(
         name="Brainstem",
         url="internal",
         model="brainstem-7b",
         is_local=True,
         tier="local_fast",
-        client=mock_brainstem,
+        client=brainstem,
     )
 
     # Tier 4: Reflex (emergency fallback)
-    mock_reflex = MagicMock()
-    mock_reflex.think = AsyncMock(return_value="Reflex emergency response")
-    clients["Reflex"] = mock_reflex
+    reflex = LLMClientProbe("Reflex emergency response")
+    clients["Reflex"] = reflex
     router.register(
         name="Reflex",
         url="internal",
         model="reflex-3b",
         is_local=True,
         tier="emergency",
-        client=mock_reflex,
+        client=reflex,
     )
 
     # Tier 5: Gemini-Fast (cloud API)
-    mock_gemini = MagicMock()
-    mock_gemini.think = AsyncMock(return_value="Gemini cloud response")
-    clients["Gemini-Fast"] = mock_gemini
+    gemini = LLMClientProbe("Gemini cloud response")
+    clients["Gemini-Fast"] = gemini
     router.register(
         name="Gemini-Fast",
         url="cloud",
         model="gemini-2.0-flash",
         is_local=False,
         tier="api_fast",
-        client=mock_gemini,
+        client=gemini,
     )
 
     return router, clients
@@ -172,8 +172,7 @@ class TestPrimaryFailureTriggersFlallback:
         assert result["endpoint"] != "Cortex", (
             f"Should not route to open Cortex, got endpoint={result['endpoint']}"
         )
-        # Cortex client should not have been called
-        clients["Cortex"].think.assert_not_called()
+        assert clients["Cortex"].calls == []
 
 
 class TestCascadeFailureReachesEmergency:
@@ -241,7 +240,7 @@ class TestForegroundSkipsBrainstem:
         router, clients = _make_router_with_5_tiers()
 
         # Kill the primary
-        clients["Cortex"].think.side_effect = Exception("Cortex crashed")
+        clients["Cortex"].error = RuntimeError("Cortex crashed")
 
         result = await router.generate_with_metadata(
             "Hello from user",
@@ -252,7 +251,7 @@ class TestForegroundSkipsBrainstem:
         )
 
         # Brainstem should NOT have been called for a foreground request
-        clients["Brainstem"].think.assert_not_called()
+        assert clients["Brainstem"].calls == []
 
         # Should have fallen to Gemini-Fast (cloud)
         assert result["endpoint"] == "Gemini-Fast", (

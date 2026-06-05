@@ -1,6 +1,6 @@
 """Real demos for the Substrate Voice System.
 
-These are NOT shallow mock tests. They compile real SpeechProfiles from
+These are full pipeline tests. They compile real SpeechProfiles from
 realistic substrate states and shape real LLM-like responses through
 the full pipeline. Each demo represents a real conversational scenario
 that Aura would encounter.
@@ -9,8 +9,9 @@ Run: pytest tests/test_substrate_voice_demos.py -v -s
 """
 
 import random
+from types import SimpleNamespace
+
 import pytest
-from unittest.mock import MagicMock
 
 from core.voice.speech_profile import SpeechProfile, SpeechProfileCompiler
 from core.voice.response_shaper import ResponseShaper
@@ -26,14 +27,14 @@ def _make_affect(
     valence=0.0, arousal=0.5, curiosity=0.5, engagement=0.5,
     social_hunger=0.5, dominant_emotion="neutral",
 ):
-    a = MagicMock()
-    a.valence = valence
-    a.arousal = arousal
-    a.curiosity = curiosity
-    a.engagement = engagement
-    a.social_hunger = social_hunger
-    a.dominant_emotion = dominant_emotion
-    return a
+    return SimpleNamespace(
+        valence=valence,
+        arousal=arousal,
+        curiosity=curiosity,
+        engagement=engagement,
+        social_hunger=social_hunger,
+        dominant_emotion=dominant_emotion,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -581,20 +582,22 @@ class TestDemo_FullPipeline:
     def test_full_pipeline(self):
         engine = SubstrateVoiceEngine()
 
-        # Simulate state with affect
-        state = MagicMock()
-        state.affect = _make_affect(
-            valence=0.3, arousal=0.65, curiosity=0.7,
-            engagement=0.7, dominant_emotion="curiosity",
+        state = SimpleNamespace(
+            affect=_make_affect(
+                valence=0.3, arousal=0.65, curiosity=0.7,
+                engagement=0.7, dominant_emotion="curiosity",
+            ),
+            identity=SimpleNamespace(personality_growth={}),
+            cognition=SimpleNamespace(
+                conversation_energy=0.65,
+                user_emotional_trend="engaged",
+                discourse_depth=3,
+                working_memory=[
+                    {"role": "user", "content": "Have you seen the latest research on consciousness?"},
+                    {"role": "assistant", "content": "Yeah, the IIT 4.0 paper had some interesting formal results."},
+                ],
+            ),
         )
-        state.identity.personality_growth = {}
-        state.cognition.conversation_energy = 0.65
-        state.cognition.user_emotional_trend = "engaged"
-        state.cognition.discourse_depth = 3
-        state.cognition.working_memory = [
-            {"role": "user", "content": "Have you seen the latest research on consciousness?"},
-            {"role": "assistant", "content": "Yeah, the IIT 4.0 paper had some interesting formal results."},
-        ]
 
         # 1. Compile profile
         profile = engine.compile_profile(

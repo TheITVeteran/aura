@@ -1,54 +1,53 @@
 """Verify Evaluation Harness."""
 import asyncio
 import logging
-import sys
 from pathlib import Path
-
-# Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.self_modification.evaluation_harness import EvaluationHarness
 from core.self_modification.code_repair import SandboxTester, CodeFix
 
-class MockBrain:
-    async def think(self, prompt):
-        # Return a simple reproduction script
+
+class DeterministicBrain:
+    async def think(self, prompt, **_kwargs):
         class Thought:
-            content = "import os; assert os.path.exists('test_target.py'); print('Repro script ran')"
+            content = (
+                "import sys\n"
+                "sys.path.insert(0, '.')\n"
+                "import test_target\n"
+                "assert test_target.VALUE == 1\n"
+            )
         return Thought()
 
-async def test_harness():
-    print("Testing Evaluation Harness...")
-    brain = MockBrain()
-    tester = SandboxTester(code_base_path=".")
-    harness = EvaluationHarness(brain, tester, code_base_path=".")
+
+def test_harness(tmp_path: Path):
+    asyncio.run(_run_harness_check(tmp_path))
+
+
+async def _run_harness_check(tmp_path: Path):
+    logging.getLogger(__name__).info("Testing Evaluation Harness")
+    brain = DeterministicBrain()
+    tester = SandboxTester(code_base_path=str(tmp_path))
+    harness = EvaluationHarness(brain, tester, code_base_path=str(tmp_path))
+
+    target_path = tmp_path / "test_target.py"
+    target_path.write_text("VALUE = 0\n", encoding="utf-8")
     
     fix = CodeFix(
         target_file="test_target.py",
         target_line=1,
-        original_code="print('buggy')",
-        fixed_code="print('fixed')",
-        explanation="Test fix",
-        hypothesis="Test hypothesis",
+        original_code="VALUE = 0",
+        fixed_code="VALUE = 1",
+        explanation="Update the constant so the generated probe passes.",
+        hypothesis="The probe should fail on VALUE=0 and pass after VALUE=1.",
         confidence="high"
     )
-    
-    # Create the test target file
-    target_path = Path("test_target.py")
-    target_path.write_text("print('buggy')\n", encoding="utf-8")
-    
-    try:
-        # We need to mock _run_probe_on_code or ensure run_custom_probe works
-        # Let's test if we can generate a probe first
-        probe = await harness.create_weakness_probe("test_target.py", {"bug": "info"})
-        print(f"Generated Probe:\n{probe}")
-        assert "assert" in probe or "raise" in probe or "print" in probe
-        
-        print("Harness logic looks good. (Skipping full sandbox run in mock environment)")
-        
-    finally:
-        if target_path.exists():
-            get_task_tracker().create_task(get_storage_gateway().delete(target_path, cause='test_harness'))
+
+    probe = await harness.create_weakness_probe("test_target.py", {"bug": "constant too low"})
+    assert probe is not None
+    assert "assert test_target.VALUE == 1" in probe
+
+    valid, message = await harness.evaluate_fix(fix, {"bug": "constant too low"})
+    assert valid, message
 
 if __name__ == "__main__":
-    asyncio.run(test_harness())
+    asyncio.run(_run_harness_check(Path.cwd()))
