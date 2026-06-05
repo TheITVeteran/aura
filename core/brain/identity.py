@@ -105,10 +105,15 @@ class IdentityService:
         try:
             self.state.last_updated = time.time()
             data = asdict(self.state)
-            
+
             self.data_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.data_path, "w") as f:
-                json.dump(data, f, indent=4)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self.data_path,
+                json.dumps(data, indent=4),
+                source="brain.identity.save",
+            )
             logger.info("Identity state persisted.")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('identity', e)

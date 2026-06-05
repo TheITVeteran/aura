@@ -1,34 +1,33 @@
 # core/brain/trace_logger.py
-from core.runtime.errors import record_degradation
-import atexit
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 
 class TraceLogger:
     def __init__(self, path: str | Path = "~/.aura/traces/decisions.jsonl"):
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self.path, "a", encoding="utf-8")
-        atexit.register(self.close)
 
     def log(self, record: dict[str, Any]) -> None:
         rec = {
             "ts": time.time(),
             **record
         }
-        self._fh.write(json.dumps(rec, default=str) + "\n")
-        self._fh.flush()
+        get_file_write_gateway().append_text(
+            self.path,
+            json.dumps(rec, default=str) + "\n",
+            encoding="utf-8",
+            source="trace_logger.log",
+        )
 
     def close(self) -> None:
-        try:
-            self._fh.close()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
-            record_degradation('trace_logger', _e)
-            logging.debug('Ignored Exception in trace_logger.py: %s', _e)
+        return None
 
     def __del__(self) -> None:
         self.close()

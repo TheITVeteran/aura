@@ -17,6 +17,7 @@ from research.sim_worlds.toy_world import ToyWorld
 from research.sim_worlds.market_sim import MarketSim
 from research.sim_worlds.puzzle_env import PuzzleEnv
 from core.container import ServiceContainer
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.BenchHarness")
 
@@ -104,8 +105,11 @@ class BenchmarkHarness:
     def _save_report(self, report: Dict[str, Any]):
         filename = f"bench_{int(report['timestamp'])}.json"
         try:
-            with open(self.report_dir / filename, "w") as f:
-                json.dump(report, f, indent=4)
+            get_file_write_gateway().write_text(
+                self.report_dir / filename,
+                json.dumps(report, indent=4),
+                source="research.bench_harness.report",
+            )
             logger.info(f"Benchmark saved: {filename} (Score: {report['composite_score']:.2f})")
         except (OSError, TypeError, ValueError) as e:
             logger.error(f"Failed to save benchmark report: {e}")

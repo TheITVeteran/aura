@@ -1988,12 +1988,17 @@ class RobustOrchestrator(
                         dlq_path = config.paths.data_dir / "dlq.jsonl"
 
                         def _append_dlq(path, msgs):
-                            with open(path, "a") as f:
-                                for msg in msgs:
-                                    f.write(
-                                        json.dumps({"timestamp": time.time(), "message": msg})
-                                        + "\n"
-                                    )
+                            from core.runtime.file_write_gateway import get_file_write_gateway
+
+                            payload = "".join(
+                                json.dumps({"timestamp": time.time(), "message": msg}) + "\n"
+                                for msg in msgs
+                            )
+                            get_file_write_gateway().append_text(
+                                path,
+                                payload,
+                                source="orchestrator.main.recovery_dlq",
+                            )
 
                         await run_io_bound(_append_dlq, dlq_path, dropped)
                     except _ORCHESTRATOR_RECOVERABLE_ERRORS as e:

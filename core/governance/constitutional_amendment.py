@@ -111,8 +111,14 @@ class AmendmentCourt:
 
     def record(self, proposal: AmendmentProposal) -> None:
         self.LEDGER.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.LEDGER, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(proposal.to_dict(), sort_keys=True) + "\n")
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            self.LEDGER,
+            json.dumps(proposal.to_dict(), sort_keys=True) + "\n",
+            encoding="utf-8",
+            source="constitutional_amendment.record",
+        )
 
     def export_pending(self, output_path: str | Path) -> list[dict[str, Any]]:
         proposals: list[dict[str, Any]] = []

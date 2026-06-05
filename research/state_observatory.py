@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Aura.Research.Observatory")
 
 class StateObservatory:
@@ -56,16 +58,22 @@ class StateObservatory:
     def _persist_record(self, record: Dict[str, Any]):
         """Append record to the JSONL log file."""
         try:
-            with open(self.current_log_file, "a") as f:
-                f.write(json.dumps(record) + "\n")
+            get_file_write_gateway().append_text(
+                self.current_log_file,
+                json.dumps(record) + "\n",
+                source="research.state_observatory.record",
+            )
         except (OSError, TypeError, ValueError) as e:
             logger.error("Failed to persist research record: %s", e)
 
     def export_history(self, path: Optional[Path] = None) -> Path:
         """Export the full history to a specific file."""
         target = path or self.log_dir / f"export_{int(time.time())}.json"
-        with open(target, "w") as f:
-            json.dump(list(self.history), f, indent=2)
+        get_file_write_gateway().write_text(
+            target,
+            json.dumps(list(self.history), indent=2),
+            source="research.state_observatory.export",
+        )
         return target
 
     def get_recent_metrics(self, n: int = 10) -> List[Dict[str, Any]]:

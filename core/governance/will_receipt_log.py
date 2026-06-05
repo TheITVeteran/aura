@@ -49,13 +49,14 @@ class WillReceiptEntry:
 
 def append(entry: WillReceiptEntry) -> None:
     try:
-        with open(_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(entry), default=str) + "\n")
-            fh.flush()
-            try:
-                os.fsync(fh.fileno())
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            _PATH,
+            json.dumps(asdict(entry), default=str) + "\n",
+            encoding="utf-8",
+            source="will_receipt_log.append",
+        )
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         record_degradation('will_receipt_log', exc)
         logger.warning("will receipt append failed: %s", exc)

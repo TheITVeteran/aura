@@ -16,6 +16,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Aura.RSILab")
 
 RSI_LAB_IO_ERRORS = (OSError, TypeError, ValueError)
@@ -177,8 +179,11 @@ class RSILab:
     def _save(self):
         try:
             data = {k: asdict(v) for k, v in self.candidates.items()}
-            with open(self.lab_dir / "candidates.json", "w") as f:
-                json.dump(data, f, indent=4)
+            get_file_write_gateway().write_text(
+                self.lab_dir / "candidates.json",
+                json.dumps(data, indent=4),
+                source="research.meta_learning_loop.candidates",
+            )
         except RSI_LAB_IO_ERRORS as e:
             logger.error(f"Failed to save RSI Lab candidates: {e}")
 

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Infrastructure.Hardening")
 
@@ -288,8 +289,11 @@ class StateManager:
             checkpoint_file = self.checkpoint_dir / f"checkpoint_{int(time.time())}.json"
             
             # Create backup of current state
-            with open(checkpoint_file, 'w') as f:
-                json.dump(self.state, f, indent=2, default=str)
+            get_file_write_gateway().write_text(
+                checkpoint_file,
+                json.dumps(self.state, indent=2, default=str),
+                source="infrastructure.hardening.state_checkpoint",
+            )
             
             # Keep only last 10 checkpoints
             checkpoints = sorted(list(self.checkpoint_dir.glob("checkpoint_*.json")))

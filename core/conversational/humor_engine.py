@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer, ServiceLifetime
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Humor")
 
@@ -211,10 +212,11 @@ class HumorEngine:
                 },
                 "saved_at": time.time(),
             }
-            tmp = str(self._data_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(payload, f, indent=2)
-            os.replace(tmp, self._data_path)
+            get_file_write_gateway().write_text(
+                self._data_path,
+                json.dumps(payload, indent=2),
+                source="conversational.humor_engine.profiles",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('humor_engine', e)
             logger.error("HumorEngine: save failed: %s", e)

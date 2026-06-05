@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 
-import httpx
-
+from core.runtime.network_gateway import get_network_gateway
 from core.thought_stream import get_emitter
 
 
@@ -662,9 +661,7 @@ class ResearchSearchPipeline:
         return deduped
 
     def _legacy_html_search(self, query: str, num_results: int) -> list[SearchHit]:
-        import urllib.error
         import urllib.parse
-        import urllib.request
         from bs4 import BeautifulSoup
 
         encoded = urllib.parse.quote_plus(query)
@@ -680,12 +677,20 @@ class ResearchSearchPipeline:
 
         for base_url, source_engine, parser in endpoints:
             url = f"{base_url}{encoded}"
-            request = urllib.request.Request(url, headers=_HEADERS)
 
             try:
-                with urllib.request.urlopen(request, timeout=10) as response:
-                    raw_html = response.read().decode("utf-8", errors="replace")
-            except (ConnectionError, OSError, TimeoutError, urllib.error.URLError) as exc:
+                response = get_network_gateway().request(
+                    "GET",
+                    url,
+                    headers=_HEADERS,
+                    timeout=10,
+                    source=f"research_pipeline.legacy_html_search.{source_engine}",
+                    read_only=True,
+                )
+                if not response.get("ok"):
+                    raise OSError(str(response.get("error") or "legacy search request failed"))
+                raw_html = bytes(response.get("content") or b"").decode("utf-8", errors="replace")
+            except (ConnectionError, OSError, TimeoutError) as exc:
                 record_degradation('research_pipeline', exc)
                 logger.debug("Legacy HTML search failed for %s via %s: %s", query, source_engine, exc)
                 continue
@@ -882,14 +887,9 @@ class ResearchSearchPipeline:
         pages: list[SearchPage] = []
         timeout_val = 14.0 if deep else 8.0 # Component A3: Timeout hardening
         
-        # 1. Fallback / Normal Mode: HTTPX
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            headers=_HEADERS,
-            timeout=httpx.Timeout(timeout_val, connect=5.0),
-        ) as client:
-            tasks = [self._fetch_page(client, hit) for hit in hits[:3]]
-            fetched = await asyncio.gather(*tasks, return_exceptions=True)
+        # 1. Fallback / Normal Mode: canonical network gateway
+        tasks = [self._fetch_page(None, hit, timeout_val=timeout_val) for hit in hits[:3]]
+        fetched = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in fetched:
             if isinstance(item, SearchPage):
@@ -914,33 +914,41 @@ class ResearchSearchPipeline:
 
         return pages
 
-    async def _fetch_page(self, client: httpx.AsyncClient, hit: SearchHit) -> Optional[SearchPage]:
+    async def _fetch_page(self, client: Any, hit: SearchHit, *, timeout_val: float = 8.0) -> Optional[SearchPage]:
         try:
-            response = await client.get(hit.url)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # Component A3: Error classification
-            status = exc.response.status_code
-            if status in (403, 404, 410, 451):
-                logger.debug("Page fetch permanent error (%d) for %s", status, hit.url)
-            else:
-                logger.debug("Page fetch transient error (%d) for %s", status, hit.url)
-            return None
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
+            response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "GET",
+                hit.url,
+                headers=_HEADERS,
+                timeout=timeout_val,
+                source="research_pipeline.fetch_page",
+                read_only=True,
+            )
+            status = int(response.get("status_code") or 0)
+            if status >= 400 or not response.get("ok"):
+                # Component A3: Error classification
+                if status in (403, 404, 410, 451):
+                    logger.debug("Page fetch permanent error (%d) for %s", status, hit.url)
+                else:
+                    logger.debug("Page fetch transient error (%d) for %s", status, hit.url)
+                return None
+        except (OSError, ConnectionError, TimeoutError, ValueError) as exc:
             record_degradation('research_pipeline', exc)
             logger.debug("Page fetch failed for %s: %s", hit.url, exc)
             return None
 
-        content_type = str(response.headers.get("content-type", ""))
+        content_type = str(dict(response.get("headers") or {}).get("content-type", ""))
+        body = bytes(response.get("content") or b"").decode("utf-8", errors="replace")
         # Component A3: Content-type handling
-        if not any(t in content_type.lower() for t in ("html", "text/plain", "application/json")):
+        if content_type and not any(t in content_type.lower() for t in ("html", "text/plain", "application/json")):
             return None
 
-        text = _html_to_text(response.text)
+        text = _html_to_text(body)
         if len(text) < 200:
             return None
 
-        title = _extract_title(response.text) or hit.title
+        title = _extract_title(body) or hit.title
         return SearchPage(
             url=hit.url,
             title=title,

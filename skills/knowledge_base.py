@@ -15,6 +15,7 @@ from typing import Any
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from infrastructure import BaseSkill
 
 logger = logging.getLogger("Skills.KnowledgeBase")
@@ -61,8 +62,11 @@ class KnowledgeBaseSkill(BaseSkill):
         return {}
 
     def _save_metadata(self, metadata: dict[str, Any]):
-        with open(self._get_metadata_path(), 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
+        get_file_write_gateway().write_text(
+            self._get_metadata_path(),
+            json.dumps(metadata, indent=2),
+            source="skills.knowledge_base.metadata",
+        )
 
     async def execute(self, goal: dict, context: dict) -> dict:
         params = goal.get("params", {})
@@ -80,7 +84,12 @@ class KnowledgeBaseSkill(BaseSkill):
             filepath = self.store_dir / f"{slug}.md"
             
             # Write item
-            await asyncio.to_thread(filepath.write_text, f"# {title}\n\n{content}", encoding="utf-8")
+            await asyncio.to_thread(
+                get_file_write_gateway().write_text,
+                filepath,
+                f"# {title}\n\n{content}",
+                source="skills.knowledge_base.item",
+            )
                 
             # Update metadata index
             metadata = self._load_metadata()

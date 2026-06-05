@@ -570,24 +570,21 @@ class ContentFetcher:
 
     async def _web_html(self, url: str, args: dict[str, Any], priority: int) -> FetchedContent:
         try:
-            import urllib.error
-            import urllib.request
-        except ImportError:
-            return FetchedContent(
-                method="web_html",
-                priority_level=priority,
-                target=url,
-                success=False,
-                error="urllib unavailable",
+            from core.runtime.network_gateway import get_network_gateway
+
+            response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "GET",
+                url,
+                headers={"User-Agent": "Aura/1.0 (+research)"},
+                timeout=HTTP_TIMEOUT_SECONDS,
+                source="content_fetcher.web_html",
+                read_only=True,
             )
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Aura/1.0 (+research)"})
-
-            def _fetch_limited():
-                with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-                    return resp.read(self._per_attempt_bytes + 1), getattr(resp, "status", None)
-
-            data, status = await asyncio.get_running_loop().run_in_executor(None, _fetch_limited)
+            if not response.get("ok"):
+                raise OSError(str(response.get("error") or "web_html fetch failed"))
+            data = bytes(response.get("content") or b"")
+            status = int(response.get("status_code") or 0)
             truncated = len(data) > self._per_attempt_bytes
             if truncated:
                 data = data[: self._per_attempt_bytes]
@@ -603,7 +600,7 @@ class ContentFetcher:
                 truncated=truncated,
                 metadata={"http_status": status},
             )
-        except (ConnectionError, OSError, TimeoutError, urllib.error.URLError, ValueError) as e:
+        except (ConnectionError, OSError, TimeoutError, ValueError) as e:
             _record_fetch_degradation(
                 "content_fetcher_web_html",
                 e,

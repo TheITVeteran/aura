@@ -13,6 +13,9 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 logger = logging.getLogger("Aura.Sandbox")
 
 @dataclass
@@ -95,23 +98,27 @@ class MacOSSandbox:
         
         # Write profile to temporary file
         fd, profile_path = tempfile.mkstemp(prefix="aura_sandbox_", suffix=".sb")
+        os.close(fd)
         try:
-            with os.fdopen(fd, 'w') as f:
-                f.write(profile_content)
+            get_file_write_gateway().write_text(
+                profile_path,
+                profile_content,
+                source="sandbox.macos_sandbox.profile",
+            )
                 
             sandbox_cmd = ["sandbox-exec", "-f", profile_path] + command
             logger.info("Executing under sandbox: %s", " ".join(command))
             
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 sandbox_cmd,
                 cwd=cwd,
                 capture_output=True,
-                text=True
+                source="sandbox.macos_sandbox.execute_command",
             )
             return result
             
         finally:
             try:
                 os.remove(profile_path)
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+            except OSError as exc:
+                logger.debug("Failed to remove temporary sandbox profile %s: %s", profile_path, exc)

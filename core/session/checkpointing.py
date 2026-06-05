@@ -94,8 +94,14 @@ class CheckpointService:
         filepath = os.path.join(self._dir, filename)
 
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(asdict(checkpoint), f, indent=2, default=str)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                filepath,
+                json.dumps(asdict(checkpoint), indent=2, default=str),
+                encoding="utf-8",
+                source="session.checkpointing.save_checkpoint",
+            )
 
             self._last_checkpoint_turn = self._turn_count
             logger.info("Checkpoint saved: %s (%d messages, turn %d)",

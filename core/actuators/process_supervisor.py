@@ -88,12 +88,6 @@ class ProcessSupervisorActuator(BaseActuator):
         stdout_path = os.path.join(self.logs_dir, f"{process_id}_stdout.log")
         stderr_path = os.path.join(self.logs_dir, f"{process_id}_stderr.log")
 
-        try:
-            stdout_file = open(stdout_path, "w", encoding="utf-8")
-            stderr_file = open(stderr_path, "w", encoding="utf-8")
-        except IOError as e:
-            return ActuatorResult(False, f"Failed to open process log files: {e}", {})
-
         cwd = params.get("cwd") or os.getcwd()
         env = os.environ.copy()
         if "env" in params and isinstance(params["env"], dict):
@@ -102,8 +96,8 @@ class ProcessSupervisorActuator(BaseActuator):
         try:
             proc = get_subprocess_gateway().spawn(
                 command,
-                stdout=stdout_file,
-                stderr=stderr_file,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
                 cwd=cwd,
                 env=env,
                 text=True,
@@ -117,8 +111,7 @@ class ProcessSupervisorActuator(BaseActuator):
                 "start_time": time.time(),
                 "stdout_path": stdout_path,
                 "stderr_path": stderr_path,
-                "stdout_file": stdout_file,
-                "stderr_file": stderr_file,
+                "log_streams": getattr(proc, "_aura_gateway_streams", ()),
                 "cwd": cwd
             }
 
@@ -142,8 +135,6 @@ class ProcessSupervisorActuator(BaseActuator):
                 }
             )
         except (subprocess.SubprocessError, OSError, ValueError) as e:
-            stdout_file.close()
-            stderr_file.close()
             return ActuatorResult(False, f"Process spawn failed: {e}", {})
 
     def _handle_list(self) -> ActuatorResult:
@@ -165,8 +156,8 @@ class ProcessSupervisorActuator(BaseActuator):
             # Clean up finished process file handles
             if not is_running:
                 try:
-                    pinfo["stdout_file"].close()
-                    pinfo["stderr_file"].close()
+                    for stream in pinfo.get("log_streams", ()):
+                        stream.close()
                 except (OSError, ValueError) as exc:
                     logger.debug("Process log close failed for %s: %s", pid, exc)
 
@@ -194,8 +185,8 @@ class ProcessSupervisorActuator(BaseActuator):
         # Clean file handles if completed
         if not is_running:
             try:
-                pinfo["stdout_file"].close()
-                pinfo["stderr_file"].close()
+                for stream in pinfo.get("log_streams", ()):
+                    stream.close()
             except (OSError, ValueError) as exc:
                 logger.debug("Process log close failed for %s: %s", process_id, exc)
 

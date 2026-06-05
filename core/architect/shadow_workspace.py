@@ -4,13 +4,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from subprocess import SubprocessError, TimeoutExpired
 from typing import Any
 
 from core.architect.config import ASAConfig
@@ -18,6 +18,7 @@ from core.architect.errors import ShadowWorkspaceError
 from core.architect.models import RefactorPlan
 from core.architect.refactor_planner import plan_to_dict
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 @dataclass(frozen=True)
@@ -112,14 +113,13 @@ class ShadowWorkspaceManager:
         start = time.monotonic()
         cmd = tuple(str(part) for part in command)
         try:
-            proc = subprocess.run(
+            proc = get_subprocess_gateway().run(
                 cmd,
                 cwd=cwd,
                 env=env,
                 capture_output=True,
-                text=True,
                 timeout=timeout or self.config.shadow_timeout,
-                check=False,
+                source="architect.shadow_workspace.run_command",
             )
             result = CommandResult(
                 command=cmd,
@@ -130,13 +130,13 @@ class ShadowWorkspaceManager:
                 duration_s=round(time.monotonic() - start, 4),
                 timed_out=False,
             )
-        except subprocess.TimeoutExpired as exc:
+        except TimeoutExpired as exc:
             result = CommandResult(
                 command=cmd,
                 cwd=str(cwd),
                 exit_code=-1,
                 stdout=(exc.stdout or "")[-6000:] if isinstance(exc.stdout, str) else "",
-                stderr=(exc.stderr or "")[-6000:] if isinstance(exc.stderr, str) else "",
+                stderr=(exc.stderr or "")[-6000:] if isinstance(exc.stderr, str) else str(exc),
                 duration_s=round(time.monotonic() - start, 4),
                 timed_out=True,
             )
@@ -201,20 +201,20 @@ class ShadowWorkspaceManager:
 
     def _git_worktree_files(self, source: Path) -> list[str]:
         try:
-            proc = subprocess.run(
+            proc = get_subprocess_gateway().run(
                 ["git", "-C", str(source), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
                 capture_output=True,
-                check=False,
-                text=False,
                 timeout=15.0,
+                read_only=True,
+                source="architect.shadow_workspace.git_ls_files",
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, RuntimeError, SubprocessError, TimeoutExpired):
             return []
         if proc.returncode != 0:
             return []
         return [
-            item.decode("utf-8", errors="ignore")
-            for item in proc.stdout.split(b"\0")
+            item
+            for item in proc.stdout.split("\0")
             if item
         ]
 

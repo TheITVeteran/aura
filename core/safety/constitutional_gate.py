@@ -448,8 +448,14 @@ class ConstitutionalGate:
                 "timestamp": violation.timestamp,
                 "metadata": violation.metadata,
             }
-            with open(self._log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                self._log_path,
+                json.dumps(entry) + "\n",
+                encoding="utf-8",
+                source="constitutional_gate.log_violation",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('constitutional_gate', e)
 

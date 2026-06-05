@@ -34,7 +34,13 @@ class PersonalityKernel:
         key = os.urandom(32)
         try:
             self.key_file.parent.mkdir(parents=True, exist_ok=True)
-            self.key_file.write_bytes(key)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_bytes(
+                self.key_file,
+                key,
+                source="personality_kernel.key_init",
+            )
             os.chmod(self.key_file, 0o600)
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation(

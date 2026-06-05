@@ -262,10 +262,14 @@ class ResourceGovernor:
         """Read macOS thermal pressure via subprocess (cached)."""
         try:
             # Use pmset to read thermal state on macOS
-            import subprocess
-            result = subprocess.run(
+            from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+            result = get_subprocess_gateway().run(
                 ["pmset", "-g", "therm"],
-                capture_output=True, text=True, timeout=2.0,
+                capture_output=True,
+                timeout=2.0,
+                read_only=True,
+                source="resource.resource_governor.thermal_state",
             )
             output = result.stdout.lower()
             if "critical" in output:

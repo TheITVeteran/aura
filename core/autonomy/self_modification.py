@@ -553,8 +553,14 @@ class AutonomousSelfModification:
         """Verify durable audit storage before any live runtime mutation."""
         try:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with open(_AUDIT_LOG_PATH, "a", encoding="utf-8"):
-                pass
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                _AUDIT_LOG_PATH,
+                "",
+                encoding="utf-8",
+                source="autonomy.self_modification.audit_log_probe",
+            )
             return True, "audit log writable"
         except OSError as exc:
             record_degradation("self_modification", exc)
@@ -568,8 +574,14 @@ class AutonomousSelfModification:
 
         try:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with open(_AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(receipt.to_dict(), default=str) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                _AUDIT_LOG_PATH,
+                json.dumps(receipt.to_dict(), default=str) + "\n",
+                encoding="utf-8",
+                source="autonomy.self_modification.record_receipt",
+            )
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('self_modification', exc)
             logger.debug("Audit log write failed: %s", exc)

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.AffordanceSchema")
 
@@ -78,8 +79,11 @@ class AffordanceKnowledgeBase:
         try:
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
             data = {entity: [a.to_dict() for a in aff_list] for entity, aff_list in self.affordances.items()}
-            with open(self.storage_path, 'w') as f:
-                json.dump(data, f, indent=2)
+            get_file_write_gateway().write_text(
+                self.storage_path,
+                json.dumps(data, indent=2),
+                source="perception.affordance_schema.knowledge",
+            )
         except (OSError, IOError) as e:
             logger.error("Failed to save affordances: %s", e)
 

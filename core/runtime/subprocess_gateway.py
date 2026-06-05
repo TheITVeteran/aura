@@ -146,6 +146,8 @@ class SubprocessGateway:
         *,
         stdout: IO[str] | None = None,
         stderr: IO[str] | None = None,
+        stdout_path: str | os.PathLike[str] | None = None,
+        stderr_path: str | os.PathLike[str] | None = None,
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
         text: bool = True,
@@ -165,21 +167,49 @@ class SubprocessGateway:
                 strict=True,
                 allowed_domains=_EFFECT_DOMAINS,
             )
-        return subprocess.Popen(
-            command,
-            stdout=stdout,
-            stderr=stderr,
-            cwd=_coerce_cwd(cwd),
-            env=dict(env) if env is not None else None,
-            shell=False,
-            text=text,
-            start_new_session=start_new_session,
-        )
+        if stdout is not None and stdout_path is not None:
+            raise ValueError("stdout and stdout_path are mutually exclusive")
+        if stderr is not None and stderr_path is not None:
+            raise ValueError("stderr and stderr_path are mutually exclusive")
+
+        opened_streams: list[IO[Any]] = []
+        try:
+            if stdout_path is not None:
+                stdout_target = Path(stdout_path).expanduser()
+                stdout_target.parent.mkdir(parents=True, exist_ok=True)
+                stdout = open(stdout_target, "w", encoding="utf-8") if text else open(stdout_target, "wb")
+                opened_streams.append(stdout)
+            if stderr_path is not None:
+                stderr_target = Path(stderr_path).expanduser()
+                stderr_target.parent.mkdir(parents=True, exist_ok=True)
+                stderr = open(stderr_target, "w", encoding="utf-8") if text else open(stderr_target, "wb")
+                opened_streams.append(stderr)
+
+            proc = subprocess.Popen(
+                command,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=_coerce_cwd(cwd),
+                env=dict(env) if env is not None else None,
+                shell=False,
+                text=text,
+                start_new_session=start_new_session,
+            )
+            setattr(proc, "_aura_gateway_streams", tuple(opened_streams))
+            return proc
+        except Exception:
+            for stream in opened_streams:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            raise
 
     async def spawn_async(
         self,
         argv: Sequence[str],
         *,
+        stdin: Any = None,
         stdout: Any = None,
         stderr: Any = None,
         cwd: str | os.PathLike[str] | None = None,
@@ -202,6 +232,7 @@ class SubprocessGateway:
             )
         return await asyncio.create_subprocess_exec(
             *command,
+            stdin=stdin,
             stdout=stdout,
             stderr=stderr,
             cwd=_coerce_cwd(cwd),

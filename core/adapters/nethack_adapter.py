@@ -5,6 +5,8 @@ import os
 import logging
 from typing import List, Tuple, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Aura.NetHackAdapter")
 
 class NetHackAdapter:
@@ -22,10 +24,18 @@ class NetHackAdapter:
         
         # Create a custom .nethackrc for automation
         rc_path = os.path.expanduser("~/.nethackrc_aura")
-        with open(rc_path, "w") as f:
-            f.write("OPTIONS=color,autoquiver,autopickup,hitpointbar,showexp,time,statuslines:2\n")
-            f.write("OPTIONS=pettype:none\n")
-            f.write("OPTIONS=pickup_types:$\n") # Only pick up gold by default
+        get_file_write_gateway().write_text(
+            rc_path,
+            "\n".join(
+                [
+                    "OPTIONS=color,autoquiver,autopickup,hitpointbar,showexp,time,statuslines:2",
+                    "OPTIONS=pettype:none",
+                    "OPTIONS=pickup_types:$",
+                ]
+            )
+            + "\n",
+            source="adapters.nethack_adapter.rc",
+        )
             
         env["NETHACKOPTIONS"] = rc_path
         

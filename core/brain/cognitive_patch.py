@@ -87,11 +87,16 @@ class CognitivePatchStrategy(PatchStrategy):
             patch_dir = os.path.join(str(DATA_DIR), "cognitive_patches")
             os.makedirs(patch_dir, exist_ok=True)
             patch_file = os.path.join(patch_dir, f"patch_{int(time.time())}.sh")
-            with open(patch_file, "w") as f:
-                f.write(f"# Cognitive patch proposal — REQUIRES MANUAL REVIEW\n")
-                f.write(f"# Goal: {goal}\n")
-                f.write(f"# Error: {failure_reason}\n\n")
-                f.write(fix_code)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                patch_file,
+                "# Cognitive patch proposal — REQUIRES MANUAL REVIEW\n"
+                f"# Goal: {goal}\n"
+                f"# Error: {failure_reason}\n\n"
+                f"{fix_code}",
+                source="cognitive_patch.save_proposal",
+            )
             logger.info("Patch saved to %s for manual review.", patch_file)
             return True
         except (ImportError, AttributeError, RuntimeError) as e:

@@ -10,8 +10,10 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+from core.governance_context import governed_scope_sync
 from core.runtime.errors import record_degradation
 from core.state.aura_state import (
     _is_background_processing_placeholder,
@@ -391,11 +393,17 @@ class ContinuityEngine:
             path.parent.mkdir(parents=True, exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                path,
-                json.dumps(asdict(record), indent=2),
-                source="continuity.shutdown_record",
+            lifecycle_receipt = SimpleNamespace(
+                receipt_id=f"continuity_shutdown:{int(time.time() * 1000)}",
+                domain="state_mutation",
+                source="continuity.save_shutdown_state",
             )
+            with governed_scope_sync(lifecycle_receipt):
+                get_file_write_gateway().write_text(
+                    path,
+                    json.dumps(asdict(record), indent=2),
+                    source="continuity.shutdown_record",
+                )
             self._record = record
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
@@ -654,11 +662,17 @@ class ContinuityEngine:
             path.parent.mkdir(parents=True, exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                path,
-                json.dumps(asdict(self._record), indent=2),
-                source="continuity.executive_failure_obligation",
+            recovery_receipt = SimpleNamespace(
+                receipt_id=f"continuity_failure_obligation:{int(time.time() * 1000)}",
+                domain="state_mutation",
+                source="continuity.note_failure_obligation",
             )
+            with governed_scope_sync(recovery_receipt):
+                get_file_write_gateway().write_text(
+                    path,
+                    json.dumps(asdict(self._record), indent=2),
+                    source="continuity.executive_failure_obligation",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
             logger.error("Continuity failure obligation save failed: %s", e, exc_info=True)

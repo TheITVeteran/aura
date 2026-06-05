@@ -6,14 +6,13 @@ import logging
 import os
 import signal
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
 
 from core.bus.local_pipe_bus import LocalPipeBus
 from core.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.network_gateway import get_network_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SensoryGate")
@@ -27,7 +26,6 @@ SENSORY_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
     json.JSONDecodeError,
-    urllib.error.URLError,
 )
 
 
@@ -212,9 +210,17 @@ class SensoryGateActor:
             )
 
             def fetch() -> Any:
-                req = urllib.request.Request(url, headers={"User-Agent": "Aura/1.0"})
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    return json.loads(response.read().decode("utf-8", errors="replace"))
+                response = get_network_gateway().request(
+                    "GET",
+                    url,
+                    headers={"User-Agent": "Aura/1.0"},
+                    timeout=5,
+                    source="sensory_gate.wikipedia_search",
+                    read_only=True,
+                )
+                if not response.get("ok"):
+                    raise OSError(str(response.get("error") or "Wikipedia search failed"))
+                return json.loads(bytes(response.get("content") or b"").decode("utf-8", errors="replace"))
 
             data = await asyncio.to_thread(fetch)
             return {

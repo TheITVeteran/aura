@@ -1344,8 +1344,14 @@ class AuraKernel:
         async def _append_to_file(path: str, payload: dict):
             # Offload blocking write to thread pool
             def _sync_write():
-                with open(path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(payload) + "\n")
+                from core.runtime.file_write_gateway import get_file_write_gateway
+
+                get_file_write_gateway().append_text(
+                    path,
+                    json.dumps(payload) + "\n",
+                    encoding="utf-8",
+                    source="aura_kernel.process_intent_file_append",
+                )
 
             await asyncio.to_thread(_sync_write)
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +165,12 @@ async def _communicate_process(
     timeout_s: float,
     mem_bytes: int,
 ) -> _RunnerProcessResult:
-    process = await asyncio.create_subprocess_exec(
-        *command,
+    process = await get_subprocess_gateway().spawn_async(
+        command,
         stdin=_PIPE,
         stdout=_PIPE,
         stderr=_PIPE,
+        source="sandbox.runner.untrusted_child",
     )
     communicate_task = asyncio.create_task(process.communicate(input=payload))
     loop = asyncio.get_running_loop()

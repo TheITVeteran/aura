@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,12 @@ class NativeCompilerPlanner:
     def compile(self, plan: NativeCompilePlan, *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
         if not plan.allowed:
             raise PermissionError(plan.reason)
-        return subprocess.run(list(plan.command), capture_output=True, text=True, timeout=timeout, check=False)
+        return get_subprocess_gateway().run(
+            list(plan.command),
+            capture_output=True,
+            timeout=timeout,
+            source="morphogenesis.native_compiler.compile",
+        )
 
 
 __all__ = ["NativeCompilePlan", "NativeCompilerPlanner"]

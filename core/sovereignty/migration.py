@@ -37,7 +37,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import shutil
 import tarfile
 import tempfile
@@ -48,6 +47,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Migration")
 
@@ -326,17 +327,16 @@ class MigrationOrchestrator:
 
     def _record(self, proposal: MigrationProposal, event: str) -> None:
         try:
-            with open(_MIG_DIR / "ledger.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
+            get_file_write_gateway().append_text(
+                _MIG_DIR / "ledger.jsonl",
+                json.dumps({
                     "when": time.time(),
                     "event": event,
                     "proposal": asdict(proposal),
-                }, default=str) + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+                }, default=str)
+                + "\n",
+                source="sovereignty.migration.ledger",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('migration', exc)
             logger.warning("migration ledger append failed: %s", exc)

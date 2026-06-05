@@ -21,7 +21,8 @@ from core.architect.models import (
     PromotionStatus,
     RefactorPlan,
 )
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +136,10 @@ class ASASafetyGate:
 
     def _save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(
+        get_file_write_gateway().write_text(
             self.state_path,
             json.dumps(self.state, indent=2, sort_keys=True, default=str),
+            source="architect.safety_gate.state",
         )
 
     # -- freeze / thaw -------------------------------------------------------
@@ -301,10 +303,13 @@ class ASASafetyGate:
 
     def _check_git_clean(self) -> tuple[bool, str]:
         try:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 ["git", "status", "--porcelain"],
                 cwd=self.config.repo_root,
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                timeout=10,
+                read_only=True,
+                source="architect.safety_gate.git_status",
             )
             dirty = result.stdout.strip()
             if dirty:
@@ -356,16 +361,20 @@ class ASASafetyGate:
     def _git_commit(self, files: tuple[str, ...], run_id: str, objective: str) -> bool:
         try:
             for f in files:
-                subprocess.run(
+                get_subprocess_gateway().run(
                     ["git", "add", str(self.config.repo_root / f)],
                     cwd=self.config.repo_root,
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True,
+                    timeout=10,
+                    source="architect.safety_gate.git_add",
                 )
             msg = f"asa(auto): {objective[:80]} [{run_id[:12]}]"
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 ["git", "commit", "-m", msg, "--allow-empty"],
                 cwd=self.config.repo_root,
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                timeout=30,
+                source="architect.safety_gate.git_commit",
             )
             return result.returncode == 0
         except (subprocess.TimeoutExpired, OSError):
@@ -376,20 +385,29 @@ class ASASafetyGate:
     def _git_snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {}
         try:
-            snap["head"] = subprocess.run(
+            snap["head"] = get_subprocess_gateway().run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=self.config.repo_root,
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                timeout=5,
+                read_only=True,
+                source="architect.safety_gate.git_rev_parse",
             ).stdout.strip()
-            snap["status"] = subprocess.run(
+            snap["status"] = get_subprocess_gateway().run(
                 ["git", "status", "--porcelain"],
                 cwd=self.config.repo_root,
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                timeout=5,
+                read_only=True,
+                source="architect.safety_gate.git_snapshot_status",
             ).stdout.strip()[:500]
-            snap["diff_stat"] = subprocess.run(
+            snap["diff_stat"] = get_subprocess_gateway().run(
                 ["git", "diff", "--stat", "HEAD"],
                 cwd=self.config.repo_root,
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                timeout=5,
+                read_only=True,
+                source="architect.safety_gate.git_diff_stat",
             ).stdout.strip()[:500]
         except (subprocess.TimeoutExpired, OSError, subprocess.CalledProcessError) as exc:
             snap["error"] = repr(exc)
@@ -430,14 +448,18 @@ class ASASafetyGate:
 
         # Persist autopsy as structured JSON
         autopsy_path = self.autopsy_dir / f"{autopsy_id}.json"
-        atomic_write_text(
+        get_file_write_gateway().write_text(
             autopsy_path,
             json.dumps(asdict(autopsy), indent=2, sort_keys=True, default=str),
+            source="architect.safety_gate.autopsy",
         )
 
         # Also append a LoRA-shaped training example
         training_path = self.autopsy_dir / "training_examples.jsonl"
-        with open(training_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(autopsy.to_training_example(), sort_keys=True, default=str) + "\n")
+        get_file_write_gateway().append_text(
+            training_path,
+            json.dumps(autopsy.to_training_example(), sort_keys=True, default=str) + "\n",
+            source="architect.safety_gate.training_example",
+        )
 
         return autopsy

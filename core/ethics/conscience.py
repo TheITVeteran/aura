@@ -278,18 +278,19 @@ class Conscience:
 
     def _publish_violation(self, rule: Rule, why: str) -> None:
         try:
-            with open(_VIOLATIONS_PATH, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                _VIOLATIONS_PATH,
+                json.dumps({
                     "when": time.time(),
                     "rule_id": rule.rule_id,
                     "rule": rule.description,
                     "reason": why,
-                }, default=str) + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+                }, default=str) + "\n",
+                encoding="utf-8",
+                source="conscience.publish_violation",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('conscience', exc)
             logger.warning("conscience violation log write failed: %s", exc)

@@ -36,11 +36,8 @@ from __future__ import annotations
 from core.runtime.errors import record_degradation
 
 
-from core.runtime.atomic_writer import atomic_write_text
-
 import json
 import logging
-import os
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -48,6 +45,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Wallet")
 
@@ -67,7 +66,12 @@ class SpendCap:
 def _load_cap() -> SpendCap:
     if not _CAP_PATH.exists():
         cap = SpendCap()
-        atomic_write_text(_CAP_PATH, json.dumps(asdict(cap), indent=2), encoding="utf-8")
+        get_file_write_gateway().write_text(
+            _CAP_PATH,
+            json.dumps(asdict(cap), indent=2),
+            encoding="utf-8",
+            source="sovereignty.wallet.cap_init",
+        )
         return cap
     try:
         d = json.loads(_CAP_PATH.read_text(encoding="utf-8"))
@@ -77,7 +81,12 @@ def _load_cap() -> SpendCap:
 
 
 def _save_cap(cap: SpendCap) -> None:
-    atomic_write_text(_CAP_PATH, json.dumps(asdict(cap), indent=2), encoding="utf-8")
+    get_file_write_gateway().write_text(
+        _CAP_PATH,
+        json.dumps(asdict(cap), indent=2),
+        encoding="utf-8",
+        source="sovereignty.wallet.cap",
+    )
 
 
 @dataclass
@@ -265,13 +274,15 @@ class Wallet:
 
     def _record(self, intent: SpendIntent, event: str) -> None:
         try:
-            with open(_LEDGER_PATH, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"when": time.time(), "event": event, "intent": asdict(intent)}, default=str) + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+            get_file_write_gateway().append_text(
+                _LEDGER_PATH,
+                json.dumps(
+                    {"when": time.time(), "event": event, "intent": asdict(intent)},
+                    default=str,
+                )
+                + "\n",
+                source="sovereignty.wallet.ledger",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('wallet', exc)
             logger.warning("wallet ledger append failed: %s", exc)

@@ -207,8 +207,13 @@ class CausalWorldModel:
                 "nodes": {k: asdict(v) for k, v in self.nodes.items()},
                 "edges": [asdict(e) for e in self.edges]
             }
-            with open(self.data_path, "w") as f:
-                json.dump(data, f, indent=4)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self.data_path,
+                json.dumps(data, indent=4),
+                source="causal_world_model.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('causal_world_model', e)
             logger.error("Failed to save Causal World Model: %s", e)

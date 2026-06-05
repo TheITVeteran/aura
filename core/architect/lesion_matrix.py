@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.LesionMatrix")
 
@@ -307,8 +308,11 @@ class LesionStudy:
 
     def _save(self, matrix: LesionMatrix) -> None:
         try:
-            with open(_RESULTS_PATH, "w") as f:
-                json.dump(matrix.to_dict(), f, indent=2, default=str)
+            get_file_write_gateway().write_text(
+                _RESULTS_PATH,
+                json.dumps(matrix.to_dict(), indent=2, default=str),
+                source="architect.lesion_matrix.results",
+            )
         except (OSError, IOError, TypeError, ValueError) as exc:
             logger.debug("Lesion results save failed: %s", exc)
 

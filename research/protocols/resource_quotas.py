@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from core.container import ServiceContainer
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Governance")
 
@@ -162,8 +163,11 @@ class ComputeGovernor:
     def _save(self):
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, "w") as f:
-                json.dump(self.state, f, indent=4)
+            get_file_write_gateway().write_text(
+                self.state_file,
+                json.dumps(self.state, indent=4),
+                source="research.resource_quotas.state",
+            )
         except PermissionError as e:
             logger.error("🚫 GOVERNANCE: Permission denied while writing state file %s: %s", self.state_file, e)
             raise

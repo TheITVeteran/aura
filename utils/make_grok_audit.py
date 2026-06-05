@@ -1,4 +1,5 @@
 import os
+from core.runtime.file_write_gateway import get_file_write_gateway
 from pathlib import Path
 
 def generate_grok_audit():
@@ -61,8 +62,11 @@ def generate_grok_audit():
     # Final trim to be exactly 48 MB or just under
     final_output = bundle_str.encode('utf-8')[:target_bytes]
     
-    with open(output_path, 'wb') as f:
-        f.write(final_output)
+    get_file_write_gateway().write_bytes(
+        output_path,
+        final_output,
+        source="maintenance.make_grok_audit.bundle",
+    )
         
     print(f"Success! Generated {len(final_output)} bytes to {output_path}")
 
