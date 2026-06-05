@@ -10,6 +10,8 @@ from core.being.functional_soul import FunctionalSoul
 from core.being.introspection_renderer import IntrospectionRenderer, IntrospectionVerifier
 from core.being.runtime import BeingRuntime, reset_being_runtime_for_test
 from core.container import ServiceContainer
+from core.runtime.consequence_bus import ConsequenceBus
+from core.runtime.lesion_controller import LesionController
 from core.state.aura_state import AuraState
 from core.will import ActionDomain, UnifiedWill, WillOutcome
 
@@ -17,6 +19,8 @@ from core.will import ActionDomain, UnifiedWill, WillOutcome
 def teardown_function() -> None:
     reset_being_runtime_for_test()
     ServiceContainer.clear()
+    ConsequenceBus.reset()
+    LesionController.reset()
 
 
 def test_continuous_self_field_evolves_without_user_turn() -> None:
@@ -71,6 +75,59 @@ def test_affect_lesion_changes_policy_surface() -> None:
     assert full.affect.control_effects != lesioned.affect.control_effects
     assert lesioned.affect.dominant_drive == "lesioned_affect"
     assert full.memory_context.semantic_centrality > 0.0
+
+
+def test_being_runtime_registers_operational_lesion_targets() -> None:
+    runtime = BeingRuntime()
+    runtime.start(hz=10.0)
+    try:
+        controller = LesionController.get()
+        targets = set(controller.all_targets())
+        assert {
+            "welfare",
+            "body",
+            "introspection",
+            "self_report",
+            "semantic_stream",
+            "affect",
+            "workspace",
+        }.issubset(targets)
+
+        state = AuraState.default()
+        controller.lesion("affect")
+        affect_lesioned = runtime.sample(state, objective="debug a blocked dependency")
+        assert affect_lesioned.affect.dominant_drive == "lesioned_affect"
+
+        controller.restore("affect")
+        affect_restored = runtime.sample(state, objective="debug a blocked dependency")
+        assert affect_restored.affect.dominant_drive != "lesioned_affect"
+
+        controller.lesion("workspace")
+        workspace_lesioned = runtime.sample(state, objective="research climate news")
+        assert workspace_lesioned.workspace.broadcast_targets == ()
+        assert workspace_lesioned.workspace.lesion == "workspace_ignition"
+    finally:
+        runtime.stop()
+
+
+def test_body_cost_failure_defers_consequential_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = BeingRuntime()
+    now = runtime.sample(AuraState.default(), objective="research with tools")
+    spend_attempts: list[tuple[str, float]] = []
+
+    def fail_spend(_domain: str, *, cost_multiplier: float = 1.0) -> dict[str, float]:
+        spend_attempts.append((_domain, cost_multiplier))
+        raise RuntimeError("body cost ledger unavailable")
+
+    monkeypatch.setattr(runtime.body_service, "spend", fail_spend)
+
+    policy = runtime.action_policy(now, domain="tool_execution", priority=0.8)
+
+    assert policy["outcome"] == "defer"
+    assert spend_attempts == [("tool_execution", 0.8)]
+    assert "body_cost_accounting_failed" in policy["constraints"]
+    assert "body_cost_accounting_required_before_action" in policy["defers"]
+    assert policy["evidence"]["body_cost_applied"] == {}
 
 
 def test_ownership_conflict_marks_tool_mismatch() -> None:
@@ -133,6 +190,59 @@ def test_will_decision_signs_live_aura_now_evidence() -> None:
     assert decision.aura_now_policy in {"proceed", "constrain", "defer", "refuse"}
     assert decision.aura_now_hash in material["payload"]
     assert will.verify_receipt_signature(decision.receipt_id) is True
+
+
+def test_will_decision_carries_aura_now_welfare_evidence() -> None:
+    will = UnifiedWill()
+    will.ensure_started()
+
+    decision = will.decide(
+        "research with an external tool",
+        source="desktop_task",
+        domain=ActionDomain.TOOL_EXECUTION,
+        priority=0.7,
+        context={
+            "aura_state": AuraState.default(),
+            "user_requested_action": True,
+            "foreground_request": True,
+        },
+    )
+
+    assert "welfare_score" in decision.aura_now_evidence
+    assert "welfare_truth_protection" in decision.aura_now_evidence
+    assert "welfare_self_report_confidence" in decision.aura_now_evidence
+    assert decision.welfare_score == pytest.approx(decision.aura_now_evidence["welfare_score"])
+    assert decision.welfare_truth_protection == pytest.approx(
+        decision.aura_now_evidence["welfare_truth_protection"]
+    )
+    assert decision.welfare_body_fatigue == pytest.approx(decision.aura_now_evidence["body_fatigue"])
+
+
+def test_will_decision_publishes_pre_action_consequence_event() -> None:
+    will = UnifiedWill()
+    will.ensure_started()
+
+    decision = will.decide(
+        "answer a user status question",
+        source="desktop_task",
+        domain=ActionDomain.RESPONSE,
+        priority=0.5,
+        context={
+            "aura_state": AuraState.default(),
+            "user_requested_action": True,
+            "foreground_request": True,
+        },
+    )
+
+    events = ConsequenceBus.get().recent_events(1)
+
+    assert events
+    event = events[-1]
+    assert event.will_receipt_id == decision.receipt_id
+    assert event.domain == ActionDomain.RESPONSE.value
+    assert event.actual_outcome == "authorized"
+    assert event.predicted_welfare_delta["welfare_score"] == pytest.approx(decision.welfare_score)
+    assert event.actual_body_cost == {}
 
 
 def test_stopped_will_refuses_before_aura_now_sampling() -> None:

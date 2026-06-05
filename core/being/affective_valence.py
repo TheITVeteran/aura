@@ -15,6 +15,20 @@ def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
 class AffectiveValenceEngine:
     """Turns interoceptive prediction error into control variables."""
 
+    _lesioned: bool = False
+
+    def lesion(self) -> None:
+        """Disable affective control for lesion and ablation tests."""
+        self._lesioned = True
+
+    def restore(self) -> None:
+        """Restore affective control after a lesion test."""
+        self._lesioned = False
+
+    @property
+    def is_lesioned(self) -> bool:
+        return self._lesioned
+
     def compute(
         self,
         *,
@@ -25,7 +39,7 @@ class AffectiveValenceEngine:
         base_arousal: float = 0.5,
         lesion: bool = False,
     ) -> AffectiveState:
-        if lesion:
+        if lesion or self._lesioned:
             return AffectiveState(
                 valence=0.0,
                 arousal=0.5,

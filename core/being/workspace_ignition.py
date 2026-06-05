@@ -20,6 +20,21 @@ class Coalition:
 class WorkspaceIgnition:
     BROADCAST_TARGETS = ("memory", "planner", "will", "speaker", "self_model", "learning")
 
+    def __init__(self) -> None:
+        self._lesioned = False
+
+    def lesion(self) -> None:
+        """Disable workspace broadcast for lesion and ablation tests."""
+        self._lesioned = True
+
+    def restore(self) -> None:
+        """Restore workspace broadcast after a lesion test."""
+        self._lesioned = False
+
+    @property
+    def is_lesioned(self) -> bool:
+        return self._lesioned
+
     def build_coalitions(
         self,
         *,
@@ -44,7 +59,7 @@ class WorkspaceIgnition:
         threshold: float = 0.35,
         lesion: bool = False,
     ) -> tuple[WorkspaceState, AttentionState]:
-        if lesion:
+        if lesion or self._lesioned:
             names = tuple(coalition.name for coalition in coalitions)
             return (
                 WorkspaceState(

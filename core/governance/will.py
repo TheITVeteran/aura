@@ -193,6 +193,17 @@ class WillDecision:
     aura_now_constraints: list[str] = field(default_factory=list)
     aura_now_evidence: dict[str, Any] = field(default_factory=dict)
 
+    # Welfare state evidence (causal welfare architecture)
+    welfare_score: float = 0.5
+    welfare_distress: float = 0.0
+    welfare_integrity_guard: float = 0.5
+    welfare_truth_protection: float = 0.5
+    welfare_action_inhibition: float = 0.0
+    welfare_recovery_drive: float = 0.0
+    welfare_self_report_confidence: float = 0.5
+    welfare_body_fatigue: float = 0.0
+    welfare_constraints: list[str] = field(default_factory=list)
+
     # Constraints (if outcome is CONSTRAIN)
     constraints: list[str] = field(default_factory=list)
 
@@ -495,6 +506,16 @@ class UnifiedWill:
         # ── 8. WORLD STATE INPUT: What is happening in the environment? ─
         self._apply_world_state_modulation(domain, context)
 
+        # ── 8b. WELFARE CHECK: What does the welfare system say? ─────
+        welfare_evidence = self._consult_welfare(
+            content,
+            source,
+            domain,
+            priority,
+            context,
+            aura_now_packet=aura_now_packet,
+        )
+
         # ── 9. COMPOSE THE DECISION ─────────────────────────────────
         catatonia_relief = self._catatonia_relief_allowed(domain, source, context)
         outcome, reason, constraints = self._compose_decision(
@@ -556,6 +577,16 @@ class UnifiedWill:
             aura_now_policy=aura_now_policy,
             aura_now_constraints=list(aura_now_constraints),
             aura_now_evidence=aura_now_evidence,
+            # Welfare evidence — every decision carries welfare state
+            welfare_score=float(welfare_evidence.get("welfare_score", 0.5)),
+            welfare_distress=float(welfare_evidence.get("distress", 0.0)),
+            welfare_integrity_guard=float(welfare_evidence.get("integrity_guard", 0.5)),
+            welfare_truth_protection=float(welfare_evidence.get("truth_protection", 0.5)),
+            welfare_action_inhibition=float(welfare_evidence.get("action_inhibition", 0.0)),
+            welfare_recovery_drive=float(welfare_evidence.get("recovery_drive", 0.0)),
+            welfare_self_report_confidence=float(welfare_evidence.get("self_report_confidence", 0.5)),
+            welfare_body_fatigue=float(welfare_evidence.get("body_fatigue", 0.0)),
+            welfare_constraints=list(welfare_evidence.get("constraints", [])),
             constraints=constraints,
             source=source,
             content_hash=content_hash,
@@ -567,6 +598,9 @@ class UnifiedWill:
         # ── 6. UPDATE WILL STATE ────────────────────────────────────
         self._update_will_state(decision)
         self._record(decision)
+
+        # ── 6b. CONSEQUENCE BUS: publish decision outcome ──────────
+        self._publish_to_consequence_bus(decision, domain, source)
 
         if outcome == WillOutcome.REFUSE:
             logger.info("WILL REFUSED: %s/%s -- %s", source, domain.value, reason)
@@ -728,6 +762,53 @@ class UnifiedWill:
             record_degradation('will', e)
             logger.debug("Will: substrate consultation failed (degraded): %s", e)
             return 0.6, 0.0, ""
+
+    def _consult_welfare(
+        self,
+        content: str,
+        source: str,
+        domain: ActionDomain,
+        priority: float,
+        context: dict[str, Any],
+        *,
+        aura_now_packet: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read welfare control evidence from the sampled AuraNow policy.
+
+        This must not resample BeingRuntime or call action_policy again because
+        consequential policy checks pay body cost. The Will decision carries the
+        same welfare values that informed the pre-action AuraNow policy.
+        """
+        del content, source, domain, priority, context
+
+        def as_float(value: Any, default: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        packet = dict(aura_now_packet or {})
+        evidence = dict(packet.get("evidence") or {})
+        constraints = [
+            str(item)
+            for item in list(packet.get("constraints") or [])
+            if str(item)
+        ]
+
+        return {
+            "welfare_score": as_float(evidence.get("welfare_score"), 0.5),
+            "distress": as_float(evidence.get("welfare_distress"), 0.0),
+            "integrity_guard": as_float(evidence.get("welfare_integrity_guard"), 0.5),
+            "truth_protection": as_float(evidence.get("welfare_truth_protection"), 0.5),
+            "action_inhibition": as_float(evidence.get("welfare_action_inhibition"), 0.0),
+            "recovery_drive": as_float(evidence.get("welfare_recovery_drive"), 0.0),
+            "self_report_confidence": as_float(
+                evidence.get("welfare_self_report_confidence"),
+                0.5,
+            ),
+            "body_fatigue": as_float(evidence.get("body_fatigue"), 0.0),
+            "constraints": constraints,
+        }
 
     def _check_behavioral_scars(
         self, content: str, source: str, domain: ActionDomain,
@@ -1089,7 +1170,7 @@ class UnifiedWill:
             record_degradation(
                 "will",
                 exc,
-                severity="error",
+                severity="degraded",
                 action="blocked or constrained decision because AuraNow evidence could not be sampled",
             )
             outcome = "refuse" if self._is_consequential_domain(domain) else "constrain"
@@ -1472,6 +1553,58 @@ class UnifiedWill:
         # Periodically refresh identity
         if self._state.total_decisions % 50 == 0:
             self._refresh_identity()
+
+    def _publish_to_consequence_bus(
+        self,
+        decision: WillDecision,
+        domain: ActionDomain,
+        source: str,
+    ) -> None:
+        """Publish the Will decision as pre-action consequence evidence.
+
+        This is not an action-success claim. Actual tool/file/model outcomes
+        must still be published by the executor after execution. The Will event
+        gives welfare/body learners a governed pre-action trace without
+        charging body cost a second time.
+        """
+        try:
+            from core.runtime.consequence_bus import ConsequenceBus
+
+            evidence = dict(decision.aura_now_evidence or {})
+            predicted_body_cost = dict(evidence.get("body_cost_applied") or {})
+            actual_outcome = "authorized" if decision.is_approved() else "blocked"
+            recovery_required = (
+                max(0.0, min(1.0, float(decision.welfare_recovery_drive)))
+                if decision.outcome in {WillOutcome.DEFER, WillOutcome.REFUSE}
+                else 0.0
+            )
+            ConsequenceBus.get().publish_action(
+                source=source,
+                domain=domain.value,
+                action_content=decision.reason,
+                predicted_welfare_delta={
+                    "welfare_score": round(float(decision.welfare_score), 4),
+                    "distress": round(float(decision.welfare_distress), 4),
+                    "action_inhibition": round(float(decision.welfare_action_inhibition), 4),
+                    "recovery_drive": round(float(decision.welfare_recovery_drive), 4),
+                },
+                predicted_body_cost=predicted_body_cost,
+                predicted_memory_risk=0.0,
+                predicted_integrity_risk=round(float(decision.welfare_integrity_guard), 4),
+                actual_outcome=actual_outcome,
+                recovery_required=recovery_required,
+                will_receipt_id=decision.receipt_id,
+                error=decision.reason if not decision.is_approved() else "",
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "will",
+                exc,
+                severity="warning",
+                action="continued after Will decision consequence publish failed",
+                extra={"receipt_id": decision.receipt_id, "domain": domain.value},
+            )
+            logger.warning("Will consequence publish failed: %s", exc)
 
     def _record(self, decision: WillDecision) -> None:
         """Record decision in audit trail."""
