@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Core.StateManager")
 
 class StateManager:
@@ -30,10 +32,13 @@ class StateManager:
             "memory_stats": self._get_memory_stats(orchestrator),
 
         }
-        
+
         try:
-            with open(self.snapshot_file, "w") as f:
-                json.dump(snapshot, f, indent=2)
+            get_file_write_gateway().write_text(
+                self.snapshot_file,
+                json.dumps(snapshot, indent=2),
+                source="state_manager.create_snapshot",
+            )
             logger.debug("StateManager: Snapshot saved.")
             return snapshot
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -74,8 +79,7 @@ class StateManager:
         if not self.checkpoints:
             logger.warning("StateManager: No checkpoints available for rollback.")
             return None
-        
+
         last_state = self.checkpoints.pop()
         logger.info("StateManager: Rolling back to checkpoint from %s", last_state.get('timestamp'))
         return last_state
-

@@ -6,18 +6,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 
 class ThoughtTracer:
     """Deep Observability System.
     Records structured traces of the cognitive process for debugging and auditing.
     """
-    
+
     def __init__(self, log_dir: str = "data/traces") -> None:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.current_trace_file = self.log_dir / f"trace_{int(time.time())}.jsonl"
         self.logger = logging.getLogger("System.ThoughtTracer")
-        
+
     def log_cycle(
         self,
         objective: str,
@@ -35,10 +37,14 @@ class ThoughtTracer:
             "thought": thought,
             "outcome": outcome
         }
-        
+
         try:
-            with open(self.current_trace_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().append_text(
+                self.current_trace_file,
+                json.dumps(entry) + "\n",
+                encoding="utf-8",
+                source="thought_tracer.log_cycle",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write trace: %s", e)
@@ -51,8 +57,12 @@ class ThoughtTracer:
             "details": details
         }
         try:
-            with open(self.current_trace_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().append_text(
+                self.current_trace_file,
+                json.dumps(entry) + "\n",
+                encoding="utf-8",
+                source="thought_tracer.log_event",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write event trace: %s", e)

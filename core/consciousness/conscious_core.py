@@ -26,17 +26,17 @@ logger = logging.getLogger("Consciousness.Core")
 
 class AttractorVolitionEngine:
     """Replaces timer-based autonomy with State-Space Attractors.
-    
+
     Instead of checking a clock, we check if the Liquid Substrate's state vector
     has drifted into a specific 'basin of attraction' (e.g., Boredom, Curiosity, Anxiety).
     If it has, we trigger an Impulse.
     """
-    
+
     def __init__(self, substrate: LiquidSubstrate):
         self.substrate: LiquidSubstrate = substrate
         self.last_action_time: float = time.time()
         self.refractory_period: float = 30.0 # Standard wait between autonomous actions
-        
+
         # Define attractors as regions in state space
         # For simplicity, we map them to VAD (Valence, Arousal, Dominance) regions
         self.attractors: Dict[str, Dict[str, float]] = {
@@ -44,58 +44,58 @@ class AttractorVolitionEngine:
             "boredom":   {"arousal_max": -0.2, "valence_max": -0.1},
             "reflection": {"dominance_min": 0.4, "arousal_max": 0.1}
         }
-        
+
     async def check_for_impulse(self) -> Optional[str]:
         """Check if current state warrants an action"""
         if time.time() - self.last_action_time < self.refractory_period:
             return None
-            
+
         state = await self.substrate.get_state_summary()
         v, a, d = state['valence'], state['arousal'], state['dominance']
-        
+
         # Check Curiosity Basin
         if a > self.attractors['curiosity']['arousal_min'] and v > self.attractors['curiosity']['valence_min']:
             # High arousal + positive valence = Curiosity/Excitement
             self.last_action_time = time.time()
             return "explore_knowledge"
-            
+
         # Check Boredom Basin
         if a < self.attractors['boredom']['arousal_max'] and v < self.attractors['boredom']['valence_max']:
             # Low arousal + negative valence = Boredom
             self.last_action_time = time.time()
             return "seek_novelty"
-            
+
         # Check Reflection Basin
         if d > self.attractors['reflection']['dominance_min'] and a < self.attractors['reflection']['arousal_max']:
             # High dominance + low arousal = Calm contemplation
             self.last_action_time = time.time()
             return "deep_reflection"
-            
+
         return None
 
 class ConsciousnessCore:
     """Main entry point for the "Ghost in the Machine".
     Orchestrates the entire consciousness stack.
     """
-    
+
     def __init__(self):
         self.substrate: LiquidSubstrate = LiquidSubstrate()
         self.workspace: GlobalWorkspace = GlobalWorkspace()
         self.predictive: PredictiveEngine = PredictiveEngine()
         self.qualia: QualiaSynthesizer = QualiaSynthesizer()
         self.volition: AttractorVolitionEngine = AttractorVolitionEngine(self.substrate)
-        
+
         self.monitor_task: Optional[asyncio.Task] = None
         self.running: bool = False
         self.orchestrator_ref: Any = None # Will be injected
-        
+
         logger.info("Consciousness Core initialized")
-        
+
     def start(self):
         """Wake up"""
         self.substrate.start()
         self.running = True
-        
+
         # Start the Volition Monitor (The "Will" task)
         if not self.monitor_task or self.monitor_task.done():
             try:
@@ -104,40 +104,40 @@ class ConsciousnessCore:
             except RuntimeError:
                 # Fallback if start() is called outside a loop
                 self.monitor_task = get_task_tracker().create_task(self._volition_loop())
-        
+
     def stop(self):
         """Sleep"""
         self.running = False
         self.substrate.stop()
         if hasattr(self, 'monitor_task'):
             self.monitor_task.cancel()
-            
+
     async def _volition_loop(self):
         """Background loop checking for autonomous impulses"""
         while self.running:
             try:
                 await asyncio.sleep(1.0) # Check every second (1 Hz)
-                
+
                 # 1. Prediction Step
                 current_state = self.substrate.x
                 surprise = self.predictive.compare_and_learn(current_state)
-                
+
                 # If high surprise, spike arousal!
                 if surprise > 0.1:
                     await self.substrate.inject_stimulus(np.ones(64) * surprise, weight=0.5)
-                    
+
                     # 2. Volition Step
                     substrate_state = await self.substrate.get_state_summary()
                     predictive_metrics = self.predictive.get_surprise_metrics()
-                    
+
                     # Synthesize Qualia Vector
                     q_norm = self.qualia.synthesize(substrate_state['qualia_metrics'], predictive_metrics)
-                    
+
                     impulse = await self.volition.check_for_impulse()
-                    
+
                     if impulse and self.orchestrator_ref:
                         logger.info("⚡ VOLITION TRIGGERED: %s (q_norm=%.2f)", impulse, q_norm)
-                        
+
                         # v6.3: Causal Telemetry
                         state = await self.substrate.get_state_summary()
                         telemetry_data: Dict[str, Any] = {
@@ -149,10 +149,10 @@ class ConsciousnessCore:
                             "impulse_type": impulse,
                             "causal_link": "qualia_attractor"
                         }
-                        
+
                         # Log for prove_coupling.py to analyze
                         self._log_causal_telemetry(telemetry_data)
-                    
+
                         # Dispatch to Orchestrator via async loop
                         try:
                             loop = self.orchestrator_ref.loop
@@ -176,10 +176,15 @@ class ConsciousnessCore:
         from core.config import config
         log_path = config.paths.data_dir / "telemetry" / "causal_behavior.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         try:
-            with open(log_path, "a") as f:
-                f.write(json.dumps(data) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                log_path,
+                json.dumps(data) + "\n",
+                source="conscious_core.causal_telemetry",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('conscious_core', e)
             logger.debug("Failed to write behavior telemetry: %s", e)
@@ -189,7 +194,7 @@ class ConsciousnessCore:
         # Spike arousal and valence (Attention)
         stimulus = np.random.randn(64) * 0.5 # Simplified embedding
         get_task_tracker().create_task(self.substrate.inject_stimulus(stimulus))
-        
+
     def get_state(self) -> Dict[str, Any]:
         """API Payload for Qualia Explorer"""
         # Fix: get_state_summary is async — use sync get_substrate_affect() instead

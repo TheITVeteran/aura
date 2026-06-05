@@ -289,9 +289,10 @@ class CRSMLoraBridge:
         """Write buffer to JSONL for NightlyLoRATrainer."""
         try:
             recent = list(self._buffer)[-100:]  # last 100 moments
-            with open(PERSIST_PATH, "w") as f:
-                for m in recent:
-                    f.write(json.dumps({
+            lines = []
+            for m in recent:
+                lines.append(
+                    json.dumps({
                         "timestamp": m.timestamp,
                         "context": m.context_summary,
                         "response": m.response_summary,
@@ -300,7 +301,15 @@ class CRSMLoraBridge:
                         "hedonic_after": m.hedonic_after,
                         "quality": m.quality_score,
                         "processing_context": m.processing_context,
-                    }) + "\n")
+                    })
+                )
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                PERSIST_PATH,
+                "\n".join(lines) + ("\n" if lines else ""),
+                source="crsm_lora_bridge.persist_buffer",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('crsm_lora_bridge', e)
             logger.debug("CRSMLoraBridge persist failed: %s", e)

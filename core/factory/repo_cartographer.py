@@ -1,60 +1,87 @@
-"""core/factory/repo_cartographer.py — Repository Dependency Cartographer.
+"""core/factory/repo_cartographer.py — Repository Analysis and Mapping.
+
+Parses codebases, constructs dependency trees, identifies test suites,
+finds weaknesses, and builds a structural map for the software factory.
 """
 from __future__ import annotations
 
 import ast
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
 logger = logging.getLogger("Aura.RepoCartographer")
-_CARTOGRAPHER_RECOVERABLE_ERRORS = (
-    OSError,
-    RecursionError,
-    SyntaxError,
-    TypeError,
-    UnicodeDecodeError,
-    ValueError,
-)
 
 
 class RepoCartographer:
-    """Parses codebase code structures, imports, and builds dependency trees."""
+    """Maps repository structure, dependencies, and quality signals."""
 
-    def __init__(self, root_dir: str = ".") -> None:
-        self.root_dir = Path(root_dir).resolve()
-        self.dependencies: Dict[str, Set[str]] = {}
+    async def map_repo(self, repo_path: str) -> Dict[str, Any]:
+        """Produce a structural map of the repository."""
+        root = Path(repo_path).resolve()
+        if not root.exists():
+            return {"error": "repo_not_found", "file_count": 0, "module_count": 0}
 
-    def map_repository(self) -> Dict[str, Any]:
-        """Scans the repository folder, parsing Python files for import chains."""
-        logger.info("🏭 Cartographer scanning codebase at: %s", self.root_dir)
-        py_files = []
-        # Simple walk to find files (excluding .venv, build, etc.)
-        for path in self.root_dir.rglob("*.py"):
-            if not any(part in path.parts for part in (".venv", ".git", "build", "dist")):
-                py_files.append(path)
+        py_files: List[str] = []
+        test_files: List[str] = []
+        modules: Set[str] = set()
+        total_lines = 0
+        syntax_errors: List[str] = []
 
-        for filepath in py_files:
-            rel_path = filepath.relative_to(self.root_dir).as_posix()
-            self.dependencies[rel_path] = self._extract_imports(filepath)
+        skip_dirs = {".git", ".venv", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache", "dist", "build"}
 
-        logger.info("🏭 Indexed %d codebase files and imports.", len(py_files))
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+            rel_dir = os.path.relpath(dirpath, root)
+
+            for fname in filenames:
+                if not fname.endswith(".py"):
+                    continue
+                rel_path = os.path.join(rel_dir, fname)
+                full_path = os.path.join(dirpath, fname)
+
+                py_files.append(rel_path)
+                if fname.startswith("test_") or "/tests/" in rel_path:
+                    test_files.append(rel_path)
+
+                # Count lines and detect syntax errors
+                try:
+                    content = Path(full_path).read_text(encoding="utf-8", errors="ignore")
+                    total_lines += content.count("\n")
+                    ast.parse(content, filename=rel_path)
+                except SyntaxError:
+                    syntax_errors.append(rel_path)
+
+                # Extract module path
+                if rel_dir != ".":
+                    modules.add(rel_dir.replace(os.sep, "."))
+
         return {
-            "files_count": len(py_files),
-            "files": list(self.dependencies.keys()),
+            "repo_root": str(root),
+            "file_count": len(py_files),
+            "test_file_count": len(test_files),
+            "module_count": len(modules),
+            "modules": sorted(modules),
+            "total_lines": total_lines,
+            "syntax_errors": syntax_errors,
+            "has_tests": len(test_files) > 0,
+            "test_coverage_ratio": len(test_files) / max(1, len(py_files)),
         }
 
-    def _extract_imports(self, filepath: Path) -> Set[str]:
-        imports = set()
-        try:
-            content = filepath.read_text(encoding="utf-8", errors="ignore")
-            tree = ast.parse(content, filename=filepath.name)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for name in node.names:
-                        imports.add(name.name)
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    imports.add(node.module)
-        except _CARTOGRAPHER_RECOVERABLE_ERRORS as e:
-            logger.debug("Failed parsing imports for %s: %s", filepath, e)
-        return imports
+    async def find_weaknesses(self, repo_map: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Identify weaknesses: modules without tests, syntax errors, low coverage."""
+        weaknesses = []
+        if repo_map.get("syntax_errors"):
+            weaknesses.append({
+                "type": "syntax_errors",
+                "severity": "high",
+                "files": repo_map["syntax_errors"],
+            })
+        if repo_map.get("test_coverage_ratio", 0) < 0.1:
+            weaknesses.append({
+                "type": "low_test_coverage",
+                "severity": "medium",
+                "ratio": repo_map.get("test_coverage_ratio", 0),
+            })
+        return weaknesses

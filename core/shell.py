@@ -5,6 +5,9 @@ import asyncio
 import logging
 from typing import Dict, Any
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 
 class ShellInterface:
     def __init__(self, timeout=30):
@@ -24,14 +27,13 @@ class ShellInterface:
                 tokens = list(command)
             if not tokens:
                 return {"success": False, "error": "Empty command.", "stdout": "", "stderr": "", "code": -1}
-            
+
             result = await asyncio.to_thread(
-                subprocess.run,
+                get_subprocess_gateway().run,
                 tokens,
-                shell=False,
                 capture_output=True,
-                text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                source="shell.execute",
             )
             return {
                 "success": result.returncode == 0,
@@ -48,19 +50,22 @@ class ShellInterface:
     async def write_file_safe(self, target_file: str, content: str) -> Dict[str, Any]:
         """Write content to a file with an automated safety snapshot."""
         from core.resilience.sandbox_manager import sandbox_manager
-        
+
         # 1. Snapshot
         snapshot = sandbox_manager.create_snapshot(target_file)
-        
+
         # 2. Write
         try:
             full_path = (sandbox_manager.base_dir / target_file).resolve()
             if not str(full_path).startswith(str(sandbox_manager.base_dir.resolve())):
                 return {"success": False, "error": f"Path traversal attempt blocked: {target_file}"}
-                
-            with open(full_path, "w") as f:
-                f.write(content)
-            
+
+            get_file_write_gateway().write_text(
+                full_path,
+                content,
+                source="shell.write_file_safe",
+            )
+
             # 3. Verify
             health = await sandbox_manager.verify_integrity()
             if not health["integrity_ok"]:
@@ -68,7 +73,7 @@ class ShellInterface:
                 if snapshot:
                     sandbox_manager.restore_snapshot(target_file, snapshot)
                 return {"success": False, "error": "Integrity check failed. Rollback triggered."}
-                
+
             return {"success": True, "file": target_file}
         except (OSError, IOError) as e:
             record_degradation('shell', e)

@@ -198,8 +198,14 @@ class _ReceiptLog:
                 logger.warning("Receipt log append failed: %s", exc)
 
     def _append_sync(self, receipt: ActionReceipt) -> None:
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(receipt.to_dict(), default=str) + "\n")
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            self.path,
+            json.dumps(receipt.to_dict(), default=str) + "\n",
+            encoding="utf-8",
+            source="agency_orchestrator.receipt_log",
+        )
 
     def recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return [r.to_dict() for r in list(self._recent)[-limit:]]

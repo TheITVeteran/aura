@@ -2386,7 +2386,7 @@ Respond ONLY with a JSON array, no other text:
                         step.description[:40],
                         attempt + 1,
                     )
-                    
+
                     # Record success to ResilienceEngine
                     try:
                         from core.container import ServiceContainer
@@ -2872,11 +2872,15 @@ Respond ONLY with a JSON array, no other text:
 
         async def _write_file(path: str, content: str, **kwargs) -> str:
             """Write content to a file."""
-            import aiofiles
-
             try:
-                async with aiofiles.open(path, "w") as f:
-                    await f.write(content)
+                from core.runtime.file_write_gateway import get_file_write_gateway
+
+                await asyncio.to_thread(
+                    get_file_write_gateway().write_text,
+                    path,
+                    content,
+                    source="autonomous_task_engine.write_file_tool",
+                )
                 return f"Written to {path}"
             except OSError as e:
                 record_degradation("autonomous_task_engine", e)

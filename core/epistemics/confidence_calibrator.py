@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from core.epistemics.source_ranker import get_source_ranker
 
@@ -16,8 +16,11 @@ class ConfidenceCalibrator:
     """Calibrates confidence scores based on source trust, evidence count, and logical disputes."""
 
     @staticmethod
-    def calibrate(graph: ClaimGraph) -> None:
-        """Runs the calibration pass over the ClaimGraph, updating all node confidence values."""
+    def calibrate(subject: Any) -> float | None:
+        """Calibrate a ClaimGraph in-place or return confidence for one claim."""
+        if not hasattr(subject, "nodes"):
+            return ConfidenceCalibrator._calibrate_claim(subject)
+        graph = subject
         ranker = get_source_ranker()
         
         for node in graph.nodes.values():
@@ -50,3 +53,25 @@ class ConfidenceCalibrator:
                 node.claim_id, old_conf, node.confidence, contradiction_penalty
             )
         logger.info("Truth and Epistemics Calibration Pass completed.")
+        return None
+
+    @staticmethod
+    def _calibrate_claim(claim: Any) -> float:
+        """Return calibrated confidence for a TruthEngine Claim dataclass."""
+        ranker = get_source_ranker()
+        sources = list(getattr(claim, "sources", []) or [])
+        source_scores = [ranker.get_reliability(src) for src in sources]
+        avg_source_reliability = sum(source_scores) / len(source_scores) if source_scores else 0.5
+
+        metadata = getattr(claim, "metadata", {}) or {}
+        supporting_evidence = list(metadata.get("supporting_evidence", []) or [])
+        supporting_claims = list(getattr(claim, "supporting_claims", []) or [])
+        support_boost = min(0.15, (len(supporting_evidence) + len(supporting_claims)) * 0.03)
+
+        contradiction_links = list(getattr(claim, "contradiction_links", []) or [])
+        contradiction_penalty = min(0.70, 0.20 * len(contradiction_links))
+        verification_count = int(getattr(claim, "verification_count", 0) or 0)
+        verification_boost = min(0.12, verification_count * 0.04)
+
+        calibrated = (avg_source_reliability + support_boost + verification_boost) * (1.0 - contradiction_penalty)
+        return max(0.01, min(0.99, calibrated))

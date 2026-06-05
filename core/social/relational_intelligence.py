@@ -235,10 +235,13 @@ class RelationalIntelligence:
                     "perspective": self._perspectives[uid].to_dict() if uid in self._perspectives else {},
                     "entertainment": self._entertainment[uid].to_dict() if uid in self._entertainment else {},
                 }
-            tmp = str(self._data_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(payload, f, indent=2)
-            os.replace(tmp, self._data_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._data_path,
+                json.dumps(payload, indent=2),
+                source="relational_intelligence.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('relational_intelligence', e)
             logger.error("RelationalIntelligence: save failed: %s", e)

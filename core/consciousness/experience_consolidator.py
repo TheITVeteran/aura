@@ -39,7 +39,6 @@ from typing import Any
 
 import numpy as np
 
-from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -668,7 +667,13 @@ Return valid JSON only:
             if not self._narrative:
                 return
             data = asdict(self._narrative)
-            atomic_write_text(NARRATIVE_PATH, json.dumps(data, indent=2))
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                NARRATIVE_PATH,
+                json.dumps(data, indent=2),
+                source="experience_consolidator.save_narrative",
+            )
         except (OSError, TypeError, ValueError) as e:
             _record_experience_consolidator_degradation(
                 e,
@@ -760,14 +765,24 @@ Return valid JSON only:
                 "experiences_processed": len(material.get("experiences", [])),
             }
             CONSOL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONSOL_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                CONSOL_LOG_PATH,
+                json.dumps(entry) + "\n",
+                encoding="utf-8",
+                source="experience_consolidator.log_consolidation",
+            )
             # Rotate log if it grows too large (>5MB)
             try:
                 if CONSOL_LOG_PATH.stat().st_size > 5 * 1024 * 1024:
                     lines = CONSOL_LOG_PATH.read_text().splitlines()
                     # Keep last 500 entries
-                    atomic_write_text(CONSOL_LOG_PATH, "\n".join(lines[-500:]) + "\n")
+                    get_file_write_gateway().write_text(
+                        CONSOL_LOG_PATH,
+                        "\n".join(lines[-500:]) + "\n",
+                        source="experience_consolidator.rotate_log",
+                    )
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 _record_experience_consolidator_degradation(
                     _exc,

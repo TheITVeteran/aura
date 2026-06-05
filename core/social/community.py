@@ -93,8 +93,14 @@ class LocalLogTransport(CommunityTransport):
 
     async def send(self, msg: OutboundMessage) -> Dict[str, Any]:
         self.outbox.append(msg)
-        with open(_DIR / "outbox.jsonl", "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(msg), default=str) + "\n")
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            _DIR / "outbox.jsonl",
+            json.dumps(asdict(msg), default=str) + "\n",
+            encoding="utf-8",
+            source="community.local_transport_send",
+        )
         return {"delivered": True, "transport": "local"}
 
     async def receive(self) -> Optional[InboundMessage]:
@@ -214,13 +220,14 @@ class CommunityLayer:
     @staticmethod
     def _record(payload: Dict[str, Any]) -> None:
         try:
-            with open(_LEDGER_PATH, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"when": time.time(), **payload}, default=str) + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                _LEDGER_PATH,
+                json.dumps({"when": time.time(), **payload}, default=str) + "\n",
+                encoding="utf-8",
+                source="community.record",
+            )
         except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 

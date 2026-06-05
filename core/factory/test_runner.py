@@ -1,36 +1,77 @@
-"""core/factory/test_runner.py — Software Factory Test Runner.
+"""core/factory/test_runner.py — Test Suite Executor.
+
+Executes tests in localized sub-environments, capturing stdout/stderr,
+pass/fail counts, and timing.
 """
 from __future__ import annotations
 
 import logging
 import subprocess
-from typing import Dict
+import time
+from pathlib import Path
+from typing import Any, Dict
 
-from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.errors import record_degradation
 
-logger = logging.getLogger("Aura.FactoryTestRunner")
+logger = logging.getLogger("Aura.TestRunner")
 
 
-class FactoryTestRunner:
-    """Runs codebase test suites using standard pytest commands."""
+class TestRunner:
+    """Executes project test suites and captures structured results."""
 
-    @staticmethod
-    def run_tests(test_path: str = "tests/") -> Dict[str, Any]:
-        logger.info("🏭 TestRunner running tests at path: %s", test_path)
-        gateway = get_subprocess_gateway()
-        
-        # Dispatch command via subprocess gateway
-        proc = gateway.run(
-            argv=["pytest", test_path, "-q"],
-            timeout=45.0,
-            source="factory_test_runner",
-        )
-        passed = proc.returncode == 0
-        logger.info("🏭 Tests outcome: %s (Exit Code: %d)", "PASSED" if passed else "FAILED", proc.returncode)
+    async def run_tests(
+        self,
+        repo_path: str,
+        *,
+        test_command: str = "python -m pytest --tb=short -q",
+        timeout: float = 120.0,
+    ) -> Dict[str, Any]:
+        """Run the test suite and return structured results."""
+        logger.info("🧪 TestRunner: executing tests in %s", repo_path)
+        started = time.time()
 
-        return {
-            "passed": passed,
-            "exit_code": proc.returncode,
-            "stdout": proc.stdout,
-            "stderr": proc.stderr,
-        }
+        try:
+            result = subprocess.run(
+                test_command.split(),
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            duration = time.time() - started
+            stdout = result.stdout[-2000:] if result.stdout else ""
+            stderr = result.stderr[-1000:] if result.stderr else ""
+
+            # Parse pytest output for pass/fail counts
+            passed = 0
+            failed = 0
+            for line in stdout.splitlines():
+                if "passed" in line:
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == "passed" and i > 0:
+                            try:
+                                passed = int(parts[i - 1])
+                            except ValueError:
+                                pass
+                        if p == "failed" and i > 0:
+                            try:
+                                failed = int(parts[i - 1])
+                            except ValueError:
+                                pass
+
+            return {
+                "all_passed": result.returncode == 0,
+                "return_code": result.returncode,
+                "passed": passed,
+                "failed": failed,
+                "duration_s": round(duration, 2),
+                "summary": stdout.splitlines()[-1] if stdout.strip() else "no output",
+                "stderr_tail": stderr[-500:],
+            }
+
+        except subprocess.TimeoutExpired:
+            return {"all_passed": False, "error": "timeout", "duration_s": timeout}
+        except (OSError, RuntimeError) as e:
+            record_degradation("test_runner", e, action="test execution failed")
+            return {"all_passed": False, "error": str(e), "duration_s": time.time() - started}

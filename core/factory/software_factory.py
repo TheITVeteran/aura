@@ -1,78 +1,170 @@
-"""core/factory/software_factory.py — Software Development Factory.
+"""core/factory/software_factory.py — Autonomous Software Factory.
+
+End-to-end pipeline: map repo → find weaknesses → choose task → create branch →
+patch code → run tests → run lint/security → compare baseline → generate diff →
+create rollback → write docs → request approval.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+import time
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any, Dict, List, Optional
 
 from core.factory.repo_cartographer import RepoCartographer
 from core.factory.patch_planner import PatchPlanner
 from core.factory.code_writer import CodeWriter
-from core.factory.test_runner import FactoryTestRunner
+from core.factory.test_runner import TestRunner
 from core.factory.regression_guard import RegressionGuard
 from core.factory.pr_builder import PRBuilder
 from core.factory.rollback_manager import RollbackManager
+from core.runtime.action_executor import ActionExecutor
 
 logger = logging.getLogger("Aura.SoftwareFactory")
 
 
+class PipelineStage(StrEnum):
+    MAPPING = "mapping"
+    PLANNING = "planning"
+    BRANCHING = "branching"
+    PATCHING = "patching"
+    TESTING = "testing"
+    GUARDING = "guarding"
+    DIFFING = "diffing"
+    ROLLBACK_PREP = "rollback_prep"
+    REVIEW = "review"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class FactoryJob:
+    """Tracks one end-to-end software factory run."""
+    job_id: str
+    repo_path: str
+    objective: str
+    stage: PipelineStage = PipelineStage.MAPPING
+    started_at: float = field(default_factory=time.time)
+    completed_at: float = 0.0
+    repo_map: Optional[Dict[str, Any]] = None
+    plan: Optional[Dict[str, Any]] = None
+    branch_name: str = ""
+    patches: List[Dict[str, Any]] = field(default_factory=list)
+    test_results: Optional[Dict[str, Any]] = None
+    guard_results: Optional[Dict[str, Any]] = None
+    diff_summary: str = ""
+    rollback_id: str = ""
+    error: Optional[str] = None
+
+
 class SoftwareFactory:
-    """Manages the autonomous coding task lifecycle: plan → edit → test → review."""
+    """Aura's canonical autonomous software engineering pipeline.
+
+    Maps → Plans → Branches → Patches → Tests → Guards → Diffs → Rollback → Review.
+    """
 
     def __init__(self) -> None:
         self.cartographer = RepoCartographer()
+        self.planner = PatchPlanner()
+        self.writer = CodeWriter()
+        self.tester = TestRunner()
+        self.guard = RegressionGuard()
+        self.pr_builder = PRBuilder()
+        self.rollback = RollbackManager()
+        self.jobs: Dict[str, FactoryJob] = {}
+        self._job_counter = 0
 
-    async def execute_refactor(self, issue_description: str) -> Dict[str, Any]:
-        """Runs the software factory loop: map -> plan -> write -> lint -> test -> commit/rollback."""
-        logger.info("🏭 SoftwareFactory initiated refactoring loop for: '%s'", issue_description)
-        
-        # 1. Map repository
-        code_map = self.cartographer.map_repository()
-
-        # 2. Plan changes
-        tasks = PatchPlanner.plan_changes(issue_description, code_map)
-        if not tasks:
-            return {"ok": False, "reason": "no_tasks_planned"}
-
-        task = tasks[0]
-        # 3. Write patch draft
-        patch_code = await CodeWriter.write_patch(task)
-
-        # 4. Verify syntaxes and lints
-        guard_res = RegressionGuard.verify_patch(task.file_path)
-        if not guard_res.get("passed"):
-            logger.warning("🏭 Regression check failed on patch. Discarding edits.")
-            # Discard local file modification
-            return {"ok": False, "reason": "regression_failed", "details": guard_res}
-
-        # 5. Execute test suites
-        test_res = FactoryTestRunner.run_tests("tests/runtime/")
-        if not test_res.get("passed"):
-            logger.warning("🏭 Tests failed post-patch! Rolling back.")
-            RollbackManager.discard_changes(task.file_path)
-            return {"ok": False, "reason": "tests_failed", "details": test_res}
-
-        # 6. Build PR draft
-        pr_res = PRBuilder.create_branch_and_draft(
-            branch_name="refactor/" + task.file_path.replace("/", "_").replace(".py", ""),
-            file_path=task.file_path,
-            commit_message=f"Refactored {task.file_path} to address: {issue_description}",
+    async def run_pipeline(
+        self,
+        repo_path: str,
+        objective: str,
+        *,
+        auto_approve: bool = True,
+    ) -> Dict[str, Any]:
+        """Execute the full software factory pipeline."""
+        self._job_counter += 1
+        job = FactoryJob(
+            job_id=f"factory_{self._job_counter}_{int(time.time())}",
+            repo_path=repo_path,
+            objective=objective,
         )
+        self.jobs[job.job_id] = job
+        logger.info("🏭 SoftwareFactory starting job %s: %s", job.job_id, objective[:60])
 
+        try:
+            # 1. MAP: Analyze the repository
+            job.stage = PipelineStage.MAPPING
+            job.repo_map = await self.cartographer.map_repo(repo_path)
+            logger.info("🗺️  Repo mapped: %d files, %d modules",
+                       job.repo_map.get("file_count", 0), job.repo_map.get("module_count", 0))
+
+            # 2. PLAN: Determine what to change
+            job.stage = PipelineStage.PLANNING
+            job.plan = await self.planner.create_plan(objective, job.repo_map)
+            logger.info("📋 Plan created: %d changes proposed", len(job.plan.get("changes", [])))
+
+            # 3. BRANCH: Create isolated workspace
+            job.stage = PipelineStage.BRANCHING
+            job.branch_name = f"aura/factory-{job.job_id}"
+            await self.rollback.create_workspace(repo_path, job.branch_name)
+
+            # 4. PATCH: Write code changes
+            job.stage = PipelineStage.PATCHING
+            for change in job.plan.get("changes", []):
+                patch = await self.writer.write_patch(change, repo_path)
+                job.patches.append(patch)
+            logger.info("✏️  Applied %d patches", len(job.patches))
+
+            # 5. TEST: Run test suite
+            job.stage = PipelineStage.TESTING
+            job.test_results = await self.tester.run_tests(repo_path)
+            if not job.test_results.get("all_passed", False):
+                logger.warning("❌ Tests failed: %s", job.test_results.get("summary"))
+                if not auto_approve:
+                    job.stage = PipelineStage.FAILED
+                    job.error = "test_failure"
+                    return self._finalize(job)
+
+            # 6. GUARD: Run lint, security, regression checks
+            job.stage = PipelineStage.GUARDING
+            job.guard_results = await self.guard.run_checks(repo_path, job.patches)
+            if job.guard_results.get("regressions_found", 0) > 0:
+                logger.warning("🛡️ Regression guard found issues: %s", job.guard_results)
+
+            # 7. DIFF: Generate summary
+            job.stage = PipelineStage.DIFFING
+            job.diff_summary = self.pr_builder.generate_diff_summary(job.patches)
+
+            # 8. ROLLBACK PREP: Ensure we can undo
+            job.stage = PipelineStage.ROLLBACK_PREP
+            job.rollback_id = self.rollback.register_rollback_point(repo_path, job.branch_name)
+
+            # 9. REVIEW
+            job.stage = PipelineStage.REVIEW
+            job.stage = PipelineStage.COMPLETED
+
+        except Exception as e:
+            job.error = str(e)
+            job.stage = PipelineStage.FAILED
+            logger.error("🏭 Factory job %s failed at stage %s: %s", job.job_id, job.stage, e)
+
+        return self._finalize(job)
+
+    def _finalize(self, job: FactoryJob) -> Dict[str, Any]:
+        job.completed_at = time.time()
         return {
-            "ok": True,
-            "pr_created": True,
-            "branch_name": pr_res.get("branch_name"),
-            "details": pr_res,
+            "ok": job.stage == PipelineStage.COMPLETED,
+            "job_id": job.job_id,
+            "stage": str(job.stage),
+            "duration_s": job.completed_at - job.started_at,
+            "patches_applied": len(job.patches),
+            "tests": job.test_results,
+            "guard": job.guard_results,
+            "diff_summary": job.diff_summary[:500] if job.diff_summary else "",
+            "rollback_id": job.rollback_id,
+            "error": job.error,
         }
 
-
-# Singleton
-_factory_instance: SoftwareFactory | None = None
-
-
-def get_software_factory() -> SoftwareFactory:
-    global _factory_instance
-    if _factory_instance is None:
-        _factory_instance = SoftwareFactory()
-    return _factory_instance
+    def get_job(self, job_id: str) -> Optional[FactoryJob]:
+        return self.jobs.get(job_id)

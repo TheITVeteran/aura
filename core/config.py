@@ -288,7 +288,7 @@ class RedisConfig(BaseModel):
         .lower()
         in {"1", "true", "yes", "on"}
     )
-    
+
     @property
     def broker_url(self) -> str:
         if os.environ.get("AURA_REDIS_ENABLED") == "0":
@@ -305,7 +305,7 @@ class RedisConfig(BaseModel):
 class LLMConfig(BaseModel):
     provider: str = "local_runtime"
     api_key: str | None = None
-    
+
     # Tri-Cameral Architecture (Phase 16) — Tuned for M5 Pro 64 GB
     # Tier 1: Brainstem (Heartbeat, telemetry, background tasks)
     chat_model: str = "Qwen2.5-7B-Instruct-4bit"
@@ -319,10 +319,10 @@ class LLMConfig(BaseModel):
     deep_model: str = "Qwen2.5-72B-Instruct-4bit"
     deep_max_tokens: int = 8192
     deep_temperature: float = 0.4
-    
+
     # Teacher/Oracle: Cloud API for distillation and emergency fallback
     teacher_model: str = "gemini-2.5-pro"
-    
+
     # Cloud API Keys
     # ISSUE #70 - resolved env lookup inside Pydantic by moving to model_validator
     gemini_api_key: str | None = None
@@ -407,10 +407,10 @@ class AuraConfig(BaseSettings):
     env: Environment = Environment.DEV
     version: str = Field(default="unknown")
     api_token: str | None = Field(default=None)
-    
+
     # Feature flags
     features: FeatureToggles = Field(default_factory=FeatureToggles)
-    
+
     # Sub-configs
     paths: Paths = Field(default_factory=Paths)
     cognitive: CognitiveConfig = Field(default_factory=CognitiveConfig)
@@ -485,7 +485,7 @@ class AuraConfig(BaseSettings):
 
         # 2. Create paths
         self.paths.create_directories()
-        
+
         # 3. Fail-fast on critical missing infrastructure in PROD
         if self.env == Environment.PROD:
             if not self.api_token:
@@ -494,7 +494,7 @@ class AuraConfig(BaseSettings):
             if not os.environ.get("GEMINI_API_KEY"):
                 logger.critical("CRITICAL ERROR: Missing GEMINI_API_KEY for PROD environment.")
                 sys.exit(1)
-            
+
         return self
 
     def save(self) -> None:
@@ -503,12 +503,21 @@ class AuraConfig(BaseSettings):
         data = self.model_dump(mode='json')
         file_path = self.paths._effective_home_dir() / "config.yaml"
         try:
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            gateway = get_file_write_gateway()
             if yaml:
-                with open(file_path, 'w') as f:
-                    yaml.dump(data, f, default_flow_style=False)
+                gateway.write_text(
+                    file_path,
+                    yaml.dump(data, default_flow_style=False),
+                    source="config.save.yaml",
+                )
             else:
-                with open(file_path.with_suffix('.json'), 'w') as f:
-                    json.dump(data, f, indent=4)
+                gateway.write_text(
+                    file_path.with_suffix('.json'),
+                    json.dumps(data, indent=4),
+                    source="config.save.json",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('config', e)
             logger.error("config_save_failed: %s", e)

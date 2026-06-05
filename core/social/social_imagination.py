@@ -228,10 +228,14 @@ class SocialImagination:
                     for user_id, frames in self._frames.items()
                 }
             }
-            tmp = str(self._storage_path) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2)
-            os.replace(tmp, self._storage_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._storage_path,
+                json.dumps(payload, indent=2),
+                encoding="utf-8",
+                source="social_imagination.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('social_imagination', exc)
             logger.error("SocialImagination save failed: %s", exc)

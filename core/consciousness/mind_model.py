@@ -34,7 +34,7 @@ class MindModel(AuraBaseModule):
         if not data_path:
             from core.config import config
             data_path = config.paths.data_dir / "consciousness" / "mind_model.json"
-        
+
         self.data_path = data_path
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
         self.user_state = UserBeliefState()
@@ -56,8 +56,13 @@ class MindModel(AuraBaseModule):
 
     def save(self):
         try:
-            with open(self.data_path, 'w') as f:
-                json.dump(self.user_state.to_dict(), f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self.data_path,
+                json.dumps(self.user_state.to_dict(), indent=2),
+                source="mind_model.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mind_model', e)
             self.logger.error("Failed to save mind model: %s", e)
@@ -68,7 +73,7 @@ class MindModel(AuraBaseModule):
         # In a full cognitive cycle, the LLM provides this summary.
         self.user_state.perceived_mood = current_mood
         self.user_state.last_updated = time.time()
-        
+
         # Heuristic: If user is asking questions, they are acquiring facts.
         # This will be refined via prompt injections.
         self.logger.info("🧠 MindModel: User mood projected as %s", current_mood)
@@ -79,7 +84,7 @@ class MindModel(AuraBaseModule):
         state = self.user_state
         facts = ", ".join(state.known_facts[:5]) if state.known_facts else "unknown"
         goals = ", ".join(state.active_goals[:3]) if state.active_goals else "unknown"
-        
+
         return (
             f"[THEORY OF MIND]\n"
             f"- User Perceived Mood: {state.perceived_mood}\n"

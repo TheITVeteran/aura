@@ -28,11 +28,10 @@ import os
 import struct
 import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any, List, Optional, Sequence
 
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Consciousness.QuantumEntropy")
 
@@ -49,8 +48,6 @@ _QUANTUM_API_RECOVERABLE_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
-    urllib.error.HTTPError,
-    urllib.error.URLError,
 )
 
 
@@ -276,9 +273,17 @@ class QuantumEntropyBridge:
 
         try:
             url = f"{_ANU_API_URL}?length={self._pool_size}&type=uint8"
-            req = urllib.request.Request(url, headers={"User-Agent": "AURA/1.0"})
-            with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as resp:
-                data = json.loads(resp.read().decode())
+            response = get_network_gateway().request(
+                "GET",
+                url,
+                headers={"User-Agent": "AURA/1.0"},
+                timeout=_API_TIMEOUT,
+                source="quantum_entropy.refill",
+                read_only=True,
+            )
+            if not response.get("ok"):
+                raise OSError(str(response.get("error") or "ANU QRNG request failed"))
+            data = json.loads(bytes(response.get("content") or b"").decode())
 
             if data.get("success") and "data" in data:
                 new_bytes = bytearray(data["data"])
@@ -299,8 +304,6 @@ class QuantumEntropyBridge:
             external_entropy_unavailable = isinstance(
                 e,
                 (
-                    urllib.error.HTTPError,
-                    urllib.error.URLError,
                     TimeoutError,
                     OSError,
                 ),

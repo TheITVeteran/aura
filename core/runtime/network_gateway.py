@@ -83,7 +83,7 @@ class NetworkGateway:
         except urllib.error.HTTPError as exc:
             return {
                 "status_code": exc.code,
-                "headers": dict(exc.headers),
+                "headers": dict(exc.headers or {}),
                 "content": exc.read(),
                 "ok": False,
                 "error": str(exc),

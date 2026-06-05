@@ -192,10 +192,13 @@ class ConversationalProfiler:
                 "profiles": {uid: p.to_dict() for uid, p in self._profiles.items()},
                 "phrase_counters": {uid: dict(pc) for uid, pc in self._phrase_counter.items()},
             }
-            tmp = str(self._storage_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(payload, f, indent=2)
-            os.replace(tmp, self._storage_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._storage_path,
+                json.dumps(payload, indent=2),
+                source="conversational_profile.save",
+            )
             logger.debug("Conversational profiles saved (%d users)", len(self._profiles))
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('conversational_profile', exc)

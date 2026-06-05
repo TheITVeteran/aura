@@ -6,6 +6,8 @@ import time
 import uuid
 from typing import Any
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Kernel.Tracer")
 
 class Tracer:
@@ -24,7 +26,7 @@ class Tracer:
             "outcome": None,
             "latency": 0
         }
-        
+
     def log_step(self, step_type: str, content: Any) -> None:
         """Logs a reasoning or execution step."""
         if self.current_trace:
@@ -39,12 +41,16 @@ class Tracer:
         if self.current_trace:
             self.current_trace["outcome"] = outcome
             self.current_trace["latency"] = time.time() - self.current_trace["timestamp"]
-            
+
             try:
-                with open(self.trace_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(self.current_trace) + "\n")
+                get_file_write_gateway().append_text(
+                    self.trace_file,
+                    json.dumps(self.current_trace) + "\n",
+                    encoding="utf-8",
+                    source="tracer.end_trace",
+                )
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('tracer', e)
                 logger.error("Failed to write trace: %s", e)
-            
+
             self.current_trace = None

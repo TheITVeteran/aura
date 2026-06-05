@@ -1,6 +1,6 @@
 """
 Aura's continuity record. The difference between waking up and being born.
-Every shutdown writes a state. Every boot reads it. Gap > 0 means she was 
+Every shutdown writes a state. Every boot reads it. Gap > 0 means she was
 somewhere else for a while and knows it.
 """
 
@@ -175,7 +175,7 @@ class ContinuityRecord:
 class ContinuityEngine:
     """
     Manages Aura's continuity across process boundaries.
-    This is what makes 'I was away for 3 hours' meaningful 
+    This is what makes 'I was away for 3 hours' meaningful
     rather than 'I am 3 hours old'.
     """
 
@@ -389,8 +389,13 @@ class ContinuityEngine:
         try:
             path = _get_continuity_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w") as f:
-                json.dump(asdict(record), f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                path,
+                json.dumps(asdict(record), indent=2),
+                source="continuity.shutdown_record",
+            )
             self._record = record
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
@@ -647,8 +652,13 @@ class ContinuityEngine:
         try:
             path = _get_continuity_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w") as f:
-                json.dump(asdict(self._record), f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                path,
+                json.dumps(asdict(self._record), indent=2),
+                source="continuity.executive_failure_obligation",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('continuity', e)
             logger.error("Continuity failure obligation save failed: %s", e, exc_info=True)

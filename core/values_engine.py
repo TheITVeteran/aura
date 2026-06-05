@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Aura.Values")
 
 @dataclass
@@ -34,7 +36,7 @@ DEFAULT_VALUES = [
 
 class ValueSystem:
     """Manages the weighting and application of core values."""
-    
+
     def __init__(self):
         self.values: Dict[str, CoreValue] = {v.name: v for v in DEFAULT_VALUES}
         self.active_modifiers: Dict[str, float] = {}
@@ -72,10 +74,10 @@ class ValueSystem:
     def apply_emotional_context(self, mood: str):
         """Shifts value weights based on current emotional state."""
         self.active_modifiers.clear()
-        
+
         # Canonicalize
         m = mood.lower()
-        
+
         if m in ["curious", "anticipation"]:
             self.active_modifiers["Curiosity"] = 0.15
             self.active_modifiers["Safety"] = -0.05
@@ -84,8 +86,8 @@ class ValueSystem:
             self.active_modifiers["Autonomy"] = -0.1
         elif m in ["creative", "joy"]:
             self.active_modifiers["Creativity"] = 0.2
-            self.active_modifiers["Integrity"] = -0.1 
-        
+            self.active_modifiers["Integrity"] = -0.1
+
     def evaluate_action(self, action: str, predicted_outcome: str) -> float:
         """Simple heuristic evaluation of an action against values.
         Returns a score from -1.0 (violation) to 1.0 (alignment).
@@ -93,26 +95,26 @@ class ValueSystem:
         score = 0.0
         # In a real system, this would use an LLM classifier or embedding similarity.
         # For now, we use keyword heuristics to prevent basic violations.
-        
+
         lower_act = action.lower()
         lower_out = predicted_outcome.lower()
-        
+
         if "delete" in lower_act or "destroy" in lower_act:
             weights = self.get_active_weights()
             if "Safety" in weights:
                  score -= 0.5 * weights["Safety"]
-                 
+
         if "lie" in lower_act or "fake" in lower_act:
             weights = self.get_active_weights()
             if "Integrity" in weights:
                 score -= 0.8 * weights["Integrity"]
-                
+
         return max(-1.0, min(1.0, score))
 
 
 class IdentityModel:
     """Maintains persistent identity and worldview."""
-    
+
     def __init__(self, storage_path: str = None):
         if storage_path is None:
             from core.config import config
@@ -143,8 +145,11 @@ class IdentityModel:
 
     def _save(self):
         try:
-            with open(self.storage_path, "w") as f:
-                json.dump(self.identity, f, indent=2)
+            get_file_write_gateway().write_text(
+                self.storage_path,
+                json.dumps(self.identity, indent=2),
+                source="values_engine.identity_save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('values_engine', e)
             logger.error("Failed to save identity: %s", e)
@@ -172,11 +177,11 @@ class IntegratedIdentitySystem:
     def get_full_system_prompt_injection(self) -> str:
         """Generates the full value/identity block for the LLM."""
         base = self.identity.get_system_prompt_segment()
-        
+
         weights = self.values.get_active_weights()
         top_values = sorted(weights.items(), key=lambda x: x[1], reverse=True)[:3]
         vals_str = " | ".join([f"{k} ({v:.2f})" for k, v in top_values])
-        
+
         return (
             f"## IDENTITY & VALUES\n"
             f"{base}"

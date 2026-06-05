@@ -322,8 +322,13 @@ class MycelialHypergraphAttractorField:
                 "global_phi": self._global_phi,
                 "saved_at": time.time(),
             }
-            with open(_DATA_PATH, "w") as f:
-                json.dump(state, f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                _DATA_PATH,
+                json.dumps(state, indent=2),
+                source="mhaf_field.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mhaf_field', e)
             logger.debug("MHAF save error: %s", e)

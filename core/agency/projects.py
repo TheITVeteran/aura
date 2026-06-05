@@ -241,13 +241,14 @@ class ProjectLedger:
                 "snapshot": proj.to_dict(),
                 "payload": payload,
             }, default=str)
-            with open(self.path, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                self.path,
+                line + "\n",
+                encoding="utf-8",
+                source="projects.record_event",
+            )
 
     def _load(self) -> None:
         if not self.path.exists():

@@ -311,6 +311,7 @@ class AstLinter(ast.NodeVisitor):
         self.findings: list[LintFinding] = []
         self.async_depth = 0
         self.func_depth = 0
+        self.file_gateway_vars: set[str] = set()
 
     def add(self, severity: str, kind: str, node: ast.AST, message: str) -> None:
         if self.rel in EXEMPT_FILES:
@@ -333,6 +334,13 @@ class AstLinter(ast.NodeVisitor):
         self.func_depth += 1
         self.generic_visit(node)
         self.func_depth -= 1
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if isinstance(node.value, ast.Call) and self._call_name(node.value) == "get_file_write_gateway":
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.file_gateway_vars.add(target.id)
+        self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         broad = node.type is None or (
@@ -419,6 +427,10 @@ class AstLinter(ast.NodeVisitor):
                     "Direct write open() is prohibited outside approved gateways.",
                 )
         elif name.endswith(".write_text") or name.endswith(".write_bytes"):
+            receiver = self._attribute_receiver_name(node)
+            if receiver in self.file_gateway_vars:
+                self.generic_visit(node)
+                return
             self.add(
                 "high",
                 "unapproved_direct_file_write",
@@ -429,7 +441,10 @@ class AstLinter(ast.NodeVisitor):
 
     @staticmethod
     def _call_name(node: ast.Call) -> str:
-        func = node.func
+        return AstLinter._call_name_from_func(node.func)
+
+    @staticmethod
+    def _call_name_from_func(func: ast.AST) -> str:
         parts: list[str] = []
         while isinstance(func, ast.Attribute):
             parts.append(func.attr)
@@ -437,6 +452,12 @@ class AstLinter(ast.NodeVisitor):
         if isinstance(func, ast.Name):
             parts.append(func.id)
         return ".".join(reversed(parts))
+
+    @staticmethod
+    def _attribute_receiver_name(node: ast.Call) -> str:
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            return node.func.value.id
+        return ""
 
 
 def scan_file(path: Path) -> list[LintFinding]:

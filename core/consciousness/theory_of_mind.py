@@ -87,17 +87,20 @@ class TheoryOfMindEngine:
             logger.debug("ToM: load failed (%s), starting fresh", e)
 
     def save(self):
-        import json, os
+        import json
         try:
             data = {}
             for uid, model in self.known_selves.items():
                 d = model.to_dict()
                 d["interaction_history"] = d["interaction_history"][-20:]  # Keep it lean
                 data[uid] = d
-            tmp = str(self._data_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, self._data_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._data_path,
+                json.dumps(data, indent=2),
+                source="theory_of_mind.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: save failed: %s", e)

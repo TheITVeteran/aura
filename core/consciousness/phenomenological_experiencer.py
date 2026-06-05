@@ -1594,17 +1594,19 @@ class PhenomenologicalExperiencer:
                 "qualia": [q.to_dict() for q in self._current_qualia],
                 "thread": self.continuity.current_thread,
             }
-            with open(archive_path, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                archive_path,
+                json.dumps(entry) + "\n",
+                source="phenomenological_experiencer.persist_moment",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation("phenomenological_experiencer", e)
             logger.debug("Phenomenal archive write error: %s", e)
 
     def _save_phenomenal_memory(self):
         """Persist state for cross-session continuity (atomic)."""
-        import os
-        import tempfile
-
         try:
             raw_moments = list(getattr(self.continuity, "_moments", []))
             tail = raw_moments[-MAX_PERSISTED_CONTINUITY_MOMENTS:] if raw_moments else []
@@ -1631,18 +1633,14 @@ class PhenomenologicalExperiencer:
 
             target_path = self.save_dir / "phenomenal_memory.json"
 
-            # Atomic write using tempfile + os.replace
-            fd, temp_path = tempfile.mkstemp(dir=str(self.save_dir), text=True)
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(memory, f, indent=2)
-                os.replace(temp_path, str(target_path))
-                logger.info("💾 Phenomenal memory saved (atomic)")
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation("phenomenological_experiencer", e)
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                raise e
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                target_path,
+                json.dumps(memory, indent=2),
+                source="phenomenological_experiencer.save_memory",
+            )
+            logger.info("Phenomenal memory saved")
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation("phenomenological_experiencer", e)
             logger.debug("Phenomenal memory save error: %s", e)

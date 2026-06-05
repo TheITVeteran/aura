@@ -238,10 +238,14 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
             "pad_state": pad,
         }
         # PP-001: Force utf-8 encoding
-        with self.storage_path.open(mode="a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            self.storage_path,
+            json.dumps(entry, ensure_ascii=False, default=str) + "\n",
+            encoding="utf-8",
+            source="private_phenomenology.record_reflection",
+        )
 
     async def _record_reflection(self, text: str, pad: dict):
         """Asynchronously writes the internal monologue to the persistent soul-file."""

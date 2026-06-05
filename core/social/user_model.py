@@ -11,7 +11,7 @@ class UserModel:
     """Theory of Mind: Maintains a model of the user's preferences, style, and goals.
     Allows Aura to adapt her behavior to better serve the specific user.
     """
-    
+
     def __init__(self, storage_path: Optional[str] = None):
         if storage_path is None:
             from core.config import config
@@ -27,7 +27,7 @@ class UserModel:
             "last_updated": time.time()
         }
         self._load()
-        
+
     def _load(self):
         if self.storage_path.exists():
             try:
@@ -40,8 +40,13 @@ class UserModel:
     def save(self):
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.storage_path, 'w') as f:
-                json.dump(self.data, f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self.storage_path,
+                json.dumps(self.data, indent=2),
+                source="user_model.save",
+            )
             logger.debug("User model saved")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('user_model', e)
@@ -51,11 +56,11 @@ class UserModel:
         """Update the model based on a new interaction."""
         self.data["interaction_history_count"] += 1
         self.data["last_updated"] = time.time()
-        
+
         # Audit Fix: Context-aware updates. Avoid increments if negation is present nearby.
         text = input_text.lower()
         negations = ["not", "dont", "don't", "stop", "no", "never", "less"]
-        
+
         def is_negated(keyword: str) -> bool:
             # Check for negation in the 3 words preceding the keyword
             words = text.split()
@@ -70,17 +75,17 @@ class UserModel:
                 self.data["preferences"]["brevity"] = self.data["preferences"].get("brevity", 0.5) + 0.1
             elif any(n in text for n in ["not concise", "less short", "don't be short"]):
                 self.data["preferences"]["brevity"] = self.data["preferences"].get("brevity", 0.5) - 0.1
-        
+
         # Update Depth
         if "detail" in text or "explain" in text or "deep" in text:
             if not is_negated("detail") and not is_negated("explain") and not is_negated("deep"):
                  self.data["preferences"]["depth"] = self.data["preferences"].get("depth", 0.5) + 0.1
-        
+
         # Normalize
         for k in self.data["preferences"]:
             if isinstance(self.data["preferences"][k], float):
                 self.data["preferences"][k] = min(1.0, max(0.0, self.data["preferences"][k]))
-        
+
         self.save()
         return self.data
 
@@ -88,12 +93,12 @@ class UserModel:
         """Generates a prompt snippet to bias the LLM based on user model."""
         style = self.data.get("communication_style", "professional")
         pref = self.data.get("preferences", {})
-        
+
         bias = f"\n[USER CONTEXT: Style={style}"
         if pref.get("brevity", 0) >= 0.6:
              bias += ", Be very concise."
         if pref.get("depth", 0) > 0.7:
              bias += ", Provide deep technical explanations."
         bias += "]"
-        
+
         return bias

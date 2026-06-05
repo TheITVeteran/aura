@@ -208,10 +208,13 @@ class AbsorbedVoices:
         with self._lock:
             data = {vid: v.to_dict() for vid, v in self._voices.items()}
         try:
-            tmp = str(self._storage_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, self._storage_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._storage_path,
+                json.dumps(data, indent=2),
+                source="absorbed_voices.save",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('absorbed_voices', exc)
             logger.debug("Failed to save absorbed_voices: %s", exc)

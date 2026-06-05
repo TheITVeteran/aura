@@ -452,10 +452,14 @@ Only reply with the JSON, nothing else."""
     def _save_lexicon(self):
         try:
             _LEXICON_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = _LEXICON_PATH.with_suffix(_LEXICON_PATH.suffix + ".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self._lexicon, f, indent=2)
-            tmp_path.replace(_LEXICON_PATH)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                _LEXICON_PATH,
+                json.dumps(self._lexicon, indent=2),
+                encoding="utf-8",
+                source="neologism_engine.save_lexicon",
+            )
         except _RECOVERABLE_NEOLOGISM_ERRORS as e:
             _record_neologism_degradation(
                 e,

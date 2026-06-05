@@ -1,5 +1,6 @@
 from core.runtime.errors import record_degradation
 import asyncio
+import json
 import logging
 import os
 import random
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 from core.config import config
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Kernel.Network")
 
@@ -24,30 +26,27 @@ class RequestStats:
     last_request_time: Optional[datetime] = None
 
 class RobustHTTP:
-    """Enterprise-grade Async HTTP client using httpx.
-    
+    """Async HTTP facade backed by Aura's canonical network gateway.
+
     Features:
-    1. Native asyncio support via httpx.AsyncClient
-    2. Connection pooling and keep-alive
+    1. Native asyncio compatibility for legacy callers
+    2. Canonical network governance through NetworkGateway
     3. TLS 1.2+ enforcement
     4. Request rate limiting
     5. User-agent rotation
     6. Detailed metrics and logging
     """
-    
+
     USER_AGENTS = [
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
         'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15'
     ]
-    
+
     def __init__(self, timeout: float = 30.0):
-        self.client = httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=True,
-            headers={"User-Agent": random.choice(self.USER_AGENTS)}
-        )
+        self.timeout = timeout
+        self.default_headers = {"User-Agent": random.choice(self.USER_AGENTS)}
         self.stats = RequestStats()
         self.requests_per_minute = 60
         self.request_history = deque(maxlen=500)
@@ -58,12 +57,12 @@ class RobustHTTP:
             now = datetime.now()
             cutoff = now - timedelta(minutes=1)
             self.request_history = deque((t for t in self.request_history if t > cutoff), maxlen=500)
-            
+
             if len(self.request_history) >= self.requests_per_minute:
                 wait_time = 60 - (now - self.request_history[0]).total_seconds()
                 logger.warning("Rate limit exceeded. Waiting %.1fs", wait_time)
                 await asyncio.sleep(min(wait_time, 5.0))
-            
+
             self.request_history.append(now)
 
     def _is_url_allowed(self, url: str) -> bool:
@@ -71,7 +70,7 @@ class RobustHTTP:
         allowed_domains = ["api.github.com", "localhost", "127.0.0.1"]
         if any(parsed == d or parsed.endswith("." + d) for d in allowed_domains):
             return True
-            
+
         if parsed.startswith("192.168.") or parsed.startswith("10."):
             return True
         if parsed.startswith("172."):
@@ -81,7 +80,7 @@ class RobustHTTP:
                     return True
             except (ValueError, IndexError):
                 logger.debug('Ignored Exception in network.py: %s', "unknown_error")
-                
+
         if os.getenv("AURA_ALLOW_OUTBOUND", "false").lower() == "true":
             return True
         return False
@@ -90,9 +89,9 @@ class RobustHTTP:
         await self._check_rate_limit()
         if not self._is_url_allowed(url):
             raise ValueError(f"Outbound access to {urlparse(url).netloc} restricted.")
-            
+
         try:
-            response = await self.client.get(url, **kwargs)
+            response = await self._request_via_gateway("GET", url, **kwargs)
             self.stats.total_requests += 1
             self.stats.last_request_time = datetime.now()
             if response.status_code < 400:
@@ -110,9 +109,9 @@ class RobustHTTP:
         await self._check_rate_limit()
         if not self._is_url_allowed(url):
             raise ValueError(f"Outbound access to {urlparse(url).netloc} restricted.")
-            
+
         try:
-            response = await self.client.post(url, **kwargs)
+            response = await self._request_via_gateway("POST", url, **kwargs)
             self.stats.total_requests += 1
             self.stats.last_request_time = datetime.now()
             if response.status_code < 400:
@@ -127,5 +126,48 @@ class RobustHTTP:
             raise
 
     async def close(self):
-        await self.client.aclose()
-        logger.info("Async HTTP client closed")
+        logger.info("RobustHTTP gateway facade closed")
+
+    async def _request_via_gateway(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        request_url = _merge_params(url, kwargs.get("params"))
+        headers = dict(self.default_headers)
+        headers.update({str(k): str(v) for k, v in dict(kwargs.get("headers") or {}).items()})
+        payload = _coerce_gateway_payload(kwargs)
+        timeout = kwargs.get("timeout", self.timeout)
+
+        result = await asyncio.to_thread(
+            get_network_gateway().request,
+            method,
+            request_url,
+            headers=headers,
+            data=payload,
+            timeout=float(timeout),
+            source=f"core.network.robust_http.{method.lower()}",
+            read_only=(method.upper() in {"GET", "HEAD", "OPTIONS"}),
+        )
+        if int(result.get("status_code") or 0) <= 0:
+            raise httpx.RequestError(str(result.get("error") or "gateway request failed"))
+        request = httpx.Request(method.upper(), request_url, headers=headers)
+        return httpx.Response(
+            int(result.get("status_code") or 0),
+            content=bytes(result.get("content") or b""),
+            headers=dict(result.get("headers") or {}),
+            request=request,
+        )
+
+
+def _merge_params(url: str, params: Any) -> str:
+    if params in (None, "", {}, []):
+        return url
+    return str(httpx.URL(url).copy_merge_params(params))
+
+
+def _coerce_gateway_payload(kwargs: dict[str, Any]) -> bytes | str | None:
+    if "json" in kwargs:
+        return json.dumps(kwargs["json"])
+    data = kwargs.get("data")
+    if data is None or isinstance(data, (bytes, str)):
+        return data
+    if isinstance(data, dict):
+        return str(httpx.QueryParams(data))
+    return str(data)
