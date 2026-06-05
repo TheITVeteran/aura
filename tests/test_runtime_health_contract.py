@@ -377,3 +377,24 @@ def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
     assert report["operational"] is False
     assert report["status_code"] == 503
     assert report["probe_blockers"] == ["runtime_required_probes", "probe:inference", "probe:memory", "probe:scheduler", "probe:tool_governance"]
+
+
+def test_health_verdict_status_code_uses_required_probe_groups(monkeypatch):
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+
+    def forged_probe_status(_services):
+        return {
+            "all_passed": True,
+            "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        }
+
+    monkeypatch.setattr(
+        "core.runtime.health_contract._required_probe_status_from_services",
+        forged_probe_status,
+    )
+
+    verdict = evaluate_health()
+
+    assert verdict.level == HealthLevel.HEALTHY
+    assert verdict.is_operational is True
+    assert verdict.status_code == 503

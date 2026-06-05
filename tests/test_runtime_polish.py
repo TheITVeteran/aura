@@ -117,7 +117,7 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "get_network_gateway().request" in gui_actor
     assert "_gateway_heartbeat_healthy(resp)" in gui_actor
     assert "resp.status_code == 200" not in gui_actor
-    assert "tool_governance" in gui_actor
+    assert "REQUIRED_HEALTH_PROBE_GROUPS" in gui_actor
 
 
 def test_gui_actor_rejects_heartbeat_without_required_probe_groups():

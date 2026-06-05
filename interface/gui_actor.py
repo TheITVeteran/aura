@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.runtime.errors import record_degradation
+from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 from core.runtime.network_gateway import get_network_gateway
 
 
@@ -49,15 +50,6 @@ _GUI_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
-_REQUIRED_RUNTIME_PROBE_COMPONENTS = {
-    "kernel": ("kernel_interface",),
-    "inference": ("inference_gate", "llm_router"),
-    "memory": ("state_repository", "memory_facade"),
-    "scheduler": ("scheduler",),
-    "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
-}
-
-
 def _flush_logs_before_forced_exit() -> None:
     try:
         logging.shutdown()
@@ -78,7 +70,7 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
     probes = payload.get("required_probes")
     if not isinstance(probes, dict) or not bool(probes.get("all_passed", False)):
         return False
-    for group, expected_components in _REQUIRED_RUNTIME_PROBE_COMPONENTS.items():
+    for group, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
         probe = probes.get(group)
         if not isinstance(probe, dict) or not bool(probe.get("ok", False)):
             return False

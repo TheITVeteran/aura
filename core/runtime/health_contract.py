@@ -301,7 +301,12 @@ class HealthVerdict:
 
     @property
     def status_code(self) -> int:
-        return 200 if self.is_operational else 503
+        services = {
+            status.requirement.container_key: _service_status_payload(status)
+            for status in self.services
+        }
+        required_probes = _required_probe_status_from_services(services)
+        return 200 if self.is_operational and required_probe_groups_pass(required_probes) else 503
 
     def summary(self) -> str:
         lines = [f"Health: {self.level.value.upper()}"]
