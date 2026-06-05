@@ -26,7 +26,9 @@ from typing import Any
 
 from core.container import ServiceContainer, ServiceLifetime
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.Environment")
 
@@ -166,28 +168,21 @@ async def _run_command(cmd: list[str], timeout_s: float = 5.0) -> str:
         return ""
     timeout_s = max(0.1, min(float(timeout_s or 5.0), 15.0))
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await get_subprocess_gateway().run_async(
+            cmd,
+            timeout=timeout_s,
+            read_only=True,
+            capture_output=True,
+            source="core.environment_awareness.run_command",
         )
-        try:
-            async with asyncio.timeout(timeout_s):
-                stdout, stderr = await proc.communicate()
-            if proc.returncode == 0:
-                return stdout.decode().strip()
-            if stderr:
-                logger.debug("Environment command stderr from %s: %s", executable, stderr.decode(errors="replace")[:300])
-        except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
-            _record_environment_degradation(
-                exc,
-                action="timed out and killed environment probe command",
-                severity="warning",
-                extra={"command": executable, "timeout_s": timeout_s},
+        if result.returncode == 0:
+            return result.stdout.strip()
+        if result.stderr:
+            logger.debug(
+                "Environment command stderr from %s: %s",
+                executable,
+                result.stderr[:300],
             )
-            logger.debug("Command timed out: %s", " ".join(cmd))
     except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as e:
         _record_environment_degradation(
             e,
@@ -509,7 +504,12 @@ class UserIdentityManager:
         try:
             self._data_path.parent.mkdir(parents=True, exist_ok=True)
             payload = json.dumps(self._known_fingerprints, ensure_ascii=False, indent=2)
-            self._data_path.write_text(payload, encoding="utf-8")
+            get_file_write_gateway().write_text(
+                self._data_path,
+                payload,
+                encoding="utf-8",
+                source="core.environment_awareness.save_known_fingerprints",
+            )
         except _ENVIRONMENT_ERRORS as e:
             _record_environment_degradation(
                 e,

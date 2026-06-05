@@ -196,10 +196,6 @@ EXEMPT_FILES = {
         "justification": "Exposes standard external network messaging interfaces.",
         "compensating_tests": "tests/test_external_chat.py"
     },
-    "core/environment_awareness.py": {
-        "justification": "Gathers live telemetry metrics of CPU/memory.",
-        "compensating_tests": "tests/test_environment_awareness.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"
