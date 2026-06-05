@@ -164,6 +164,7 @@ SELF_DESCRIPTIVE_PATTERN_FILES = {
     "core/utils/safe_import.py",
     "core/verification/decision_verifier.py",
     "tests/agi/live/test_live_harness_proof.py",
+    "tests/test_semantic_marker_audit.py",
     "tools/agi/run_live_harness_proof.py",
     "tools/closeout/run_codebase_closeout_audit.py",
 }

@@ -11,7 +11,7 @@ from core.consciousness.apply_patches import apply_consciousness_patches
 from core.consciousness.phenomenological_experiencer import PhenomenologicalExperiencer
 
 
-class _DummyMonitor:
+class _TestMonitor:
     def __init__(self) -> None:
         self.started = False
 
@@ -19,7 +19,7 @@ class _DummyMonitor:
         self.started = True
 
 
-class _DummyContinuity:
+class _TestContinuity:
     def __init__(self) -> None:
         self._moments = deque()
         self._thread = ""
@@ -43,7 +43,7 @@ class _DummyContinuity:
 def test_apply_consciousness_patches_is_native_compatibility_hook(monkeypatch):
     import core.consciousness.loop_monitor as loop_monitor_module
 
-    monitor = _DummyMonitor()
+    monitor = _TestMonitor()
     monkeypatch.setattr(loop_monitor_module, "get_loop_monitor", lambda orchestrator: monitor)
 
     save_fn = PhenomenologicalExperiencer._save_phenomenal_memory
@@ -91,30 +91,30 @@ def test_load_phenomenal_memory_restores_waking_thread_and_moment_tail(tmp_path:
         )
     )
 
-    dummy = SimpleNamespace(
+    experiencer = SimpleNamespace(
         save_dir=tmp_path,
         psm=SimpleNamespace(
             _phenomenal_reports=[],
             _witness_observation="",
             _present_description="",
         ),
-        continuity=_DummyContinuity(),
+        continuity=_TestContinuity(),
         _current_emotion="neutral",
     )
-    dummy._seed_continuity_from_memory = MethodType(
+    experiencer._seed_continuity_from_memory = MethodType(
         PhenomenologicalExperiencer._seed_continuity_from_memory,
-        dummy,
+        experiencer,
     )
 
-    PhenomenologicalExperiencer._load_phenomenal_memory(dummy)
+    PhenomenologicalExperiencer._load_phenomenal_memory(experiencer)
 
-    assert dummy.psm._phenomenal_reports == ["report"]
-    assert dummy.psm._witness_observation == "witness"
-    assert dummy.psm._present_description == "present"
-    assert dummy._current_emotion == "curious"
-    assert len(dummy.continuity._moments) == 1
-    assert "Returning after" in dummy.continuity.current_thread
-    assert "deeply following a proof" in dummy.continuity.current_thread
+    assert experiencer.psm._phenomenal_reports == ["report"]
+    assert experiencer.psm._witness_observation == "witness"
+    assert experiencer.psm._present_description == "present"
+    assert experiencer._current_emotion == "curious"
+    assert len(experiencer.continuity._moments) == 1
+    assert "Returning after" in experiencer.continuity.current_thread
+    assert "deeply following a proof" in experiencer.continuity.current_thread
 
 
 def test_agency_core_self_development_prefers_native_audit_targeting(monkeypatch):
@@ -138,17 +138,17 @@ def test_agency_core_self_development_prefers_native_audit_targeting(monkeypatch
         lambda: SimpleNamespace(get_trend=lambda n=5: {"latest_index": 0.72, "index_trend": "stable"}),
     )
 
-    dummy = SimpleNamespace(
+    agency = SimpleNamespace(
         state=SimpleNamespace(
             initiative_energy=0.8,
             last_skill_use=0.0,
         )
     )
 
-    action = AgencyCore._pathway_self_development(dummy, now=8000.0, idle_seconds=1200.0)
+    action = AgencyCore._pathway_self_development(agency, now=8000.0, idle_seconds=1200.0)
 
     assert action is not None
     assert action["skill"] == "attention_deepening"
     assert action["audit_driven"] is True
     assert action["theory_target"] == "GWT"
-    assert dummy.state.last_skill_use == 8000.0
+    assert agency.state.last_skill_use == 8000.0

@@ -12,7 +12,7 @@ from core.orchestrator import RobustOrchestrator
 from core.orchestrator.orchestrator_types import SystemStatus
 from core.utils.queues import unpack_priority_message
 
-# mock_container and orchestrator fixtures migrated to tests/conftest.py v14.1
+# container and orchestrator fixtures migrated to tests/conftest.py v14.1
 
 # Using centralized fixtures from conftest.py
 
@@ -25,7 +25,7 @@ def test_orchestrator_properties(orchestrator, mock_container):
     assert orchestrator.project_store is not None
     assert orchestrator.intent_router is not None
     # Test missing component fallback - should raise AttributeError
-    # (Since we mocked them all as TRUTHY in conftest.py, we check one we DIDN'T mock)
+    # The fixture supplies truthy core services, so verify a missing component.
     with pytest.raises(AttributeError):
         _ = orchestrator.nonsense_component
 
@@ -39,7 +39,7 @@ async def test_process_user_input_direct(orchestrator):
     with patch.object(orchestrator.message_queue, "put_nowait", side_effect=asyncio.QueueFull):
         pass  # Not applicable to direct invoke but good safety check
 
-    # Queue up a mock reply from the state machine pipeline
+    # Queue up a controlled reply from the state machine pipeline.
     async def mock_handler(*args, **kwargs):
         await orchestrator.reply_queue.put("Mocked reply")
 
@@ -138,7 +138,7 @@ async def test_process_user_input_timeout(orchestrator):
     # Setup test message
     test_msg = "Think really hard"
 
-    # We will mock _process_message directly for this specific timeout case
+    # Patch _process_message directly for this specific timeout case.
     # This avoids pytest-asyncio getting permanently stuck waiting on the Queue.get()
     with patch.object(
         orchestrator, "_process_message", return_value="I'm sorry, my cognitive loop timed out."
@@ -149,7 +149,7 @@ async def test_process_user_input_timeout(orchestrator):
 
 @pytest.mark.asyncio
 async def test_process_user_input_complex(orchestrator):
-    # We will mock process_user_input directly for this specific timeout case
+    # Patch process_user_input directly for this specific timeout case.
     # This avoids pytest-asyncio getting permanently stuck waiting on the Queue.get()
     # Use the hardened tracker patch
     with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
@@ -413,7 +413,7 @@ async def test_retry_brain_connection(orchestrator):
     mock_brain.setup = MagicMock()
     mock_brain.client = MagicMock()
     mock_brain.autonomous_brain = MagicMock()
-    # Set the override so self.cognitive_engine returns our mock
+    # Set the override so self.cognitive_engine returns the test double.
     orchestrator._cognitive_engine_override = mock_brain
 
     with patch("core.container.get_container"):
@@ -557,10 +557,10 @@ async def test_handle_signal(orchestrator):
 async def test_process_cycle(orchestrator, mock_container):
     orchestrator.status.cycle_count = 499
 
-    # Batch 3 Fix: Inject mock cognitive_loop to support the cycle shim
+    # Batch 3 Fix: inject a cognitive_loop test double to support the cycle shim.
     mock_loop = MagicMock()
 
-    # Mocking CognitiveLoop._process_cycle increment
+    # Control CognitiveLoop._process_cycle increment.
     async def _mock_cycle():
         orchestrator.status.cycle_count += 1
 
@@ -780,7 +780,7 @@ async def test_acquire_next_message_real_queue(orchestrator):
 
 @pytest.mark.asyncio
 async def test_emit_thought_stream_cognitive_engine(orchestrator):
-    # Mock cognititive_engine
+    # Inject a cognitive_engine test double.
     mock_ce = MagicMock()
     mock_ce._emit_thought = MagicMock()  # SYNC in source
     orchestrator._cognitive_engine_override = mock_ce
@@ -833,7 +833,7 @@ async def test_retry_cognitive_connection_flow(orchestrator):
     mock_ce.lobotomized = False
     mock_ce.client = MagicMock()
     mock_ce.autonomous_brain = MagicMock()
-    # Set override so self.cognitive_engine returns our mock
+    # Set override so self.cognitive_engine returns the test double.
     orchestrator._cognitive_engine_override = mock_ce
 
     with patch("core.container.get_container"):
@@ -959,7 +959,7 @@ async def test_perform_autonomous_thought_reflective_lite(orchestrator):
                 mock_get_ref.return_value = MagicMock()
 
                 await orchestrator._perform_autonomous_thought()
-                # Mock resolution works!
+                # Dependency resolution completes without escaping the harness.
 
 
 # =====================================================================
@@ -1068,7 +1068,7 @@ def test_enqueue_from_thread_dict_message(orchestrator):
         orchestrator.loop = MagicMock()
         orchestrator.loop.is_running.return_value = True
 
-        # Mock call_soon_threadsafe to actually execute the put
+        # Patch call_soon_threadsafe to execute the put synchronously.
         def mock_call_soon(func, *args):
             func(*args)
 
@@ -1786,7 +1786,7 @@ async def test_finalize_response_empty_response(orchestrator):
         side_effect=lambda resp, *args, **kwargs: resp
     )
 
-    # Mock LLM router/cerebellum to avoid its own failures
+    # Use an LLM router/cerebellum test double to isolate finalize_response.
     mock_llm = MagicMock()
     mock_llm.think = AsyncMock(return_value=MagicMock(content="Fallback response"))
     mock_llm.get_reflex_response.return_value = ""
@@ -2322,8 +2322,6 @@ def safe_set(obj, key, val):
 
 @pytest.mark.asyncio
 async def test_perform_autonomous_thought_goal(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     goal_mock = MagicMock(description="Clean up database", id="g1")
@@ -2354,8 +2352,6 @@ async def test_perform_autonomous_thought_goal(orchestrator):
 
 @pytest.mark.asyncio
 async def test_perform_autonomous_thought_dream_without_goal(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     hierarchy_mock = MagicMock()
@@ -2411,8 +2407,6 @@ async def test_perform_autonomous_thought_dream_without_goal(orchestrator):
 
 @pytest.mark.asyncio
 async def test_perform_autonomous_thought_reflect(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     hierarchy_mock = MagicMock()
@@ -2579,8 +2573,6 @@ async def test_handle_action_step_exception(orchestrator):
 # --- Streaming and helpers (line 1980-2070) ---
 @pytest.mark.asyncio
 async def test_chat_stream_legacy_broken(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     orchestrator.conversation_history = []
@@ -2614,7 +2606,7 @@ async def test_chat_stream_legacy_broken(orchestrator):
 
 @pytest.mark.asyncio
 async def test_sentence_stream_generator(orchestrator):
-    # Mock chat_stream to return partial tokens
+    # Patch chat_stream to return partial tokens.
     async def mock_stream(*args, **kwargs):
         yield "Hello"
         yield " world."
@@ -2639,8 +2631,6 @@ def test_get_current_mood_and_time_exception(orchestrator):
 
 # --- final gap fillers ---
 def test_trigger_background_reflection_exception(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     with patch.object(
@@ -2668,8 +2658,6 @@ def test_trigger_background_learning_exception(orchestrator):
 
 @pytest.mark.asyncio
 async def test_learn_from_exchange_kg_init(orchestrator):
-    from unittest.mock import PropertyMock
-
     from core.orchestrator import RobustOrchestrator
 
     with patch.object(
@@ -2700,7 +2688,7 @@ async def test_process_user_input_queue_full(orchestrator):
     orchestrator._handle_incoming_message = AsyncMock(side_effect=asyncio.QueueFull())
 
     with patch("core.thought_stream.get_emitter"):
-        # Just mock a timeout response directly instead of letting it raise internally
+        # Patch a timeout response directly instead of letting it raise internally.
         with patch.object(
             orchestrator, "_process_message", return_value={"ok": False, "error": "overloaded"}
         ):
@@ -2724,7 +2712,7 @@ async def test_process_user_input_timeout_still_running(orchestrator):
     orchestrator._handle_incoming_message = AsyncMock()
 
     with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
-        # We mock process_message directly here
+        # Patch process_message directly here.
         with patch.object(
             orchestrator,
             "_process_message",
@@ -2791,7 +2779,7 @@ async def test_check_direct_skill_shortcut_search(orchestrator, monkeypatch):
         lambda origin: True,
     )
 
-    # Mock mycelium.match_hardwired
+    # Patch mycelium.match_hardwired.
     mock_mycelium = MagicMock()
     mock_pw = MagicMock()
     mock_pw.direct_response = None
@@ -2828,7 +2816,7 @@ async def test_handle_incoming_message_queue_full(orchestrator):
     orchestrator._state_machine_override = MagicMock()
     orchestrator._state_machine_override.execute = AsyncMock()
 
-    # Safely mock the queue on the existing orchestrator instead of reassigning properties
+    # Patch the queue on the existing orchestrator instead of reassigning properties.
     if hasattr(orchestrator, "reply_queue"):
         orchestrator.reply_queue.put_nowait = MagicMock(side_effect=asyncio.QueueFull())
 
