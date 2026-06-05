@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SwarmSandbox")
 
@@ -45,18 +47,18 @@ class WorkerSandbox:
             if sys.platform != "win32":
                 proc_argv = ["nice", "-n", "10"] + argv
 
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 proc_argv,
                 cwd=self.workspace_path,
                 env=sandbox_env,
                 capture_output=True,
-                text=True,
                 timeout=timeout,
+                source="swarm_worker_sandbox",
             )
             return result
         except subprocess.TimeoutExpired as exc:
             logger.error("Sandbox command timed out after %ds", timeout)
             raise TimeoutError(f"Sandbox command timed out: {exc}") from exc
-        except Exception as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.error("Sandbox execution failed: %s", exc)
             raise RuntimeError(f"Sandbox execution failed: {exc}") from exc

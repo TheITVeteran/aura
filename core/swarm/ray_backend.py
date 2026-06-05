@@ -5,7 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, List
 
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.SwarmRay")
+_RAY_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 try:
     import ray
@@ -27,7 +37,12 @@ class RayBackend:
                     ray.init(ignore_reinit_error=True)
                 self.active = True
                 logger.info("⚡ Ray distributed backend connected successfully.")
-            except Exception as e:
+            except _RAY_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "ray_backend",
+                    e,
+                    action="used local thread execution after optional Ray backend initialization failed",
+                )
                 logger.warning("Failed to initialize Ray cluster: %s. Falling back to local.", e)
 
     def is_available(self) -> bool:

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.MinorityReport")
 
@@ -39,9 +40,14 @@ class MinorityReportStore:
         """Appends a new dissent entry to the log file."""
         logger.warning("📝 Minority Report filed by %s on %s!", disagreement.dissenting_role, disagreement.mission_id)
         try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(asdict(disagreement)) + "\n")
-        except OSError as e:
+            existing = self.log_path.read_text(encoding="utf-8") if self.log_path.exists() else ""
+            payload = existing + json.dumps(asdict(disagreement), sort_keys=True) + "\n"
+            get_file_write_gateway().write_text(
+                self.log_path,
+                payload,
+                source="minority_report.record_dissent",
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as e:
             logger.error("Failed to write minority report: %s", e)
 
     def list_dissents(self) -> List[MinorityDisagreement]:
@@ -49,11 +55,10 @@ class MinorityReportStore:
             return []
         entries = []
         try:
-            with open(self.log_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        entries.append(MinorityDisagreement(**data))
+            for line in self.log_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    data = json.loads(line)
+                    entries.append(MinorityDisagreement(**data))
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to read minority reports: %s", e)
         return entries

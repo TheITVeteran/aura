@@ -16,6 +16,14 @@ from interface.auth import _require_internal
 
 logger = logging.getLogger("Aura.Server.MissionControl")
 router = APIRouter(prefix="/mission_control", tags=["mission_control"])
+_MISSION_CONTROL_RECOVERABLE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 @router.get("/status")
@@ -35,10 +43,12 @@ async def status(_: None = Depends(_require_internal)) -> JSONResponse:
     forge = kernel.get_subsystem("forge")
     auditor = kernel.get_subsystem("auditor")
     cloud_body = kernel.get_subsystem("cloud_body")
+    kernel_health = kernel.health_status()
 
     status_payload = {
         "timestamp": time.time(),
-        "kernel_online": kernel._initialized,
+        "kernel_online": kernel_health["healthy"],
+        "kernel_health": kernel_health,
         "active_missions": kernel.active_missions,
         "perception_scans": getattr(perception, "last_scan_count", 0) if perception else 0,
         "claims_tracked": len(world_model.graph.nodes) if (world_model and hasattr(world_model, "graph")) else 0,
@@ -71,7 +81,7 @@ async def run_mission(payload: Dict[str, Any], _: None = Depends(_require_intern
         # For control panel requests, we execute and return the consensus result
         result = await kernel.execute_mission(objective, constraints=payload.get("constraints"))
         return JSONResponse({"ok": True, "result": result})
-    except Exception as e:
+    except _MISSION_CONTROL_RECOVERABLE_ERRORS as e:
         logger.error("Error running mission via cockpit API: %s", e, exc_info=True)
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
     finally:

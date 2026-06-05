@@ -9,8 +9,18 @@ from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
 from core.runtime.action_executor import ActionExecutor
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LeviathanKernel")
+_KERNEL_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class LeviathanKernel:
@@ -18,12 +28,18 @@ class LeviathanKernel:
 
     def __init__(self) -> None:
         self.subsystems: Dict[str, Any] = {}
+        self.critical_subsystems: set[str] = set()
+        self.startup_failures: Dict[str, str] = {}
         self.active_missions: List[str] = []
         self._initialized = False
 
-    def register_subsystem(self, name: str, instance: Any) -> None:
+    def register_subsystem(self, name: str, instance: Any, *, critical: bool = False) -> None:
         """Dynamically plug in a Leviathan component."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("subsystem name must be a non-empty string")
         self.subsystems[name] = instance
+        if critical:
+            self.critical_subsystems.add(name)
         logger.info("🔌 Leviathan Kernel registered subsystem: %s", name)
 
     def get_subsystem(self, name: str) -> Optional[Any]:
@@ -34,16 +50,40 @@ class LeviathanKernel:
         if self._initialized:
             return
 
-        logger.info("🛡️  Leviathan Kernel initializing all organs...")
+        self.startup_failures.clear()
+        logger.info("🛡️  Leviathan Kernel initializing registered subsystems...")
         for name, subsystem in self.subsystems.items():
             if hasattr(subsystem, "initialize") and callable(subsystem.initialize):
                 try:
                     await subsystem.initialize()
-                except Exception as e:
+                except _KERNEL_RECOVERABLE_ERRORS as e:
+                    self.startup_failures[name] = str(e)
+                    record_degradation(
+                        "leviathan_kernel",
+                        e,
+                        action="blocked critical subsystem startup or degraded optional subsystem",
+                        extra={"subsystem": name, "critical": name in self.critical_subsystems},
+                    )
                     logger.error("Failed to initialize subsystem %s: %s", name, e, exc_info=True)
+                    if name in self.critical_subsystems:
+                        self._initialized = False
+                        raise RuntimeError(f"critical_subsystem_failed:{name}") from e
 
         self._initialized = True
         logger.info("👑 Leviathan Kernel fully online.")
+
+    def health_status(self) -> Dict[str, Any]:
+        """Return explicit kernel health without conflating heartbeat and readiness."""
+        missing_critical = sorted(name for name in self.critical_subsystems if name not in self.subsystems)
+        failed_critical = sorted(name for name in self.critical_subsystems if name in self.startup_failures)
+        healthy = self._initialized and not missing_critical and not failed_critical
+        return {
+            "initialized": self._initialized,
+            "healthy": healthy,
+            "critical_subsystems": sorted(self.critical_subsystems),
+            "missing_critical": missing_critical,
+            "startup_failures": dict(self.startup_failures),
+        }
 
     async def execute_mission(self, objective: str, constraints: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Runs a strategic campaign mission through the unified cognition flow."""

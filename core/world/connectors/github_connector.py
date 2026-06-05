@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from typing import Any, Dict, List
 
+from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.Perception.GitHubConnector")
+_CONNECTOR_RECOVERABLE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class GitHubConnector:
@@ -22,25 +32,25 @@ class GitHubConnector:
         results = []
 
         try:
-            url = f"https://api.github.com/search/repositories?q={query}&sort=stars"
+            encoded = urllib.parse.urlencode({"q": query, "sort": "stars"})
+            url = f"https://api.github.com/search/repositories?{encoded}"
             response = gateway.request(method="GET", url=url, timeout=5.0, source="github_connector")
             if response.get("ok"):
+                content = response.get("content") or b""
+                text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
                 results.append({
                     "title": f"GitHub Search Result: {query}",
                     "source": "github.com",
-                    "content": response.get("body", "Repo info"),
+                    "content": text[:2000],
                     "url": url,
                     "confidence": 0.90,
                 })
-        except Exception as e:
+        except _CONNECTOR_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "github_connector",
+                e,
+                action="returned no GitHub perception items after governed fetch failure",
+                extra={"query": query[:200]},
+            )
             logger.debug("GitHub connector query degraded: %s", e)
-
-        # Fallback repository stub
-        results.append({
-            "title": f"Sovereign AI Runtime Framework ({query})",
-            "source": "github.com",
-            "content": f"Active repository youngbryan97/aura containing sovereign agentic kernel implementations, memory systems, and Will safety gates.",
-            "url": "https://github.com/youngbryan97/aura",
-            "confidence": 0.95,
-        })
         return results

@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from typing import Any, Dict, List
 
+from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.Perception.WebConnector")
+_CONNECTOR_RECOVERABLE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class WebConnector:
@@ -20,38 +30,33 @@ class WebConnector:
         """Query search engines and return structured results."""
         logger.info("🌐 Fetching web info for: '%s'", query)
         
-        # In a real environment, we'd query Google/Bing/DuckDuckGo via NetworkGateway
-        # Let's perform a governed sandbox request stub to simulate, or fall back to structured data
         gateway = get_network_gateway()
         results = []
 
         try:
-            # Under strict network rules, we check if allowed.
-            # If network access is disabled, this will raise or degrade gracefully.
+            encoded = urllib.parse.urlencode({"q": query, "format": "json"})
             response = gateway.request(
                 method="GET",
-                url=f"https://api.duckduckgo.com/?q={query}&format=json",
+                url=f"https://api.duckduckgo.com/?{encoded}",
                 timeout=5.0,
                 source="web_connector",
             )
             if response.get("ok"):
-                # Parse search response
+                content = response.get("content") or b""
+                text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
                 results.append({
                     "title": f"DuckDuckGo Search: {query}",
                     "source": "duckduckgo.com",
-                    "content": response.get("body", "No description available"),
+                    "content": text[:2000],
                     "url": f"https://duckduckgo.com/?q={query}",
                     "confidence": 0.80,
                 })
-        except Exception as e:
-            logger.debug("Web search query degraded: %s. Using local knowledge stub.", e)
-
-        # Fallback structured mock data to ensure 100% test reliability
-        results.append({
-            "title": f"Web Synthesis for {query}",
-            "source": "web_connector_internal",
-            "content": f"Structured web summary detailing current landscape changes for '{query}'. AI agent frameworks are converging on Model Context Protocol (MCP) and model councils.",
-            "url": "local://perception/web_stub",
-            "confidence": 0.90,
-        })
+        except _CONNECTOR_RECOVERABLE_ERRORS as e:
+            record_degradation(
+                "web_connector",
+                e,
+                action="returned no web perception items after governed fetch failure",
+                extra={"query": query[:200]},
+            )
+            logger.debug("Web search query degraded: %s", e)
         return results

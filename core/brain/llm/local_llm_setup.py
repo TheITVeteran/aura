@@ -13,6 +13,8 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.network_gateway import get_network_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Brain.LocalLLM")
 
@@ -68,22 +70,21 @@ class LocalLLMServer(ABC):
 
     async def is_running(self) -> bool:
         try:
-            # Most local servers have a health or version endpoint
-            import httpx
-        except ImportError as exc:
-            logger.debug("Local LLM health check unavailable on port %s: %s", self.port, exc)
-            return False
-
-        try:
-            async with httpx.AsyncClient() as client:
-                url = (
-                    f"http://localhost:{self.port}/api/tags"
-                    if self.port == 11434
-                    else f"http://localhost:{self.port}/v1/models"
-                )
-                response = await client.get(url, timeout=2)
-                return response.status_code == 200
-        except (httpx.HTTPError, AttributeError, RuntimeError, OSError) as exc:
+            url = (
+                f"http://localhost:{self.port}/api/tags"
+                if self.port == 11434
+                else f"http://localhost:{self.port}/v1/models"
+            )
+            response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "GET",
+                url,
+                timeout=2,
+                source="maintenance_tooling:local_llm_health",
+                read_only=True,
+            )
+            return int(response.get("status_code") or 0) == 200
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             logger.debug("Local LLM health check unavailable on port %s: %s", self.port, exc)
             return False
 
@@ -98,14 +99,17 @@ class OllamaManager(LocalLLMServer):
             logger.error("❌ Ollama not found. Please install from https://ollama.com")
             return False
         try:
-            subprocess.run(
+            proc = get_subprocess_gateway().run(
                 ["ollama", "--version"],
-                check=True,
                 capture_output=True,
                 timeout=_VERSION_TIMEOUT_S,
+                source="maintenance_tooling:local_llm_setup",
+                offline_tooling=True,
             )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ollama --version failed")
             return True
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        except _LOCAL_LLM_RECOVERABLE_ERRORS as exc:
             _record_local_llm_degradation(
                 exc,
                 action="reported ollama unavailable before local model boot",
@@ -118,20 +122,27 @@ class OllamaManager(LocalLLMServer):
         """Ensures the Titan model is pulled."""
         logger.info("Checking for Titan model: %s", self.model_name)
         try:
-            res = subprocess.run(
+            res = get_subprocess_gateway().run(
                 ["ollama", "list"],
-                check=True,
                 capture_output=True,
                 text=True,
                 timeout=_LIST_TIMEOUT_S,
+                source="maintenance_tooling:local_llm_setup",
+                offline_tooling=True,
             )
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip() or "ollama list failed")
             if self.model_name not in res.stdout:
                 logger.info("📥 Pulling %s... this may take a while.", self.model_name)
-                subprocess.run(
+                pull = get_subprocess_gateway().run(
                     ["ollama", "pull", self.model_name],
-                    check=True,
                     timeout=_PULL_TIMEOUT_S,
+                    capture_output=True,
+                    source="maintenance_tooling:local_llm_setup",
+                    offline_tooling=True,
                 )
+                if pull.returncode != 0:
+                    raise RuntimeError(pull.stderr.strip() or f"ollama pull {self.model_name} failed")
             return True
         except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
             _record_local_llm_degradation(
@@ -150,13 +161,12 @@ class OllamaManager(LocalLLMServer):
 
         logger.info("🚀 Starting Ollama serve...")
         try:
-            # We don't usually need to start 'ollama serve' manually if the service is running,
-            # but for a self-contained system we attempt it.
-            self.process = await asyncio.create_subprocess_exec(
-                "ollama",
-                "serve",
+            self.process = await get_subprocess_gateway().spawn_async(
+                ["ollama", "serve"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                source="maintenance_tooling:local_llm_setup",
+                offline_tooling=True,
             )
             # Poll for readiness instead of blind sleep
             for _ in range(_SERVE_READY_ATTEMPTS):

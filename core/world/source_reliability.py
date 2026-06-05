@@ -49,7 +49,6 @@ _monitor_instance: SourceReliabilityMonitor | None = None
 
 
 def get_source_reliability_monitor() -> SourceReliabilityMonitor:
-    global _instance
     global _monitor_instance
     if _monitor_instance is None:
         _monitor_instance = SourceReliabilityMonitor()

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import asyncio
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
@@ -27,6 +28,7 @@ import httpx
 from core.resilience.factory import circuit_breaker
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.network_gateway import get_network_gateway
 from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Brain.Gemini")
@@ -294,7 +296,6 @@ class GeminiAdapter:
         self.model = model or self.CHAT_MODEL
         self.timeout = timeout
         self.rate_limiter = rate_limiter or DailyRateLimiter()
-        self._client: httpx.AsyncClient | None = None
         self._disabled_until: float = 0.0
         self._disabled_reason: str = ""
         logger.info("✨ GeminiAdapter initialized: model=%s", self.model)
@@ -311,25 +312,45 @@ class GeminiAdapter:
         self._disabled_reason = str(reason or "gemini_provider_unavailable")
         self._disabled_until = time.monotonic() + max(60.0, float(cooldown_s or 3600.0))
     
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout, connect=10.0),
-                headers={"Content-Type": "application/json"},
-            )
-        return self._client
-    
     async def close(self):
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        return None
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any], str]:
+        response = await asyncio.to_thread(
+            get_network_gateway().request,
+            "POST",
+            url,
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=self.timeout,
+            source=f"llm_provider:gemini:{self.model}",
+            read_only=True,
+        )
+        body = response.get("content") or b""
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+        data: dict[str, Any] = {}
+        if text.strip():
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {}
+        return int(response.get("status_code") or 0), data, text
     
     async def _handle_error(self, response: httpx.Response):
         """Standardized error handling for Gemini API."""
         error_body = await response.aread()
+        await self._handle_error_payload(response.status_code, error_body)
+
+    async def _handle_error_payload(self, status_code: int, error_body: bytes | str):
+        """Standardized error handling for Gemini API gateway responses."""
+        if isinstance(error_body, str):
+            error_body = error_body.encode("utf-8", errors="replace")
         text = error_body.decode('utf-8', errors='replace')
         lowered = text.lower()
         
-        if response.status_code == 429:
+        if status_code == 429:
             retry_after = self._parse_retry_after(error_body)
             # Permanent Quota exhaustion detection
             if "quota" in text.lower():
@@ -344,16 +365,16 @@ class GeminiAdapter:
             msg = f"🚫 Gemini {self.model}: 429 rate limited, backoff {retry_after:.0f}s"
             logger.warning(msg)
             raise GeminiProviderUnavailable(msg)
-        elif response.status_code in {401, 403} or any(
+        elif status_code in {401, 403} or any(
             marker in lowered
             for marker in ("permission_denied", "api key", "leaked", "api_key_invalid")
         ):
-            reason = f"Gemini {self.model}: provider_auth_failed_http_{response.status_code}"
+            reason = f"Gemini {self.model}: provider_auth_failed_http_{status_code}"
             self._mark_provider_unavailable(reason, cooldown_s=24 * 60 * 60)
             logger.warning("%s", reason)
             raise GeminiProviderUnavailable(reason)
         else:
-            msg = f"Gemini API error {response.status_code}: {text[:500]}"
+            msg = f"Gemini API error {status_code}: {text[:500]}"
             logger.warning(msg)
             raise GeminiProviderUnavailable(msg)
 
@@ -380,7 +401,7 @@ class GeminiAdapter:
         cancel_event=None,
         **kwargs
     ) -> AsyncIterator[str]:
-        """Stream tokens from Gemini — compatible with LLMRouter's race_think_stream."""
+        """Stream-compatible Gemini path routed through the canonical network gateway."""
         is_background = kwargs.get("is_background", False)
         if not self.is_available():
             raise GeminiProviderUnavailable(self.availability_reason())
@@ -388,129 +409,17 @@ class GeminiAdapter:
             msg = f"🚫 Gemini {self.model} local rate limited"
             logger.warning(msg)
             raise GeminiProviderUnavailable(msg)
-        
-        contents = []
-        system_instruction = None
-        
-        if system_prompt:
-            system_instruction = {"parts": [{"text": system_prompt}]}
-        
-        parts = kwargs.get("parts")
-        if not parts:
-            # Guard: prompt can be empty when user input is in system_prompt
-            if prompt and prompt.strip():
-                parts = [{"text": prompt}]
-            elif system_prompt:
-                # Move system_prompt to user content so Gemini has valid data
-                parts = [{"text": system_prompt}]
-                system_instruction = None  # Don't double-send
-            else:
-                logger.warning("⚠️ Gemini stream: No prompt or system_prompt provided")
-                return
-            
-        # Final guard: filter out any parts with empty/None text unless they have inlineData (images/multimodal)
-        parts = [p for p in parts if p.get("text") or p.get("inlineData")]
-        if not parts:
-            logger.warning("⚠️ Gemini stream: All parts were empty after filtering")
+
+        if cancel_event and cancel_event.is_set():
             return
-            
-        contents.append({
-            "role": "user",
-            "parts": parts
-        })
-        
-        payload = {
-            "contents": contents,
-            "generationConfig": {
-                "temperature": kwargs.get("temperature", 0.8),
-                "maxOutputTokens": kwargs.get("max_tokens", 2048),
-                "topP": 0.95,
-            },
-        }
-        
-        if system_instruction:
-            payload["systemInstruction"] = system_instruction
-        
-        url = f"{self.BASE_URL}/models/{self.model}:streamGenerateContent?key={self.api_key}&alt=sse"
-        
-        client = self._get_client()
-        tokens_yielded = 0
-        t0_stream = time.monotonic()
-        
+
         try:
-            async with client.stream("POST", url, json=payload) as response:
-                if response.status_code != 200:
-                    await self._handle_error(response)
-                
-                self.rate_limiter.record_call(self.model)
-                
-                async for line in response.aiter_lines():
-                    if cancel_event and cancel_event.is_set():
-                        return
-                    
-                    line = line.strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    
-                    json_str = line[6:]  # Strip "data: " prefix
-                    if json_str == "[DONE]":
-                        return
-                    
-                    try:
-                        chunk = json.loads(json_str)
-                        # Extract token usage from any chunk (usually final)
-                        usage = chunk.get("usageMetadata")
-                        if usage:
-                            # Yield metadata as a special non-string chunk
-                            yield {
-                                "type": "metadata",
-                                "tokens_used": usage.get("totalTokenCount", 0),
-                                "prompt_tokens": usage.get("promptTokenCount", 0),
-                                "completion_tokens": usage.get("candidatesTokenCount", 0)
-                            }
-                            
-                        candidates = chunk.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            for part in parts:
-                                text = part.get("text", "")
-                                if text:
-                                    yield text
-                                    tokens_yielded += 1
-                    except json.JSONDecodeError:
-                        continue
-            
-            if tokens_yielded == 0:
-                logger.warning("⚠️ Gemini stream yielded 0 tokens")
-            else:
-                # [Phase 18] Record Metabolic Cost for streaming
-                try:
-                    from core.ops.metabolic_monitor import get_cost_tracker
-                    get_cost_tracker().record_operation(
-                        op_type="gemini_stream",
-                        tokens=tokens_yielded,
-                        duration_s=time.monotonic() - t0_stream, # Need to define t0_stream
-                        model_tier="PRIMARY" if self.model == self.DEEP_MODEL else "SECONDARY"
-                    )
-                except GEMINI_RECOVERABLE_ERRORS as _e:
-                    _record_gemini_degradation(
-                        _e,
-                        action="returned Gemini stream after metabolic cost recording failed",
-                        severity="debug",
-                        extra={"model": self.model, "tokens_yielded": tokens_yielded},
-                    )
-                    logger.debug('Ignored Exception in gemini_adapter.py: %s', _e)
-                
-        except httpx.TimeoutException as e:
-            reason = f"Gemini stream timed out after {self.timeout:.0f}s"
-            self._mark_provider_unavailable(reason, cooldown_s=300.0)
-            _record_gemini_degradation(
-                e,
-                action="raised provider-unavailable signal so router can fail over after Gemini stream timeout",
-                extra={"model": self.model, "timeout": self.timeout, "tokens_yielded": tokens_yielded},
-            )
-            logger.warning(reason)
-            raise GeminiProviderUnavailable(reason) from e
+            ok, text, metadata = await self.call(prompt, system_prompt=system_prompt, **kwargs)
+            if not ok:
+                raise GeminiProviderUnavailable(str(metadata.get("error") or "gemini_stream_call_failed"))
+            if cancel_event and cancel_event.is_set():
+                return
+            yield text
         except GeminiProviderUnavailable as e:
             logger.warning("Gemini stream unavailable: %s", e)
             raise
@@ -518,7 +427,7 @@ class GeminiAdapter:
             _record_gemini_degradation(
                 e,
                 action="raised provider-unavailable signal so router can fail over after Gemini stream error",
-                extra={"model": self.model, "tokens_yielded": tokens_yielded},
+                extra={"model": self.model},
             )
             logger.error("Gemini stream error: %s", e)
             raise GeminiProviderUnavailable(str(e)) from e
@@ -619,28 +528,26 @@ class GeminiAdapter:
         }
         
         t0 = time.monotonic()
-        client = self._get_client()
         
         try:
-            response = await client.post(url, json=payload)
+            status_code, data, body_text = await self._post_json(url, payload)
             metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
             
-            if response.status_code != 200:
+            if status_code != 200:
                 try:
-                    await self._handle_error(response)
+                    await self._handle_error_payload(status_code, body_text)
                 except GeminiProviderUnavailable as e:
                     return False, "", {"error": str(e)}
                 except GEMINI_RECOVERABLE_ERRORS as e:
                     _record_gemini_degradation(
                         e,
                         action="returned failed Gemini call result after provider error handler failed",
-                        extra={"model": self.model, "status_code": response.status_code},
+                        extra={"model": self.model, "status_code": status_code},
                     )
                     return False, "", {"error": str(e)}
             
             self.rate_limiter.record_call(self.model)
             
-            data = response.json()
             candidates = data.get("candidates", [])
             if not candidates:
                 return False, "", {"error": "No candidates in response"}
@@ -677,7 +584,7 @@ class GeminiAdapter:
             
             return True, text, metadata
             
-        except httpx.TimeoutException:
+        except TimeoutError:
             metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
             return False, "", {"error": f"Timeout after {self.timeout}s"}
         except GEMINI_RECOVERABLE_ERRORS as e:

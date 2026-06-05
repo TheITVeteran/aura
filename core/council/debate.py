@@ -7,8 +7,17 @@ from typing import Any, Dict, List, Tuple
 
 from core.container import ServiceContainer
 from core.council.consensus import ConsensusResolver
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.CouncilDebate")
+_DEBATE_RECOVERABLE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class ParliamentDebate:
@@ -31,7 +40,12 @@ class ParliamentDebate:
                 plan_draft = await router.think(
                     prompt=f"Draft an engineering step-by-step plan to achieve: {self.objective}"
                 )
-            except Exception as e:
+            except _DEBATE_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "council_debate",
+                    e,
+                    action="used deterministic strategist fallback after LLM planning lane failed",
+                )
                 logger.error("Strategist thinking lane failed: %s", e)
 
         logger.info("Strategist Draft Plan:\n%s", plan_draft)
@@ -44,7 +58,12 @@ class ParliamentDebate:
                 criticism = await router.think(
                     prompt=f"Identify flaws, security risks, or missing test suites in this plan:\n{plan_draft}"
                 )
-            except Exception as e:
+            except _DEBATE_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "council_debate",
+                    e,
+                    action="used deterministic critic fallback after LLM critique lane failed",
+                )
                 logger.error("Critic thinking lane failed: %s", e)
 
         logger.info("Critic Feedback:\n%s", criticism)
@@ -60,7 +79,12 @@ class ParliamentDebate:
                         f"Original Plan:\n{plan_draft}\nCriticism:\n{criticism}"
                     )
                 )
-            except Exception as e:
+            except _DEBATE_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "council_debate",
+                    e,
+                    action="used deterministic refinement fallback after LLM refinement lane failed",
+                )
                 logger.error("Strategist refinement failed: %s", e)
 
         logger.info("Final Plan:\n%s", final_plan)

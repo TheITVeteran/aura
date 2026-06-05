@@ -30,7 +30,7 @@ params = {repr(params)}
 try:
     result = main(params)
     print("TOOL_OUT:" + repr(result))
-except Exception as e:
+except (ArithmeticError, LookupError, NameError, RuntimeError, TypeError, ValueError) as e:
     print("TOOL_ERR:" + str(e))
 """
         
@@ -56,7 +56,7 @@ except Exception as e:
                 try:
                     val = ast.literal_eval(line[len("TOOL_OUT:"):])
                     return {"ok": True, "result": val}
-                except Exception as e:
+                except (MemoryError, RecursionError, SyntaxError, TypeError, ValueError) as e:
                     logger.error("Failed to parse tool output: %s", e)
             elif line.startswith("TOOL_ERR:"):
                 return {"ok": False, "error": line[len("TOOL_ERR:"):]}

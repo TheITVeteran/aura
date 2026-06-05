@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import threading
@@ -46,6 +47,7 @@ from core.brain.llm.runtime_wiring import (
 from core.phases.response_contract import ResponseContract
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
     is_strict_proof_answer_prompt,
@@ -2325,21 +2327,29 @@ class HealthAwareLLMRouter:
                     raise e
 
             # 3. Fallback to HTTP API proxying (if no direct client)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    f"{ep.url}/api/chat",
-                    json={
-                        "model": ep.model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        **clean_kwargs
-                    },
-                )
+            gateway_response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "POST",
+                f"{ep.url}/api/chat",
+                headers={"Content-Type": "application/json"},
+                data=json.dumps({
+                    "model": ep.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    **clean_kwargs,
+                }),
+                timeout=timeout,
+                source=f"llm_provider:health_router:{ep.name}",
+                read_only=True,
+            )
+            status_code = int(gateway_response.get("status_code") or 0)
+            body = gateway_response.get("content") or b""
+            body_text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
 
-            if resp.status_code != 200:
-                ep.record_failure(f"http_{resp.status_code}")
-                return {"ok": False, "error": f"http_{resp.status_code}"}
+            if status_code != 200:
+                ep.record_failure(f"http_{status_code}")
+                return {"ok": False, "error": f"http_{status_code}"}
 
-            data = resp.json()
+            data = json.loads(body_text or "{}")
             raw_text = data.get("message", {}).get("content") or ""
             
             is_valid, reason = validate_response(raw_text)
@@ -2369,7 +2379,7 @@ class HealthAwareLLMRouter:
                 "latency_ms": latency_ms,
             }
 
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
+        except (httpx.HTTPError, OSError, ConnectionError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             _record_router_degradation(
                 exc,
                 action="recorded HTTP endpoint failure and raised for fallback handling",

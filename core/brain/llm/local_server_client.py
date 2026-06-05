@@ -19,6 +19,7 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.task_ownership import create_tracked_task
 from core.utils.deadlines import Deadline, get_deadline
 
 from .chat_format import format_chatml_prompt
@@ -189,7 +190,6 @@ class LocalServerClient:
         # "bound to a different event loop".
         self._spawn_lock = _threading.Lock()
         self._request_lock = _threading.Lock()
-        self._http: httpx.AsyncClient | None = None
         self._init_future: asyncio.Task | None = None
         self._lane_state = "cold"
         self._lane_error = ""
@@ -638,10 +638,35 @@ class LocalServerClient:
         """Instance wrapper that passes runtime URL to the static impl."""
         return self._http_health_check_sync_impl(self._runtime_url)
 
-    async def _client(self) -> httpx.AsyncClient:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=None)
-        return self._http
+    async def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> tuple[int, dict[str, Any], str]:
+        response = await asyncio.to_thread(
+            get_network_gateway().request,
+            method,
+            url,
+            headers={"Content-Type": "application/json"} if payload is not None else None,
+            data=json.dumps(payload) if payload is not None else None,
+            timeout=timeout,
+            source=f"llm_provider:local_server:{self._lane_name}",
+            read_only=True,
+        )
+        content = response.get("content") or b""
+        text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+        data: dict[str, Any] = {}
+        if text.strip():
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {}
+        return int(response.get("status_code") or 0), data, text
 
     def _resolve_llama_server_bin(self) -> str | None:
         return find_llama_server_bin()
@@ -797,12 +822,15 @@ class LocalServerClient:
         return reclaimed
 
     async def _server_healthy(self) -> tuple[bool, bool]:
-        client = await self._client()
         try:
-            response = await client.get(f"{self._runtime_url}/health", timeout=5.0)
-            if response.status_code != 200:
+            status_code, _payload, _text = await self._request_json(
+                "GET",
+                f"{self._runtime_url}/health",
+                timeout=5.0,
+            )
+            if status_code != 200:
                 return False, False
-        except (httpx.HTTPError, OSError, ConnectionError):
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
             return False, False
 
         if self._external_only:
@@ -811,15 +839,18 @@ class LocalServerClient:
             return True, False
 
         try:
-            response = await client.get(f"{self._runtime_url}/v1/models", timeout=5.0)
-            if response.status_code != 200:
+            status_code, payload, _text = await self._request_json(
+                "GET",
+                f"{self._runtime_url}/v1/models",
+                timeout=5.0,
+            )
+            if status_code != 200:
                 self._runtime_identity_ok = False
                 self._detected_runtime_models = []
                 return False, False
-            payload = response.json()
             if not isinstance(payload, dict):
                 payload = {}
-        except (httpx.HTTPError, OSError, ConnectionError, json.JSONDecodeError):
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
             self._runtime_identity_ok = False
             self._detected_runtime_models = []
             return False, False
@@ -1129,14 +1160,6 @@ class LocalServerClient:
 
     async def reboot_worker(self, reason: str = "manual_reboot", mark_failed: bool = False):
         self._set_lane_state("recovering", reason)
-        if self._http is not None:
-            try:
-                await self._http.aclose()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation("local_server_client", _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
-            self._http = None
-
         proc = self._process
         self._process = None
         if proc is not None and proc.poll() is None:
@@ -1317,7 +1340,6 @@ class LocalServerClient:
         deadline: Deadline | None,
         foreground_request: bool,
     ) -> str | None:
-        client = await self._client()
         self._mark_generation_started()
         try:
             payload: dict[str, Any] = {
@@ -1339,12 +1361,13 @@ class LocalServerClient:
                 timeout = 180.0 if self._is_primary_or_deep_lane() else 120.0
 
             try:
-                response = await client.post(
+                status_code, data, response_text = await self._request_json(
+                    "POST",
                     f"{self._runtime_url}/v1/chat/completions",
-                    json=payload,
                     timeout=timeout,
+                    payload=payload,
                 )
-            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                 _record_server_degradation(
                     exc,
                     stage="chat_completion_request",
@@ -1361,11 +1384,11 @@ class LocalServerClient:
                 self.note_lane_recovering(f"request_failed:{type(exc).__name__}")
                 return None
 
-            if response.status_code != 200:
-                detail = f"http_{response.status_code}"
-                response_text = (response.text or "")[:240]
+            if status_code != 200:
+                detail = f"http_{status_code}"
+                response_text = (response_text or "")[:240]
                 if (
-                    response.status_code == 400
+                    status_code == 400
                     and "exceeds the available context size" in response_text.lower()
                 ):
                     self._record_degraded_event(
@@ -1379,7 +1402,7 @@ class LocalServerClient:
                     return None
 
                 # 500 "Compute error" is a fatal server issue — needs restart
-                if response.status_code == 500 and "compute error" in response_text.lower():
+                if status_code == 500 and "compute error" in response_text.lower():
                     logger.error(
                         "[%s] COMPUTE ERROR from server. Triggering restart.", self._lane_name
                     )
@@ -1394,9 +1417,7 @@ class LocalServerClient:
                     # stayed "ready" while restart happened in background.
                     self.note_lane_recovering("compute_error_restart")
                     try:
-                        import asyncio
-
-                        task = asyncio.get_event_loop().create_task(
+                        task = create_tracked_task(
                             self._restart_server(),
                             name=f"restart_server:{self._lane_name}",
                         )
@@ -1434,9 +1455,8 @@ class LocalServerClient:
                     self.note_lane_recovering(detail)
                 return None
 
-            try:
-                data = response.json()
-            except (json.JSONDecodeError, ValueError) as exc:
+            if not data:
+                exc = ValueError("local runtime returned empty or invalid JSON")
                 _record_server_degradation(
                     exc,
                     stage="chat_completion_json",

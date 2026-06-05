@@ -14,6 +14,13 @@ from core.will import ActionDomain
 from core.config import config
 
 logger = logging.getLogger("Aura.ToolRegistry")
+_TOOL_REGISTRY_RECOVERABLE_ERRORS = (
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class ToolRegistry:
@@ -62,7 +69,7 @@ class ToolRegistry:
             self.in_memory_tools[manifest.name] = (code, manifest)
             logger.info("Successfully installed tool: %s", manifest.name)
             return True
-        except Exception as e:
+        except _TOOL_REGISTRY_RECOVERABLE_ERRORS as e:
             logger.error("Failed to install tool: %s", e, exc_info=True)
             return False
 
@@ -77,16 +84,13 @@ class ToolRegistry:
 
         if manifest_path.exists() and code_path.exists():
             try:
-                # We can read file content
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest_data = json.load(f)
-                with open(code_path, "r", encoding="utf-8") as f:
-                    code = f.read()
+                manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                code = code_path.read_text(encoding="utf-8")
 
                 manifest = ToolManifest.from_dict(manifest_data)
                 self.in_memory_tools[name] = (code, manifest)
                 return code, manifest
-            except Exception as e:
+            except _TOOL_REGISTRY_RECOVERABLE_ERRORS as e:
                 logger.error("Error loading tool %s from disk: %s", name, e)
                 return None
         return None

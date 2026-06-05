@@ -34,6 +34,7 @@ from core.brain.llm.runtime_wiring import (
     should_force_tool_handoff,
 )
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Brain.Router")
 
@@ -330,6 +331,29 @@ class LocalLLMAdapter:
         _, text, _ = await self.think(prompt, **kwargs)
         return text
 
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any], str]:
+        response = await asyncio.to_thread(
+            get_network_gateway().request,
+            "POST",
+            url,
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=self.endpoint.timeout,
+            source=f"llm_provider:{self.endpoint.name}",
+            read_only=True,
+        )
+        content = response.get("content") or b""
+        text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+        data: dict[str, Any] = {}
+        if text.strip():
+            try:
+                loaded = json.loads(text)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except json.JSONDecodeError:
+                data = {}
+        return int(response.get("status_code") or 0), data, text
+
     async def think(self, prompt: str, **kwargs) -> tuple[bool, str, dict[str, Any]]:
         """Asynchronous call to the local LLM endpoint with context injection."""
         try:
@@ -341,137 +365,127 @@ class LocalLLMAdapter:
             
             if not self.endpoint.model_name:
                 return False, "", {"error": "Missing model_name"}
-            
-            async with httpx.AsyncClient(timeout=self.endpoint.timeout) as client:
-                messages = kwargs.get("messages")
-                prefill = kwargs.get("prefill")
 
-                if messages:
-                    normalized_messages = []
-                    for message in list(messages or []):
-                        if isinstance(message, dict):
-                            normalized_messages.append(dict(message))
+            messages = kwargs.get("messages")
+            prefill = kwargs.get("prefill")
 
-                    if system_prompt:
-                        if normalized_messages and normalized_messages[0].get("role") == "system":
-                            base = str(normalized_messages[0].get("content", "") or "").strip()
-                            normalized_messages[0]["content"] = f"{system_prompt}\n\n{base}" if base else system_prompt
-                        else:
-                            normalized_messages.insert(0, {"role": "system", "content": system_prompt})
+            if messages:
+                normalized_messages = []
+                for message in list(messages or []):
+                    if isinstance(message, dict):
+                        normalized_messages.append(dict(message))
 
-                    if context:
-                        if normalized_messages and normalized_messages[0].get("role") == "system":
-                            base = str(normalized_messages[0].get("content", "") or "").strip()
-                            normalized_messages[0]["content"] = f"{context.strip()}\n\n{base}" if base else context.strip()
-                        else:
-                            normalized_messages.insert(0, {"role": "system", "content": context.strip()})
+                if system_prompt:
+                    if normalized_messages and normalized_messages[0].get("role") == "system":
+                        base = str(normalized_messages[0].get("content", "") or "").strip()
+                        normalized_messages[0]["content"] = f"{system_prompt}\n\n{base}" if base else system_prompt
+                    else:
+                        normalized_messages.insert(0, {"role": "system", "content": system_prompt})
 
-                    if prefill and normalized_messages and normalized_messages[-1]["role"] != "assistant":
-                        normalized_messages.append({"role": "assistant", "content": prefill})
-
-                    response = await client.post(
-                        f"{self.endpoint.endpoint_url}/v1/chat/completions",
-                        json={
-                            "model": self.endpoint.model_name,
-                            "messages": normalized_messages,
-                            "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
-                            "temperature": kwargs.get("temperature", self.endpoint.temperature),
-                            "top_p": kwargs.get("top_p", 0.9),
-                        },
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        text = data["choices"][0]["message"]["content"]
-                        metadata = {
-                            "model": self.endpoint.model_name,
-                            "endpoint": self.endpoint.name,
-                            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-                        }
-                        return True, text, metadata
-                    logger.debug(
-                        "LocalLLMAdapter chat-completions path returned HTTP %s. Falling back to prompt path.",
-                        response.status_code,
-                    )
-                    augmented_prompt = "\n".join(
-                        f"{str(m.get('role', 'message')).capitalize()}: {str(m.get('content', '') or '').strip()}"
-                        for m in normalized_messages
-                        if str(m.get("content", "") or "").strip()
-                    ) or augmented_prompt
-
-                # 1. Try Ollama-native /api/generate
-                try:
-                    url = f"{self.endpoint.endpoint_url}/api/generate"
-                    payload = {
-                        "model": self.endpoint.model_name,
-                        "prompt": augmented_prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": kwargs.get("temperature", self.endpoint.temperature),
-                            "top_p": kwargs.get("top_p", 0.9),
-                            "repeat_penalty": kwargs.get("repetition_penalty", 1.08),
-                            "num_predict": kwargs.get("max_tokens", self.endpoint.max_tokens),
-                        }
-                    }
-                    response = await client.post(url, json=payload)
-                    if response.status_code == 200:
-                        data = response.json()
-                        metadata = {
-                            "model": self.endpoint.model_name,
-                            "endpoint": self.endpoint.name,
-                            "tokens_used": data.get("usage", {}).get("total_tokens", 0)
-                        }
-                        return True, data.get("response", ""), metadata
-                except ROUTER_RECOVERABLE_ERRORS as e:
-                    _record_router_degradation(
-                        e,
-                        action="continued to OpenAI-compatible chat-completions after Ollama-native generate failed",
-                        severity="warning",
-                        extra={"endpoint": self.endpoint.name},
-                    )
-                    logger.debug("Ollama /api/generate failed, trying /v1/chat/completions: %s", e)
-
-                # 2. Try OpenAI-compatible /v1/chat/completions fallback
-                if not messages:
-                    # Construct minimal messages if only prompt provided
-                    messages = [{"role": "user", "content": augmented_prompt}]
-                    if system_prompt:
-                        messages.insert(0, {"role": "system", "content": system_prompt})
-                
-                # If prefill is provided, ensure it's handled (some providers support it in the message list)
-                if prefill and messages and messages[-1]["role"] != "assistant":
-                     messages.append({"role": "assistant", "content": prefill})
-
-                # Inject context as a system message if it doesn't exist and context is available
                 if context:
-                    has_system = any(m.get("role") == "system" for m in messages)
-                    if not has_system:
-                        messages = [{"role": "system", "content": f"Aura System State: {context.strip()}"}] + messages
-                
-                chat_payload = {
-                    "model": self.endpoint.model_name,
-                    "messages": messages,
-                    "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
-                    "temperature": kwargs.get("temperature", self.endpoint.temperature),
-                    "top_p": kwargs.get("top_p", 0.9),
-                }
-                
-                response = await client.post(
+                    if normalized_messages and normalized_messages[0].get("role") == "system":
+                        base = str(normalized_messages[0].get("content", "") or "").strip()
+                        normalized_messages[0]["content"] = f"{context.strip()}\n\n{base}" if base else context.strip()
+                    else:
+                        normalized_messages.insert(0, {"role": "system", "content": context.strip()})
+
+                if prefill and normalized_messages and normalized_messages[-1]["role"] != "assistant":
+                    normalized_messages.append({"role": "assistant", "content": prefill})
+
+                status_code, data, _text = await self._post_json(
                     f"{self.endpoint.endpoint_url}/v1/chat/completions",
-                    json=chat_payload
+                    {
+                        "model": self.endpoint.model_name,
+                        "messages": normalized_messages,
+                        "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
+                        "temperature": kwargs.get("temperature", self.endpoint.temperature),
+                        "top_p": kwargs.get("top_p", 0.9),
+                    },
                 )
-                
-                if response.status_code == 200:
-                    data = response.json()
+                if status_code == 200:
                     text = data["choices"][0]["message"]["content"]
                     metadata = {
                         "model": self.endpoint.model_name,
                         "endpoint": self.endpoint.name,
-                        "tokens_used": data.get("usage", {}).get("total_tokens", 0)
+                        "tokens_used": data.get("usage", {}).get("total_tokens", 0),
                     }
                     return True, text, metadata
-                else:
-                    error = f"HTTP {response.status_code}: {response.text}"
-                    return False, "", {"error": error}
+                logger.debug(
+                    "LocalLLMAdapter chat-completions path returned HTTP %s. Falling back to prompt path.",
+                    status_code,
+                )
+                augmented_prompt = "\n".join(
+                    f"{str(m.get('role', 'message')).capitalize()}: {str(m.get('content', '') or '').strip()}"
+                    for m in normalized_messages
+                    if str(m.get("content", "") or "").strip()
+                ) or augmented_prompt
+
+            try:
+                url = f"{self.endpoint.endpoint_url}/api/generate"
+                payload = {
+                    "model": self.endpoint.model_name,
+                    "prompt": augmented_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": kwargs.get("temperature", self.endpoint.temperature),
+                        "top_p": kwargs.get("top_p", 0.9),
+                        "repeat_penalty": kwargs.get("repetition_penalty", 1.08),
+                        "num_predict": kwargs.get("max_tokens", self.endpoint.max_tokens),
+                    },
+                }
+                status_code, data, _text = await self._post_json(url, payload)
+                if status_code == 200:
+                    metadata = {
+                        "model": self.endpoint.model_name,
+                        "endpoint": self.endpoint.name,
+                        "tokens_used": data.get("usage", {}).get("total_tokens", 0),
+                    }
+                    return True, data.get("response", ""), metadata
+            except ROUTER_RECOVERABLE_ERRORS as e:
+                _record_router_degradation(
+                    e,
+                    action="continued to OpenAI-compatible chat-completions after Ollama-native generate failed",
+                    severity="warning",
+                    extra={"endpoint": self.endpoint.name},
+                )
+                logger.debug("Ollama /api/generate failed, trying /v1/chat/completions: %s", e)
+
+            if not messages:
+                messages = [{"role": "user", "content": augmented_prompt}]
+                if system_prompt:
+                    messages.insert(0, {"role": "system", "content": system_prompt})
+
+            if prefill and messages and messages[-1]["role"] != "assistant":
+                messages.append({"role": "assistant", "content": prefill})
+
+            if context:
+                has_system = any(m.get("role") == "system" for m in messages)
+                if not has_system:
+                    messages = [{"role": "system", "content": f"Aura System State: {context.strip()}"}] + messages
+
+            chat_payload = {
+                "model": self.endpoint.model_name,
+                "messages": messages,
+                "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
+                "temperature": kwargs.get("temperature", self.endpoint.temperature),
+                "top_p": kwargs.get("top_p", 0.9),
+            }
+
+            status_code, data, text_body = await self._post_json(
+                f"{self.endpoint.endpoint_url}/v1/chat/completions",
+                chat_payload,
+            )
+
+            if status_code == 200:
+                text = data["choices"][0]["message"]["content"]
+                metadata = {
+                    "model": self.endpoint.model_name,
+                    "endpoint": self.endpoint.name,
+                    "tokens_used": data.get("usage", {}).get("total_tokens", 0),
+                }
+                return True, text, metadata
+            error = f"HTTP {status_code}: {text_body[:500]}"
+            return False, "", {"error": error}
                     
         except ROUTER_RECOVERABLE_ERRORS as e:
             _record_router_degradation(

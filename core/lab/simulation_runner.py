@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import time
+import asyncio
 from typing import Any, Dict
 
 from core.lab.experiment_designer import ExperimentProtocol
@@ -25,8 +25,7 @@ class SimulationRunner:
         # Simulate running steps
         for step in protocol.steps:
             logger.info("   [STEP] %s", step)
-            # Sleep brief fraction of second
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
 
         latency_delta = baseline_latency - post_latency
         delta_ratio = latency_delta / baseline_latency

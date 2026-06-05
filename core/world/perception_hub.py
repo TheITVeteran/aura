@@ -10,8 +10,17 @@ from core.world.connectors.papers_connector import PapersConnector
 from core.world.connectors.github_connector import GitHubConnector
 from core.world.connectors.data_connector import DataConnector
 from core.world.source_reliability import get_source_reliability_monitor
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.PerceptionHub")
+_PERCEPTION_RECOVERABLE_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class PerceptionHub:
@@ -45,7 +54,13 @@ class PerceptionHub:
                     if not any(x.get("url") == item.get("url") for x in self.raw_feed):
                         new_items.append(item)
                         self.raw_feed.append(item)
-            except Exception as e:
+            except _PERCEPTION_RECOVERABLE_ERRORS as e:
+                record_degradation(
+                    "perception_hub",
+                    e,
+                    action="continued perception scan after connector failure",
+                    extra={"connector": type(conn).__name__},
+                )
                 logger.error("Error running connector %s: %s", type(conn).__name__, e)
 
         logger.info("📡 Ingested %d new items into Perception Hub.", len(new_items))

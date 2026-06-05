@@ -5,9 +5,17 @@ from __future__ import annotations
 import ast
 import logging
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 logger = logging.getLogger("Aura.RepoCartographer")
+_CARTOGRAPHER_RECOVERABLE_ERRORS = (
+    OSError,
+    RecursionError,
+    SyntaxError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+)
 
 
 class RepoCartographer:
@@ -47,6 +55,6 @@ class RepoCartographer:
                         imports.add(name.name)
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     imports.add(node.module)
-        except Exception as e:
+        except _CARTOGRAPHER_RECOVERABLE_ERRORS as e:
             logger.debug("Failed parsing imports for %s: %s", filepath, e)
         return imports
