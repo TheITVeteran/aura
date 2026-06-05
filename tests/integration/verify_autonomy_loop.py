@@ -1,66 +1,81 @@
-################################################################################
+import time
+from types import SimpleNamespace
 
-import asyncio
-import logging
-from unittest.mock import MagicMock, AsyncMock
-from core.orchestrator import RobustOrchestrator
-from core.brain.cognitive_engine import CognitiveEngine
+import pytest
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("TestAutonomy")
-
-async def test_autonomy_loop():
-    """
-    Verify that the Orchestrator's autonomy loop triggers when bored.
-    """
-    # 1. Setup Orchestrator with Mock Engine
-    orchestrator = RobustOrchestrator()
-    orchestrator.cognitive_engine = MagicMock(spec=CognitiveEngine)
-    # Configure think to return a complete dict
-    mock_brain = AsyncMock()
-    mock_brain.think.return_value = {
-        "content": "I am bored.", 
-        "tool_calls": [{"name": "web_search", "args": {"query": "news"}}]
-    }
-    orchestrator.cognitive_engine.autonomous_brain = mock_brain
-    
-    # Mock system status
-    orchestrator.status = MagicMock()
-    orchestrator.status.cycle_count = 0
-    
-    # Mock emitter
-    orchestrator._emit_thought_stream = MagicMock()
-    
-    # Mock execute_tool
-    orchestrator.execute_tool = AsyncMock()
-
-    # 2. Simulate Boredom Accumulation
-    logger.info("Simulating 5 idle cycles...")
-    for i in range(5):
-        await orchestrator._perform_autonomous_thought()
-        # On 5th cycle, it should trigger
-        
-    # 3. Verify Trigger
-    # The thought process is async, so we await the called method
-    if orchestrator.cognitive_engine.autonomous_brain.think.called:
-        print("✅ TEST PASSED: Autonomous Brain triggered after boredom threshold.")
-        call_args = orchestrator.cognitive_engine.autonomous_brain.think.call_args
-        print(f"   Context boredom level: {call_args[1].get('context', {}).get('boredom_level')}")
-        assert call_args[1].get('context', {}).get('boredom_level') >= 5
-    else:
-        print("❌ TEST FAILED: Autonomous Brain did NOT trigger.")
-        exit(1)
-
-    # 4. Verify Emitter
-    if orchestrator._emit_thought_stream.called:
-         print("✅ TEST PASSED: Thought stream emitted during reflection.")
-    else:
-         print("❌ TEST FAILED: No thoughts emitted.")
-         exit(1)
-
-if __name__ == "__main__":
-    asyncio.run(test_autonomy_loop())
+from core.orchestrator.mixins.autonomy import AutonomyMixin
 
 
-##
+class ThoughtStreamRecorder:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, title, message, **kwargs):
+        self.events.append({"title": title, "message": message, "kwargs": kwargs})
+
+
+class AutonomousBrainRecorder:
+    def __init__(self):
+        self.calls = []
+
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "content": "I found a useful loose thread and want to investigate it further.",
+            "tool_calls": [{"name": "web_search", "args": {"query": "current systems research"}}],
+        }
+
+
+class AutonomyRuntimeProbe(AutonomyMixin):
+    def __init__(self, brain):
+        self.cognitive_engine = SimpleNamespace(autonomous_brain=brain)
+        self.conversation_history = [{"role": "user", "content": "keep improving the system"}]
+        self.status = SimpleNamespace(cycle_count=0, start_time=time.time() - 240)
+        self.boredom = 0
+        self._last_thought_time = time.time() - 240
+        self._last_user_interaction_time = 0
+        self.goal_hierarchy = None
+        self.state_repo = None
+        self.liquid_state = None
+        self.knowledge_graph = None
+        self.drives = None
+        self.streamed = []
+        self.insights = []
+        self.tools = []
+
+    def _emit_thought_stream(self, message):
+        self.streamed.append(message)
+
+    async def _store_autonomous_insight(self, internal_msg, response):
+        self.insights.append({"internal_msg": internal_msg, "response": response})
+
+    async def execute_tool(self, name, args):
+        self.tools.append({"name": name, "args": args})
+        return {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_autonomy_loop_routes_reflection_through_brain_context_and_tools(monkeypatch):
+    emitter = ThoughtStreamRecorder()
+    brain = AutonomousBrainRecorder()
+    runtime = AutonomyRuntimeProbe(brain)
+
+    monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
+    monkeypatch.setattr("core.orchestrator.mixins.autonomy.background_activity_reason", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.orchestrator.mixins.autonomy.ServiceContainer.get", lambda name, default=None: default)
+
+    await runtime._perform_autonomous_thought()
+
+    assert emitter.events[0]["title"] == "Autonomous Drift"
+    assert brain.calls
+    assert brain.calls[0]["objective"] == "Reflect on current state."
+    assert brain.calls[0]["context"]["boredom_level"] >= 200
+    assert "keep improving the system" in brain.calls[0]["system_prompt"]
+    assert any("loose thread" in item for item in runtime.streamed)
+    assert runtime.tools == [{"name": "web_search", "args": {"query": "current systems research"}}]
+    assert runtime.insights == [
+        {
+            "internal_msg": "Autonomous Reflection",
+            "response": "I found a useful loose thread and want to investigate it further.",
+        }
+    ]
