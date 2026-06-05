@@ -24,9 +24,6 @@ from pydantic import BaseModel, Field
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.skills.base_skill import BaseSkill
 
-from core.runtime.action_executor import ActionExecutor
-from core.governance.will import ActionDomain
-
 logger = logging.getLogger("Skills.CodeREPL")
 
 _REPL_RECOVERABLE_ERRORS = (
@@ -134,7 +131,7 @@ class CodeREPLSkill(BaseSkill):
 
         session_id = params.session_id or self._generate_session_id()
         session_dir = self._get_session_dir(session_id)
-        timeout = params.timeout
+        timeout_s = params.timeout
 
         # List files before execution to detect new ones
         pre_files = set()
@@ -146,19 +143,19 @@ class CodeREPLSkill(BaseSkill):
 
         # Strategy 1: Use core.sandbox.runner (preferred — full isolation)
         result = await self._execute_via_sandbox_runner(
-            code, timeout, session_dir
+            code, timeout_s, session_dir
         )
 
         if result is None:
             # Strategy 2: Use SandboxOperator (fallback)
             result = await self._execute_via_sandbox_operator(
-                code, timeout
+                code, timeout_s
             )
 
         if result is None:
-            # Strategy 3: Direct subprocess (last resort)
+            # Strategy 3: Governed subprocess (last resort)
             result = await self._execute_via_subprocess(
-                code, timeout, session_dir
+                code, timeout_s, session_dir
             )
 
         if result is None:
@@ -189,7 +186,7 @@ class CodeREPLSkill(BaseSkill):
         return result
 
     async def _execute_via_sandbox_runner(
-        self, code: str, timeout: int, cwd: Path
+        self, code: str, timeout_s: int, cwd: Path
     ) -> dict[str, Any] | None:
         """Execute via core.sandbox.runner.run_untrusted (full isolation)."""
         try:
@@ -201,7 +198,7 @@ class CodeREPLSkill(BaseSkill):
             raw = await asyncio.to_thread(
                 run_untrusted,
                 code,
-                timeout=timeout,
+                timeout=timeout_s,
                 mem_bytes=512 * 1024 * 1024,
             )
 
@@ -239,7 +236,7 @@ class CodeREPLSkill(BaseSkill):
             return None
 
     async def _execute_via_sandbox_operator(
-        self, code: str, timeout: int
+        self, code: str, timeout_s: int
     ) -> dict[str, Any] | None:
         """Execute via SandboxOperator (affect-grounded fallback)."""
         try:
@@ -249,7 +246,7 @@ class CodeREPLSkill(BaseSkill):
             raw = await asyncio.to_thread(
                 operator.execute_synthesized_tool,
                 code,
-                float(timeout),
+                float(timeout_s),
             )
 
             return {
@@ -275,10 +272,12 @@ class CodeREPLSkill(BaseSkill):
             return None
 
     async def _execute_via_subprocess(
-        self, code: str, timeout: int, cwd: Path
+        self, code: str, timeout_s: int, cwd: Path
     ) -> dict[str, Any] | None:
-        """Execute via direct subprocess (last resort, minimal isolation)."""
+        """Execute via the canonical subprocess gateway as a last-resort backend."""
         import sys
+
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
 
         temp_path = None
         try:
@@ -288,17 +287,17 @@ class CodeREPLSkill(BaseSkill):
                 f.write(code)
                 temp_path = f.name
 
-            process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                temp_path,
+            process = await get_subprocess_gateway().spawn_async(
+                [sys.executable, temp_path],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(cwd),
+                source="tool_execution:code_repl",
             )
 
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
+                    process.communicate(), timeout=timeout_s
                 )
             except TimeoutError:
                 process.kill()
@@ -308,7 +307,7 @@ class CodeREPLSkill(BaseSkill):
                     logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
                 return {
                     "ok": False,
-                    "error": f"Execution timed out after {timeout}s",
+                    "error": f"Execution timed out after {timeout_s}s",
                     "engine": "subprocess",
                 }
 

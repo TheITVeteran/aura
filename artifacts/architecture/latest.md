@@ -2,7 +2,7 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1780638960.8206139`
+Generated: `1780640000.590338`
 
 ## Summary
 
@@ -21,7 +21,7 @@ graph TD
     runtime["runtime<br/>102 files, 23108 lines"]
     utils["utils<br/>42 files, 5210 lines"]
     brain["brain<br/>116 files, 43920 lines"]
-    memory["memory<br/>77 files, 19063 lines"]
+    memory["memory<br/>77 files, 19061 lines"]
     consciousness["consciousness<br/>128 files, 59758 lines"]
     resilience["resilience<br/>53 files, 11329 lines"]
     health["health<br/>3 files, 850 lines"]
@@ -29,7 +29,7 @@ graph TD
     adaptation["adaptation<br/>26 files, 12039 lines"]
     affect["affect<br/>6 files, 2935 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
-    self_modification["self_modification<br/>29 files, 10903 lines"]
+    self_modification["self_modification<br/>29 files, 10904 lines"]
     senses["senses<br/>23 files, 5144 lines"]
     state["state<br/>6 files, 3468 lines"]
     governance["governance<br/>8 files, 2827 lines"]
@@ -41,13 +41,13 @@ graph TD
     executive["executive<br/>4 files, 2342 lines"]
     phases["phases<br/>29 files, 17310 lines"]
     tasks["tasks<br/>3 files, 333 lines"]
-    learning["learning<br/>20 files, 6976 lines"]
+    learning["learning<br/>20 files, 6977 lines"]
     actuators["actuators<br/>9 files, 2123 lines"]
     autonomy["autonomy<br/>22 files, 7712 lines"]
     being["being<br/>18 files, 4201 lines"]
     conversation["conversation<br/>8 files, 4300 lines"]
     reasoning["reasoning<br/>7 files, 3893 lines"]
-    skills["skills<br/>77 files, 16610 lines"]
+    skills["skills<br/>77 files, 16609 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     coordinators["coordinators<br/>9 files, 4247 lines"]
     managers["managers<br/>6 files, 943 lines"]
@@ -153,7 +153,7 @@ graph TD
     science["science<br/>1 files, 71 lines"]
     session["session<br/>2 files, 231 lines"]
     sim["sim<br/>5 files, 219 lines"]
-    swarm["swarm<br/>5 files, 359 lines"]
+    swarm["swarm<br/>5 files, 360 lines"]
     systems["systems<br/>3 files, 256 lines"]
     telemetry["telemetry<br/>2 files, 191 lines"]
     temporal["temporal<br/>3 files, 1507 lines"]
@@ -903,18 +903,18 @@ graph TD
 | core_root | 178 | 54967 | 2235013 | 99 | 0 |
 | brain | 116 | 43920 | 1894429 | 42 | 39 |
 | runtime | 102 | 23108 | 815605 | 41 | 117 |
-| memory | 77 | 19063 | 769557 | 18 | 32 |
+| memory | 77 | 19061 | 769495 | 18 | 32 |
 | orchestrator | 42 | 18872 | 832854 | 124 | 9 |
 | phases | 29 | 17310 | 783345 | 33 | 8 |
-| skills | 77 | 16610 | 671011 | 29 | 6 |
+| skills | 77 | 16609 | 671058 | 29 | 6 |
 | agency | 28 | 14386 | 583160 | 28 | 17 |
 | adaptation | 26 | 12039 | 481710 | 19 | 14 |
 | resilience | 53 | 11329 | 456229 | 16 | 25 |
-| self_modification | 29 | 10903 | 432967 | 12 | 14 |
+| self_modification | 29 | 10904 | 432990 | 12 | 14 |
 | environment | 82 | 8308 | 322051 | 10 | 2 |
 | cognitive | 11 | 8103 | 330009 | 9 | 4 |
 | autonomy | 22 | 7712 | 316721 | 17 | 6 |
-| learning | 20 | 6976 | 276736 | 15 | 7 |
+| learning | 20 | 6977 | 276754 | 15 | 7 |
 | kernel | 11 | 6013 | 251231 | 22 | 4 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
 | utils | 42 | 5210 | 203061 | 17 | 50 |
@@ -992,7 +992,7 @@ graph TD
 | reproducibility | 2 | 497 | 18141 | 1 | 0 |
 | organism | 1 | 476 | 18672 | 3 | 5 |
 | mission | 4 | 472 | 17806 | 1 | 0 |
-| council | 5 | 466 | 18092 | 3 | 0 |
+| council | 5 | 466 | 18107 | 3 | 0 |
 | resource | 2 | 430 | 15691 | 3 | 4 |
 | adapters | 3 | 402 | 13469 | 1 | 0 |
 | coherence | 2 | 397 | 18920 | 6 | 2 |
@@ -1000,7 +1000,7 @@ graph TD
 | lab | 7 | 378 | 13494 | 0 | 0 |
 | neuroweb | 5 | 368 | 14195 | 5 | 0 |
 | skill_management | 1 | 367 | 17964 | 6 | 1 |
-| swarm | 5 | 359 | 12053 | 1 | 0 |
+| swarm | 5 | 360 | 12068 | 1 | 0 |
 | verification | 4 | 350 | 13177 | 2 | 3 |
 | plasticity | 4 | 342 | 12056 | 2 | 1 |
 | tasks | 3 | 333 | 11388 | 3 | 8 |
@@ -1019,7 +1019,7 @@ graph TD
 | middleware | 2 | 254 | 11019 | 2 | 1 |
 | session | 2 | 231 | 9389 | 1 | 0 |
 | play | 1 | 228 | 8774 | 4 | 0 |
-| sim | 5 | 219 | 7354 | 1 | 0 |
+| sim | 5 | 219 | 7359 | 1 | 0 |
 | pipeline | 3 | 217 | 6684 | 1 | 0 |
 | telemetry | 2 | 191 | 5594 | 0 | 0 |
 | predictive | 2 | 186 | 7105 | 5 | 2 |

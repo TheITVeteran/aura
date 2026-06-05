@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """Real-World Coding & Debugging Loop Runner.
 
-This script simulates a live coding-agent debugging loop:
+This script orchestrates a live coding-agent debugging loop:
 1. Discover files and run tests to diagnose failures.
 2. Read files to understand code structure.
-3. Automatically apply code edits/patches.
+3. Request an agent-owned patch proposal and apply it.
 4. Verify code changes by re-running tests until success is achieved.
 """
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
 import logging
 import os
 import sys
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("LiveDebuggingRunner")
@@ -42,7 +49,28 @@ def _read_text(path: Path) -> str:
 
 
 def _write_text(path: Path, content: str) -> None:
-    path.write_text(content)
+    atomic_write_text(path, content)
+
+
+@dataclass(frozen=True)
+class DebugObservation:
+    repo_path: Path
+    code_file: Path
+    test_file: Path
+    code_content: str
+    test_content: str
+    initial_stdout: str
+    initial_stderr: str
+
+
+@dataclass(frozen=True)
+class PatchProposal:
+    file: Path
+    content: str
+    rationale: str = ""
+
+
+PatchProvider = Callable[[DebugObservation], PatchProposal | Awaitable[PatchProposal | None] | None]
 
 
 async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
@@ -51,12 +79,14 @@ async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
     try:
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
+        proc = await get_subprocess_gateway().spawn_async(
+            cmd,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            offline_tooling=True,
+            source="proof_tooling:live_debugging_loop",
         )
         stdout, stderr = await proc.communicate()
         return {
@@ -69,7 +99,102 @@ async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
         return {"exit_code": -1, "stdout": "", "stderr": str(e)}
 
 
-async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`")
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:].strip()
+    try:
+        value = json.loads(stripped)
+        return value if isinstance(value, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            value = json.loads(stripped[start : end + 1])
+            return value if isinstance(value, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+async def _default_patch_provider(observation: DebugObservation) -> PatchProposal | None:
+    """Ask the canonical cognitive engine for a repair proposal."""
+    try:
+        from core.container import ServiceContainer
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+
+    try:
+        engine = ServiceContainer.get("cognitive_engine", default=None)
+    except _COMMAND_RECOVERABLE_ERRORS:
+        engine = None
+    if engine is None or not hasattr(engine, "think"):
+        return None
+
+    prompt = (
+        "You are repairing a small local Python repository. Return only JSON "
+        "with keys path, content, rationale. The content must be the complete "
+        "replacement text for the file you edit. Do not invent test results; "
+        "the runner will apply your patch and rerun pytest.\n\n"
+        f"Repository: {observation.repo_path}\n"
+        f"Source file: {observation.code_file.relative_to(observation.repo_path)}\n"
+        f"Test file: {observation.test_file.relative_to(observation.repo_path)}\n\n"
+        f"Initial pytest stdout:\n{observation.initial_stdout[-4000:]}\n\n"
+        f"Initial pytest stderr:\n{observation.initial_stderr[-4000:]}\n\n"
+        f"Source content:\n```python\n{observation.code_content}\n```\n\n"
+        f"Test content:\n```python\n{observation.test_content}\n```"
+    )
+    thought = await asyncio.wait_for(
+        engine.think(objective=prompt, origin="external_live_debugging_loop"),
+        timeout=60.0,
+    )
+    content = str(getattr(thought, "content", "") or "")
+    payload = _extract_json_object(content)
+    if not payload:
+        return None
+    path_value = str(payload.get("path") or payload.get("file") or "").strip()
+    patch_content = payload.get("content")
+    if not path_value or not isinstance(patch_content, str) or not patch_content.strip():
+        return None
+    return PatchProposal(
+        file=observation.repo_path / path_value,
+        content=patch_content,
+        rationale=str(payload.get("rationale") or ""),
+    )
+
+
+async def _call_patch_provider(
+    provider: PatchProvider,
+    observation: DebugObservation,
+) -> PatchProposal | None:
+    proposed = provider(observation)
+    if inspect.isawaitable(proposed):
+        proposed = await proposed
+    return proposed if isinstance(proposed, PatchProposal) else None
+
+
+def _validate_patch_target(repo_path: Path, proposal: PatchProposal) -> Path:
+    target = proposal.file
+    if not target.is_absolute():
+        target = repo_path / target
+    target = target.resolve()
+    repo_root = repo_path.resolve()
+    if not target.is_relative_to(repo_root):
+        raise ValueError(f"Patch target escapes repository: {target}")
+    if target.suffix != ".py":
+        raise ValueError(f"Patch target must be a Python file, got {target.name}")
+    return target
+
+
+async def run_debugging_loop(
+    repo_path: Path,
+    *,
+    patch_provider: PatchProvider | None = None,
+) -> dict[str, Any]:
     """Run a complete diagnostic, patching, and verification loop on the target repository."""
     logger.info("Starting live debugging loop for repository: %s", repo_path)
     
@@ -126,70 +251,52 @@ async def run_debugging_loop(repo_path: Path) -> dict[str, Any]:
         "test_content": test_content,
     })
 
-    # Step 3: Diagnostic Reasoning & Patching
-    # For this proof-of-agency harness, we will locate the bug pattern:
-    # e.g., if there's an incorrect calculation like a bug in an addition or edge case check, we replace it.
-    logger.info("Step 3: Applying code patch...")
-    
-    patched_content = None
-    # Support a few common seeded defect patterns so the runner is generic.
-    if "def calculate(" in code_content:
-        # e.g. a bug in calculate function returning incorrect value
-        # Bug: return a - b instead of return a + b
-        if "return a - b" in code_content:
-            patched_content = code_content.replace("return a - b", "return a + b")
-        elif "return a * b" in code_content:
-            patched_content = code_content.replace("return a * b", "return a + b")
-            
-    if "def reverse_list(" in code_content:
-        if "return lst[::-2]" in code_content:
-            patched_content = code_content.replace("return lst[::-2]", "return lst[::-1]")
-
-    if "def is_palindrome(" in code_content:
-        if "return s == s[::-1]" in code_content:
-            patched_content = "import re\n" + code_content.replace(
-                "return s == s[::-1]",
-                "clean_s = re.sub(r'[^a-zA-Z0-9]', '', s).lower()\n    return clean_s == clean_s[::-1]"
-            )
-
-    if "def fibonacci(" in code_content:
-        if "return fibonacci(n-1) + fibonacci(n-2)" in code_content:
-            patched_content = code_content.replace(
-                "def fibonacci(n):",
-                "def fibonacci(n):\n    if n <= 1:\n        return n"
-            )
-            
-    if patched_content is None:
-        # If no known pattern is matched, look for specific bug markers or fallback to a custom replacement
-        if "# BUG:" in code_content:
-            lines = code_content.splitlines()
-            for i, line in enumerate(lines):
-                if "# BUG:" in line:
-                    # Replace the next line with the correct code
-                    if i + 1 < len(lines):
-                        buggy_line = lines[i + 1]
-                        # Let's say correction is specified in the BUG comment, e.g. "# BUG: correct is return a + b"
-                        if "correct is" in line:
-                            correction = line.split("correct is")[-1].strip()
-                            lines[i + 1] = buggy_line.replace(buggy_line.strip(), correction)
-                            patched_content = "\n".join(lines)
-                            break
-                            
-    if patched_content is None:
+    # Step 3: Agent-owned diagnostic reasoning and patching. The runner does
+    # not contain task-specific fixes; it only applies and verifies proposals.
+    logger.info("Step 3: Requesting agent patch proposal...")
+    observation = DebugObservation(
+        repo_path=repo_path,
+        code_file=code_file,
+        test_file=test_file,
+        code_content=code_content,
+        test_content=test_content,
+        initial_stdout=initial_test["stdout"],
+        initial_stderr=initial_test["stderr"],
+    )
+    provider = patch_provider or _default_patch_provider
+    try:
+        proposal = await _call_patch_provider(provider, observation)
+    except _COMMAND_RECOVERABLE_ERRORS as exc:
+        logger.error("Patch provider failed: %s", exc)
         return {
             "ok": False,
-            "error": "Failed to automatically locate or resolve the bug pattern in source code.",
+            "error": f"Patch provider failed: {type(exc).__name__}: {exc}",
+            "trace": trace,
+        }
+    if proposal is None:
+        return {
+            "ok": False,
+            "error": "No agent patch proposal was produced.",
             "trace": trace,
         }
 
-    # Write the patched content
-    await asyncio.to_thread(_write_text, code_file, patched_content)
-    logger.info("Successfully wrote patched content to %s", code_file.name)
+    try:
+        patch_target = _validate_patch_target(repo_path, proposal)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "trace": trace,
+        }
+
+    await asyncio.to_thread(_write_text, patch_target, proposal.content)
+    logger.info("Successfully wrote agent patch to %s", patch_target.name)
     
     trace.append({
         "stage": "patch",
-        "patched_file": code_file.name,
-        "new_content": patched_content,
+        "patched_file": str(patch_target.relative_to(repo_path)),
+        "new_content": proposal.content,
+        "rationale": proposal.rationale,
     })
 
     # Step 4: Verify (Re-run test suite)
