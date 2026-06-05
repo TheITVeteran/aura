@@ -236,6 +236,8 @@ class NativeChatSkill(BaseSkill):
             from core.brain.context_builder import DynamicContextBuilder
 
             rich_context = await DynamicContextBuilder.build_rich_context(msg_str, context)
+            if intent_context and not rich_context.get("user_intent"):
+                rich_context["user_intent"] = intent_context
             personality_context = rich_context.get("personality", {})
             logger.info(
                 "Personality State (v5.5): %s (%s)",

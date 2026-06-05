@@ -16,7 +16,7 @@ from aura_bench.capability_delta.adapter import (
     LLMCallable,
     TaskOutcome,
 )
-from aura_bench.capability_delta.stub_llm import _solve_arith
+from aura_bench.capability_delta.deterministic_llm import _solve_arith
 
 
 class ArithmeticSmokeAdapter:

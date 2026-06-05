@@ -22,6 +22,7 @@ def test_offline_tooling_run_requires_named_source(monkeypatch: pytest.MonkeyPat
 
 def test_offline_tooling_run_denied_when_live_governance_active(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.delenv("AURA_TEST_MODE", raising=False)
 
     with pytest.raises(subprocess_gateway.GovernanceViolation):
         subprocess_gateway.SubprocessGateway().run(
@@ -48,6 +49,7 @@ def test_offline_tooling_run_allowed_for_approved_source(monkeypatch: pytest.Mon
 
 def test_offline_tooling_spawn_denied_when_live_governance_active(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.delenv("AURA_TEST_MODE", raising=False)
 
     with pytest.raises(subprocess_gateway.GovernanceViolation):
         subprocess_gateway.SubprocessGateway().spawn(
@@ -61,6 +63,7 @@ def test_offline_tooling_spawn_async_denied_when_live_governance_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.delenv("AURA_TEST_MODE", raising=False)
 
     async def _attempt() -> None:
         await subprocess_gateway.SubprocessGateway().spawn_async(
@@ -71,3 +74,35 @@ def test_offline_tooling_spawn_async_denied_when_live_governance_active(
 
     with pytest.raises(subprocess_gateway.GovernanceViolation):
         asyncio.run(_attempt())
+
+
+def test_proof_tooling_run_allowed_in_test_mode_with_live_governance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.setenv("AURA_TEST_MODE", "1")
+
+    result = subprocess_gateway.SubprocessGateway().run(
+        [sys.executable, "-c", "print('proof-ok')"],
+        timeout=5,
+        offline_tooling=True,
+        source="proof_tooling:test",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "proof-ok"
+
+
+def test_non_proof_tooling_still_denied_in_test_mode_with_live_governance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    monkeypatch.setenv("AURA_TEST_MODE", "1")
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('training-denied')"],
+            timeout=5,
+            offline_tooling=True,
+            source="training_tooling:test",
+        )

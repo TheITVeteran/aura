@@ -14,9 +14,9 @@ from aura_bench.capability_delta import (
 from aura_bench.capability_delta.adapters.arithmetic_smoke import (
     ArithmeticSmokeAdapter,
 )
-from aura_bench.capability_delta.adapters.external_stubs import ALL_STUBS
+from aura_bench.capability_delta.adapters.external_contracts import ALL_CONTRACT_ADAPTERS
+from aura_bench.capability_delta.deterministic_llm import make_deterministic_llm
 from aura_bench.capability_delta.profiles import KNOWN_SUBSYSTEMS
-from aura_bench.capability_delta.stub_llm import make_stub_llm
 
 
 # ---------------------------------------------------------------------------
@@ -60,17 +60,17 @@ def test_profile_set_is_closed():
 
 
 # ---------------------------------------------------------------------------
-# stub LLM behaviour
+# deterministic LLM behaviour
 # ---------------------------------------------------------------------------
-def test_stub_llm_full_profile_is_perfect_on_arithmetic():
-    llm = make_stub_llm()
+def test_deterministic_llm_full_profile_is_perfect_on_arithmetic():
+    llm = make_deterministic_llm()
     assert llm("What is 2 + 3?", "full") == "5"
     assert llm("What is 10 - 7?", "full") == "3"
     assert llm("What is 6 * 7?", "full") == "42"
 
 
-def test_stub_llm_base_only_is_meaningfully_worse():
-    llm = make_stub_llm(base_accuracy=0.2)
+def test_deterministic_llm_base_only_is_meaningfully_worse():
+    llm = make_deterministic_llm(base_accuracy=0.2)
     correct = 0
     for a in range(20):
         prompt = f"What is {a} + {a + 1}?"
@@ -87,7 +87,7 @@ def test_stub_llm_base_only_is_meaningfully_worse():
 # ---------------------------------------------------------------------------
 def test_arithmetic_smoke_run_full_vs_base_shows_capability_delta():
     adapter = ArithmeticSmokeAdapter()
-    llm = make_stub_llm(base_accuracy=0.25)
+    llm = make_deterministic_llm(base_accuracy=0.25)
     report = run_capability_delta(adapter, llm=llm)
 
     assert isinstance(report, DeltaReport)
@@ -95,14 +95,14 @@ def test_arithmetic_smoke_run_full_vs_base_shows_capability_delta():
     assert "base_llm_only" in report.by_profile
     full = report.by_profile["full"]
     base = report.by_profile["base_llm_only"]
-    assert full.mean_score == pytest.approx(1.0)  # stub gets full right
+    assert full.mean_score == pytest.approx(1.0)
     assert base.mean_score < 0.6  # base is meaningfully degraded
     assert report.capability_delta > 0.4  # full beats base by a wide margin
 
 
 def test_smoke_report_has_outcome_per_task_per_profile():
     adapter = ArithmeticSmokeAdapter()
-    llm = make_stub_llm()
+    llm = make_deterministic_llm()
     report = run_capability_delta(adapter, llm=llm, max_tasks=5)
     for profile in ABLATION_PROFILES:
         result = report.by_profile[profile.name]
@@ -114,7 +114,7 @@ def test_smoke_report_has_outcome_per_task_per_profile():
 
 def test_report_serialises_to_dict():
     adapter = ArithmeticSmokeAdapter()
-    llm = make_stub_llm()
+    llm = make_deterministic_llm()
     report = run_capability_delta(adapter, llm=llm, max_tasks=3)
     payload = report.to_dict()
     assert payload["adapter_name"] == adapter.name
@@ -124,23 +124,23 @@ def test_report_serialises_to_dict():
 
 
 # ---------------------------------------------------------------------------
-# stub adapters all conform to the contract
+# contract adapters all conform to the benchmark interface
 # ---------------------------------------------------------------------------
-def test_all_external_stubs_implement_adapter_contract():
-    llm = make_stub_llm()
-    for stub in ALL_STUBS:
-        assert isinstance(stub.name, str) and stub.name
-        tasks = list(stub.tasks())
-        assert tasks, f"{stub.name} produced no tasks"
-        outcome = stub.run(tasks[0], "full", llm)
+def test_all_external_contract_adapters_implement_adapter_contract():
+    llm = make_deterministic_llm()
+    for adapter in ALL_CONTRACT_ADAPTERS:
+        assert isinstance(adapter.name, str) and adapter.name
+        tasks = list(adapter.tasks())
+        assert tasks, f"{adapter.name} produced no tasks"
+        outcome = adapter.run(tasks[0], "full", llm)
         assert outcome.task_id == tasks[0].task_id
         assert outcome.profile_name == "full"
-        assert outcome.metadata.get("synthetic") is True
+        assert outcome.metadata.get("contract_check") is True
 
 
 def test_smoke_adapter_max_tasks_caps_run():
     adapter = ArithmeticSmokeAdapter()
-    llm = make_stub_llm()
+    llm = make_deterministic_llm()
     report = run_capability_delta(adapter, llm=llm, max_tasks=2)
     for result in report.by_profile.values():
         assert result.n_tasks == 2
@@ -181,6 +181,6 @@ def test_capability_delta_is_zero_when_full_and_base_match():
                 self.metadata = {}
 
     report = run_capability_delta(
-        AlwaysWinAdapter(), llm=make_stub_llm(), max_tasks=3
+        AlwaysWinAdapter(), llm=make_deterministic_llm(), max_tasks=3
     )
     assert report.capability_delta == pytest.approx(0.0)

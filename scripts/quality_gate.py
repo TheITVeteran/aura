@@ -22,6 +22,7 @@ CORE = ROOT / "core"
 FAIL_COUNT = 0
 APPROVED_LARGE_FILES = {
     "artifacts/architecture/latest.json": "generated architecture-map evidence retained for offline review",
+    "artifacts/closeout/semantic_review/SEMANTIC_REVIEW_LEDGER.jsonl": "append-only closeout semantic review evidence",
     "dev_archive/simulation_output/simulate_out.txt": "legacy simulation trace retained as archival evidence",
     "interface/static/vendor/3d-force-graph.min.js": "offline UI vendor bundle used by interface/static/mycelial.html",
     "training/data/train.jsonl": "offline training corpus, not loaded by runtime boot",
@@ -69,11 +70,16 @@ def tracked_files(patterns: list[str]) -> list[Path]:
     return [ROOT / path for path in result.stdout.splitlines() if path.strip()]
 
 
+def existing_tracked_files(patterns: list[str]) -> list[Path]:
+    """Return tracked files that still exist in the current worktree."""
+    return [path for path in tracked_files(patterns) if path.exists()]
+
+
 def check_syntax():
     """All Python files must parse."""
     print("\n[1/6] Syntax check...")
     errors = 0
-    for py_file in tracked_files(["*.py"]):
+    for py_file in existing_tracked_files(["*.py"]):
         try:
             ast.parse(py_file.read_text(encoding="utf-8", errors="ignore"))
         except SyntaxError as e:
@@ -170,7 +176,7 @@ def check_no_incomplete_returns():
     print("\n[5/6] Incomplete implementation check...")
     patterns = ["not_" + "implemented", "not " + "implemented", "Method recognized but not " + "implemented"]
     found = 0
-    for py_file in tracked_files(["core/**/*.py"]):
+    for py_file in existing_tracked_files(["core/**/*.py"]):
         try:
             content = py_file.read_text(encoding="utf-8", errors="ignore")
             for pattern in patterns:

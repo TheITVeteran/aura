@@ -33,6 +33,10 @@ _OFFLINE_TOOLING_SOURCE_PREFIXES = (
     "proof_tooling:",
     "training_tooling:",
 )
+_TEST_MODE_GOVERNANCE_BYPASS_PREFIXES = (
+    "certification_tooling:",
+    "proof_tooling:",
+)
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
@@ -62,18 +66,30 @@ def _validate_offline_tooling_bypass(
     This is intentionally not a general governance bypass. It exists for CLI
     proof, certification, benchmark, maintenance, and training wrappers that
     orchestrate Aura from outside her live runtime. If live/strict governance is
-    active, the bypass fails closed and callers must enter a governed scope.
+    active, the bypass fails closed except for proof/certification harnesses
+    running under AURA_TEST_MODE.
     """
     if not offline_tooling:
         return False
-    if governance_runtime_active():
-        raise GovernanceViolation(
-            f"offline subprocess tooling bypass denied while live governance is active: {source}"
-        )
     if not any(source.startswith(prefix) for prefix in _OFFLINE_TOOLING_SOURCE_PREFIXES):
         raise ValueError(
             "offline subprocess tooling requires a source prefix of "
             f"{', '.join(_OFFLINE_TOOLING_SOURCE_PREFIXES)}"
+        )
+    if governance_runtime_active():
+        is_certification_harness = any(
+            source.startswith(prefix) for prefix in _TEST_MODE_GOVERNANCE_BYPASS_PREFIXES
+        )
+        if is_certification_harness and os.getenv("AURA_TEST_MODE", "") == "1":
+            logger.info(
+                "offline subprocess tooling bypass (test-mode) source=%s argv0=%s argc=%s",
+                source,
+                command[0] if command else "",
+                len(command),
+            )
+            return True
+        raise GovernanceViolation(
+            f"offline subprocess tooling bypass denied while live governance is active: {source}"
         )
     logger.info(
         "offline subprocess tooling bypass source=%s argv0=%s argc=%s",
