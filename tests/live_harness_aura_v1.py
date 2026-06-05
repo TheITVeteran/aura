@@ -312,11 +312,11 @@ def _import_and_instantiate(mod_name: str, cls_name: str) -> str:
     try:
         inst = cls()
     except TypeError:
-        # Tolerate constructors needing a parent system/context — pass a dummy
+        # Tolerate constructors needing a parent system/context by inspecting an uninitialized shell.
         inst = cls.__new__(cls)
-    # heuristic: ensure at least one public method exists (not a pure stub)
+    # Heuristic: ensure the module exposes behavior-bearing public methods.
     public = [a for a in dir(inst) if not a.startswith("_") and callable(getattr(inst, a, None))]
-    assert len(public) >= 2, f"{cls_name} exposes <2 public methods — likely stub"
+    assert len(public) >= 2, f"{cls_name} exposes <2 public methods — likely thin facade"
     return f"instantiated, {len(public)} public methods"
 
 

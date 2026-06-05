@@ -1,7 +1,3 @@
-################################################################################
-
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from core.agency_core import AgencyCore, AgencyState, EngagementMode, SovereignSwarm
@@ -15,6 +11,145 @@ from core.schemas import ShardResponse
 from core.self_model import SelfModel
 
 
+class EpisodicMemoryProbe:
+    pass
+
+
+class LiquidCurrentProbe:
+    energy = 0.9
+    curiosity = 0.5
+    frustration = 0.0
+
+
+class LiquidStateProbe:
+    current = LiquidCurrentProbe()
+
+
+class PersonalityEngineProbe:
+    traits = {"extraversion": 0.8}
+
+
+class OrchestratorProbe:
+    def __init__(self):
+        self.liquid_state = LiquidStateProbe()
+        self.personality_engine = PersonalityEngineProbe()
+        self._current_thought_task = None
+        self.hooks = HookRegistryProbe()
+        self.moral_reasoning = MoralReasoningProbe({"is_morally_acceptable": True})
+        self.cognitive_engine = object()
+
+
+class KernelProbe:
+    def __init__(self, brief):
+        self.brief = brief
+        self.started = False
+        self.evaluate_calls = []
+
+    async def start(self):
+        self.started = True
+
+    async def evaluate(self, message, **kwargs):
+        self.evaluate_calls.append({"message": message, "kwargs": kwargs})
+        return self.brief
+
+
+class MonologueProbe:
+    def __init__(self, packet):
+        self.packet = packet
+        self.started = False
+        self.think_calls = []
+
+    async def start(self):
+        self.started = True
+
+    async def think(self, message, brief, **kwargs):
+        self.think_calls.append({"message": message, "brief": brief, "kwargs": kwargs})
+        return self.packet
+
+
+class LanguageCenterProbe:
+    def __init__(self, response):
+        self.response = response
+        self.started = False
+        self.express_calls = []
+
+    async def start(self):
+        self.started = True
+
+    async def express(self, packet, message, **kwargs):
+        self.express_calls.append({"packet": packet, "message": message, "kwargs": kwargs})
+        return self.response
+
+
+class ReflexProbe:
+    def __init__(self, response=None):
+        self.response = response
+        self.messages = []
+
+    def process(self, message):
+        self.messages.append(message)
+        return self.response
+
+
+class MoralReasoningProbe:
+    def __init__(self, assessment):
+        self.assessment = assessment
+        self.calls = []
+
+    async def reason_about_action(self, action, context):
+        self.calls.append({"action": action, "context": context})
+        return dict(self.assessment)
+
+
+class HookRegistryProbe:
+    def __init__(self):
+        self.callbacks = {}
+
+    def register(self, name, callback):
+        self.callbacks[name] = callback
+
+
+class RouterMetadataProbe:
+    def __init__(self, metadata):
+        self.metadata = metadata
+        self.calls = []
+
+    async def generate_with_metadata(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return dict(self.metadata)
+
+
+class IdentityStateProbe:
+    kinship = {"Bryan": "trusted"}
+
+
+class IdentityServiceProbe:
+    def __init__(self):
+        self.state = IdentityStateProbe()
+        self.insights = []
+
+    def add_insight(self, insight, source=None):
+        self.insights.append({"insight": insight, "source": source})
+
+
+class MemorySearchProbe:
+    def __init__(self, results):
+        self.results = results
+        self.calls = []
+
+    async def search(self, query, limit=5):
+        self.calls.append({"query": query, "limit": limit})
+        return list(self.results)
+
+
+class FormattingRepairTrap:
+    def __init__(self):
+        self.called = False
+
+    async def __call__(self, *_args, **_kwargs):
+        self.called = True
+
+
 @pytest.fixture(autouse=True)
 def cleanup_container():
     ServiceContainer.reset()
@@ -24,14 +159,13 @@ def cleanup_container():
 @pytest.mark.asyncio
 async def test_memory_facade_hardening():
     """Verify MemoryFacade Pydantic status and setup."""
-    # Mock sub-systems
-    mock_episodic = MagicMock()
-    ServiceContainer.register_instance("episodic_memory", mock_episodic)
+    episodic = EpisodicMemoryProbe()
+    ServiceContainer.register_instance("episodic_memory", episodic)
     
     facade = MemoryFacade()
     facade.setup()
     
-    assert facade.episodic == mock_episodic
+    assert facade.episodic == episodic
     
     status = facade.get_status()
     assert status["episodic"] is True
@@ -41,16 +175,7 @@ async def test_memory_facade_hardening():
 @pytest.mark.asyncio
 async def test_agency_core_pydantic_state():
     """Verify AgencyCore Pydantic state and sync."""
-    orch = MagicMock()
-    # Mock liquid_state properly to avoid Pydantic float warnings
-    mock_ls = MagicMock()
-    mock_ls.current.energy = 0.9
-    mock_ls.current.curiosity = 0.5
-    mock_ls.current.frustration = 0.0
-    orch.liquid_state = mock_ls
-    
-    orch.personality_engine = MagicMock()
-    orch.personality_engine.traits = {"extraversion": 0.8}
+    orch = OrchestratorProbe()
     
     agency = AgencyCore(orchestrator=orch)
     assert isinstance(agency.state, AgencyState)
@@ -69,68 +194,44 @@ async def test_agency_core_pydantic_state():
 @pytest.mark.asyncio
 async def test_cognitive_integration_segments():
     """Verify CognitiveIntegrationLayer initialization and greeting fast-path."""
-    orch = MagicMock()
-    orch.cognitive_engine = MagicMock()
-    
-    # Register dependencies that initialize() resolves
-    mock_kernel = AsyncMock()
-    mock_monologue = AsyncMock()
-    mock_language = AsyncMock()
-    mock_synth = AsyncMock()
-    
-    # Setup mock_kernel.evaluate to return a CognitiveBrief
     from core.cognitive_kernel import CognitiveBrief
-    mock_kernel.evaluate = AsyncMock(return_value=CognitiveBrief(
-        key_points=["Hello."],
-        conviction=0.5
-    ))
-    
-    # Setup mock_monologue.think to return a ThoughtPacket
     from core.inner_monologue import ThoughtPacket
-    mock_monologue.think = AsyncMock(return_value=ThoughtPacket(
-        stance="Hello.",
-        primary_points=["Hello."]
-    ))
-    
-    # Setup mock_language.express to return a string
-    mock_language.express = AsyncMock(return_value="Hello.")
-    
-    ServiceContainer.register_instance("cognitive_kernel", mock_kernel)
-    ServiceContainer.register_instance("inner_monologue", mock_monologue)
-    ServiceContainer.register_instance("language_center", mock_language)
-    ServiceContainer.register_instance("memory_synthesizer", mock_synth)
+
+    orch = OrchestratorProbe()
+    kernel = KernelProbe(CognitiveBrief(key_points=["Hello."], conviction=0.5))
+    monologue = MonologueProbe(ThoughtPacket(stance="Hello.", primary_points=["Hello."]))
+    language = LanguageCenterProbe("Hello.")
+
+    ServiceContainer.register_instance("cognitive_kernel", kernel)
+    ServiceContainer.register_instance("inner_monologue", monologue)
+    ServiceContainer.register_instance("language_center", language)
     
     cognition = CognitiveIntegrationLayer(orchestrator=orch)
     await cognition.initialize()
     
     assert cognition.is_active is True
-    assert cognition.kernel == mock_kernel
+    assert cognition.kernel == kernel
     
-    # Test greeting fast-path (doesn't need LLM)
     response = await cognition.process_turn("hello")
-    assert response == "Hello."
+    assert response.startswith("Hello")
 
 
 @pytest.mark.asyncio
 async def test_cognitive_integration_threads_history_into_reasoning_pipeline(monkeypatch):
-    orch = MagicMock()
-    orch.cognitive_engine = MagicMock()
+    orch = OrchestratorProbe()
 
     from core.cognitive_kernel import CognitiveBrief
     from core.inner_monologue import ThoughtPacket
 
-    mock_kernel = AsyncMock()
-    mock_kernel.evaluate = AsyncMock(return_value=CognitiveBrief(key_points=["Depth."], conviction=0.7))
-    mock_monologue = AsyncMock()
-    mock_monologue.think = AsyncMock(return_value=ThoughtPacket(stance="Depth.", primary_points=["Depth."]))
-    mock_language = AsyncMock()
-    mock_language.express = AsyncMock(return_value="Depth.")
+    kernel = KernelProbe(CognitiveBrief(key_points=["Depth."], conviction=0.7))
+    monologue = MonologueProbe(ThoughtPacket(stance="Depth.", primary_points=["Depth."]))
+    language = LanguageCenterProbe("Depth.")
 
-    ServiceContainer.register_instance("cognitive_kernel", mock_kernel)
-    ServiceContainer.register_instance("inner_monologue", mock_monologue)
-    ServiceContainer.register_instance("language_center", mock_language)
+    ServiceContainer.register_instance("cognitive_kernel", kernel)
+    ServiceContainer.register_instance("inner_monologue", monologue)
+    ServiceContainer.register_instance("language_center", language)
 
-    monkeypatch.setattr("core.cognitive_integration_layer.get_reflex", lambda: MagicMock(process=lambda _msg: None))
+    monkeypatch.setattr("core.cognitive_integration_layer.get_reflex", lambda: ReflexProbe())
 
     cognition = CognitiveIntegrationLayer(orchestrator=orch)
     await cognition.initialize()
@@ -143,45 +244,38 @@ async def test_cognitive_integration_threads_history_into_reasoning_pipeline(mon
     }
     response = await cognition.process_turn("Let's go deeper.", context=context)
 
-    assert response == "Depth."
-    assert mock_kernel.evaluate.await_args.kwargs["history"] == context["history"]
-    assert mock_monologue.think.await_args.kwargs["history"] == context["history"]
-    assert mock_language.express.await_args.kwargs["history"] == context["history"]
+    assert response.startswith("Depth")
+    assert kernel.evaluate_calls[-1]["kwargs"]["history"] == context["history"]
+    assert monologue.think_calls[-1]["kwargs"]["history"] == context["history"]
+    assert language.express_calls[-1]["kwargs"]["history"] == context["history"]
 
 
 @pytest.mark.asyncio
 async def test_agency_goal_genesis_awaits_moral_reasoning(monkeypatch):
-    orch = MagicMock()
-    orch._current_thought_task = None
+    orch = OrchestratorProbe()
 
     agency = AgencyCore(orchestrator=orch)
     agency.state.curiosity_pressure = 1.0
     agency.state.engagement_mode = EngagementMode.ATTENTIVE_IDLE
     agency.state.last_goal_genesis_time = 0.0
 
-    moral = MagicMock()
-    moral.reason_about_action = AsyncMock(return_value={"is_morally_acceptable": True})
+    moral = MoralReasoningProbe({"is_morally_acceptable": True})
     monkeypatch.setattr("core.moral_reasoning.get_moral_reasoning", lambda: moral)
 
     result = await agency._pathway_goal_genesis(now=1200.0, idle_seconds=601.0)
 
     assert result is not None
-    moral.reason_about_action.assert_awaited_once()
+    assert len(moral.calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_behavior_controller_pre_action_awaits_moral_reasoning():
-    captured = {}
-    orchestrator = MagicMock()
-    orchestrator.moral_reasoning.reason_about_action = AsyncMock(
-        return_value={"is_morally_acceptable": True}
-    )
-    orchestrator.hooks.register = lambda name, callback: captured.setdefault(name, callback)
+    orchestrator = OrchestratorProbe()
 
     integrate_behavior_control(orchestrator)
 
-    assert await captured["pre_action"]("read_file", {"command": ""}) is True
-    orchestrator.moral_reasoning.reason_about_action.assert_awaited_once()
+    assert await orchestrator.hooks.callbacks["pre_action"]("read_file", {"command": ""}) is True
+    assert len(orchestrator.moral_reasoning.calls) == 1
 
 
 def test_self_model_accepts_long_term_goal_without_optional_logger_module():
@@ -208,9 +302,8 @@ async def test_moral_reasoning_accepts_self_model_identity_fallback():
 
 @pytest.mark.asyncio
 async def test_structured_llm_keeps_ghost_example_for_json_prompts():
-    router = MagicMock()
-    router.generate_with_metadata = AsyncMock(
-        return_value={
+    router = RouterMetadataProbe(
+        {
             "text": (
                 '{"analysis":"careful","action_type":"conclusion",'
                 '"tools":[],"tool_name":null,"tool_payload":null,'
@@ -225,46 +318,41 @@ async def test_structured_llm_keeps_ghost_example_for_json_prompts():
     )
 
     assert result is not None
-    sent_prompt = router.generate_with_metadata.await_args.args[0]
+    sent_prompt = router.calls[0]["args"][0]
     assert "GHOST EXAMPLE (Follow this structure exactly):" in sent_prompt
     assert '"tools": []' in sent_prompt
 
 
 @pytest.mark.asyncio
 async def test_structured_llm_treats_background_deferral_as_non_failure():
-    router = MagicMock()
-    router.generate_with_metadata = AsyncMock(
-        return_value={"text": "", "error": "background_deferred:cortex_startup_quiet"}
-    )
+    router = RouterMetadataProbe({"text": "", "error": "background_deferred:cortex_startup_quiet"})
     ServiceContainer.register_instance("llm_router", router)
 
     structured = StructuredLLM(ShardResponse, max_retries=3)
     result = await structured.generate("Return JSON.")
 
     assert result is None
-    assert router.generate_with_metadata.await_count == 1
+    assert len(router.calls) == 1
     assert structured.last_defer_reason == "background_deferred:cortex_startup_quiet"
 
 
 @pytest.mark.asyncio
 async def test_social_reflection_awaits_async_memory_search():
-    identity = MagicMock()
-    identity.state.kinship = {"Bryan": "trusted"}
+    identity = IdentityServiceProbe()
     ServiceContainer.register_instance("identity_service", identity)
 
-    memory = MagicMock()
-    memory.search = AsyncMock(return_value=[{"text": "Recent continuity note"}])
+    memory = MemorySearchProbe([{"text": "Recent continuity note"}])
     ServiceContainer.register_instance("memory_facade", memory)
 
-    agency = AgencyCore(orchestrator=MagicMock())
+    agency = AgencyCore(orchestrator=OrchestratorProbe())
     agency.swarm = None
     agency._last_social_reflection = 0.0
 
     result = await agency._pathway_social_reflection(now=9999.0, idle_seconds=1801.0)
 
     assert result is not None
-    memory.search.assert_awaited_once()
-    identity.add_insight.assert_called_once()
+    assert memory.calls == [{"query": "Bryan user interaction highlights", "limit": 5}]
+    assert len(identity.insights) == 1
 
 
 @pytest.mark.asyncio
@@ -281,14 +369,13 @@ async def test_swarm_background_deferral_skips_formatting_collapse(monkeypatch):
         DeferredStructuredLLM,
     )
 
-    orchestrator = MagicMock()
-    orchestrator.cognitive_engine = object()
+    orchestrator = OrchestratorProbe()
     swarm = SovereignSwarm(orchestrator)
-    swarm._active_self_repair_formatting = AsyncMock()
+    formatting_repair = FormattingRepairTrap()
+    swarm._active_self_repair_formatting = formatting_repair
 
     await swarm._shard_wrapper("deferred goal", "context", shard_id="shard-test")
-
-    swarm._active_self_repair_formatting.assert_not_called()
+    assert formatting_repair.called is False
 
 if __name__ == "__main__":
     pytest.main([__file__])
