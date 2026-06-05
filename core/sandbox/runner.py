@@ -14,6 +14,7 @@ from pathlib import Path
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,10 @@ async def _communicate_process(
         stderr=_PIPE,
         source="sandbox.runner.untrusted_child",
     )
-    communicate_task = asyncio.create_task(process.communicate(input=payload))
+    communicate_task = create_tracked_task(
+        process.communicate(input=payload),
+        name="sandbox.runner.communicate",
+    )
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     timed_out = False

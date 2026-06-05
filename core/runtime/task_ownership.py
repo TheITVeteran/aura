@@ -3,16 +3,16 @@
 Use this instead of raw asyncio.create_task in production code.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import asyncio
 import contextvars
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Runtime.TaskOwnership")
 
@@ -35,7 +35,7 @@ def close_awaitable(awaitable: Any) -> None:
             cancel()
 
 
-def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: Optional[str]) -> asyncio.Task:
+def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: str | None) -> asyncio.Task:
     """Create a fallback task while preserving strict task-owner semantics."""
 
     try:
@@ -58,13 +58,13 @@ def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: Optional[str]
 def create_tracked_task(
     awaitable: Awaitable[Any],
     *,
-    name: Optional[str] = None,
+    name: str | None = None,
     bounded: bool = False,
-    on_done: Optional[Callable[[asyncio.Task], Any]] = None,
+    on_done: Callable[[asyncio.Task], Any] | None = None,
     cancel_on_fail: bool = True,
 ) -> asyncio.Task:
     tracker = _get_tracker()
-    task: Optional[asyncio.Task] = None
+    task: asyncio.Task | None = None
     try:
         if tracker is not None:
             if bounded and hasattr(tracker, "bounded_track"):
@@ -100,10 +100,10 @@ def create_tracked_task(
 def fire_and_forget(
     awaitable: Awaitable[Any],
     *,
-    name: Optional[str] = None,
+    name: str | None = None,
     bounded: bool = False,
     log_exceptions: bool = True,
-) -> Optional[asyncio.Task]:
+) -> asyncio.Task | None:
     def _log_done(task: asyncio.Task) -> None:
         if not log_exceptions:
             return
@@ -121,7 +121,7 @@ def fire_and_forget(
     except RuntimeError:
         close_awaitable(awaitable)
         return None
-    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         record_degradation('task_ownership', exc)
         close_awaitable(awaitable)
         logger.debug("fire_and_forget scheduling failed for %s: %s", name, exc)

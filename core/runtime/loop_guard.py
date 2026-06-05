@@ -1,8 +1,9 @@
 import asyncio
-import time
 import logging
+import time
 from contextlib import suppress
-from typing import Optional
+
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Runtime.LoopGuard")
 
@@ -18,9 +19,9 @@ class LoopLagMonitor:
         self.threshold_s = float(threshold_s)
         self.sample_interval_s = float(sample_interval_s)
         self.last = time.perf_counter()
-        self._stop_event: Optional[asyncio.Event] = None
+        self._stop_event: asyncio.Event | None = None
 
-    async def start(self, stop_event: Optional[asyncio.Event] = None):
+    async def start(self, stop_event: asyncio.Event | None = None):
         logger.info(
             "LoopLagMonitor active (threshold=%.3fs interval=%.3fs)",
             self.threshold_s,
@@ -36,7 +37,7 @@ class LoopLagMonitor:
                         timeout=self.sample_interval_s,
                     )
                     break
-                except asyncio.TimeoutError as _exc:
+                except TimeoutError as _exc:
                     logger.debug("Suppressed %s in core.runtime.loop_guard: %s", type(_exc).__name__, _exc)
                 now = time.perf_counter()
                 lag = now - self.last - self.sample_interval_s
@@ -56,7 +57,7 @@ class LoopLagMonitor:
         if duration_s < 0:
             raise ValueError("duration_s must be >= 0")
         stop_event = asyncio.Event()
-        task = asyncio.create_task(self.start(stop_event), name="loop-lag-monitor")
+        task = create_tracked_task(self.start(stop_event), name="loop-lag-monitor")
         try:
             await asyncio.sleep(duration_s)
             stop_event.set()

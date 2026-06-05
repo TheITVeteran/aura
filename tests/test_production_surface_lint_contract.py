@@ -11,6 +11,12 @@ def _findings(source: str) -> list[str]:
     return [finding.kind for finding in visitor.findings]
 
 
+def _findings_for_path(source: str, rel_path: str) -> list[str]:
+    visitor = AstLinter(rel_path)
+    visitor.visit(ast.parse(source))
+    return [finding.kind for finding in visitor.findings]
+
+
 def test_lint_blocks_asyncio_subprocess_exec() -> None:
     kinds = _findings(
         """
@@ -22,6 +28,33 @@ async def main():
     )
 
     assert "unapproved_direct_subprocess" in kinds
+
+
+def test_lint_blocks_raw_asyncio_create_task_in_production_file() -> None:
+    kinds = _findings(
+        """
+import asyncio
+
+async def main(coro):
+    asyncio.create_task(coro)
+"""
+    )
+
+    assert "raw_async_task" in kinds
+
+
+def test_lint_allows_raw_asyncio_create_task_only_in_canonical_task_owner() -> None:
+    kinds = _findings_for_path(
+        """
+import asyncio
+
+def create(coro):
+    return asyncio.create_task(coro)
+""",
+        "core/runtime/task_ownership.py",
+    )
+
+    assert "raw_async_task" not in kinds
 
 
 def test_lint_blocks_asyncio_subprocess_shell() -> None:
