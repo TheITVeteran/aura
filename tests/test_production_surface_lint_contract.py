@@ -51,6 +51,20 @@ async def main():
     assert "unapproved_direct_subprocess" in kinds
 
 
+def test_lint_blocks_network_callable_wrapped_in_to_thread() -> None:
+    kinds = _findings(
+        """
+import asyncio
+import requests
+
+async def main():
+    await asyncio.to_thread(requests.get, "https://example.com")
+"""
+    )
+
+    assert "unapproved_direct_network" in kinds
+
+
 def test_lint_blocks_path_constructor_write_text() -> None:
     kinds = _findings(
         """

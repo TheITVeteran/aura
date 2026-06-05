@@ -5,10 +5,11 @@ package is absent from a local runtime.
 """
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from typing import Any
-from urllib.request import Request, urlopen
-import xml.etree.ElementTree as ET
+
+from core.runtime.network_gateway import get_network_gateway
 
 
 def parse_feed_url(url: str, *, timeout: float = 12.0) -> Any:
@@ -18,9 +19,18 @@ def parse_feed_url(url: str, *, timeout: float = 12.0) -> Any:
 
         return feedparser.parse(url)
     except ImportError:
-        req = Request(url, headers={"User-Agent": "AuraWorldWatcher/1.0"})
-        with urlopen(req, timeout=timeout) as response:
-            data = response.read(1_000_000)
+        response = get_network_gateway().request(
+            "GET",
+            url,
+            headers={"User-Agent": "AuraWorldWatcher/1.0"},
+            timeout=timeout,
+            read_only=True,
+            source="core.utils.rss_feed.parse_feed_url",
+        )
+        if not response.get("ok"):
+            raise OSError(str(response.get("error") or "feed request failed")) from None
+        content = response.get("content", b"")
+        data = content[:1_000_000] if isinstance(content, bytes) else str(content).encode("utf-8")
         return parse_feed_bytes(data)
 
 

@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1780642824.376558`
+Generated: `1780643396.153134`
 
 ## Summary
 
 - Subsystems: 141
 - Python files: 1734
-- Python lines: 488679
+- Python lines: 488773
 - Dependency edges: 734
 - ServiceContainer `.get()` calls: 1490
 - ServiceContainer registrations: 358
@@ -18,8 +18,8 @@ Generated: `1780642824.376558`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>102 files, 23205 lines"]
-    utils["utils<br/>42 files, 5210 lines"]
+    runtime["runtime<br/>102 files, 23258 lines"]
+    utils["utils<br/>42 files, 5220 lines"]
     brain["brain<br/>116 files, 43920 lines"]
     memory["memory<br/>77 files, 19061 lines"]
     consciousness["consciousness<br/>128 files, 59758 lines"]
@@ -130,7 +130,7 @@ graph TD
     audits["audits<br/>2 files, 267 lines"]
     body["body<br/>1 files, 139 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>178 files, 54997 lines"]
+    core_root["core_root<br/>178 files, 55028 lines"]
     council["council<br/>5 files, 466 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     evals["evals<br/>1 files, 143 lines"]
@@ -900,9 +900,9 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 128 | 59758 | 2514202 | 38 | 29 |
-| core_root | 178 | 54997 | 2236455 | 99 | 0 |
+| core_root | 178 | 55028 | 2238311 | 99 | 0 |
 | brain | 116 | 43920 | 1894429 | 42 | 39 |
-| runtime | 102 | 23205 | 819406 | 41 | 117 |
+| runtime | 102 | 23258 | 821314 | 41 | 117 |
 | memory | 77 | 19061 | 769495 | 18 | 32 |
 | orchestrator | 42 | 18872 | 832854 | 124 | 9 |
 | phases | 29 | 17310 | 783345 | 33 | 8 |
@@ -917,7 +917,7 @@ graph TD
 | learning | 20 | 6977 | 276754 | 15 | 7 |
 | kernel | 11 | 6013 | 251231 | 22 | 4 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
-| utils | 42 | 5210 | 203061 | 17 | 50 |
+| utils | 42 | 5220 | 203444 | 17 | 50 |
 | senses | 23 | 5144 | 215535 | 16 | 14 |
 | security | 17 | 4638 | 182760 | 11 | 10 |
 | conversation | 8 | 4300 | 158729 | 11 | 6 |
@@ -1151,7 +1151,7 @@ graph TD
 | Tool execution | 93 | 48 | 6 | 87 |
 | Self-modification and patching | 13 | 10 | 2 | 11 |
 | LLM inference | 253 | 150 | 67 | 186 |
-| External I/O | 91 | 42 | 10 | 81 |
+| External I/O | 91 | 40 | 9 | 82 |
 
 ### UnifiedWill decisions
 
@@ -1339,7 +1339,6 @@ Review candidates:
 - `core/brain/react_loop.py:436` [brain] `httpx.get` - resp = httpx.get(search_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10.0, follow_redirects=True)
 - `core/brain/react_loop.py:470` [brain] `httpx.get` - resp = httpx.get(target_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, timeout=15.0, follow_redirects=True)
 - `core/bus/sensory_gate.py:209` [bus] `urllib.parse.quote` - f"&search={urllib.parse.quote(query)}&limit=3&namespace=0&format=json"
-- `core/capabilities.py:65` [core_root] `asyncio.to_thread` - resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=self.timeout)
 - `core/collective/belief_sync.py:201` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/collective/belief_sync.py:231` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/collective/belief_sync.py:288` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
@@ -1355,6 +1354,7 @@ Review candidates:
 - `core/embodiment/mock_iot_plug.py:32` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/embodiment/mock_iot_plug.py:58` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/embodiment/mock_iot_plug.py:90` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
+- `core/embodiment/unity_bridge.py:30` [embodiment] `websockets.connect` - self.ws = await websockets.connect(uri)
 
 ## Degradation Handling
 

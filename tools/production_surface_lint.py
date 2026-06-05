@@ -408,7 +408,7 @@ class AstLinter(ast.NodeVisitor):
             "requests.get", "requests.post", "requests.put", "requests.delete", "requests.patch", "requests.request",
             "urllib.request.urlopen", "urllib.request.Request",
             "httpx.get", "httpx.post", "httpx.request", "httpx.Client", "httpx.AsyncClient"
-        }:
+        } or self._has_network_callable_arg(node):
             self.add(
                 "high",
                 "unapproved_direct_network",
@@ -473,6 +473,26 @@ class AstLinter(ast.NodeVisitor):
             "subprocess.check_output",
             "asyncio.create_subprocess_exec",
             "asyncio.create_subprocess_shell",
+        }
+        for arg in node.args:
+            if AstLinter._call_name_from_func(arg) in forbidden:
+                return True
+        return False
+
+    @staticmethod
+    def _has_network_callable_arg(node: ast.Call) -> bool:
+        forbidden = {
+            "requests.get",
+            "requests.post",
+            "requests.put",
+            "requests.delete",
+            "requests.patch",
+            "requests.request",
+            "httpx.get",
+            "httpx.post",
+            "httpx.request",
+            "urllib.request.urlopen",
+            "urllib.request.Request",
         }
         for arg in node.args:
             if AstLinter._call_name_from_func(arg) in forbidden:

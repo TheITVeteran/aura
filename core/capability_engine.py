@@ -15,9 +15,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-import requests
-
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("core.capability_engine")
@@ -71,20 +70,20 @@ except ImportError:
         """Fallback circuit-breaker exception when pybreaker is unavailable."""
 
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
-from core.base_module import AuraBaseModule
-from core.config import config
-from core.container import ServiceContainer
-from core.exceptions import ContainerError
-from core.runtime.service_access import (
+from core.base_module import AuraBaseModule  # noqa: E402
+from core.config import config  # noqa: E402
+from core.container import ServiceContainer  # noqa: E402
+from core.exceptions import ContainerError  # noqa: E402
+from core.runtime.service_access import (  # noqa: E402
     optional_service,
     resolve_edi,
     resolve_homeostatic_coupling,
     resolve_metabolic_monitor,
     resolve_state_repository,
 )
-from core.utils.intent_normalization import normalize_memory_intent_text
+from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
 
 _USER_FACING_CONTEXT_ORIGINS = frozenset(
     {
@@ -707,14 +706,22 @@ class WebClient:
             )
             return False, f"Authority unavailable for network request: {e}"
         try:
-            resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=self.timeout)
+            response = await get_network_gateway().request_async(
+                "GET",
+                url,
+                headers=headers,
+                timeout=self.timeout,
+                read_only=True,
+                source="core.capability_engine.web_client",
+            )
+            ok = bool(response.get("ok"))
             try:
                 from core.executive.authority_gateway import get_authority_gateway
 
                 get_authority_gateway().finalize_tool_execution(
                     executive_intent_id=getattr(auth, "executive_intent_id", None),
                     capability_token_id=getattr(auth, "capability_token_id", None),
-                    success=True,
+                    success=ok,
                 )
             except (
                 ImportError,
@@ -727,8 +734,12 @@ class WebClient:
                     finalize_error,
                     action="returned network response after authority finalization failed",
                 )
-            return True, resp.text
-        except (requests.RequestException, OSError, ValueError) as e:
+            if not ok:
+                return False, str(response.get("error") or "network request failed")
+            content = response.get("content", b"")
+            text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+            return True, text
+        except (OSError, RuntimeError, TypeError, ValueError) as e:
             _record_capability_degradation(
                 e,
                 action="returned network request failure and finalized authority denial",

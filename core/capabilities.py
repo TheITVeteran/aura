@@ -1,10 +1,8 @@
-import asyncio
 import logging
 import subprocess
 
-import requests
-
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Kernel.Capabilities")
@@ -62,8 +60,19 @@ class WebClient:
             
         logger.info("WebClient.get: %s", url[:80])
         try:
-            resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=self.timeout)
-            return True, resp.text
+            response = await get_network_gateway().request_async(
+                "GET",
+                url,
+                headers=headers,
+                timeout=self.timeout,
+                read_only=True,
+                source="core.capabilities.web_client",
+            )
+            if not response.get("ok"):
+                return False, str(response.get("error") or "network request failed")
+            content = response.get("content", b"")
+            text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+            return True, text
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('capabilities', e)
             logger.error("Web error: %s", e)
