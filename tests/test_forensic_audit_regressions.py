@@ -5,7 +5,6 @@ import signal
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -46,6 +45,16 @@ from core.senses.sensory_instincts import SensoryInstincts
 from core.skills.base_skill import BaseSkill
 from core.state.aura_state import AuraState
 from core.systems.metabolism import MetabolismEngine
+
+
+class AsyncCallProbe:
+    def __init__(self, *, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return self.result
 
 
 def _reset_authority_runtime() -> None:
@@ -291,11 +300,12 @@ def test_self_play_quality_gate_accepts_structured_reasoning():
 @pytest.mark.asyncio
 async def test_self_play_waits_for_a_real_user_idle_anchor():
     self_play = ContinuousSelfPlay(idle_threshold_seconds=0)
-    self_play._generate_adversarial_problem = AsyncMock(side_effect=AssertionError("should stay deferred"))
+    adversarial_problem = AsyncCallProbe(result="deferred problem")
+    self_play._generate_adversarial_problem = adversarial_problem
 
     await self_play.trigger_cycle(0.0)
 
-    self_play._generate_adversarial_problem.assert_not_awaited()
+    assert adversarial_problem.calls == []
 
 
 @pytest.mark.asyncio
@@ -402,7 +412,7 @@ async def test_filesystem_reality_shortcut_is_disabled_for_user_facing_requests(
     from core.orchestrator.mixins.incoming_logic import IncomingLogicMixin
 
     class Probe(IncomingLogicMixin):
-        output_gate = SimpleNamespace(emit=AsyncMock())
+        output_gate = SimpleNamespace(emit=AsyncCallProbe())
 
     probe = Probe()
     example_path = Path(tempfile.gettempdir()) / "example.txt"
@@ -413,15 +423,15 @@ async def test_filesystem_reality_shortcut_is_disabled_for_user_facing_requests(
     )
 
     assert handled is False
-    probe.output_gate.emit.assert_not_called()
+    assert probe.output_gate.emit.calls == []
 
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_signal_path_does_not_raise_system_exit(monkeypatch):
     from core.graceful_shutdown import GracefulShutdown
 
-    hook = AsyncMock()
-    container = SimpleNamespace(shutdown=AsyncMock())
+    hook = AsyncCallProbe()
+    container = SimpleNamespace(shutdown=AsyncCallProbe())
 
     GracefulShutdown._hooks = [hook]
     GracefulShutdown._is_shutting_down = False
@@ -431,8 +441,8 @@ async def test_graceful_shutdown_signal_path_does_not_raise_system_exit(monkeypa
 
     await GracefulShutdown.trigger_shutdown(signal.SIGTERM)
 
-    hook.assert_awaited_once()
-    container.shutdown.assert_awaited_once()
+    assert len(hook.calls) == 1
+    assert len(container.shutdown.calls) == 1
     assert GracefulShutdown._shutdown_event.is_set()
 
 
@@ -442,7 +452,7 @@ async def test_graceful_shutdown_signal_handlers_are_task_tracked(monkeypatch):
 
     handlers = []
     scheduled = {}
-    container = SimpleNamespace(shutdown=AsyncMock())
+    container = SimpleNamespace(shutdown=AsyncCallProbe())
 
     class _Loop:
         def add_signal_handler(self, sig, callback):
@@ -470,7 +480,7 @@ async def test_graceful_shutdown_signal_handlers_are_task_tracked(monkeypatch):
     await scheduled["task"]
 
     assert scheduled["name"].startswith("graceful_shutdown.")
-    container.shutdown.assert_awaited_once()
+    assert len(container.shutdown.calls) == 1
 
 
 def test_file_operation_no_longer_allows_desktop_agency_test_escape(tmp_path):
@@ -622,7 +632,8 @@ def test_goal_engine_requires_stronger_phrase_alignment():
 def test_global_workspace_history_buffer_is_bounded_and_sliceable():
     workspace = GlobalWorkspace()
 
-    for idx in range(600):
+    total_items = workspace.max_history + 3
+    for idx in range(total_items):
         workspace.history.append(
             WorkItem(
                 priority=1.0,
@@ -637,7 +648,11 @@ def test_global_workspace_history_buffer_is_bounded_and_sliceable():
     assert len(workspace.history) == workspace.max_history
     tail = workspace.history[-3:]
     assert isinstance(tail, list)
-    assert [item.payload["idx"] for item in tail] == [597, 598, 599]
+    assert [item.payload["idx"] for item in tail] == [
+        total_items - 3,
+        total_items - 2,
+        total_items - 1,
+    ]
 
 
 def test_service_container_require_fails_loudly_for_missing_service():
@@ -964,7 +979,7 @@ async def test_queue_governed_initiative_does_not_commit_when_blocked(monkeypatc
     assert commits == []
 
 
-def test_runtime_state_prefers_canonical_self_over_fallback_stub():
+def test_runtime_state_prefers_canonical_self_over_legacy_self_model():
     _reset_authority_runtime()
     ServiceContainer.register_instance(
         "canonical_self",
@@ -981,7 +996,7 @@ def test_runtime_state_prefers_canonical_self_over_fallback_stub():
     )
     ServiceContainer.register_instance(
         "self_model",
-        type("Stub", (), {"get_status": lambda self: {"version": 1, "name": "stub"}})(),
+        type("LegacySelfModel", (), {"get_status": lambda self: {"version": 1, "name": "legacy"}})(),
         required=False,
     )
 
@@ -1001,9 +1016,9 @@ def test_core_self_package_self_model_is_compatibility_shim():
     assert self_package.SelfModel is RootSelfModel
 
 
-def test_identity_prompt_surface_prefers_package_identity_over_promptless_stub():
+def test_identity_prompt_surface_prefers_package_identity_over_promptless_legacy_identity():
     _reset_authority_runtime()
-    ServiceContainer.register_instance("identity", type("Stub", (), {"name": "stub"})(), required=False)
+    ServiceContainer.register_instance("identity", type("LegacyIdentity", (), {"name": "legacy"})(), required=False)
 
     surface = resolve_identity_prompt_surface(default=None)
 

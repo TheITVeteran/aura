@@ -25,7 +25,6 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -47,16 +46,23 @@ def _clear_container():
     ServiceContainer.clear()
 
 
-def _make_mock_kernel(vault=None):
-    """Build a lightweight mock kernel that satisfies AuraKernel's shape
-    without triggering the full boot sequence or heavy imports."""
-    kernel = MagicMock()
-    kernel.vault = vault
-    kernel.state = None
-    kernel.organs = {}
-    kernel.get = MagicMock(return_value=None)
-    kernel._services = {}
-    return kernel
+class KernelProbe:
+    """Lightweight kernel shape used by focused e2e component tests."""
+
+    def __init__(self, vault=None):
+        self.vault = vault
+        self.state = None
+        self.organs = {}
+        self._services = {}
+        self.get_calls = []
+
+    def get(self, name, default=None):
+        self.get_calls.append(name)
+        return self._services.get(name, default)
+
+
+class DependencyProbe:
+    pass
 
 
 class _DeterministicPhaseLLM:
@@ -101,7 +107,7 @@ class TestBoot:
     def test_kernel_config_and_kernel_instantiation(self):
         """Instantiate AuraKernel with KernelConfig + temp StateRepository.
 
-        This validates that the full canonical phase pipeline is created and organ stubs are
+        This validates that the full canonical phase pipeline is created and organ slots are
         populated (without running the async boot sequence).
         """
         _clear_container()
@@ -158,7 +164,7 @@ class TestBoot:
                     f"Actual:   {actual_phase_names}"
                 )
 
-                # -- Organ stub verification --
+                # -- Organ slot verification --
                 kernel._initialize_organs()
                 expected_organs = {
                     "llm", "vision", "memory", "voice", "metabolism",
@@ -368,8 +374,8 @@ class TestTaskCommitment:
             )
             from core.state.aura_state import AuraState
 
-            mock_kernel = _make_mock_kernel()
-            verifier = TaskCommitmentVerifier(mock_kernel)
+            kernel = KernelProbe()
+            verifier = TaskCommitmentVerifier(kernel)
             state = AuraState.default()
 
             acceptance = await verifier.verify_and_dispatch(
@@ -414,44 +420,47 @@ class TestApprovalGate:
 
         assert plan.requires_approval is True
 
-    def test_approve_and_reject_plan_methods_exist(self):
+    def test_approve_and_reject_plan_methods_exist(self, monkeypatch):
         """Verify approve_plan and reject_plan work on the _approval_events dict."""
         from core.agency.autonomous_task_engine import AutonomousTaskEngine, TaskPlan, TaskStep
 
-        mock_kernel = _make_mock_kernel()
-        mock_kernel.organs = {"llm": MagicMock()}
+        kernel = KernelProbe()
+        kernel.organs = {"llm": DependencyProbe()}
 
-        # Patch the heavy dependencies that __init__ tries to resolve
-        with (
-            patch("core.agency.autonomous_task_engine.get_capability_manager", return_value=MagicMock()),
-            patch("core.agency.autonomous_task_engine.get_safety_registry", return_value=MagicMock()),
-            patch("core.agency.autonomous_task_engine.get_mycelial", return_value=MagicMock()),
-        ):
-            engine = AutonomousTaskEngine(mock_kernel)
+        monkeypatch.setattr(
+            "core.agency.autonomous_task_engine.get_capability_manager",
+            lambda: DependencyProbe(),
+        )
+        monkeypatch.setattr(
+            "core.agency.autonomous_task_engine.get_safety_registry",
+            lambda: DependencyProbe(),
+        )
+        monkeypatch.setattr(
+            "core.agency.autonomous_task_engine.get_mycelial",
+            lambda: DependencyProbe(),
+        )
+        engine = AutonomousTaskEngine(kernel)
 
-            # Simulate a plan waiting for approval
-            plan_id = "test_approval_plan"
-            event = asyncio.Event()
-            engine._approval_events[plan_id] = event
-            engine._active_plans[plan_id] = TaskPlan(
-                plan_id=plan_id, goal="test", steps=[], trace_id="t"
-            )
+        plan_id = "test_approval_plan"
+        event = asyncio.Event()
+        engine._approval_events[plan_id] = event
+        engine._active_plans[plan_id] = TaskPlan(
+            plan_id=plan_id, goal="test", steps=[], trace_id="t"
+        )
 
-            # approve_plan should set the event
-            result = engine.approve_plan(plan_id)
-            assert result is True
-            assert event.is_set()
-            assert engine._active_plans[plan_id].status == "approved"
+        result = engine.approve_plan(plan_id)
+        assert result is True
+        assert event.is_set()
+        assert engine._active_plans[plan_id].status == "approved"
 
-            # Reset for reject test
-            event2 = asyncio.Event()
-            engine._approval_events[plan_id] = event2
-            engine._active_plans[plan_id].status = "pending"
+        event2 = asyncio.Event()
+        engine._approval_events[plan_id] = event2
+        engine._active_plans[plan_id].status = "pending"
 
-            result2 = engine.reject_plan(plan_id)
-            assert result2 is True
-            assert event2.is_set()
-            assert engine._active_plans[plan_id].status == "rejected"
+        result2 = engine.reject_plan(plan_id)
+        assert result2 is True
+        assert event2.is_set()
+        assert engine._active_plans[plan_id].status == "rejected"
 
 
 # ============================================================================
