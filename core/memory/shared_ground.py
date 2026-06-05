@@ -24,6 +24,8 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import List, Optional
 
+from core.runtime.atomic_writer import atomic_write_text
+
 logger = logging.getLogger("Aura.SharedGround")
 
 
@@ -82,11 +84,11 @@ class SharedGroundBuffer:
 
     def save(self):
         try:
-            tmp = str(self.data_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump([e.to_dict() for e in self.entries], f, indent=2)
-            os.replace(tmp, self.data_path)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            atomic_write_text(
+                self.data_path,
+                json.dumps([e.to_dict() for e in self.entries], indent=2),
+            )
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError) as e:
             record_degradation('shared_ground', e)
             logger.error("SharedGround: save failed: %s", e)
 

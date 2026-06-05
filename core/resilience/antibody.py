@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 logger = logging.getLogger("Core.Antibody")
 
 # Environment variable names that may indicate hostile instrumentation
@@ -65,9 +67,13 @@ class Antibody:
         # 2. Detect unexpected listening ports (requires lsof)
         if shutil.which("lsof"):
             try:
-                result = subprocess.run(
+                result = get_subprocess_gateway().run(
                     ["lsof", "-iTCP", "-sTCP:LISTEN", "-nP"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    timeout=5,
+                    read_only=True,
+                    source="maintenance_tooling:antibody",
+                    offline_tooling=True,
                 )
                 current_ports: set = set()
                 for line in result.stdout.splitlines()[1:]:
@@ -84,7 +90,7 @@ class Antibody:
                         alerts.append(f"New listening port detected: {port}")
                     # Update baseline to include newly seen ports
                     self._known_ports = current_ports
-            except (subprocess.TimeoutExpired, OSError) as e:
+            except (subprocess.TimeoutExpired, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
                 logger.debug("Port scan unavailable: %s", e)
 
         if alerts:

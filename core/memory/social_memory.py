@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from core.base_module import AuraBaseModule
+from core.runtime.atomic_writer import atomic_write_text
 
 class RelationshipMilestone:
     def __init__(self, description: str, timestamp: Optional[float] = None, importance: float = 0.5):
@@ -52,16 +53,15 @@ class SocialMemory(AuraBaseModule):
 
     def save(self):
         try:
-            import os
-            tmp_path = str(self.data_path) + ".tmp"
-            with open(tmp_path, 'w') as f:
-                json.dump({
+            atomic_write_text(
+                self.data_path,
+                json.dumps({
                     "milestones": [m.to_dict() for m in self.milestones],
                     "depth": self.relationship_depth,
                     "shared_keys": self.shared_context_keys
-                }, f, indent=2)
-            os.replace(tmp_path, self.data_path)
-        except (ImportError, AttributeError, RuntimeError) as e:
+                }, indent=2),
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('social_memory', e)
             self.logger.error("Failed to save social memory: %s", e)
 

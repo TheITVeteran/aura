@@ -21,6 +21,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from core.config import config
+from core.runtime.atomic_writer import atomic_write_text
 
 logger = logging.getLogger("Learning.Tools")
 
@@ -211,10 +212,7 @@ class ToolLearningSystem:
                     for key, combo in self._combos.items()
                 },
             }
-            tmp = self._persist_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, self._persist_path)  # Atomic rename
+            atomic_write_text(self._persist_path, json.dumps(data, indent=2))
         except (OSError, IOError) as e:
             record_degradation('tool_learning', e)
             logger.error("Failed to save tool learning data: %s", e)

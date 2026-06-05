@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 
@@ -96,13 +97,11 @@ class UserProfile:
         """Persist user profile to disk."""
         try:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._storage_path, 'w') as f:
-                # Serialize to JSON
-                data = {
-                    category: [fact.to_dict() for fact in facts]
-                    for category, facts in self._profile_data.items()
-                }
-                json.dump(data, f, indent=2)
+            data = {
+                category: [fact.to_dict() for fact in facts]
+                for category, facts in self._profile_data.items()
+            }
+            atomic_write_text(self._storage_path, json.dumps(data, indent=2))
             logger.debug(f"✓ Saved user profile to {self._storage_path}")
         except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("user_profile", e)

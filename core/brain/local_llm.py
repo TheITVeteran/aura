@@ -513,63 +513,24 @@ class LocalBrain:
             payload["system"] = effective_system
 
         try:
-            # Thinking State Machine
-            in_think_block = False
-            thought_buffer = []
-
-            async with self.client.stream(
-                "POST", url, json=payload, timeout=_DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if cancel_event and cancel_event.is_set():
-                        logger.info("Stream cancelled by caller")
-                        break
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        token = data.get("response", "")
-
-                        if data.get("done"):
-                            # Emit collected thought at the end as a protocol token
-                            if thought_buffer:
-                                yield f"{self.THOUGHT_STREAM_PREFIX}{''.join(thought_buffer)}{self.THOUGHT_STREAM_SUFFIX}"
-                            break
-
-                        # Stream Filtering Logic for <think>
-                        if in_think_block:
-                            if "</think>" in token:
-                                in_think_block = False
-                                parts = token.split("</think>")
-                                # Capture the thinking content
-                                thought_buffer.append(parts[0])
-                                # Emit whatever follows the closing tag
-                                if len(parts) > 1 and parts[1]:
-                                    yield parts[1]
-                            else:
-                                thought_buffer.append(token)
-                            continue
-
-                        if "<think>" in token:
-                            in_think_block = True
-                            parts = token.split("<think>")
-                            if parts[0]:
-                                yield parts[0]
-                            # Capture any text after the opening tag
-                            if len(parts) > 1 and parts[1]:
-                                thought_buffer.append(parts[1])
-                            continue
-
-                        if token:
-                            # UX Tuning: 50% slower stream for readability
-                            await asyncio.sleep(0.03)
-                            yield token
-
-                    except json.JSONDecodeError:
-                        continue
+            if cancel_event and cancel_event.is_set():
+                logger.info("Stream cancelled by caller")
+                return
+            status_code, data, text = await self._request_json(
+                "POST",
+                url,
+                payload={**payload, "stream": False},
+                timeout=float(self.timeout or _DEFAULT_REQUEST_TIMEOUT),
+            )
+            if status_code != 200:
+                raise RuntimeError(f"ollama_stream_http_{status_code}:{text[:160]}")
+            cleaned, thought = self._extract_think_segments(str(data.get("response", "") or ""))
+            if cleaned:
+                yield cleaned
+            if thought:
+                yield f"{self.THOUGHT_STREAM_PREFIX}{thought}{self.THOUGHT_STREAM_SUFFIX}"
             self._record_success()
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
             _record_llm_degradation(
                 "local_llm",
                 e,
@@ -766,60 +727,25 @@ class LocalBrain:
         }
 
         try:
-            # Thinking State Machine
-            in_think_block = False
-            thought_buffer = []
-
-            async with self.client.stream(
-                "POST", url, json=payload, timeout=_DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if cancel_event and cancel_event.is_set():
-                        logger.info("Chat stream cancelled by caller")
-                        break
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        token = data.get("message", {}).get("content", "")
-
-                        if data.get("done"):
-                            # Emit collected thought at the end as a protocol token
-                            if thought_buffer:
-                                yield f"{self.THOUGHT_STREAM_PREFIX}{''.join(thought_buffer)}{self.THOUGHT_STREAM_SUFFIX}"
-                            break
-
-                        # Stream Filtering Logic for <think>
-                        if in_think_block:
-                            if "</think>" in token:
-                                in_think_block = False
-                                parts = token.split("</think>")
-                                thought_buffer.append(parts[0])
-                                if len(parts) > 1 and parts[1]:
-                                    yield parts[1]
-                            else:
-                                thought_buffer.append(token)
-                            continue
-
-                        if "<think>" in token:
-                            in_think_block = True
-                            parts = token.split("<think>")
-                            if parts[0]:
-                                yield parts[0]
-                            if len(parts) > 1 and parts[1]:
-                                thought_buffer.append(parts[1])
-                            continue
-
-                        if token:
-                            # UX Tuning: 50% slower stream for readability
-                            await asyncio.sleep(0.03)
-                            yield token
-
-                    except json.JSONDecodeError:
-                        continue
+            if cancel_event and cancel_event.is_set():
+                logger.info("Chat stream cancelled by caller")
+                return
+            status_code, data, text = await self._request_json(
+                "POST",
+                url,
+                payload={**payload, "stream": False},
+                timeout=float(self.timeout or _DEFAULT_REQUEST_TIMEOUT),
+            )
+            if status_code != 200:
+                raise RuntimeError(f"ollama_chat_stream_http_{status_code}:{text[:160]}")
+            raw_response = str(data.get("message", {}).get("content", "") or "")
+            cleaned, thought = self._extract_think_segments(raw_response)
+            if cleaned:
+                yield cleaned
+            if thought:
+                yield f"{self.THOUGHT_STREAM_PREFIX}{thought}{self.THOUGHT_STREAM_SUFFIX}"
             self._record_success()
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
             _record_llm_degradation(
                 "local_llm",
                 e,

@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from core.runtime.atomic_writer import atomic_write_text as runtime_atomic_write_text
+
 logger = logging.getLogger("Kernel.Memory")
 
 
@@ -109,9 +111,7 @@ class Memory:
                 with open(self.storage_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
-                # Write backup
-                with open(backup_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                runtime_atomic_write_text(backup_file, content)
                 
                 logger.debug("Created memory backup: %s", backup_file.name)
                 
@@ -135,7 +135,6 @@ class Memory:
             True if successful, False otherwise
 
         """
-        temp_file = self.storage_file.with_suffix(".tmp")
         backup_file = self.storage_file.with_suffix(".bak")
         
         try:
@@ -144,16 +143,14 @@ class Memory:
             data["metadata"]["checksum"] = None # Reset before calculation for consistency
             data["metadata"]["checksum"] = self._calculate_checksum(data)
             
-            # Write to temporary file
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=str)
-            
             # Create backup of current file if it exists
             if self.storage_file.exists():
                 self.storage_file.replace(backup_file)
-            
-            # Move temp file to final location
-            temp_file.replace(self.storage_file)
+
+            runtime_atomic_write_text(
+                self.storage_file,
+                json.dumps(data, indent=2, default=str),
+            )
             
             # Clean up backup if everything succeeded
             if backup_file.exists():
@@ -161,7 +158,7 @@ class Memory:
             
             return True
             
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('atomic_storage', e)
             logger.error("Atomic write failed: %s", e)
             
@@ -176,13 +173,6 @@ class Memory:
                 logger.critical("Rollback failed: %s", rollback_error)
             
             # Clean up temp file
-            if temp_file.exists():
-                try:
-                    temp_file.unlink()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    record_degradation('atomic_storage', exc)
-                    logger.debug("Suppressed: %s", exc)
-
             return False
     
     def load(self) -> None:
@@ -418,20 +408,8 @@ class Memory:
 
 def atomic_write(file_path: str, content: str) -> None:
     """Thread-safe atomic write utility using a temporary file and atomic rename."""
-    path = Path(file_path)
-    temp_path = path.with_suffix(".tmp")
     try:
-        # Ensure parent directory exists
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write to temp file using context manager (ensures closure)
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-            
-        # Atomic rename
-        temp_path.replace(path)
+        runtime_atomic_write_text(file_path, content)
     except (OSError, IOError) as e:
         record_degradation('atomic_storage', e)
         logger.error("Standalone atomic write failed for %s: %s", file_path, e)

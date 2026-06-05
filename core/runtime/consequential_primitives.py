@@ -14,6 +14,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.effect_boundary import effect_sink
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 @effect_sink("primitive.file_write", allowed_domains=("state_mutation", "file_write"))
@@ -23,7 +24,13 @@ def guarded_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") 
 
 @effect_sink("primitive.shell_exec", allowed_domains=("tool_execution",))
 def guarded_shell_exec(argv: list[str], *, cwd: str | Path | None = None, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, cwd=cwd, timeout=timeout, capture_output=True, text=True, check=False)
+    return get_subprocess_gateway().run(
+        argv,
+        cwd=cwd,
+        timeout=timeout,
+        capture_output=True,
+        source="consequential_primitives.shell_exec",
+    )
 
 
 @effect_sink("primitive.memory_write", allowed_domains=("memory_write",))

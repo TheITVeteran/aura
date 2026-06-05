@@ -3,6 +3,7 @@ Part of Aura's Neural Neuro-Surgeon (Phase 29).
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 import logging
 import json
 import subprocess
@@ -66,7 +67,13 @@ class DiagnosticHub:
         """Run Ruff linter and return issues."""
         try:
             cmd = ["ruff", "check", str(target), "--format", "json"]
-            result = await asyncio.to_thread(lambda: subprocess.run(cmd, capture_output=True, text=True))
+            result = await asyncio.to_thread(
+                get_subprocess_gateway().run,
+                cmd,
+                capture_output=True,
+                source="maintenance_tooling:diagnostic_hub",
+                offline_tooling=True,
+            )
             if result.stdout:
                 return {"ok": False, "issues": json.loads(result.stdout)}
             return {"ok": True, "issues": []}
@@ -78,7 +85,13 @@ class DiagnosticHub:
         """Run Pyright type checker and return issues."""
         try:
             cmd = ["pyright", str(target), "--outputjson"]
-            result = await asyncio.to_thread(lambda: subprocess.run(cmd, capture_output=True, text=True))
+            result = await asyncio.to_thread(
+                get_subprocess_gateway().run,
+                cmd,
+                capture_output=True,
+                source="maintenance_tooling:diagnostic_hub",
+                offline_tooling=True,
+            )
             if result.stdout:
                 data = json.loads(result.stdout)
                 return {"ok": False, "issues": data.get("generalDiagnostics", [])}

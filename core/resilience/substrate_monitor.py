@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SubstrateMonitor")
 
@@ -83,12 +84,13 @@ class SubstrateMonitor:
 def _darwin_thermal_level() -> int:
     for key in ("hw.thermallevel", "kern.thermal_pressure"):
         try:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 ["sysctl", "-n", key],
                 capture_output=True,
-                text=True,
-                check=False,
                 timeout=1.0,
+                read_only=True,
+                source="maintenance_tooling:substrate_monitor",
+                offline_tooling=True,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return max(0, min(3, int(result.stdout.strip())))
@@ -128,7 +130,7 @@ def _linux_thermal() -> tuple[int, float]:
 
 def _windows_thermal() -> tuple[int, float]:
     try:
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             [
                 "powershell",
                 "-NoProfile",
@@ -137,9 +139,10 @@ def _windows_thermal() -> tuple[int, float]:
                 "| Select-Object -First 1 -ExpandProperty CurrentTemperature)",
             ],
             capture_output=True,
-            text=True,
-            check=False,
             timeout=2.0,
+            read_only=True,
+            source="maintenance_tooling:substrate_monitor",
+            offline_tooling=True,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return 0, 0.0

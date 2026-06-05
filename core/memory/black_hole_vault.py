@@ -11,6 +11,7 @@ from core.memory.horcrux import HorcruxManager
 from core.memory.black_hole import encode_payload, decode_payload
 from core.memory.physics import bekenstein_check, hawking_decay
 from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
+from core.runtime.atomic_writer import atomic_write_text
 try:
     from core.memory.rag import chunk_text, tokenize, compute_term_freq, retrieve_memories
 except (ImportError, AttributeError, RuntimeError):
@@ -128,12 +129,9 @@ class BlackHoleVault:
         self._ensure_ready()
         if not self._dirty:
             return
-        tmp = self.memories_file + ".tmp"
         raw_json = json.dumps(self.memories)
         encoded = encode_payload(raw_json, self.key)
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(encoded["encoded"])
-        os.replace(tmp, self.memories_file)
+        atomic_write_text(self.memories_file, encoded["encoded"])
         self._dirty = False
             
     def add_memory(

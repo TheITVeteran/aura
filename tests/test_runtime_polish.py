@@ -114,7 +114,8 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
 
     assert "/api/health/heartbeat" in gui_actor
-    assert "_heartbeat_response_healthy(resp)" in gui_actor
+    assert "get_network_gateway().request" in gui_actor
+    assert "_gateway_heartbeat_healthy(resp)" in gui_actor
     assert "resp.status_code == 200" not in gui_actor
     assert "tool_governance" in gui_actor
 

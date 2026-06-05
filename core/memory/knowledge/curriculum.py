@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.atomic_writer import atomic_write_text
+
 logger = logging.getLogger("Knowledge.Curriculum")
 
 class CurriculumManager:
@@ -35,9 +37,8 @@ class CurriculumManager:
 
     def _save_data(self):
         try:
-            with open(self.data_path, 'w') as f:
-                json.dump(self.data, f, indent=2)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            atomic_write_text(self.data_path, json.dumps(self.data, indent=2))
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError) as e:
             record_degradation('curriculum', e)
             logger.error("Failed to save curriculum: %s", e)
 

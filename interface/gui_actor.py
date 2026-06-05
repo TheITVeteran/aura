@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import site
 import sys
@@ -12,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 
 def _inject_project_venv_site_packages() -> None:
@@ -88,6 +90,24 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
     return True
 
 
+def _gateway_heartbeat_healthy(response: dict[str, Any]) -> bool:
+    content = response.get("content") or b""
+    text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+    try:
+        payload = json.loads(text or "{}")
+    except json.JSONDecodeError:
+        return False
+
+    class _Response:
+        status_code = int(response.get("status_code") or 0)
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return payload
+
+    return _heartbeat_response_healthy(_Response())
+
+
 def gui_actor_entry(port: int, token: str = None):
     """Entry point for the GUI process."""
     logger.info("🚀 Aura GUI Actor starting on port %d...", port)
@@ -152,23 +172,22 @@ def gui_actor_entry(port: int, token: str = None):
 
         # Watchdog: Periodically check if the UI is responsive
         def _watchdog():
-            # ISSUE #13 - requests missing import swallows watchdog
-            try:
-                import requests
-            except ImportError:
-                logger.error("🚨 [GUI WATCHDOG] 'requests' module not found. Watchdog disabled.")
-                return
-                
             logger.info("🐕 GUI Watchdog active.")
             consecutive_failures = 0
             while not shutdown_event.wait(20):
                 try:
-                    resp = requests.get(f"{app_url}/api/health/heartbeat", timeout=5)
-                    if _heartbeat_response_healthy(resp):
+                    resp = get_network_gateway().request(
+                        "GET",
+                        f"{app_url}/api/health/heartbeat",
+                        timeout=5,
+                        source="gui_actor.watchdog",
+                        read_only=True,
+                    )
+                    if _gateway_heartbeat_healthy(resp):
                         consecutive_failures = 0
                     else:
                         consecutive_failures += 1
-                except requests.RequestException:
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
                     consecutive_failures += 1
                 
                 if consecutive_failures >= 3:

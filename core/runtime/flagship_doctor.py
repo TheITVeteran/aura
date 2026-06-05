@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 @dataclass
@@ -87,7 +88,14 @@ def _port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.15) -> boo
 def _run(cmd: list[str], root: Path, timeout: float = 45.0) -> dict[str, Any]:
     started = time.time()
     try:
-        proc = subprocess.run(cmd, cwd=str(root), text=True, capture_output=True, timeout=timeout)
+        proc = get_subprocess_gateway().run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            timeout=timeout,
+            source="maintenance_tooling:flagship_doctor",
+            offline_tooling=True,
+        )
         return {
             "cmd": cmd,
             "returncode": proc.returncode,

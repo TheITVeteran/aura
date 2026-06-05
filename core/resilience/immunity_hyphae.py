@@ -5,6 +5,7 @@ and repair for known common failure signatures.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 import logging
 import sys
 import os
@@ -157,13 +158,24 @@ class SignatureRepairRegistry:
         try:
             from core.config import config
             port = getattr(config.server, 'port', 8000)
-            import subprocess
-            res = subprocess.run(["lsof", f"-ti:{port}"], capture_output=True, text=True)
+            res = get_subprocess_gateway().run(
+                ["lsof", f"-ti:{port}"],
+                capture_output=True,
+                timeout=5.0,
+                read_only=True,
+                source="maintenance_tooling:immunity_hyphae",
+                offline_tooling=True,
+            )
             if res.stdout.strip():
                 zombie_pid = res.stdout.strip().split('\n')[0]
                 logger.warning("💉 [IMMUNE] Found zombie process %s on port %s. Cleaning up...", zombie_pid, port)
-                subprocess.run(["kill", "-9", zombie_pid])
-        except (ImportError, AttributeError, RuntimeError) as e:
+                get_subprocess_gateway().run(
+                    ["kill", "-TERM", zombie_pid],
+                    timeout=5.0,
+                    source="maintenance_tooling:immunity_hyphae",
+                    offline_tooling=True,
+                )
+        except (ImportError, AttributeError, RuntimeError, OSError, TimeoutError, TypeError, ValueError) as e:
             record_degradation('immunity_hyphae', e)
             logger.debug("Port repair probe failed: %s", e)
 

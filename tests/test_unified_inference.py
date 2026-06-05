@@ -1,4 +1,3 @@
-import httpx
 import numpy as np
 import pytest
 
@@ -166,17 +165,6 @@ async def test_local_brain_records_unified_generate_fallback(monkeypatch):
             self.was_called = True
             raise RuntimeError("unified unavailable")
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"response": "<think>private scratch</think>visible answer"}
-
-    class FakeClient:
-        async def post(self, *_args, **_kwargs):
-            return FakeResponse()
-
     monkeypatch.setattr(
         unified_inference,
         "UnifiedInferenceEngine",
@@ -184,7 +172,11 @@ async def test_local_brain_records_unified_generate_fallback(monkeypatch):
     )
 
     brain = LocalBrain(model_name="test-model")
-    brain._client = FakeClient()
+
+    async def _fake_request_json(*_args, **_kwargs):
+        return 200, {"response": "<think>private scratch</think>visible answer"}, ""
+
+    monkeypatch.setattr(brain, "_request_json", _fake_request_json)
 
     result = await brain.generate("hello")
 
@@ -198,23 +190,15 @@ async def test_local_brain_records_unified_generate_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_local_brain_stream_failure_yields_visible_marker():
+async def test_local_brain_stream_failure_yields_visible_marker(monkeypatch):
     get_degradation_tracker().reset()
 
-    class FailingStream:
-        async def __aenter__(self):
-            self.entered = True
-            raise httpx.ConnectError("stream offline")
-
-        async def __aexit__(self, *_args):
-            return None
-
-    class FakeClient:
-        def stream(self, *_args, **_kwargs):
-            return FailingStream()
-
     brain = LocalBrain(model_name="test-model")
-    brain._client = FakeClient()
+
+    async def _failing_request_json(*_args, **_kwargs):
+        raise ConnectionError("stream offline")
+
+    monkeypatch.setattr(brain, "_request_json", _failing_request_json)
 
     chunks = [chunk async for chunk in brain.generate_text_stream_async("hello")]
 

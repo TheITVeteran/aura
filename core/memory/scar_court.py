@@ -149,9 +149,9 @@ class ScarCourt:
         try:
             _COURT_DIR.mkdir(parents=True, exist_ok=True)
             entry = {"when": time.time(), **decision.to_dict()}
-            with open(_COURT_LEDGER, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, sort_keys=True) + "\n")
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            existing = _COURT_LEDGER.read_text(encoding="utf-8") if _COURT_LEDGER.exists() else ""
+            atomic_write_text(_COURT_LEDGER, existing + json.dumps(entry, sort_keys=True) + "\n")
+        except (OSError, TypeError, ValueError) as exc:
             record_degradation("scar_court", exc)
         return decision
 
