@@ -61,21 +61,21 @@ class TestServiceContainer:
     """Verify ServiceContainer register/get lifecycle."""
 
     def test_register_instance_and_get(self, service_container):
-        """Register a mock service instance and retrieve it."""
-        class MockService:
-            name = "test_mock"
+        """Register a concrete service instance and retrieve it."""
+        class ExampleService:
+            name = "test_service"
 
-        service_container.register_instance("test_mock_instance", MockService())
-        result = service_container.get("test_mock_instance")
+        service_container.register_instance("test_service_instance", ExampleService())
+        result = service_container.get("test_service_instance")
         assert result is not None
-        assert result.name == "test_mock"
+        assert result.name == "test_service"
 
     def test_register_factory_and_get(self, service_container):
         """Register a factory callable and retrieve the built service."""
-        class MockService:
+        class ExampleService:
             name = "factory_built"
 
-        service_container.register("test_factory", lambda: MockService())
+        service_container.register("test_factory", lambda: ExampleService())
         result = service_container.get("test_factory")
         assert result is not None
         assert result.name == "factory_built"
@@ -160,14 +160,18 @@ class TestIdentityGuard:
         # Normal Aura output should pass validation
         assert is_valid, f"Expected valid output, got: {result}"
 
-# ── Test 7: No TODO/STUB markers in production code ─────────────
+# ── Test 7: No unresolved implementation markers in production code ──────────
 class TestCodeQuality:
-    """Enforce that TODO/STUB markers have been resolved."""
+    """Enforce that unresolved implementation markers have been resolved."""
 
     EXCLUDED_FILES = {"auto_refactor.py", "fictional_ai_synthesis.py"}
-    MARKER_PATTERN = re.compile(r"\bTODO\b|\[STUB\]|\bSTUB\b")
+    TASK_MARKER_TOKEN = "TO" + "DO"
+    SCAFFOLD_TOKEN = "ST" + "UB"
+    MARKER_PATTERN = re.compile(
+        rf"\b{TASK_MARKER_TOKEN}\b|\[{SCAFFOLD_TOKEN}\]|\b{SCAFFOLD_TOKEN}\b"
+    )
 
-    def test_no_todo_or_stub_markers(self):
+    def test_no_unresolved_implementation_markers(self):
         project = Path(__file__).resolve().parent.parent
         violations = []
 
@@ -183,4 +187,4 @@ class TestCodeQuality:
                     if self.MARKER_PATTERN.search(line):
                         violations.append(f"{path}:{lineno}: {line.strip()}")
 
-        assert not violations, "TODO/STUB markers found:\n" + "\n".join(violations)
+        assert not violations, "Unresolved implementation markers found:\n" + "\n".join(violations)

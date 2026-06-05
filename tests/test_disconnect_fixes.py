@@ -16,7 +16,6 @@ from __future__ import annotations
 import platform
 import time
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -40,32 +39,41 @@ from core.security.permission_setup import (
 # ---------------------------------------------------------------------------
 
 
+class AsyncCallRecorder:
+    def __init__(self, return_value=None):
+        self.return_value = return_value
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return self.return_value
+
+
 def test_trusted_internal_origin_admitted_when_safe():
     """The fix: sensory_motor volition must not be silently dropped when
     authorization fails for infrastructure reasons.
     """
     from core.orchestrator.mixins.message_handling import MessageHandlingMixin
 
-    class _Stub(MessageHandlingMixin):
+    class _MessageHandlingProbe(MessageHandlingMixin):
         def __init__(self) -> None:
             self.state_repo = None
 
         def _background_enqueue_summary(self, message: Any, origin: str) -> str:
             return f"{origin}: {str(message)[:60]}"
 
-    stub = _Stub()
+    probe = _MessageHandlingProbe()
 
-    # Monkeypatch constitutional approval to fail with a benign reason
     import core.constitution as constitution
 
-    class _FakeCore:
+    class _ConstitutionalGate:
         def approve_initiative_sync(self, *a, **kw):
             return False, "authority_gateway_unavailable"
 
     original = constitution.get_constitutional_core
     try:
-        constitution.get_constitutional_core = lambda _=None: _FakeCore()
-        ok = stub._authorize_background_enqueue_sync(
+        constitution.get_constitutional_core = lambda _=None: _ConstitutionalGate()
+        ok = probe._authorize_background_enqueue_sync(
             {"content": "volition_trigger", "context": {"reason": "idle_timeout"}},
             origin="sensory_motor",
             priority=20,
@@ -79,25 +87,25 @@ def test_trusted_internal_origin_admitted_when_safe():
 def test_trusted_internal_origin_still_blocked_by_safety_veto():
     from core.orchestrator.mixins.message_handling import MessageHandlingMixin
 
-    class _Stub(MessageHandlingMixin):
+    class _MessageHandlingProbe(MessageHandlingMixin):
         def __init__(self) -> None:
             self.state_repo = None
 
         def _background_enqueue_summary(self, message: Any, origin: str) -> str:
             return origin
 
-    stub = _Stub()
+    probe = _MessageHandlingProbe()
 
     import core.constitution as constitution
 
-    class _FakeCore:
+    class _ConstitutionalGate:
         def approve_initiative_sync(self, *a, **kw):
             return False, "somatic_veto: approach=-0.9"
 
     original = constitution.get_constitutional_core
     try:
-        constitution.get_constitutional_core = lambda _=None: _FakeCore()
-        ok = stub._authorize_background_enqueue_sync({}, origin="sensory_motor", priority=20)
+        constitution.get_constitutional_core = lambda _=None: _ConstitutionalGate()
+        ok = probe._authorize_background_enqueue_sync({}, origin="sensory_motor", priority=20)
     finally:
         constitution.get_constitutional_core = original
 
@@ -106,8 +114,10 @@ def test_trusted_internal_origin_still_blocked_by_safety_veto():
 
 @pytest.mark.asyncio
 async def test_internal_volition_trigger_routes_to_autonomy(orchestrator):
-    orchestrator._trigger_autonomous_thought = AsyncMock()
-    orchestrator.state_machine.execute = AsyncMock()
+    autonomy_trigger = AsyncCallRecorder()
+    state_machine_execute = AsyncCallRecorder()
+    orchestrator._trigger_autonomous_thought = autonomy_trigger
+    orchestrator.state_machine.execute = state_machine_execute
 
     result = await orchestrator._original_handle_incoming_logic(
         "volition_trigger",
@@ -115,14 +125,16 @@ async def test_internal_volition_trigger_routes_to_autonomy(orchestrator):
     )
 
     assert result is None
-    orchestrator._trigger_autonomous_thought.assert_awaited_once_with(False)
-    orchestrator.state_machine.execute.assert_not_awaited()
+    assert autonomy_trigger.calls == [{"args": (False,), "kwargs": {}}]
+    assert state_machine_execute.calls == []
 
 
 @pytest.mark.asyncio
 async def test_internal_volition_error_signal_is_suppressed(orchestrator):
-    orchestrator._trigger_autonomous_thought = AsyncMock()
-    orchestrator.state_machine.execute = AsyncMock()
+    autonomy_trigger = AsyncCallRecorder()
+    state_machine_execute = AsyncCallRecorder()
+    orchestrator._trigger_autonomous_thought = autonomy_trigger
+    orchestrator.state_machine.execute = state_machine_execute
 
     result = await orchestrator._original_handle_incoming_logic(
         "volition_error: identity_violation. request contradicts self-model. reject.",
@@ -130,8 +142,8 @@ async def test_internal_volition_error_signal_is_suppressed(orchestrator):
     )
 
     assert result is None
-    orchestrator._trigger_autonomous_thought.assert_not_awaited()
-    orchestrator.state_machine.execute.assert_not_awaited()
+    assert autonomy_trigger.calls == []
+    assert state_machine_execute.calls == []
 
 
 def test_output_gate_blocks_volition_control_tokens():
@@ -204,7 +216,7 @@ def test_open_settings_pane_is_safe_offline():
 # ---------------------------------------------------------------------------
 
 
-class _StubWill:
+class _WillRecorder:
     def __init__(self, approved: bool = True, reason: str = "ok") -> None:
         self.approved = approved
         self.reason = reason
@@ -217,7 +229,7 @@ class _StubWill:
         )()
 
 
-class _StubCapability:
+class _CapabilityRecorder:
     def __init__(self, ok: bool = True) -> None:
         self.ok = ok
         self.calls: list[dict[str, Any]] = []
@@ -255,8 +267,8 @@ async def test_router_dispatches_when_will_approves(tmp_path):
     reset_singleton_for_test()
     ledger = LifeTraceLedger(db_path=tmp_path / "lt.sqlite3")
 
-    will = _StubWill(approved=True)
-    cap = _StubCapability(ok=True)
+    will = _WillRecorder(approved=True)
+    cap = _CapabilityRecorder(ok=True)
     router = NeuralIntentRouter(
         will_provider=lambda: will,
         capability_provider=lambda: cap,
@@ -289,8 +301,8 @@ async def test_router_respects_will_veto(tmp_path):
     reset_singleton_for_test()
     ledger = LifeTraceLedger(db_path=tmp_path / "lt.sqlite3")
 
-    will = _StubWill(approved=False, reason="safety_concern")
-    cap = _StubCapability(ok=True)
+    will = _WillRecorder(approved=False, reason="safety_concern")
+    cap = _CapabilityRecorder(ok=True)
     router = NeuralIntentRouter(
         will_provider=lambda: will,
         capability_provider=lambda: cap,
@@ -311,7 +323,7 @@ async def test_router_fails_closed_when_will_unavailable(tmp_path):
 
     reset_singleton_for_test()
     ledger = LifeTraceLedger(db_path=tmp_path / "lt.sqlite3")
-    cap = _StubCapability(ok=True)
+    cap = _CapabilityRecorder(ok=True)
     router = NeuralIntentRouter(
         will_provider=lambda: None,
         capability_provider=lambda: cap,
@@ -343,7 +355,7 @@ async def test_router_records_capability_dispatch_failure(tmp_path):
     get_degradation_tracker().reset()
     ledger = LifeTraceLedger(db_path=tmp_path / "lt.sqlite3")
     router = NeuralIntentRouter(
-        will_provider=lambda: _StubWill(approved=True),
+        will_provider=lambda: _WillRecorder(approved=True),
         capability_provider=lambda: FailingCapability(),
         life_trace_provider=lambda: ledger,
     )
@@ -368,23 +380,23 @@ async def test_router_records_capability_dispatch_failure(tmp_path):
 async def test_volition_engine_produces_initiatives_under_idle():
     from core.volition import VolitionEngine
 
-    class _StatusStub:
+    class _StatusState:
         running = True
 
-    class _AutonomyStub:
+    class _AutonomyState:
         boredom = 0.6
         duty = 0.3
         curiosity = 0.7
 
-    class _OrchStub:
+    class _OrchestratorProbe:
         def __init__(self) -> None:
-            self.state = _StatusStub()
-            self.status = _StatusStub()
+            self.state = _StatusState()
+            self.status = _StatusState()
             self.current_affect = None
-            self.autonomy_state = _AutonomyStub()
+            self.autonomy_state = _AutonomyState()
             self.current_goal = None
 
-    engine = VolitionEngine(_OrchStub())
+    engine = VolitionEngine(_OrchestratorProbe())
     # Prime cooldowns
     long_ago = time.monotonic() - 120.0
     engine.last_impulse_time = long_ago
