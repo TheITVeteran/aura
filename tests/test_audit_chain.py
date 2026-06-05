@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import core.runtime.audit_chain as audit_chain_mod
 from core.runtime.audit_chain import (
+    GENESIS_PREV_HASH,
     AuditChain,
     ChainEntry,
-    GENESIS_PREV_HASH,
     canonical_json,
     hash_receipt_body,
 )
@@ -119,7 +120,7 @@ def test_chain_head_advances_monotonically(tmp_path):
     # Genesis link
     assert entries[0].prev_hash == GENESIS_PREV_HASH
     # Each subsequent prev_hash equals the previous entry_hash
-    for prev, curr in zip(entries, entries[1:]):
+    for prev, curr in zip(entries, entries[1:], strict=False):
         assert curr.prev_hash == prev.entry_hash
 
 
@@ -259,6 +260,41 @@ def test_export_produces_portable_bundle(tmp_path):
     src = (tmp_path / "receipts" / AuditChain.CHAIN_FILENAME).read_bytes()
     dst = (dest / "chain.jsonl").read_bytes()
     assert src == dst
+
+
+def test_export_writes_portable_bundle_through_file_gateway(tmp_path, monkeypatch):
+    file_calls: list[tuple[str, str]] = []
+
+    class FakeFileWriteGateway:
+        def write_bytes(self, path, payload, *, source="unknown"):
+            target = Path(path)
+            file_calls.append((target.name, source))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(bytes(payload))
+
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            target = Path(path)
+            file_calls.append((target.name, source))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(
+        audit_chain_mod,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+    store = _fresh_store(tmp_path)
+    _emit_three(store)
+
+    dest = tmp_path / "audit_export"
+    info = store.export_chain(dest)
+
+    assert Path(info["chain_path"]).exists()
+    assert Path(info["manifest_path"]).exists()
+    assert {
+        ("chain.jsonl", "core.runtime.audit_chain.export_chain"),
+        ("MANIFEST.txt", "core.runtime.audit_chain.export_manifest"),
+    }.issubset(set(file_calls))
 
 
 def test_exported_chain_can_be_independently_verified(tmp_path):

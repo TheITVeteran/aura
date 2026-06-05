@@ -132,10 +132,6 @@ EXEMPT_FILES = {
         "justification": "Tracks the historical agentic narrative flow across memory frames.",
         "compensating_tests": "tests/test_narrative_thread.py"
     },
-    "core/runtime/audit_chain.py": {
-        "justification": "Builds hash-chained governance ledger files.",
-        "compensating_tests": "tests/test_audit_chain.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"

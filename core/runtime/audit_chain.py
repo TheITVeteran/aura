@@ -1,4 +1,3 @@
-
 """Append-only Merkle/hash chain over receipts for tamper-evident audit.
 
 Receipts in ``core/runtime/receipts.py`` are stored per-kind, per-id as
@@ -29,17 +28,20 @@ the underlying file is durable on disk.
 """
 from __future__ import annotations
 
-import logging
-logger = logging.getLogger("core.runtime.audit_chain")
 import hashlib
 import json
+import logging
 import os
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
+logger = logging.getLogger("core.runtime.audit_chain")
 
 GENESIS_PREV_HASH = "sha256:" + "0" * 64
 SCHEMA_VERSION = 1
@@ -64,7 +66,7 @@ def sha256_hex(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def hash_receipt_body(body: Dict[str, Any]) -> str:
+def hash_receipt_body(body: dict[str, Any]) -> str:
     """Hash a receipt dict (as returned by ``_ReceiptBase.to_dict``)."""
     return sha256_hex(canonical_json(body))
 
@@ -79,7 +81,7 @@ class ChainEntry:
     prev_hash: str
     entry_hash: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @staticmethod
@@ -105,7 +107,7 @@ class ChainEntry:
 class ChainTamperError(RuntimeError):
     """Raised when chain verification finds a corrupted or tampered entry."""
 
-    def __init__(self, message: str, *, seq: Optional[int] = None, kind: Optional[str] = None):
+    def __init__(self, message: str, *, seq: int | None = None, kind: str | None = None):
         super().__init__(message)
         self.seq = seq
         self.kind = kind
@@ -131,9 +133,9 @@ class AuditChain:
         self._head_hash: str = GENESIS_PREV_HASH
         self._next_seq: int = 0
         self._unsynced_entries: int = 0
-        self._known_chain_signature: Optional[Tuple[int, int, int]] = None
-        self._append_fd: Optional[int] = None
-        self._lock_fd: Optional[int] = None
+        self._known_chain_signature: tuple[int, int, int] | None = None
+        self._append_fd: int | None = None
+        self._lock_fd: int | None = None
         self._root_ready = False
         self._sync_policy = os.environ.get("AURA_AUDIT_CHAIN_SYNC", "batch").strip().lower()
         try:
@@ -162,7 +164,7 @@ class AuditChain:
             self._next_seq = 0
         self._known_chain_signature = self._chain_signature()
 
-    def _chain_signature(self) -> Optional[Tuple[int, int, int]]:
+    def _chain_signature(self) -> tuple[int, int, int] | None:
         """Return a cheap signature for detecting external chain writes."""
         try:
             st = self.path.stat()
@@ -180,7 +182,7 @@ class AuditChain:
             return
         self._refresh_head_from_disk_locked()
 
-    def _read_last_record(self) -> Optional[Dict[str, Any]]:
+    def _read_last_record(self) -> dict[str, Any] | None:
         if not self.path.exists():
             return None
         try:
@@ -203,7 +205,7 @@ class AuditChain:
         except (OSError, json.JSONDecodeError, IndexError, KeyError, ValueError):
             # Fall back to the slower full iterator so malformed tails still
             # surface through the existing ChainTamperError path when possible.
-            last_record: Optional[Dict[str, Any]] = None
+            last_record: dict[str, Any] | None = None
             for record in self._iter_entries():
                 last_record = record
             return last_record
@@ -247,11 +249,11 @@ class AuditChain:
             self._append_fd = os.open(str(self.path), flags, 0o600)
         return self._append_fd, created
 
-    def _iter_entries(self) -> Iterator[Dict[str, Any]]:
+    def _iter_entries(self) -> Iterator[dict[str, Any]]:
         """Yield raw records from the chain file. Avoids dataclass overhead."""
         if not self.path.exists():
             return
-        with open(self.path, "r", encoding="utf-8") as fh:
+        with open(self.path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -261,7 +263,7 @@ class AuditChain:
                 except json.JSONDecodeError:
                     raise ChainTamperError(
                         f"chain entry is not valid JSON: {line[:120]!r}"
-                    )
+                    ) from None
 
     # ------------------------------------------------------------------
     # public API
@@ -271,7 +273,7 @@ class AuditChain:
         *,
         receipt_id: str,
         kind: str,
-        body: Dict[str, Any],
+        body: dict[str, Any],
         timestamp: float,
     ) -> ChainEntry:
         """Append one entry to the chain.  Thread-safe and durable."""
@@ -390,15 +392,15 @@ class AuditChain:
         with self._lock:
             return self._next_seq
 
-    def entries(self) -> List[ChainEntry]:
+    def entries(self) -> list[ChainEntry]:
         with self._lock:
             return [ChainEntry(**r) for r in self._iter_entries()]
 
     def verify(
         self,
         *,
-        body_loader: Optional[callable] = None,
-    ) -> Tuple[bool, List[Dict[str, Any]]]:
+        body_loader: callable | None = None,
+    ) -> tuple[bool, list[dict[str, Any]]]:
         """Walk the chain, recompute entry hashes, and (optionally)
         re-hash receipt bodies.
 
@@ -410,7 +412,7 @@ class AuditChain:
         Returns ``(ok, problems)``.  ``problems`` is a list of dicts each
         with ``seq``, ``kind``, ``receipt_id``, ``reason``.
         """
-        problems: List[Dict[str, Any]] = []
+        problems: list[dict[str, Any]] = []
         prev_hash = GENESIS_PREV_HASH
         expected_seq = 0
 
@@ -492,7 +494,7 @@ class AuditChain:
 
         return (len(problems) == 0, problems)
 
-    def export(self, dest_dir: Path) -> Dict[str, Any]:
+    def export(self, dest_dir: Path) -> dict[str, Any]:
         """Write a portable copy of the chain plus a MANIFEST.
 
         The export is suitable for handing to an external auditor: the
@@ -510,10 +512,10 @@ class AuditChain:
             head = self._head_hash
             length = self._next_seq
             if self.path.exists():
-                with open(self.path, "rb") as src, open(chain_dst, "wb") as dst:
-                    dst.write(src.read())
+                with open(self.path, "rb") as src:
+                    chain_payload = src.read()
             else:
-                chain_dst.write_bytes(b"")
+                chain_payload = b""
 
         manifest = (
             f"audit_chain_export\n"
@@ -522,7 +524,18 @@ class AuditChain:
             f"head_hash={head}\n"
             f"source_path={self.path}\n"
         )
-        manifest_dst.write_text(manifest, encoding="utf-8")
+        file_gateway = get_file_write_gateway()
+        file_gateway.write_bytes(
+            chain_dst,
+            chain_payload,
+            source="core.runtime.audit_chain.export_chain",
+        )
+        file_gateway.write_text(
+            manifest_dst,
+            manifest,
+            encoding="utf-8",
+            source="core.runtime.audit_chain.export_manifest",
+        )
         return {
             "chain_path": str(chain_dst),
             "manifest_path": str(manifest_dst),
