@@ -17,6 +17,8 @@ import psutil
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.network_gateway import get_network_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.deadlines import Deadline, get_deadline
 
 from .chat_format import format_chatml_prompt
@@ -620,17 +622,16 @@ class LocalServerClient:
     @staticmethod
     def _http_health_check_sync_impl(runtime_url: str) -> bool:
         """Raw synchronous HTTP probe — runs ONLY inside a background thread."""
-        try:
-            import urllib.request
-
-            url = f"{runtime_url}/health"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                if resp.status == 200:
-                    data = resp.read().decode()
-                    return '"ok"' in data or '"status":"ok"' in data.replace(" ", "")
-        except (OSError, ConnectionError):
-            pass  # health probe failed — expected during boot
+        response = get_network_gateway().request(
+            "GET",
+            f"{runtime_url}/health",
+            timeout=2.0,
+            source="maintenance_tooling:local_server_health",
+            read_only=True,
+        )
+        if response.get("status_code") == 200:
+            data = (response.get("content") or b"").decode("utf-8", errors="ignore")
+            return '"ok"' in data or '"status":"ok"' in data.replace(" ", "")
         return False
 
     def _http_health_check_sync(self) -> bool:
@@ -726,11 +727,13 @@ class LocalServerClient:
             logger.info("🧠 [%s] Loading personality LoRA adapter: %s", self._lane_name, lora_path)
 
         logger.info("📡 [%s] Spawning local runtime: %s", self._lane_name, " ".join(cmd))
-        process = subprocess.Popen(
+        process = get_subprocess_gateway().spawn(
             cmd,
             stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             cwd=str(Path(__file__).resolve().parents[3]),
+            source="maintenance_tooling:local_server_runtime",
+            offline_tooling=True,
         )
         self._process_started_at = time.time()
         return process

@@ -4,11 +4,18 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-import httpx
-
+from core.runtime.network_gateway import get_network_gateway
 from .provider import LLMProvider
 
 logger = logging.getLogger("LLM.Ollama")
+_OLLAMA_RECOVERABLE_ERRORS = (
+    OSError,
+    ConnectionError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 class RobustOllamaClient(LLMProvider):
     """Ollama implementation for local inference using httpx for async operation.
@@ -16,26 +23,28 @@ class RobustOllamaClient(LLMProvider):
     
     def __init__(self, model: str = "llama3", base_url: str = "http://localhost:11434", timeout: float = 45.0, **kwargs):
         self.model = model
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client = None
 
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
-        return self._client
-
     async def close(self):
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        self._client = None
 
     async def _post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Internal helper for async POST requests."""
-        response = await self.client.post(endpoint, json=payload)
-        response.raise_for_status()
-        return response.json()
+        response = await asyncio.to_thread(
+            get_network_gateway().request,
+            "POST",
+            f"{self.base_url}{endpoint}",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=self.timeout,
+            source="llm_provider:ollama",
+            read_only=True,
+        )
+        if response.get("status_code") != 200:
+            raise RuntimeError(response.get("error") or f"ollama_http_{response.get('status_code')}")
+        return json.loads((response.get("content") or b"{}").decode("utf-8"))
 
     def generate_text(self, prompt: str, system_prompt: Optional[str] = None, model: Optional[str] = None, num_predict: Optional[int] = None) -> str:
         """Synchronous wrapper (legacy support)."""
@@ -89,7 +98,7 @@ class RobustOllamaClient(LLMProvider):
 
             data = await self._post("/api/generate", payload)
             return data.get("response", "")
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except _OLLAMA_RECOVERABLE_ERRORS as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama generation failed: %s", e)
             raise
@@ -109,13 +118,12 @@ class RobustOllamaClient(LLMProvider):
             if system_prompt:
                 payload["system"] = system_prompt
 
-            async with self.client.stream("POST", "/api/generate", json=payload) as response:
-                async for line in response.aiter_lines():
-                    if line:
-                        chunk = json.loads(line)
-                        if not chunk.get("done"):
-                            yield chunk.get("response", "")
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+            payload["stream"] = False
+            data = await self._post("/api/generate", payload)
+            text = data.get("response", "")
+            if text:
+                yield text
+        except _OLLAMA_RECOVERABLE_ERRORS as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama streaming failed: %s", e)
             raise
@@ -203,30 +211,30 @@ class RobustOllamaClient(LLMProvider):
             if isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list):
                 return embedding[0]
             return embedding if isinstance(embedding, list) else []
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except _OLLAMA_RECOVERABLE_ERRORS as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama embedding failed: %s", e)
             return []
 
     def check_health(self) -> bool:
         """Synchronous health check (Safe for both sync and async contexts)."""
-        import requests
         try:
-            # Use synchronous requests to avoid asyncio.run() conflicts in running loops
-            response = requests.get(f"{self.base_url}/api/tags", timeout=3)
-            return response.status_code == 200
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+            response = get_network_gateway().request(
+                "GET",
+                f"{self.base_url}/api/tags",
+                timeout=3,
+                source="llm_provider:ollama_health",
+                read_only=True,
+            )
+            return response.get("status_code") == 200
+        except _OLLAMA_RECOVERABLE_ERRORS as e:
             record_degradation('ollama_client', e)
             logger.debug("Ollama health check failed (sync): %s", e)
             return False
 
     async def check_health_async(self) -> bool:
         """Check if Ollama server is reachable (Async)."""
-        try:
-            response = await self.client.get("/api/tags", timeout=5)
-            return response.status_code == 200
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
-            return False
+        return await asyncio.to_thread(self.check_health)
 
     async def see(self, prompt: str, image_path: Optional[str] = None, image_base64: Optional[str] = None) -> str:
         """Analyze an image using a vision-capable model (Async)."""
@@ -239,19 +247,16 @@ class RobustOllamaClient(LLMProvider):
                 with open(image_path, "rb") as image_file:
                     image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
                     
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                payload = {
-                    "model": "llava", 
-                    "prompt": prompt,
-                    "images": [image_base64],
-                    "stream": False
-                }
-                
-                response = await client.post(f"{self.base_url}/api/generate", json=payload)
-                response.raise_for_status()
-                data = response.json()
-                return data.get("response", "[Vision Failure: No output]")
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+            payload = {
+                "model": "llava",
+                "prompt": prompt,
+                "images": [image_base64],
+                "stream": False,
+            }
+
+            data = await self._post("/api/generate", payload)
+            return data.get("response", "[Vision Failure: No output]")
+        except _OLLAMA_RECOVERABLE_ERRORS as e:
             record_degradation('ollama_client', e)
             logger.error("Ollama vision analysis failed: %s", e)
             return f"[Vision analysis failed: {e}]"

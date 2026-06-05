@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Leviathan — Mission Control Cockpit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #080711;
+            --panel-bg: rgba(13, 12, 29, 0.45);
+            --panel-border: rgba(99, 102, 241, 0.15);
+            --panel-border-glow: rgba(99, 102, 241, 0.35);
+            --primary: #6366f1;
+            --primary-glow: rgba(99, 102, 241, 0.5);
+            --secondary: #a855f7;
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            overflow-x: hidden;
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.08) 0%, transparent 45%);
+            background-attachment: fixed;
+        }
+
+        header {
+            padding: 2rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--panel-border);
+            backdrop-filter: blur(12px);
+            background: rgba(8, 7, 17, 0.6);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-glow {
+            width: 14px;
+            height: 14px;
+            background-color: var(--primary);
+            border-radius: 50%;
+            box-shadow: 0 0 15px 4px var(--primary-glow);
+            animation: pulse 2s infinite ease-in-out;
+        }
+
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            background: linear-gradient(to right, var(--text-main), var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .system-status {
+            font-size: 0.9rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--success);
+            color: var(--success);
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-weight: 600;
+            box-shadow: 0 0 10px var(--success-glow);
+        }
+
+        main {
+            padding: 3rem 4rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 2rem;
+        }
+
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 1.8rem;
+            backdrop-filter: blur(16px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: var(--panel-border-glow);
+            box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.15);
+        }
+
+        .col-4 { grid-column: span 4; }
+        .col-6 { grid-column: span 6; }
+        .col-8 { grid-column: span 8; }
+        .col-12 { grid-column: span 12; }
+
+        h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 1.2rem;
+            color: var(--text-main);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stat-value {
+            font-size: 3.5rem;
+            font-weight: 800;
+            font-family: 'Space Grotesk', sans-serif;
+            background: linear-gradient(135deg, #ffffff 0%, var(--text-muted) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .console-log {
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            height: 180px;
+            overflow-y: auto;
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.1);
+        }
+
+        .console-line {
+            margin-bottom: 0.4rem;
+            opacity: 0.85;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: #ffffff;
+            border: none;
+            padding: 0.8rem 1.8rem;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px var(--primary-glow);
+        }
+
+        .btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        .input-text {
+            flex-grow: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            color: var(--text-main);
+            padding: 0.8rem 1.2rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .input-text:focus {
+            border-color: var(--primary);
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.15); opacity: 0.7; }
+        }
+
+        @media (max-width: 1024px) {
+            main { padding: 1.5rem; }
+            .col-4, .col-6, .col-8 { grid-column: span 12; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo-container">
+        <div class="logo-glow"></div>
+        <h1>Aura Leviathan // Cockpit</h1>
+    </div>
+    <div class="system-status" id="kernel-status">Sovereign Kernel Active</div>
+</header>
+
+<main>
+    <!-- Main Stat Row -->
+    <div class="card col-4">
+        <h2>Perception Hub</h2>
+        <div class="stat-value" id="val-perception">0</div>
+        <div class="stat-label">Planetary Scans Tracked</div>
+    </div>
+    <div class="card col-4">
+        <h2>Belief Graph</h2>
+        <div class="stat-value" id="val-claims">0</div>
+        <div class="stat-label">Epistemic Claims Logged</div>
+    </div>
+    <div class="card col-4">
+        <h2>Memory OS</h2>
+        <div class="stat-value" id="val-memories">0</div>
+        <div class="stat-label">Committed Records</div>
+    </div>
+
+    <!-- Active Missions & swarms -->
+    <div class="card col-8">
+        <h2>Strategic Campaign Launcher</h2>
+        <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1rem;">
+            Deploy a multi-day objective campaign across the worker swarms, model parliament consensus loops, and simulation nodes.
+        </p>
+        <div class="input-group">
+            <input type="text" class="input-text" id="mission-objective" placeholder="e.g. Optimize local MLX inference latency budget to sub-10ms">
+            <button class="btn" onclick="launchCampaign()">Launch</button>
+        </div>
+    </div>
+    <div class="card col-4">
+        <h2>Swarm Resources</h2>
+        <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.5rem;">
+            <div>
+                <span style="color: var(--text-muted); font-size: 0.9rem;">Compute swarm workers:</span>
+                <strong style="float: right;" id="val-swarm">0 Active</strong>
+            </div>
+            <div>
+                <span style="color: var(--text-muted); font-size: 0.9rem;">Cloud budget usage:</span>
+                <strong style="float: right;" id="val-cloud">$0.00</strong>
+            </div>
+            <div>
+                <span style="color: var(--text-muted); font-size: 0.9rem;">Self-repair patches:</span>
+                <strong style="float: right;" id="val-patches">0 Compiled</strong>
+            </div>
+        </div>
+    </div>
+
+    <!-- Council & Audits -->
+    <div class="card col-6">
+        <h2>Model Parliament Debates</h2>
+        <div class="console-log" id="console-council">
+            <div class="console-line">[System] Parliament standby. Awaiting mission objectives...</div>
+        </div>
+    </div>
+    <div class="card col-6">
+        <h2>Adversarial Audit Stream</h2>
+        <div class="console-log" id="console-audit" style="color: #ef4444;">
+            <div class="console-line" style="color: var(--text-muted);">[Audit] Continuous threat assessment online.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    async function updateDashboard() {
+        try {
+            const res = await fetch('/api/mission_control/status');
+            const data = await res.json();
+            
+            document.getElementById('val-perception').innerText = data.perception_scans || 0;
+            document.getElementById('val-claims').innerText = data.claims_tracked || 0;
+            document.getElementById('val-memories').innerText = data.memories_committed || 0;
+            document.getElementById('val-swarm').innerText = `${data.swarm_workers || 0} Active`;
+            document.getElementById('val-cloud').innerText = `$${(data.cloud_compute_cost || 0).toFixed(2)}`;
+            document.getElementById('val-patches').innerText = `${data.factory_patches || 0} Compiled`;
+
+            if (data.kernel_online) {
+                document.getElementById('kernel-status').innerText = 'Sovereign Kernel Online';
+                document.getElementById('kernel-status').style.borderColor = 'var(--success)';
+            }
+        } catch (e) {
+            console.error("Dashboard pull failed", e);
+        }
+    }
+
+    async function launchCampaign() {
+        const obj = document.getElementById('mission-objective').value.trim();
+        if (!obj) return;
+
+        const consoleCouncil = document.getElementById('console-council');
+        consoleCouncil.innerHTML += `<div class="console-line">[Campaign] Deploying: "${obj}"</div>`;
+
+        try {
+            const res = await fetch('/api/mission_control/run_mission', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ objective: obj })
+            });
+            const result = await res.json();
+            
+            consoleCouncil.innerHTML += `<div class="console-line">[Parliament] Consensus outcome: ${JSON.stringify(result)}</div>`;
+            updateDashboard();
+        } catch (e) {
+            consoleCouncil.innerHTML += `<div class="console-line" style="color: var(--error)">[Error] Deployment failed: ${e.message}</div>`;
+        }
+    }
+
+    // Poll status metrics
+    setInterval(updateDashboard, 4000);
+    updateDashboard();
+</script>
+
+</body>
+</html>

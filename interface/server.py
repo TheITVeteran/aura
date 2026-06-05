@@ -636,6 +636,7 @@ from interface.routes import rpc as rpc_routes
 from interface.routes import settings as settings_routes
 from interface.routes import subsystems as subsystem_routes
 from interface.routes import system as system_routes
+from interface.routes import mission_control as mission_control_routes
 
 checkpoint_service = CheckpointService()
 
@@ -654,6 +655,7 @@ app.include_router(dashboard_routes.trace_router, prefix="/api", tags=["trace"])
 app.include_router(settings_routes.router, prefix="/api", tags=["settings"])
 app.include_router(multimodal_routes.router, prefix="/api", tags=["multimodal"])
 app.include_router(performance_routes.router, prefix="/api", tags=["performance"])
+app.include_router(mission_control_routes.router, prefix="/api", tags=["mission_control"])
 
 _system_collect_liquid_state_payload = system_routes._collect_liquid_state_payload
 

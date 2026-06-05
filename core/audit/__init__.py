@@ -1,18 +1,19 @@
+"""core/audit/__init__.py — Immutable autonomous action audit trail.
+
+Re-exports the core AuditLog and coordinates adversarial self-audits.
 """
-Immutable autonomous action audit trail.
-Append-only SQLite table — no UPDATE or DELETE ever runs on audit records.
-"""
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
 import json
 import logging
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import config
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Audit")
 
@@ -270,3 +271,11 @@ def get_audit() -> AuditLog:
     if _audit is None:
         _audit = AuditLog()
     return _audit
+
+
+# Re-exports from adversarial modules
+from core.audit.adversarial_auditor import AdversarialAuditor, get_adversarial_auditor
+from core.audit.red_team_agent import RedTeamAgent
+from core.audit.failure_injector import FailureInjector
+from core.audit.claim_challenger import ClaimChallenger
+from core.audit.action_challenger import ActionChallenger

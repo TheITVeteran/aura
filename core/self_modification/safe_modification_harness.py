@@ -318,4 +318,15 @@ def get_safe_harness(codebase_root: str | Path = ".") -> SafeModificationHarness
     return _harness
 
 
-__all__ = ["SafeModificationHarness", "HarnessResult", "get_safe_harness"]
+async def run_self_mod_test(patch_path: str, test_command: str = "") -> dict[str, Any]:
+    """Bridges the ActionExecutor's SELF_MODIFICATION domain to the SafeModificationHarness."""
+    harness = get_safe_harness()
+    # Treat patch_path as the changed file
+    res = await harness.run([patch_path])
+    return {
+        "passed": res.passed,
+        "output": res.summary() + "\n" + "\n".join(res.errors),
+    }
+
+
+__all__ = ["SafeModificationHarness", "HarnessResult", "get_safe_harness", "run_self_mod_test"]

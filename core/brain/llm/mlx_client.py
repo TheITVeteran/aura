@@ -22,6 +22,7 @@ import psutil
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
@@ -681,14 +682,14 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
         ok = False
         detail = "probe_not_run"
         try:
-            completed = subprocess.run(
+            completed = get_subprocess_gateway().run(
                 _mlx_runtime_probe_command(),
                 cwd=project_root,
                 env=env,
                 capture_output=True,
-                text=True,
                 timeout=25.0,  # [STABILITY v57] Raised from 12.0s for high-load scenarios
-                check=False,
+                source="certification_tooling:mlx_runtime_probe",
+                offline_tooling=True,
             )
             ok = completed.returncode == 0
             detail = _normalize_probe_detail(
@@ -1593,7 +1594,8 @@ class MLXLocalClient:
         lock_dir = Path.home() / ".aura" / "run"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_file_path = str(lock_dir / "mlx_spawn.lock")
-        with open(lock_file_path, "w") as lock_file:
+        lock_fd = os.open(lock_file_path, os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(lock_fd, "w") as lock_file:
             try:
                 logger.info("🔒 [MLX] Acquiring process-level spawn lock...")
                 fcntl.flock(lock_file, fcntl.LOCK_EX)

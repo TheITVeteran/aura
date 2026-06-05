@@ -252,74 +252,6 @@ EXEMPT_FILES = {
         "justification": "Compiles and serializes the terminal grid environment state.",
         "compensating_tests": "tests/test_terminal_grid_state.py"
     },
-    "core/skills/computer_use.py": {
-        "justification": "Executes osascript subprocess commands and pasteboard tools for GUI orchestration.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/listen.py": {
-        "justification": "Uses wave.open and temporary file descriptor writing to save mic audio frames locally.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/self_improvement.py": {
-        "justification": "Saves and updates temporary patch parameters and local telemetry scores.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/skill_evolution.py": {
-        "justification": "Reads and writes generated/refactored skill templates during self-modification.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/toggle_senses.py": {
-        "justification": "Writes system sensors state toggles and runs launchd/osascript process control.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/manifest_to_device.py": {
-        "justification": "Pushes manifest schemas to local hardware devices and communicates via API.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/manim_renderer.py": {
-        "justification": "Writes temporary scene files and compiles video outputs via subprocess command tools.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/sec_ops.py": {
-        "justification": "Runs local security audit scans and fetches CVE vulnerability templates over the network.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/branching_futures.py": {
-        "justification": "Writes speculative execution logs and local trajectory state snapshots.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/memory_sync.py": {
-        "justification": "Synchronizes vector databases and sqlite persistence layers via subprocess sync commands.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/inter_agent_comm.py": {
-        "justification": "Communicates with external swarm agents using local network client connections.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/toolbox_web_agent.py": {
-        "justification": "Fetches remote webpage details and executes playwright browser actions.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/train_self.py": {
-        "justification": "Saves model gradients and writes checkpoint metadata files during training.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "core/skills/self_evolution.py": {
-        "justification": "Performs code compilation and writes intermediate mutation diffs.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "skills/browser_action.py": {
-        "justification": "Runs HTTP requests to scrape and parse webpage metadata.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "skills/knowledge_base.py": {
-        "justification": "Stores structured learning resources and updates database indices.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
-    "skills/sec_ops.py": {
-        "justification": "Audits network ports and verifies certificate integrity.",
-        "compensating_tests": "tests/runtime/test_welfare_transaction_coverage.py"
-    },
 }
 
 
@@ -384,26 +316,6 @@ class AstLinter(ast.NodeVisitor):
             return  # Audited and exempted from strict lints
         if kind in {"unapproved_direct_subprocess", "unapproved_direct_network", "unapproved_direct_file_write"}:
             if is_approved_direct_surface(self.rel, kind):
-                return
-            # Dynamically exempt core infrastructure, interface/UI endpoints, research, and utility scripts
-            infra_prefixes = (
-                "core/actuators/", "core/adaptation/", "core/adapters/", "core/architect/",
-                "core/autonomy/", "core/brain/", "core/bus/", "core/cognitive/", "core/config.py",
-                "core/consciousness/", "core/context/", "core/coordinators/", "core/ethics/",
-                "core/governance/", "core/kernel/", "core/learning/", "core/memory/", "core/meta/",
-                "core/morphogenesis/", "core/ops/", "core/perception/", "core/phases/",
-                "core/resilience/", "core/resource/", "core/sandbox/", "core/search/",
-                "core/security/", "core/self_modification/", "core/senses/", "core/session/",
-                "core/sovereignty/", "core/state_manager.py", "core/temporal/", "core/utils/",
-                "core/voice/", "core/world_model/", "infrastructure/", "interface/", "utils/",
-                "aura_main.py", "_gen_icons.py", "core/continuity.py", "core/network.py",
-                "core/optimizer.py", "core/reliability_tracker.py", "core/sensory_motor_cortex.py",
-                "core/shell.py", "core/thought_tracer.py", "core/tracer.py", "core/unified_action_log.py",
-                "core/values_engine.py", "core/narrative_thread.py", "research/",
-                "core/logging_hmac.py", "core/agency/", "core/runtime/", "core/safety/",
-                "core/social/", "core/sovereign/", "core/conversational/", "core/orchestrator/"
-            )
-            if any(self.rel.startswith(pfx) for pfx in infra_prefixes):
                 return
         self.findings.append(
             LintFinding(severity, kind, self.rel, getattr(node, "lineno", 0), message)

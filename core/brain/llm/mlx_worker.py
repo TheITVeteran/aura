@@ -971,7 +971,7 @@ class HeartbeatThread(threading.Thread):
 def _setup_worker_env():
     import os
     import platform
-    import subprocess
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
 
     # [PERFORMANCE] Fast-path: Use environment if already probed by parent
     cached_sdk = os.environ.get("AURA_SDK_PATH")
@@ -980,13 +980,21 @@ def _setup_worker_env():
         print(f"Using cached SDK root: {cached_sdk}")
     else:
         try:
-            sdk_path = subprocess.check_output(["xcrun", "--show-sdk-path"], timeout=2.0).decode().strip()
+            proc = get_subprocess_gateway().run(
+                ["xcrun", "--show-sdk-path"],
+                timeout=2.0,
+                source="maintenance_tooling:mlx_worker_env",
+                offline_tooling=True,
+            )
+            sdk_path = (proc.stdout or "").strip()
+            if proc.returncode != 0 or not sdk_path:
+                raise RuntimeError((proc.stderr or "xcrun failed").strip())
             allowed_prefixes = ("/Library/", "/Applications/Xcode", "/usr/")
             if not any(sdk_path.startswith(pfx) for pfx in allowed_prefixes):
                 raise RuntimeError(f"Suspicious SDK path rejected: {sdk_path}")
             os.environ["SDKROOT"] = sdk_path
             os.environ["AURA_SDK_PATH"] = sdk_path # Cache for subsequent spawns
-        except (subprocess.SubprocessError, OSError) as e:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as e:
             _record_mlx_degradation(
                 e,
                 action="continued worker startup without probed SDKROOT",
