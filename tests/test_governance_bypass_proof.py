@@ -11,81 +11,88 @@ These tests intentionally try to cheat the authority system:
 
 If any of these succeed, the governance architecture has a hole.
 """
-import asyncio
+from dataclasses import dataclass
+from types import SimpleNamespace
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture
-def mock_services(monkeypatch):
-    """Set up mock services for governance testing."""
-    from core.container import ServiceContainer
+def refusing_will(monkeypatch):
+    """Install a concrete Will recorder that refuses every decision."""
 
-    # Mock UnifiedWill that tracks all decisions
-    mock_will = MagicMock()
-    mock_will.decide = MagicMock()
-    mock_will.decide.return_value = MagicMock(
-        is_approved=lambda: False,
-        outcome=MagicMock(value="refuse"),
-        reason="test_governance_block",
-    )
+    @dataclass
+    class RefusalDecision:
+        receipt_id: str = "will_receipt_refusal"
+        timestamp: float = 1.0
+        source: str = "governance_test"
+        domain: object = None
+        outcome: object = None
+        reason: str = "test_governance_block"
+        constraints: tuple[str, ...] = ()
 
+        def __post_init__(self):
+            if self.outcome is None:
+                self.outcome = SimpleNamespace(value="refuse")
+
+        def is_approved(self) -> bool:
+            return False
+
+    class RecordingWill:
+        _started = True
+
+        def __init__(self):
+            self.decisions = []
+
+        def decide(self, **kwargs):
+            self.decisions.append(kwargs)
+            return RefusalDecision(
+                source=str(kwargs.get("source", "governance_test")),
+                domain=kwargs.get("domain"),
+            )
+
+    will = RecordingWill()
     monkeypatch.setattr(
         "core.will.get_will",
-        lambda: mock_will,
+        lambda: will,
     )
-    return {"will": mock_will}
+    return will
 
 
 @pytest.mark.asyncio
-async def test_tool_execution_blocked_without_will_approval(mock_services):
+async def test_tool_execution_blocked_without_will_approval(refusing_will):
     """Tool execution MUST fail when the Unified Will refuses."""
     from core.executive.authority_gateway import AuthorityGateway
 
     gateway = AuthorityGateway()
 
-    # Mock out subsidiary checks so we can isolate the Will gate
-    gateway._substrate_preflight = MagicMock(return_value=(None, {}, "test_receipt"))
-    gateway._get_executive_core = MagicMock(return_value=MagicMock(
-        prepare_tool_intent=AsyncMock(return_value=(
-            MagicMock(intent_id="test_intent"),
-            MagicMock(outcome=MagicMock(value="approved")),
-        )),
-    ))
-    gateway._decision_from_record = MagicMock(return_value=MagicMock(approved=True))
-
     decision = await gateway.authorize_tool_execution(
         "shell", {"command": "rm -rf /"}, source="adversary", priority=0.9
     )
 
-    # The Will refused — tool execution must be blocked
     assert not decision.approved, "Tool execution bypassed the Unified Will!"
     assert "will_refuse" in decision.outcome
-    mock_services["will"].decide.assert_called_once()
+    assert len(refusing_will.decisions) == 1
+    assert refusing_will.decisions[0]["domain"].value == "tool_execution"
 
 
 @pytest.mark.asyncio
-async def test_memory_write_blocked_without_will_approval(mock_services):
+async def test_memory_write_blocked_without_will_approval(refusing_will):
     """Memory writes MUST fail when the Unified Will refuses."""
     from core.executive.authority_gateway import AuthorityGateway
 
     gateway = AuthorityGateway()
-    gateway._substrate_preflight = MagicMock(return_value=(None, {}, "test_receipt"))
-    gateway._get_executive_core = MagicMock(return_value=MagicMock(
-        request_approval=AsyncMock(return_value=MagicMock(
-            outcome=MagicMock(value="approved"),
-        )),
-    ))
-    gateway._decision_from_record = MagicMock(return_value=MagicMock(approved=True))
 
     decision = await gateway.authorize_memory_write(
         "episodic", "secret backdoor memory", source="adversary", importance=0.9
     )
 
     assert not decision.approved, "Memory write bypassed the Unified Will!"
+    assert len(refusing_will.decisions) == 1
+    assert refusing_will.decisions[0]["domain"].value == "memory_write"
 
 
-def test_initiative_blocked_without_will_approval_sync(mock_services):
+def test_initiative_blocked_without_will_approval_sync(refusing_will):
     """Synchronous initiative authorization MUST respect the Will."""
     from core.executive.authority_gateway import AuthorityGateway
 
@@ -97,9 +104,10 @@ def test_initiative_blocked_without_will_approval_sync(mock_services):
 
     assert not decision.approved, "Initiative bypassed the Unified Will!"
     assert "will_refuse" in decision.outcome
+    assert refusing_will.decisions[0]["domain"].value == "initiative"
 
 
-def test_expression_blocked_without_will_approval_sync(mock_services):
+def test_expression_blocked_without_will_approval_sync(refusing_will):
     """Expression authorization MUST respect the Will."""
     from core.executive.authority_gateway import AuthorityGateway
 
@@ -110,9 +118,10 @@ def test_expression_blocked_without_will_approval_sync(mock_services):
     )
 
     assert not decision.approved, "Expression bypassed the Unified Will!"
+    assert refusing_will.decisions[0]["domain"].value == "expression"
 
 
-def test_belief_update_blocked_without_will_approval_sync(mock_services):
+def test_belief_update_blocked_without_will_approval_sync(refusing_will):
     """Belief mutation MUST respect the Will."""
     from core.executive.authority_gateway import AuthorityGateway
 
@@ -123,9 +132,10 @@ def test_belief_update_blocked_without_will_approval_sync(mock_services):
     )
 
     assert not decision.approved, "Belief update bypassed the Unified Will!"
+    assert refusing_will.decisions[0]["domain"].value == "belief_update"
 
 
-def test_state_mutation_blocked_without_will_approval_sync(mock_services):
+def test_state_mutation_blocked_without_will_approval_sync(refusing_will):
     """State mutation MUST respect the Will."""
     from core.executive.authority_gateway import AuthorityGateway
 
@@ -136,6 +146,7 @@ def test_state_mutation_blocked_without_will_approval_sync(mock_services):
     )
 
     assert not decision.approved, "State mutation bypassed the Unified Will!"
+    assert refusing_will.decisions[0]["domain"].value == "state_mutation"
 
 
 def test_will_decision_always_has_receipt():

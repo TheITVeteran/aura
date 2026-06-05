@@ -9,23 +9,19 @@ These tests prove that:
   6. Feedback loop: blocked actions trigger frustration chemistry
 """
 
-import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock
-
-import numpy as np
-import pytest
 
 from core.consciousness.substrate_authority import (
-    SubstrateAuthority,
     ActionCategory,
     AuthorizationDecision,
     AuthorityThresholds,
+    SubstrateAuthority,
 )
 
 
-class MockUnifiedField:
-    """Mock unified field with controllable coherence."""
+class ControllableUnifiedField:
+    """Concrete field probe with configurable coherence."""
+
     def __init__(self, coherence: float = 0.6):
         self._coherence = coherence
 
@@ -36,8 +32,9 @@ class MockUnifiedField:
         return {"coherence": self._coherence, "valence": 0.0, "intensity": 0.3}
 
 
-class MockSomaticGate:
-    """Mock somatic gate with controllable verdict."""
+class SomaticGateProbe:
+    """Concrete somatic probe with configurable approach, confidence, and budget."""
+
     def __init__(self, approach: float = 0.0, confidence: float = 0.5, budget: bool = True):
         self._approach = approach
         self._confidence = confidence
@@ -51,10 +48,11 @@ class MockSomaticGate:
         )
 
 
-class MockNeurochemicalSystem:
-    """Mock neurochemical system with controllable chemical levels."""
+class NeurochemicalProbe:
+    """Concrete neurochemical probe that records feedback surges."""
+
     def __init__(self, cortisol=0.3, gaba=0.5, dopamine=0.5, ne=0.4):
-        class Chem:
+        class ChemicalTrace:
             def __init__(self, eff):
                 self.effective = eff
                 self.surges = []
@@ -62,10 +60,10 @@ class MockNeurochemicalSystem:
             def surge(self, amount):
                 self.surges.append(amount)
         self.chemicals = {
-            "cortisol": Chem(cortisol),
-            "gaba": Chem(gaba),
-            "dopamine": Chem(dopamine),
-            "norepinephrine": Chem(ne),
+            "cortisol": ChemicalTrace(cortisol),
+            "gaba": ChemicalTrace(gaba),
+            "dopamine": ChemicalTrace(dopamine),
+            "norepinephrine": ChemicalTrace(ne),
         }
 
     def on_frustration(self, amount):
@@ -80,9 +78,9 @@ class TestMandatoryGating:
 
     def test_allow_when_all_systems_healthy(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.3, confidence=0.5)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.3, confidence=0.5)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("test action", "test", ActionCategory.RESPONSE, 0.5)
         assert verdict.decision == AuthorizationDecision.ALLOW
@@ -90,9 +88,9 @@ class TestMandatoryGating:
     def test_block_on_field_crisis(self):
         """Field coherence below crisis threshold MUST block non-critical actions."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.15)  # below 0.25 crisis
-        auth._somatic_ref = MockSomaticGate(approach=0.3)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.15)  # below 0.25 crisis
+        auth._somatic_ref = SomaticGateProbe(approach=0.3)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("test action", "test", ActionCategory.EXPLORATION, 0.5)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -101,9 +99,9 @@ class TestMandatoryGating:
     def test_stabilization_exempt_from_field_crisis(self):
         """Stabilization actions can proceed during field crisis (recovery)."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.15)  # crisis
-        auth._somatic_ref = MockSomaticGate(approach=0.0)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.15)  # crisis
+        auth._somatic_ref = SomaticGateProbe(approach=0.0)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("rest and recover", "baseline", ActionCategory.STABILIZATION, 0.3)
         # Should NOT be blocked — stabilization is exempt from field crisis
@@ -112,9 +110,9 @@ class TestMandatoryGating:
     def test_block_on_somatic_hard_veto(self):
         """Strong somatic avoid with high confidence MUST block."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=-0.7, confidence=0.6)  # strong avoid
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=-0.7, confidence=0.6)  # strong avoid
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("run dangerous tool", "agency", ActionCategory.TOOL_EXECUTION, 0.8)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -123,9 +121,9 @@ class TestMandatoryGating:
     def test_no_veto_on_low_confidence_avoid(self):
         """Somatic avoid with LOW confidence should constrain, not block."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=-0.7, confidence=0.2)  # low confidence
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=-0.7, confidence=0.2)  # low confidence
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("test", "test", ActionCategory.RESPONSE, 0.5)
         # Low confidence → should not hard block
@@ -134,9 +132,9 @@ class TestMandatoryGating:
     def test_block_on_cortisol_crisis_non_stabilization(self):
         """Cortisol crisis blocks non-stabilization/non-response actions."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.3)
-        auth._neurochemical_ref = MockNeurochemicalSystem(cortisol=0.90)
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.3)
+        auth._neurochemical_ref = NeurochemicalProbe(cortisol=0.90)
 
         verdict = auth.authorize("explore new topic", "curiosity", ActionCategory.EXPLORATION, 0.5)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -145,9 +143,9 @@ class TestMandatoryGating:
     def test_cortisol_crisis_allows_response(self):
         """During cortisol crisis, RESPONSE category still passes (user needs reply)."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.0)
-        auth._neurochemical_ref = MockNeurochemicalSystem(cortisol=0.90)
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.0)
+        auth._neurochemical_ref = NeurochemicalProbe(cortisol=0.90)
 
         verdict = auth.authorize("reply to user", "user", ActionCategory.RESPONSE, 0.5)
         assert verdict.decision != AuthorizationDecision.BLOCK
@@ -155,9 +153,9 @@ class TestMandatoryGating:
     def test_dopamine_crash_blocks_exploration(self):
         """Low dopamine specifically blocks exploration."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.1)
-        auth._neurochemical_ref = MockNeurochemicalSystem(dopamine=0.05)
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.1)
+        auth._neurochemical_ref = NeurochemicalProbe(dopamine=0.05)
 
         verdict = auth.authorize("explore", "curiosity", ActionCategory.EXPLORATION, 0.5)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -166,9 +164,9 @@ class TestMandatoryGating:
     def test_gaba_collapse_blocks_non_stabilization(self):
         """GABA collapse (no inhibition) blocks non-stabilization actions."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.0)
-        auth._neurochemical_ref = MockNeurochemicalSystem(gaba=0.05)
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.0)
+        auth._neurochemical_ref = NeurochemicalProbe(gaba=0.05)
 
         verdict = auth.authorize("do something", "agency", ActionCategory.INITIATIVE, 0.5)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -177,9 +175,9 @@ class TestMandatoryGating:
     def test_gaba_collapse_constrains_internal_substrate_state_mutation(self):
         """Internal substrate settling work should degrade, not deadlock, during GABA collapse."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.0)
-        auth._neurochemical_ref = MockNeurochemicalSystem(gaba=0.05)
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.0)
+        auth._neurochemical_ref = NeurochemicalProbe(gaba=0.05)
 
         verdict = auth.authorize(
             "stimulus_injection:weight=1.00",
@@ -194,9 +192,9 @@ class TestMandatoryGating:
     def test_constrain_on_field_warning(self):
         """Field coherence in warning zone → CONSTRAIN."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.35)  # between 0.25 and 0.40
-        auth._somatic_ref = MockSomaticGate(approach=0.2)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.35)  # between 0.25 and 0.40
+        auth._somatic_ref = SomaticGateProbe(approach=0.2)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("test", "test", ActionCategory.RESPONSE, 0.5)
         assert verdict.decision == AuthorizationDecision.CONSTRAIN
@@ -204,9 +202,9 @@ class TestMandatoryGating:
     def test_constrain_on_body_budget_deficit(self):
         """Low body budget → constrain high-cost actions."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.7)
-        auth._somatic_ref = MockSomaticGate(approach=0.0, budget=False)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.7)
+        auth._somatic_ref = SomaticGateProbe(approach=0.0, budget=False)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("run tool", "agency", ActionCategory.TOOL_EXECUTION, 0.5)
         assert verdict.decision == AuthorizationDecision.CONSTRAIN
@@ -221,9 +219,9 @@ class TestCriticalOverride:
     def test_critical_always_passes_during_field_crisis(self):
         """Safety-critical actions pass even during field crisis."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.05)  # extreme crisis
-        auth._somatic_ref = MockSomaticGate(approach=-0.9, confidence=0.9)
-        auth._neurochemical_ref = MockNeurochemicalSystem(cortisol=0.95)
+        auth._field_ref = ControllableUnifiedField(coherence=0.05)  # extreme crisis
+        auth._somatic_ref = SomaticGateProbe(approach=-0.9, confidence=0.9)
+        auth._neurochemical_ref = NeurochemicalProbe(cortisol=0.95)
 
         verdict = auth.authorize(
             "emergency shutdown", "safety", ActionCategory.STABILIZATION,
@@ -234,9 +232,9 @@ class TestCriticalOverride:
     def test_critical_is_the_only_bypass(self):
         """Without is_critical=True, worst-case state should BLOCK."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.05)
-        auth._somatic_ref = MockSomaticGate(approach=-0.9, confidence=0.9)
-        auth._neurochemical_ref = MockNeurochemicalSystem(cortisol=0.95)
+        auth._field_ref = ControllableUnifiedField(coherence=0.05)
+        auth._somatic_ref = SomaticGateProbe(approach=-0.9, confidence=0.9)
+        auth._neurochemical_ref = NeurochemicalProbe(cortisol=0.95)
 
         verdict = auth.authorize(
             "some action", "test", ActionCategory.EXPLORATION,
@@ -253,9 +251,9 @@ class TestFeedbackAndAudit:
 
     def test_block_increments_counter(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.10)
-        auth._somatic_ref = MockSomaticGate()
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.10)
+        auth._somatic_ref = SomaticGateProbe()
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         auth.authorize("test", "test", ActionCategory.EXPLORATION, 0.5)
         assert auth._blocked == 1
@@ -263,30 +261,30 @@ class TestFeedbackAndAudit:
 
     def test_allow_increments_counter(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.8)
-        auth._somatic_ref = MockSomaticGate(approach=0.3)
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.8)
+        auth._somatic_ref = SomaticGateProbe(approach=0.3)
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         auth.authorize("test", "test", ActionCategory.RESPONSE, 0.5)
         assert auth._allowed == 1
 
     def test_verdict_has_timestamp(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField()
+        auth._field_ref = ControllableUnifiedField()
         verdict = auth.authorize("test", "test", ActionCategory.RESPONSE, 0.5)
         assert verdict.timestamp > 0
 
     def test_verdict_has_latency(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField()
+        auth._field_ref = ControllableUnifiedField()
         verdict = auth.authorize("test", "test", ActionCategory.RESPONSE, 0.5)
         assert verdict.latency_ms >= 0
 
     def test_recent_blocks_audit(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.10)
-        auth._somatic_ref = MockSomaticGate()
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.10)
+        auth._somatic_ref = SomaticGateProbe()
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         for _ in range(5):
             auth.authorize("test", "test", ActionCategory.EXPLORATION, 0.5)
@@ -297,7 +295,7 @@ class TestFeedbackAndAudit:
 
     def test_status_dict(self):
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField()
+        auth._field_ref = ControllableUnifiedField()
         status = auth.get_status()
         assert "total_requests" in status
         assert "block_rate" in status
@@ -314,9 +312,9 @@ class TestCombinedStress:
         """When multiple gates trigger, most restrictive wins."""
         auth = SubstrateAuthority()
         # Field warning (constrain) + somatic hard veto (block) → should be BLOCK
-        auth._field_ref = MockUnifiedField(coherence=0.35)  # warning → constrain
-        auth._somatic_ref = MockSomaticGate(approach=-0.7, confidence=0.6)  # hard veto → block
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.35)  # warning → constrain
+        auth._somatic_ref = SomaticGateProbe(approach=-0.7, confidence=0.6)  # hard veto → block
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         verdict = auth.authorize("test", "test", ActionCategory.TOOL_EXECUTION, 0.5)
         assert verdict.decision == AuthorizationDecision.BLOCK
@@ -324,9 +322,9 @@ class TestCombinedStress:
     def test_all_categories_are_gated(self):
         """Every ActionCategory should be evaluated (no category bypass)."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.10)  # crisis
-        auth._somatic_ref = MockSomaticGate()
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.10)  # crisis
+        auth._somatic_ref = SomaticGateProbe()
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         for category in ActionCategory:
             if category == ActionCategory.STABILIZATION:
@@ -345,9 +343,9 @@ class TestCombinedStress:
     def test_rapid_authorize_calls(self):
         """Authority should handle rapid sequential calls without error."""
         auth = SubstrateAuthority()
-        auth._field_ref = MockUnifiedField(coherence=0.6)
-        auth._somatic_ref = MockSomaticGate()
-        auth._neurochemical_ref = MockNeurochemicalSystem()
+        auth._field_ref = ControllableUnifiedField(coherence=0.6)
+        auth._somatic_ref = SomaticGateProbe()
+        auth._neurochemical_ref = NeurochemicalProbe()
 
         for i in range(1000):
             verdict = auth.authorize(f"action {i}", "stress_test", ActionCategory.RESPONSE, 0.5)
