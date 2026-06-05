@@ -831,6 +831,37 @@ async def boot_aura_runtime(
     CLI, desktop, server, and validation/proof surfaces must use this path so
     their evidence reflects the same live Aura boot contract.
     """
+    if profile == "minimal":
+        os.environ["AURA_BOOT_PROFILE"] = "minimal"
+        os.environ["AURA_USE_MOCK_LLM"] = "1"
+        os.environ["AURA_FEATURES__CAMERA_ENABLED"] = "false"
+        os.environ["AURA_FEATURES__VOICE_ENABLED"] = "false"
+        os.environ["AURA_SECURITY__ALLOW_NETWORK_ACCESS"] = "false"
+        os.environ["AURA_ENABLE_CAMERA"] = "0"
+        os.environ["AURA_ENABLE_MIC"] = "0"
+        os.environ["AURA_ENABLE_DESKTOP"] = "0"
+        os.environ["AURA_DISABLE_CLOUD"] = "1"
+        os.environ["AURA_MINIMAL_PROFILE"] = "1"
+
+        try:
+            from core.config import config
+            config.skeletal_mode = True
+            config.features.camera_enabled = False
+            config.features.voice_enabled = False
+            config.security.allow_network_access = False
+            if hasattr(config, "soma"):
+                config.soma.enabled = False
+            config.features.mycelium_visualizer = False
+            config.features.autonomous_impulses = False
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                _AURA_MAIN_DEGRADATION_KEY,
+                exc,
+                action="continued minimal boot after optional config mutation failed",
+                severity="warning",
+            )
+            logger.warning("Minimal profile config mutation skipped: %s", exc)
+
     resolved_ready_label = ready_label or profile.title()
     if not _RUNTIME_LOCK_CLAIMED:
         bootstrap_lock(skip_lock=False)
@@ -1105,9 +1136,9 @@ def _enforce_service_manifest(ready_label: str) -> None:
             + "; ".join(f"{v.role}: {v.reason}" for v in crit)
         )
 
-async def run_console():
+async def run_console(profile: str = "cli"):
     """Interactive CLI Mode"""
-    orchestrator = await boot_aura_runtime(profile="cli", ready_label="CLI")
+    orchestrator = await boot_aura_runtime(profile=profile, ready_label="CLI")
 
     from core.main import conversation_loop
     await conversation_loop(orchestrator=orchestrator)
@@ -1239,30 +1270,34 @@ async def _stop_orchestrator_once(orchestrator: Any, *, reason: str, timeout_s: 
 
 async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
     """Wait for internal API server to return 200 OK and report ready status."""
+    from core.runtime.network_gateway import get_network_gateway
+
     start = time.time()
-    
+
     logger.info("📡 Waiting for API Server health check: %s", url)
     count = 0
     while time.time() - start < timeout_s:
         count += 1
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, timeout=5.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    status = data.get("status", "").lower()
-                    ready = bool(data.get("ready"))
-                    logger.info("📡 API Health status received: '%s'", status)
-                    if ready or status in ("online", "operational", "healthy", "ok", "ready"):
-                        logger.info("✅ API Server is ONLINE and HEALTHY after %ds.", int(time.time() - start))
-                        return True
-                    else:
-                        logger.warning("📡 API Server status is '%s', not yet 'online'. Full data: %s", status, data)
-                else:
-                    logger.warning("📡 API Server returned HTTP %d", response.status_code)
-        except httpx.ConnectError:
-            if count % 10 == 0:
-                 logger.info("📡 API Server not yet listening (Attempt %d)...", count)
+            response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "GET",
+                url,
+                timeout=5.0,
+                source="maintenance_tooling:server_health_wait",
+                read_only=True,
+            )
+            if response.get("status_code") == 200:
+                data = json.loads((response.get("content") or b"{}").decode("utf-8"))
+                status = str(data.get("status", "")).lower()
+                ready = bool(data.get("ready"))
+                logger.info("📡 API Health status received: '%s'", status)
+                if ready or status in ("online", "operational", "healthy", "ok", "ready"):
+                    logger.info("✅ API Server is ONLINE and HEALTHY after %ds.", int(time.time() - start))
+                    return True
+                logger.warning("📡 API Server status is '%s', not yet 'online'. Full data: %s", status, data)
+            elif count % 10 == 0:
+                logger.info("📡 API Server not yet listening (Attempt %d)...", count)
         except _AURA_MAIN_BOUNDARY_ERRORS as e:
             record_degradation('aura_main', e)
             logger.error("📡 API Health check probe FAILURE: %s", e)
@@ -1279,7 +1314,7 @@ def _native_launcher_owns_gui() -> bool:
     )
 
 
-async def run_desktop(port: int, *, launch_gui: bool | None = None):
+async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str = "desktop"):
     """GUI Mode (Managed Actor Process)"""
     from core.container import ServiceContainer
     from core.supervisor.tree import ActorSpec
@@ -1349,7 +1384,7 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None):
         # 1. Initialize Orchestrator and wait for boot
         logger.info("🧠 Orchestrator boot beginning...")
         orchestrator = await boot_aura_runtime(
-            profile="desktop",
+            profile=profile,
             ready_label="Desktop",
             readiness_context="server_boot",
         )
@@ -1595,9 +1630,15 @@ def _reap_orphaned_aura_processes() -> int:
     parent = os.getppid()
     killed = 0
     try:
-        out = subprocess.check_output(
-            ["ps", "-axo", "pid=,user=,command="], text=True, timeout=5
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        proc = get_subprocess_gateway().run(
+            ["ps", "-axo", "pid=,user=,command="],
+            timeout=5,
+            source="maintenance_tooling:process_reaper",
+            offline_tooling=True,
         )
+        out = proc.stdout
     except (subprocess.SubprocessError, OSError) as exc:
         record_degradation("aura_main", exc)
         logger.warning("Unable to inspect process table for stale Aura processes: %s", exc)
@@ -1645,11 +1686,11 @@ def _reap_orphaned_aura_processes() -> int:
                     try:
                         child.terminate()
                     except psutil.Error:
-                        pass
+                        continue
                 parent_proc.terminate()
                 killed += 1
             except psutil.Error:
-                pass
+                continue
     else:
         for pid in stale_pids:
             try:
@@ -1671,7 +1712,7 @@ def _reap_orphaned_aura_processes() -> int:
                             if child.is_running():
                                 child.kill()
                         except psutil.Error:
-                            pass
+                            continue
                     if parent_proc.is_running():
                         parent_proc.kill()
                 except psutil.Error:
@@ -1786,7 +1827,15 @@ def stop_aura():
         if plist_path.exists():
             logger.info("Unloading launchd daemon to prevent auto-revival...")
             try:
-                subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, timeout=5)
+                from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+                get_subprocess_gateway().run(
+                    ["launchctl", "unload", str(plist_path)],
+                    capture_output=True,
+                    timeout=5,
+                    source="maintenance_tooling:stop_aura",
+                    offline_tooling=True,
+                )
             except subprocess.TimeoutExpired:
                 logger.warning("launchctl unload timed out.")
             except _AURA_MAIN_BOUNDARY_ERRORS as e:
@@ -1894,6 +1943,14 @@ def stop_aura():
 # ---------------------------------------------------------------------------
 
 def main():
+    operator_commands = {
+        "doctor", "conformance", "backup", "restore", "migrate",
+        "verify-state", "verify-memory", "rebuild-index", "chaos", "plugin"
+    }
+    if len(sys.argv) > 1 and sys.argv[1] in operator_commands:
+        from core.runtime import operator_cli
+        sys.exit(operator_cli.main(sys.argv[1:]))
+
     _maybe_relaunch_with_preferred_python()
     reaper_manifest_path = _ensure_reaper_manifest_env()
 
@@ -1910,6 +1967,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port for Server/GUI")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host for Server")
     parser.add_argument("--skeletal", action="store_true", help="Skeletal Mode: Bypass heavy subsystems")
+    parser.add_argument("--profile", type=str, default=None, help="Boot profile (e.g. minimal)")
     
     args = parser.parse_args()
 
@@ -2018,7 +2076,7 @@ def main():
                 host = "0.0.0.0"
             async def _run_server_with_bootstrap():
                 orchestrator = await boot_aura_runtime(
-                    profile="server",
+                    profile=args.profile or "server",
                     ready_label="Server",
                     readiness_context="server_boot",
                 )
@@ -2042,6 +2100,7 @@ def main():
                 run_desktop(
                     args.port,
                     launch_gui=None,
+                    profile=args.profile or "desktop",
                 )
             )
         elif args.gui_window:
@@ -2053,14 +2112,14 @@ def main():
             asyncio.run(run_watchdog(args))
         elif args.cli:
             
-            asyncio.run(run_console())
+            asyncio.run(run_console(profile=args.profile or "cli"))
         else:
             # Default fallback: Desktop if double-clicked, else CLI if terminal
             if sys.stdin and sys.stdin.isatty():
-                asyncio.run(run_console())
+                asyncio.run(run_console(profile=args.profile or "cli"))
             else:
                 logger.info("Initializing in Desktop/Autonomy mode...")
-                asyncio.run(run_desktop(args.port))
+                asyncio.run(run_desktop(args.port, profile=args.profile or "desktop"))
     except KeyboardInterrupt:
         request_shutdown("keyboard_interrupt")
         logger.info("Shutdown requested by user.")

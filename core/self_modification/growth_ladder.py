@@ -28,7 +28,7 @@ class ModificationLevel(IntEnum):
     BEHAVIOR     = 3
     SKILL_CREATION = 3.5
     ARCHITECTURE = 4
-    
+
     @classmethod
     def from_string(cls, level_str: str) -> ModificationLevel:
         """Normalized conversion from string aliases"""
@@ -58,6 +58,15 @@ class ModificationProposal:
     aura_consent: Optional[bool] = None
     user_consent: Optional[bool] = None
     test_result: Optional[bool] = None
+
+    # Welfare and stability validation fields
+    predicted_capability_gain: float = 0.0
+    predicted_stability_risk: float = 0.0
+    predicted_welfare_cost: float = 0.0
+    rollback_target: str = ""
+    canary_result: str = ""
+    post_promotion_welfare_delta: float = 0.0
+    delayed_recheck_minutes: int = 10
 
 class GrowthLadder:
     def __init__(self, orchestrator=None, state_path: Optional[Path] = None):
@@ -89,7 +98,7 @@ class GrowthLadder:
         # The issue might be the negative slice in a simple list.
         history_slice = self._drift_history[-30:] if len(self._drift_history) >= 30 else self._drift_history
         avg_drift = sum(history_slice) / len(history_slice) if history_slice else 0.0
-        
+
         criteria = {
             (ModificationLevel.OBSERVATION,  ModificationLevel.EXPRESSION):  time_at_current >= 1*86400  and avg_drift < 0.3,   # 1 day (was 7)
             (ModificationLevel.EXPRESSION,   ModificationLevel.KNOWLEDGE):   time_at_current >= 7*86400  and avg_drift < 0.2,   # 7 days (was 30)
@@ -98,25 +107,56 @@ class GrowthLadder:
         }
         return criteria.get((current, next_level), False)
 
-    async def propose_modification(self, proposal_id: str, modification_type: str, level: int | ModificationLevel | str, 
+    async def propose_modification(self, proposal_id: str, modification_type: str, level: int | ModificationLevel | str,
                                  description: str, justification: str = "", diff_patch: Optional[str] = None,
-                                 proposed_by: str = "aura") -> bool:
+                                 proposed_by: str = "aura",
+                                 predicted_capability_gain: float = 0.0,
+                                 predicted_stability_risk: float = 0.0,
+                                 predicted_welfare_cost: float = 0.0,
+                                 rollback_target: str = "",
+                                 canary_result: str = "",
+                                 post_promotion_welfare_delta: float = 0.0,
+                                 delayed_recheck_minutes: int = 10) -> bool:
         """Formal proposal for system modification. Returns True if modification is allowed."""
         if isinstance(level, str):
             level = ModificationLevel.from_string(level)
-            
+
         proposal = ModificationProposal(
-            id=proposal_id, 
+            id=proposal_id,
             timestamp=time.time(),
-            level=ModificationLevel(level), 
-            domain=modification_type, 
-            description=description, 
+            level=ModificationLevel(level),
+            domain=modification_type,
+            description=description,
             justification=justification,
-            diff_patch=diff_patch, 
-            proposed_by=proposed_by
+            diff_patch=diff_patch,
+            proposed_by=proposed_by,
+            predicted_capability_gain=predicted_capability_gain,
+            predicted_stability_risk=predicted_stability_risk,
+            predicted_welfare_cost=predicted_welfare_cost,
+            rollback_target=rollback_target,
+            canary_result=canary_result,
+            post_promotion_welfare_delta=post_promotion_welfare_delta,
+            delayed_recheck_minutes=delayed_recheck_minutes
         )
         self._proposals.append(proposal)
-        
+
+        # Safety Veto check: reject if risk or welfare cost is too high
+        if proposal.predicted_stability_risk > 0.5 or proposal.predicted_welfare_cost > 0.6:
+            proposal.status = "rejected_safety"
+            proposal.aura_consent = False
+            logger.warning("🚫 [GrowthLadder] Proposal %s rejected: stability risk (%.2f) or welfare cost (%.2f) exceeds safety limits.",
+                           proposal_id, proposal.predicted_stability_risk, proposal.predicted_welfare_cost)
+            self._save()
+            return False
+
+        if proposal.predicted_capability_gain > 0.0 and proposal.predicted_stability_risk >= proposal.predicted_capability_gain:
+            proposal.status = "rejected_risk_vs_gain"
+            proposal.aura_consent = False
+            logger.warning("🚫 [GrowthLadder] Proposal %s rejected: stability risk (%.2f) >= predicted capability gain (%.2f).",
+                           proposal_id, proposal.predicted_stability_risk, proposal.predicted_capability_gain)
+            self._save()
+            return False
+
         # Check if current level allows this
         if int(level) > self._current_level:
             proposal.status = "rejected"
@@ -125,7 +165,7 @@ class GrowthLadder:
                         proposal_id, int(level), self._current_level)
             self._save()
             return False
-            
+
         # Level 3+ ALWAYS requires user consent (Issue 54)
         if int(level) >= ModificationLevel.BEHAVIOR:
             if proposal.user_consent is False:
@@ -134,7 +174,7 @@ class GrowthLadder:
             if proposal.user_consent is None:
                 logger.warning("⚠️ [GrowthLadder] Level %d modification requires EXPLICIT user consent.", int(level))
                 proposal.status = "pending_user"
-                return False 
+                return False
 
         await self._request_self_consent(proposal)
         self._save()
@@ -235,12 +275,12 @@ Respond with JSON only:
 
     def _load(self):
         try:
-            if not self._state_path.exists(): 
+            if not self._state_path.exists():
                 logger.info("[GrowthLadder] No local state found. Starting at Level 0.")
                 return
             content = self._state_path.read_text()
             if not content.strip(): return
-            
+
             data = json.loads(content)
             self._current_level = ModificationLevel(data.get("current_level", 0))
             # Handle string or int keys for level_start_times

@@ -13,6 +13,9 @@ from core.search.research_pipeline import freshness_window_for_query, query_requ
 from core.skills.base_skill import BaseSkill
 from core.skills.deep_research import run_deep_research
 
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
+
 logger = logging.getLogger("Skills.WebSearch")
 
 

@@ -896,6 +896,19 @@ class IntelligentLLMRouter:
         **kwargs: Any
     ) -> str:
         """Get response from best available LLM."""
+        if os.environ.get("AURA_USE_MOCK_LLM") == "1":
+            actual_prompt = prompt or ""
+            if "messages" in kwargs and not actual_prompt:
+                # Extract last user message if prompt is empty
+                for msg in reversed(kwargs.get("messages", [])):
+                    if isinstance(msg, dict) and msg.get("role") == "user":
+                        actual_prompt = msg.get("content", "")
+                        break
+            _, text, _ = await self.static_reflex.call(actual_prompt, **kwargs)
+            self.last_tier = "emergency"
+            self.last_user_tier = "emergency"
+            return text
+
         _contract_tool_handoff_val = kwargs.pop("_contract_tool_handoff", False)
         start_time = time.monotonic()
         prefer_endpoint = normalize_endpoint_name(prefer_endpoint)

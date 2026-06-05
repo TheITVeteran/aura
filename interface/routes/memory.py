@@ -14,8 +14,11 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from core.container import ServiceContainer
+from core.governance.will import ActionDomain, get_will
+from core.governance_context import governed_scope
 
 from interface.auth import _check_rate_limit, _require_internal
 
@@ -26,6 +29,7 @@ _MEMORY_ROUTE_RECOVERABLE_ERRORS = (
     AttributeError,
     LookupError,
     OSError,
+    PermissionError,
     RuntimeError,
     TimeoutError,
     TypeError,
@@ -378,3 +382,126 @@ async def api_memory_goals(limit: int = 20, _: None = Depends(_require_internal)
         payload["degraded"] = True
         payload["degradation_reasons"] = degradation_reasons
     return JSONResponse(payload)
+
+
+class MemoryEditRequest(BaseModel):
+    id: str
+    text: str
+
+
+class MemoryControlRequest(BaseModel):
+    id: str
+
+
+def _get_semantic_memory() -> Any:
+    sem = ServiceContainer.get("semantic_memory", default=None)
+    if sem is None:
+        raise LookupError("semantic_memory not initialized")
+    return sem
+
+
+async def _governed_memory_control(
+    *,
+    operation: str,
+    record_id: str,
+    summary: str,
+    method_name: str,
+    method_args: tuple[Any, ...] = (),
+) -> Dict[str, Any]:
+    record_id = str(record_id or "").strip()
+    if not record_id:
+        return {"ok": False, "error": "memory id is required"}
+    try:
+        sem = _get_semantic_memory()
+        method = getattr(sem, method_name, None)
+        if not callable(method):
+            return {"ok": False, "error": f"semantic_memory missing {method_name}"}
+        decision = get_will().decide(
+            content=f"semantic_memory.{operation}:{record_id}:{summary[:180]}",
+            source="interface.memory",
+            domain=ActionDomain.MEMORY_WRITE,
+            priority=0.65,
+        )
+        if not decision.is_approved():
+            return {
+                "ok": False,
+                "status": "refused",
+                "error": decision.reason,
+                "will_receipt_id": decision.receipt_id,
+            }
+        async with governed_scope(decision):
+            ok = await asyncio.to_thread(method, record_id, *method_args)
+        return {"ok": bool(ok), "will_receipt_id": decision.receipt_id}
+    except _MEMORY_ROUTE_RECOVERABLE_ERRORS as exc:
+        record_degradation("memory", exc)
+        logger.warning("Governed memory control failed for %s: %s", operation, exc)
+        return {"ok": False, "error": str(exc)}
+
+
+@router.post("/memory/edit")
+async def api_memory_edit(req: MemoryEditRequest, _: None = Depends(_require_internal)):
+    return await _governed_memory_control(
+        operation="edit",
+        record_id=req.id,
+        summary=req.text,
+        method_name="edit_memory",
+        method_args=(req.text,),
+    )
+
+
+@router.post("/memory/delete")
+async def api_memory_delete(req: MemoryControlRequest, _: None = Depends(_require_internal)):
+    return await _governed_memory_control(
+        operation="delete",
+        record_id=req.id,
+        summary="delete memory",
+        method_name="delete_memory",
+    )
+
+
+@router.post("/memory/freeze")
+async def api_memory_freeze(req: MemoryControlRequest, frozen: bool = True, _: None = Depends(_require_internal)):
+    return await _governed_memory_control(
+        operation="freeze",
+        record_id=req.id,
+        summary=f"set frozen={bool(frozen)}",
+        method_name="freeze_memory",
+        method_args=(bool(frozen),),
+    )
+
+
+@router.post("/memory/contest")
+async def api_memory_contest(req: MemoryControlRequest, contested: bool = True, _: None = Depends(_require_internal)):
+    return await _governed_memory_control(
+        operation="contest",
+        record_id=req.id,
+        summary=f"set contested={bool(contested)}",
+        method_name="contest_memory",
+        method_args=(bool(contested),),
+    )
+
+
+@router.post("/memory/mark_false")
+async def api_memory_mark_false(req: MemoryControlRequest, is_false: bool = True, _: None = Depends(_require_internal)):
+    return await _governed_memory_control(
+        operation="mark_false",
+        record_id=req.id,
+        summary=f"set false={bool(is_false)}",
+        method_name="mark_false",
+        method_args=(bool(is_false),),
+    )
+
+
+@router.get("/memory/provenance")
+async def api_memory_provenance(id: str, _: None = Depends(_require_internal)):
+    sem = ServiceContainer.get("semantic_memory", default=None)
+    if sem and hasattr(sem, "get_provenance"):
+        return sem.get_provenance(id)
+    return {"error": "semantic_memory not initialized or missing get_provenance"}
+
+@router.get("/memory/export")
+async def api_memory_export(_: None = Depends(_require_internal)):
+    sem = ServiceContainer.get("semantic_memory", default=None)
+    if sem and hasattr(sem, "list_memory_records"):
+        return {"memories": await asyncio.to_thread(sem.list_memory_records)}
+    return {"error": "semantic_memory not initialized"}

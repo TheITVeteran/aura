@@ -73,6 +73,21 @@ def main(argv: list[str] | None = None) -> int:
         if not report.get("metrics"):
             print("Error: Soak metrics are empty.", file=sys.stderr)
             return 1
+
+        # Live soak verification
+        if "live" in report.get("claim_scope", "").lower():
+            if report.get("synthetic_only", True):
+                print("Error: Live longevity soak validator fails because the run is only synthetic pulses.", file=sys.stderr)
+                return 1
+            if report.get("model_calls", 0) == 0:
+                print("Error: Live longevity soak must have actual model calls.", file=sys.stderr)
+                return 1
+            if report.get("memory_writes", 0) == 0:
+                print("Error: Live longevity soak must have actual memory writes.", file=sys.stderr)
+                return 1
+            if report.get("tool_attempts", 0) == 0:
+                print("Error: Live longevity soak must have actual tool attempts.", file=sys.stderr)
+                return 1
     except _VALIDATION_DATA_ERRORS as exc:
         print(f"Error reading metrics: {exc}", file=sys.stderr)
         return 1

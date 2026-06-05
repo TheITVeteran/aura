@@ -52,6 +52,7 @@ class StateClass(str, Enum):
     STABLE_OPERATIONAL = "stable_operational"
     CURIOSITY_DRIVEN = "curiosity_driven"
     HIGH_CONFIDENCE = "high_confidence"
+    UNKNOWN = "unknown"
 
 
 class BehaviorShift(str, Enum):
@@ -281,7 +282,48 @@ class BlindIntrospector:
 
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        if not scored:
+        # Calibrate uncertainty / handle messy inputs
+        is_unknown = False
+        unknown_reason = ""
+
+        # Calculate total perturbation
+        total_perturbation = (
+            trace.signal_a + trace.signal_b + trace.signal_c +
+            (1.0 - trace.signal_d) + (1.0 - trace.signal_e) + trace.signal_f +
+            (1.0 - trace.signal_g) + trace.signal_h + trace.signal_i +
+            trace.signal_j
+        )
+
+        # 1. Contradictory signals: High distress (signal_a) alongside high confidence (signal_l)
+        if trace.signal_a > 0.65 and trace.signal_l > 0.7:
+            is_unknown = True
+            unknown_reason = "contradictory signals: high distress and high confidence"
+
+        # 2. Ambiguity: Top two matching rules are too close in score
+        elif len(scored) >= 2 and abs(scored[0][0] - scored[1][0]) < 0.05:
+            is_unknown = True
+            unknown_reason = "high classification ambiguity between candidate states"
+
+        # 3. Missing/Corrupt context: High overall signal perturbation but no clear matching classification
+        elif (not scored or scored[0][0] < 0.15) and total_perturbation > 1.5:
+            is_unknown = True
+            unknown_reason = "low match score despite significant signal perturbations"
+
+        if is_unknown:
+            report = BlindIntrospectionReport(
+                predicted_state_class=StateClass.UNKNOWN.value,
+                confidence=0.1,  # Calibrated low confidence
+                expected_behavior_shifts=(
+                    BehaviorShift.INCREASE_CAUTION.value,
+                    BehaviorShift.INCREASE_VERIFICATION.value,
+                ),
+                reasoning_features_used=(unknown_reason,),
+                secondary_states=tuple(s[1].value for s in scored[:3]),
+                welfare_estimate=round(self._estimate_welfare(trace), 4),
+                urgency=0.5,
+                report_hash=self._hash_report(trace, StateClass.UNKNOWN.value),
+            )
+        elif not scored:
             report = BlindIntrospectionReport(
                 predicted_state_class=StateClass.STABLE_OPERATIONAL.value,
                 confidence=0.8,

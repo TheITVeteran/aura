@@ -113,6 +113,7 @@ class SubprocessGateway:
         read_only: bool = False,
         offline_tooling: bool = False,
         capture_output: bool = True,
+        input: str | None = None,
         source: str = "unknown",
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
@@ -133,6 +134,7 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             timeout=float(timeout),
             capture_output=bool(capture_output),
+            input=input,
             text=True,
             check=False,
             shell=False,

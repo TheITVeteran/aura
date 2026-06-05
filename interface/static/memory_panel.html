@@ -3,158 +3,540 @@
 <head>
     <meta charset="UTF-8">
     <title>Aura Memory Nexus</title>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #05030a;
-            --panel: #0f0a18;
-            --border: #2a1f3d;
-            --primary: #8a2be2;
-            --text: #e0e0e0;
-            --text-dim: #808080;
+            --bg: #030206;
+            --panel: rgba(18, 12, 30, 0.7);
+            --panel-hover: rgba(26, 18, 42, 0.9);
+            --border: rgba(138, 43, 226, 0.2);
+            --border-glow: rgba(138, 43, 226, 0.4);
+            --primary: #a855f7;
+            --primary-glow: rgba(168, 85, 247, 0.5);
+            --text: #f3f4f6;
+            --text-dim: #9ca3af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
         }
 
+        * { box-sizing: border-box; }
+
         body {
-            background: var(--bg);
+            background: radial-gradient(circle at 50% 0%, #1e1135 0%, var(--bg) 70%);
             color: var(--text);
-            font-family: 'Space Mono', monospace;
+            font-family: 'Outfit', sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
         }
 
         header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border-bottom: 2px solid var(--border);
-            padding-bottom: 20px;
-            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
         }
 
-        h1 { font-family: 'Syne', sans-serif; margin: 0; color: var(--primary); }
-        .back-btn { text-decoration: none; color: var(--text-dim); border: 1px solid var(--border); padding: 5px 10px; border-radius: 4px; }
-        .back-btn:hover { color: #fff; border-color: var(--primary); }
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff 0%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
+            letter-spacing: -0.05em;
+        }
 
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .back-btn {
+            text-decoration: none;
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .back-btn:hover {
+            color: #fff;
+            border-color: var(--primary);
+            box-shadow: 0 0 15px var(--border-glow);
+            transform: translateY(-2px);
+        }
+
+        .tabs {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
         .tab {
             background: var(--panel);
             border: 1px solid var(--border);
             color: var(--text-dim);
-            padding: 10px 20px;
+            padding: 12px 24px;
             cursor: pointer;
-            border-radius: 4px;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
         }
-        .tab.active { background: var(--primary); color: #000; border-color: var(--primary); font-weight: bold; }
+        .tab:hover {
+            color: #fff;
+            border-color: var(--primary);
+        }
+        .tab.active {
+            background: var(--primary);
+            color: #000;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px var(--primary-glow);
+        }
 
         .view-panel { display: none; }
         .view-panel.active { display: block; }
 
-        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-        th { text-align: left; color: var(--text-dim); border-bottom: 1px solid var(--border); padding: 10px; }
-        td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: top; }
-        tr:hover td { background: rgba(255,255,255,0.02); }
-
-        .tag {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 0.7rem;
-            background: rgba(255,255,255,0.1);
+        .memory-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
         }
-        .tag.error { background: rgba(255, 71, 87, 0.2); color: #ff4757; }
-        .tag.success { background: rgba(0, 255, 157, 0.1); color: #00ff9d; }
 
-        pre { margin: 0; white-space: pre-wrap; color: var(--text-dim); }
+        .memory-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+        }
+        .memory-card:hover {
+            border-color: var(--border-glow);
+            background: var(--panel-hover);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            transform: translateY(-2px);
+        }
 
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .badge.frozen { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+        .badge.contested { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+        .badge.false { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+
+        .card-content {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin-bottom: 24px;
+            color: #f9fafb;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding-top: 16px;
+        }
+
+        button.action-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text);
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        button.action-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--text-dim);
+        }
+        button.action-btn.edit-btn:hover { border-color: var(--info); color: #60a5fa; }
+        button.action-btn.delete-btn:hover { border-color: var(--danger); color: #f87171; }
+        button.action-btn.freeze-btn:hover { border-color: var(--info); color: #60a5fa; }
+        button.action-btn.contest-btn:hover { border-color: var(--warning); color: #fbbf24; }
+        button.action-btn.prov-btn:hover { border-color: var(--primary); color: #c084fc; }
+
+        /* Modal styling */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: #0f0a1d;
+            border: 1px solid var(--border-glow);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            padding: 32px;
+            box-shadow: 0 0 40px rgba(138, 43, 226, 0.2);
+        }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .modal-body textarea {
+            width: 100%;
+            height: 120px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: #fff;
+            padding: 16px;
+            font-family: inherit;
+            font-size: 1rem;
+            resize: none;
+        }
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .provenance-chain {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.85rem;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 16px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .export-pane {
+            text-align: center;
+            padding: 40px;
+            border: 1px dashed var(--border);
+            border-radius: 20px;
+            background: var(--panel);
+        }
     </style>
 </head>
 <body>
-    <header>
-        <h1>Memory Nexus</h1>
-        <a href="/" class="back-btn">← Back to Cortex</a>
-    </header>
+    <div class="container">
+        <header>
+            <h1>Memory Nexus</h1>
+            <div>
+                <button class="action-btn" onclick="exportMemories()" style="margin-right:12px; border-color: var(--primary);">Export All</button>
+                <a href="/" class="back-btn">← Back to Cortex</a>
+            </div>
+        </header>
 
-    <div class="tabs">
-        <div class="tab active" onclick="switchTab('episodic')">Episodic Trace</div>
-        <div class="tab" onclick="switchTab('semantic')">Semantic Facts</div>
-        <div class="tab" onclick="switchTab('goals')">Active Goals</div>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('semantic')">Semantic Memory (RAG Facts)</div>
+            <div class="tab" onclick="switchTab('export')">Backup & Export</div>
+        </div>
+
+        <div id="semantic" class="view-panel active">
+            <div class="memory-grid" id="memory-cards">
+                <div style="text-align:center; color:var(--text-dim);">Loading memories...</div>
+            </div>
+        </div>
+
+        <div id="export" class="view-panel">
+            <div class="export-pane">
+                <h3 style="font-size: 1.5rem; margin-top:0;">Export Long-Term Memories</h3>
+                <p style="color:var(--text-dim); margin-bottom:24px;">Download Aura's complete long-term semantic memory ledger as a structured JSON file.</p>
+                <button class="action-btn" onclick="exportMemories()" style="font-size:1.1rem; padding:12px 28px; border-color: var(--primary); background: var(--primary); color:#000;">Download JSON</button>
+            </div>
+        </div>
     </div>
 
-    <div id="episodic" class="view-panel active">
-        <table>
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Type</th>
-                    <th>Goal / Context</th>
-                    <th>Outcome</th>
-                    <th>Cost</th>
-                </tr>
-            </thead>
-            <tbody id="episodic-rows">
-                <tr><td colspan="5">Loading events...</td></tr>
-            </tbody>
-        </table>
+    <!-- Edit Modal -->
+    <div class="modal" id="edit-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin:0;">Edit Memory Record</h3>
+                <button class="action-btn" onclick="closeModal('edit-modal')">×</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="edit-textarea"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn" onclick="closeModal('edit-modal')">Cancel</button>
+                <button class="action-btn" id="save-edit-btn" style="background:var(--primary); color:#000; border-color:var(--primary);">Save Changes</button>
+            </div>
+        </div>
     </div>
 
-    <div id="semantic" class="view-panel">
-        <table>
-            <thead><tr><th>Key</th><th>Value</th><th>Last Mod</th></tr></thead>
-            <tbody id="semantic-rows"><tr><td colspan="3">Loading...</td></tr></tbody>
-        </table>
-    </div>
-
-    <div id="goals" class="view-panel">
-        <div style="padding: 20px; text-align: center; color: var(--text-dim)">
-            Goal Graph visualization coming in v6.1
+    <!-- Provenance Modal -->
+    <div class="modal" id="prov-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin:0;">Provenance & Receipts</h3>
+                <button class="action-btn" onclick="closeModal('prov-modal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="provenance-chain" id="prov-content">
+                    Loading provenance chain...
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn" onclick="closeModal('prov-modal')">Close</button>
+            </div>
         </div>
     </div>
 
     <script>
+        let currentEditId = null;
+
         function switchTab(id) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(id).classList.add('active');
-            if (id === 'episodic') loadEpisodic();
+            if (id === 'semantic') loadSemantic();
         }
 
-        async function loadEpisodic() {
+        async function loadSemantic() {
             try {
-                const res = await fetch('/api/memory/recent?limit=50');
+                const res = await fetch('/api/memory/semantic?limit=100');
                 const data = await res.json();
-                const tbody = document.getElementById('episodic-rows');
-                tbody.innerHTML = '';
-                
-                // Assuming API returns stringified list or objects.
-                // server.py returns [str(i) for i in items]. 
-                // We'll need to parse if they are strings, but current implementation does simple str().
-                // Let's adjust server.py or parse here. 
-                // Since I can't easily change server.py (I just wrote it), let's assume it returns strings for now
-                // but ideally it should return JSON objects.
-                // Wait, server.py: `return JSONResponse({"items": [str(i) for i in items]})`
-                // `items` are MemoryEvents. str(event) is `MemoryEvent(...)`.
-                // This is suboptimal for a UI. 
-                // However, I should stick to the plan. I will just display them as text rows for now.
-                
-                data.items.forEach(itemStr => {
-                    const row = document.createElement('tr');
-                    
-                    // Quick hacky parse for display since we get a string repr
-                    // Ideally we'd fix server.py to return .to_dict()
-                    // I will do that in a follow up if needed, but for now just show raw
-                    row.innerHTML = `
-                        <td colspan="5" style="font-family:monospace; opacity:0.8">${itemStr}</td>
+                const grid = document.getElementById('memory-cards');
+                grid.innerHTML = '';
+
+                if (!data.items || data.items.length === 0) {
+                    grid.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:40px;">No long-term memories stored.</div>';
+                    return;
+                }
+
+                data.items.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'memory-card';
+                    card.id = `card-${item.id}`;
+
+                    const tags = item.metadata || {};
+                    const isFrozen = !!tags.frozen;
+                    const isContested = !!tags.contested;
+                    const isFalse = !!tags.false;
+
+                    let badgesHtml = '';
+                    if (isFrozen) badgesHtml += '<span class="badge frozen">Frozen</span>';
+                    if (isContested) badgesHtml += '<span class="badge contested">Contested</span>';
+                    if (isFalse) badgesHtml += '<span class="badge false">False</span>';
+
+                    card.innerHTML = `
+                        <div class="card-header">
+                            <div class="card-meta">
+                                <span style="font-family:'Space Mono', monospace; font-size:0.8rem; color:var(--text-dim);">ID: ${item.id.slice(0,8)}...</span>
+                                ${badgesHtml}
+                            </div>
+                            <span style="font-size:0.8rem; color:var(--text-dim);">${item.timestamp ? new Date(item.timestamp * 1000).toLocaleString() : 'N/A'}</span>
+                        </div>
+                        <div class="card-content">${item.content || item.text}</div>
+                        <div class="card-actions">
+                            <button class="action-btn edit-btn" onclick="openEditModal('${item.id}', \`${(item.content || item.text).replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">Edit</button>
+                            <button class="action-btn delete-btn" onclick="deleteMemory('${item.id}')">Delete</button>
+                            <button class="action-btn freeze-btn" onclick="toggleFreeze('${item.id}', ${isFrozen})">${isFrozen ? 'Unfreeze' : 'Freeze'}</button>
+                            <button class="action-btn contest-btn" onclick="toggleContest('${item.id}', ${isContested})">${isContested ? 'Uncontest' : 'Contest'}</button>
+                            <button class="action-btn contest-btn" onclick="toggleMarkFalse('${item.id}', ${isFalse})">${isFalse ? 'Mark True' : 'Mark False'}</button>
+                            <button class="action-btn prov-btn" onclick="showProvenance('${item.id}')">Provenance</button>
+                        </div>
                     `;
-                    tbody.appendChild(row);
+                    grid.appendChild(card);
                 });
             } catch (e) {
                 console.error(e);
             }
         }
 
+        function openEditModal(id, text) {
+            currentEditId = id;
+            document.getElementById('edit-textarea').value = text;
+            document.getElementById('edit-modal').classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        document.getElementById('save-edit-btn').onclick = async () => {
+            const newText = document.getElementById('edit-textarea').value;
+            if (!currentEditId || !newText.trim()) return;
+            try {
+                const res = await fetch('/api/memory/edit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: currentEditId, text: newText })
+                });
+                const result = await res.json();
+                if (result.ok) {
+                    closeModal('edit-modal');
+                    loadSemantic();
+                } else {
+                    alert(result.error || 'Edit failed');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        };
+
+        async function deleteMemory(id) {
+            if (!confirm('Are you sure you want to delete this memory? It will be query-quarantined.')) return;
+            try {
+                const res = await fetch('/api/memory/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                const result = await res.json();
+                if (result.ok) {
+                    loadSemantic();
+                } else {
+                    alert(result.error || 'Delete failed');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function toggleFreeze(id, current) {
+            try {
+                const res = await fetch(`/api/memory/freeze?frozen=${!current}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                const result = await res.json();
+                if (result.ok) loadSemantic();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function toggleContest(id, current) {
+            try {
+                const res = await fetch(`/api/memory/contest?contested=${!current}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                const result = await res.json();
+                if (result.ok) loadSemantic();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function toggleMarkFalse(id, current) {
+            try {
+                const res = await fetch(`/api/memory/mark_false?is_false=${!current}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                const result = await res.json();
+                if (result.ok) loadSemantic();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function showProvenance(id) {
+            document.getElementById('prov-modal').classList.add('active');
+            const content = document.getElementById('prov-content');
+            content.innerHTML = 'Loading provenance chain...';
+            try {
+                const res = await fetch(`/api/memory/provenance?id=${id}`);
+                const data = await res.json();
+
+                if (data.error) {
+                    content.innerHTML = `<span style="color:var(--danger)">Error: ${data.error}</span>`;
+                    return;
+                }
+
+                let html = `<strong>Memory Text:</strong> "${data.text}"<br>`;
+                html += `<strong>Will Receipt ID:</strong> ${data.will_receipt_id || 'None'}<br><br>`;
+
+                if (!data.receipts || data.receipts.length === 0) {
+                    html += `<em>No causal receipts found. This memory was generated directly.</em>`;
+                } else {
+                    html += `<strong>Causal Receipt Flow:</strong><br>`;
+                    data.receipts.forEach((r, idx) => {
+                        html += `--- [Receipt #${idx+1}] ---<br>`;
+                        html += `Type: ${r.type}<br>`;
+                        html += `Receipt ID: ${r.receipt_id}<br>`;
+                        html += `Executor: ${r.executor}<br>`;
+                        html += `Outcome: ${r.outcome}<br>`;
+                        html += `Welfare Tx ID: ${r.welfare_transaction_id}<br>`;
+                        html += `Timestamp: ${new Date(r.timestamp * 1000).toLocaleString()}<br>`;
+                    });
+                }
+                content.innerHTML = html;
+            } catch (e) {
+                content.innerHTML = `<span style="color:var(--danger)">Failed to load provenance: ${e}</span>`;
+            }
+        }
+
+        async function exportMemories() {
+            try {
+                const res = await fetch('/api/memory/export');
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `aura_memories_${Math.floor(Date.now()/1000)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
         // Initial load
-        loadEpisodic();
+        loadSemantic();
     </script>
 </body>
 </html>

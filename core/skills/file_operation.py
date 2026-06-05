@@ -1,9 +1,13 @@
 from core.runtime.errors import record_degradation
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
+import contextlib
 import logging
 import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -111,8 +115,8 @@ class FileOperationSkill(BaseSkill):
                         "error": f"Operation {action} blocked: requires user approval for {path}",
                         "status": "consent_denied"
                     }
-        except (ImportError, AttributeError):
-            pass  # Consent system not available, proceed anyway
+        except (ImportError, AttributeError) as exc:
+            self.logger.debug("Consent workflow unavailable for file operation: %s", exc)
             
         try:
             if action == "read":
@@ -130,23 +134,35 @@ class FileOperationSkill(BaseSkill):
                 return {"ok": True, "content": data[:60000], "truncated": len(data) > 60000, "path": path}
                 
             elif action == "write":
-                def _write():
-                    os.makedirs(os.path.dirname(full_path) or self.root_dir, exist_ok=True)
-                    with open(full_path, "w", encoding='utf-8') as f:
-                        f.write(content)
-                
-                await asyncio.to_thread(_write)
+                result = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="file_operation.write",
+                    params={"path": full_path, "text": content},
+                    source="file_operation",
+                )
+                if not result.get("ok"):
+                    return {"ok": False, "error": result.get("error", "write failed"), "path": path}
                 return {"ok": True, "summary": f"Wrote {len(content)} bytes to {path}", "path": path}
-                
+
             elif action == "append":
-                 def _append():
-                     os.makedirs(os.path.dirname(full_path) or self.root_dir, exist_ok=True)
-                     with open(full_path, "a", encoding='utf-8') as f:
-                        f.write(content + "\n")
-                 
-                 await asyncio.to_thread(_append)
-                 return {"ok": True, "summary": f"Appended to {path}", "path": path}
-                 
+                existing = ""
+                if await asyncio.to_thread(os.path.exists, full_path):
+                    def _read_existing():
+                        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                            return f.read()
+
+                    existing = await asyncio.to_thread(_read_existing)
+                next_text = existing + content + "\n"
+                result = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="file_operation.append",
+                    params={"path": full_path, "text": next_text},
+                    source="file_operation",
+                )
+                if not result.get("ok"):
+                    return {"ok": False, "error": result.get("error", "append failed"), "path": path}
+                return {"ok": True, "summary": f"Appended to {path}", "path": path}
+
             elif action == "list":
                 if await asyncio.to_thread(os.path.isdir, full_path):
                     files = await asyncio.to_thread(os.listdir, full_path)
@@ -238,27 +254,38 @@ class FileOperationSkill(BaseSkill):
                     # Syntax validation pre-commit
                     if full_path.endswith(".py"):
                         import py_compile
-                        with open(full_path + ".tmp", "w", encoding='utf-8') as f:
-                            f.write(new_data)
+                        tmp_path = ""
                         try:
-                            py_compile.compile(full_path + ".tmp", doraise=True)
+                            fd, tmp_path = tempfile.mkstemp(suffix=".py", prefix="aura_patch_")
+                            os.close(fd)
+                            from core.runtime.atomic_writer import atomic_write_text
+
+                            atomic_write_text(tmp_path, new_data, encoding="utf-8")
+                            py_compile.compile(tmp_path, doraise=True)
                         except py_compile.PyCompileError as e:
-                            os.remove(full_path + ".tmp")
                             raise ValueError(f"Syntax Error introduced by patch: {e}")
-                        os.remove(full_path + ".tmp")
+                        finally:
+                            if tmp_path:
+                                with contextlib.suppress(OSError):
+                                    os.remove(tmp_path)
                     elif full_path.endswith(".json"):
                         import json
                         try:
                             json.loads(new_data)
                         except json.JSONDecodeError as e:
                             raise ValueError(f"JSON Syntax Error introduced by patch: {e}")
-                    
-                    with open(full_path, "w", encoding='utf-8') as f:
-                        f.write(new_data)
                     return new_data
 
                 try:
-                    await asyncio.to_thread(_patch)
+                    new_content = await asyncio.to_thread(_patch)
+                    result = await ActionExecutor.execute(
+                        domain=ActionDomain.FILE_WRITE,
+                        action_name="file_operation.patch",
+                        params={"path": full_path, "text": new_content},
+                        source="file_operation",
+                    )
+                    if not result.get("ok"):
+                        return {"ok": False, "error": result.get("error", "patch write failed"), "path": path}
                     return {"ok": True, "summary": f"Patched {path}: Replaced lines {start_line}-{end_line}", "path": path}
                 except ValueError as ve:
                     return {"ok": False, "error": str(ve), "path": path}

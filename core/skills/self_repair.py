@@ -6,6 +6,8 @@ learning system to remember what worked.
 """
 from core.runtime.errors import record_degradation
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
 import logging
 import re
 import time
@@ -115,11 +117,19 @@ class SelfRepairSkill(BaseSkill):
                 "proposal": fix_content[:500],
             }
 
-        # 5. Save repair proposal
+        # 5. Save repair proposal via ActionExecutor
         patch_dir = config.paths.data_dir / "repairs"
         patch_dir.mkdir(parents=True, exist_ok=True)
         patch_path = patch_dir / f"repair_{component}_{int(time.time())}.patch"
-        atomic_write_text(patch_path, fix_content)
+        await ActionExecutor.execute(
+            domain=ActionDomain.FILE_WRITE,
+            action_name="save_repair_patch",
+            params={
+                "path": str(patch_path),
+                "text": fix_content,
+            },
+            source="self_repair",
+        )
 
         # 6. Record in learning system
         try:

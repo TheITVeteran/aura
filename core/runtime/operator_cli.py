@@ -259,7 +259,120 @@ def build_parser() -> argparse.ArgumentParser:
     p_rebuild = sub.add_parser("rebuild-index")
     p_rebuild.add_argument("--source", required=False, default=None)
     sub.add_parser("chaos")
+
+    p_plugin = sub.add_parser("plugin")
+    p_plugin_sub = p_plugin.add_subparsers(dest="plugin_command", required=True)
+    p_plugin_sub.add_parser("list")
+    p_approve = p_plugin_sub.add_parser("approve")
+    p_approve.add_argument("path")
+    p_approve.add_argument("--reason", default="Manual operator approval")
+    p_revoke = p_plugin_sub.add_parser("revoke")
+    p_revoke.add_argument("path")
+    p_verify = p_plugin_sub.add_parser("verify")
+    p_verify.add_argument("path")
+    p_plugin_sub.add_parser("scan")
+
     return parser
+
+
+@register("plugin")
+def cmd_plugin(args: argparse.Namespace) -> Dict[str, Any]:
+    from core.security.plugin_allowlist import PluginAllowlist, PluginPolicyError
+    allowlist = PluginAllowlist()
+
+    cmd = args.plugin_command
+    if cmd == "list":
+        entries = allowlist.list_entries(include_revoked=False)
+        return {
+            "command": "plugin list",
+            "ok": True,
+            "entries": [
+                {
+                    "sha256": e.sha256,
+                    "rel_path": e.rel_path,
+                    "approved_by": e.approved_by,
+                    "approved_at": e.approved_at,
+                    "reason": e.reason,
+                }
+                for e in entries
+            ]
+        }
+
+    elif cmd == "approve":
+        p = Path(args.path)
+        if not p.exists():
+            return {"command": "plugin approve", "ok": False, "error": f"File not found: {args.path}"}
+        entry = allowlist.record(p, approved_by="operator", reason=args.reason)
+        return {
+            "command": "plugin approve",
+            "ok": True,
+            "sha256": entry.sha256,
+            "rel_path": entry.rel_path,
+            "approved_by": entry.approved_by,
+            "approved_at": entry.approved_at,
+            "reason": entry.reason,
+        }
+
+    elif cmd == "revoke":
+        p = Path(args.path)
+        ok = allowlist.revoke(p)
+        return {
+            "command": "plugin revoke",
+            "ok": ok,
+            "path": str(p),
+            "message": "Approval revoked" if ok else "Plugin not found or not approved"
+        }
+
+    elif cmd == "verify":
+        p = Path(args.path)
+        try:
+            entry = allowlist.is_allowed(p)
+            return {
+                "command": "plugin verify",
+                "ok": True,
+                "path": str(p),
+                "sha256": entry.sha256,
+                "message": "Plugin verified and approved"
+            }
+        except PluginPolicyError as e:
+            return {
+                "command": "plugin verify",
+                "ok": False,
+                "path": str(p),
+                "error": e.reason,
+                "message": str(e)
+            }
+
+    elif cmd == "scan":
+        plugins_dir = Path.home() / ".aura" / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+        files = list(plugins_dir.glob("**/*.py"))
+        report = []
+        all_passed = True
+        for f in files:
+            status = "unapproved"
+            sha = ""
+            try:
+                entry = allowlist.is_allowed(f)
+                status = "approved"
+                sha = entry.sha256
+            except PluginPolicyError as e:
+                status = e.reason
+                all_passed = False
+            report.append({
+                "path": str(f),
+                "status": status,
+                "sha256": sha
+            })
+        return {
+            "command": "plugin scan",
+            "ok": all_passed,
+            "plugins_dir": str(plugins_dir),
+            "scanned": len(files),
+            "report": report
+        }
+
+    return {"command": "plugin", "ok": False, "error": "unknown_subcommand"}
 
 
 def run_command(argv: Optional[List[str]] = None) -> Dict[str, Any]:

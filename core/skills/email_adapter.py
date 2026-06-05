@@ -41,6 +41,9 @@ from pydantic import BaseModel, Field
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.skills.base_skill import BaseSkill
 
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
+
 logger = logging.getLogger("Skills.Email")
 
 _EMAIL_RECOVERABLE_ERRORS = (

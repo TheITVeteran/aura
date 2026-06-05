@@ -8,7 +8,16 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from core.governance_context import (
+    get_active_governance,
+    governance_runtime_active,
+    require_governance,
+)
+from core.runtime.atomic_writer import atomic_write_text
+
 logger = logging.getLogger("Aura.SemanticMemory")
+_MEMORY_CONTROL_DOMAINS = ("memory_write", "state_mutation")
+_HIDDEN_MEMORY_TAGS = ("contested", "false", "deleted")
 
 
 class SemanticMemory:
@@ -90,9 +99,12 @@ class SemanticMemory:
     def _save_metadata(self):
         """Persist metadata to disk.  Caller MUST hold self._lock."""
         try:
-            with open(self.metadata_path, "w") as f:
-                json.dump(self.metadata, f, indent=2)
-        except IOError as e:
+            atomic_write_text(
+                self.metadata_path,
+                json.dumps(self.metadata, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+        except OSError as e:
             logger.error("Failed to save metadata: %s", e)
 
     # ── Background Vector Upgrade ───────────────────────────────────
@@ -214,7 +226,10 @@ class SemanticMemory:
                 with self._lock:
                     for dist, idx in zip(distances[0], indices[0]):
                         if idx != -1 and idx < len(self.metadata) and dist < 1.0:
-                            results.append(self.metadata[idx])
+                            entry = self.metadata[idx]
+                            if self._is_hidden_memory(entry):
+                                continue
+                            results.append(entry)
                 return results
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('semantic_memory', e)
@@ -223,8 +238,135 @@ class SemanticMemory:
         # Keyword fallback
         q_lower = query.lower()
         with self._lock:
-            matches = [m for m in self.metadata if q_lower in m.get("text", "").lower()]
+            matches = []
+            for m in self.metadata:
+                if q_lower in m.get("text", "").lower():
+                    if self._is_hidden_memory(m):
+                        continue
+                    matches.append(m)
         return matches[-top_k:]
+
+    def edit_memory(self, record_id: str, new_text: str) -> bool:
+        """Edit a memory's text content. Thread-safe."""
+        text = str(new_text or "").strip()
+        if not text:
+            return False
+        return self._mutate_memory_entry(record_id, "edit", {"text": text})
+
+    def delete_memory(self, record_id: str) -> bool:
+        """Mark a memory as deleted. Thread-safe."""
+        return self._mutate_memory_entry(record_id, "delete", {"deleted": True})
+
+    def freeze_memory(self, record_id: str, frozen: bool = True) -> bool:
+        """Freeze or unfreeze a memory. Thread-safe."""
+        return self._mutate_memory_entry(record_id, "freeze", {"frozen": bool(frozen)})
+
+    def contest_memory(self, record_id: str, contested: bool = True) -> bool:
+        """Flag a memory as contested. Thread-safe."""
+        return self._mutate_memory_entry(record_id, "contest", {"contested": bool(contested)})
+
+    def mark_false(self, record_id: str, is_false: bool = True) -> bool:
+        """Flag a memory as false. Thread-safe."""
+        return self._mutate_memory_entry(record_id, "mark_false", {"false": bool(is_false)})
+
+    def get_provenance(self, record_id: str) -> Dict[str, Any]:
+        """Get the provenance chain/receipts for a memory."""
+        with self._lock:
+            for entry in self.metadata:
+                if entry.get("id") == record_id:
+                    tags = dict(entry.get("tags", {}) or {})
+                    will_receipt_id = tags.get("will_receipt_id") or tags.get("receipt_id")
+                    response = {
+                        "id": record_id,
+                        "text": entry.get("text"),
+                        "timestamp": entry.get("timestamp"),
+                        "tags": tags,
+                        "will_receipt_id": will_receipt_id,
+                        "receipts": [],
+                    }
+                    break
+            else:
+                return {}
+        if will_receipt_id:
+            from core.runtime.post_action_receipt import get_post_action_receipt_store
+
+            post_store = get_post_action_receipt_store()
+            post_receipts = post_store.get_by_will_id(will_receipt_id)
+            for pr in post_receipts:
+                response["receipts"].append(
+                    {
+                        "type": "post_action",
+                        "receipt_id": pr.receipt_id,
+                        "executor": pr.executor_name,
+                        "outcome": pr.actual_outcome,
+                        "welfare_transaction_id": pr.welfare_transaction_id,
+                        "body_delta": pr.body_delta,
+                        "timestamp": pr.timestamp,
+                    }
+                )
+        return response
+
+    def list_memory_records(self) -> List[Dict[str, Any]]:
+        """Return a metadata snapshot without exposing the internal lock."""
+        with self._lock:
+            return [dict(entry) for entry in self.metadata]
+
+    @staticmethod
+    def _is_hidden_memory(entry: Dict[str, Any]) -> bool:
+        tags = entry.get("tags", {}) or {}
+        return bool(entry.get("deleted") or any(tags.get(tag) for tag in _HIDDEN_MEMORY_TAGS))
+
+    def _require_memory_control_governance(self, operation: str) -> None:
+        if governance_runtime_active():
+            require_governance(
+                f"semantic_memory.{operation}",
+                strict=True,
+                allowed_domains=_MEMORY_CONTROL_DOMAINS,
+            )
+
+    def _mutate_memory_entry(
+        self,
+        record_id: str,
+        operation: str,
+        updates: Dict[str, Any],
+    ) -> bool:
+        record_id = str(record_id or "").strip()
+        if not record_id:
+            return False
+        self._require_memory_control_governance(operation)
+        token = get_active_governance()
+        with self._lock:
+            for entry in self.metadata:
+                if entry.get("id") != record_id:
+                    continue
+                tags = entry.setdefault("tags", {})
+                if tags.get("frozen") and operation != "freeze":
+                    logger.warning("Attempted to %s frozen memory: %s", operation, record_id)
+                    return False
+                if "text" in updates:
+                    entry["text"] = str(updates["text"]).strip()
+                for tag in ("deleted", "frozen", "contested", "false"):
+                    if tag in updates:
+                        tags[tag] = bool(updates[tag])
+                        if tag == "deleted":
+                            entry["deleted"] = bool(updates[tag])
+                tags["last_control_operation"] = operation
+                tags["last_control_timestamp"] = time.time()
+                if token is not None:
+                    tags["last_control_receipt_id"] = token.receipt_id
+                    tags["last_control_source"] = token.source
+                self._save_metadata()
+                if operation == "edit":
+                    self._invalidate_vector_index("semantic_memory_edit")
+                logger.info("Semantic memory %s applied to %s", operation, record_id)
+                return True
+        return False
+
+    def _invalidate_vector_index(self, reason: str) -> None:
+        if self.is_vector_ready:
+            self.is_vector_ready = False
+            self.index = None
+            self._init_error = f"{reason}:vector_rebuild_required"
 
     # ── Consolidation ───────────────────────────────────────────────
 

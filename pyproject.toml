@@ -36,6 +36,9 @@ dependencies = [
     "pyttsx3>=2.90",
 ]
 
+[project.scripts]
+aura = "aura_main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",

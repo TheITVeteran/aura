@@ -1,5 +1,7 @@
 from core.runtime.errors import record_degradation
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
 import logging
 import os
 import json
@@ -103,8 +105,17 @@ class MemoryOpsSkill(BaseSkill):
         if action == "core_append":
             if not params.content:
                 return {"ok": False, "error": "Missing 'content' to append."}
-            with open(block_path, "a", encoding="utf-8") as f:
-                f.write(params.content + "\n")
+            current_content = ""
+            if block_path.exists():
+                with open(block_path, "r", encoding="utf-8") as f:
+                    current_content = f.read()
+            new_content = current_content + params.content + "\n"
+            await ActionExecutor.execute(
+                domain=ActionDomain.FILE_WRITE,
+                action_name="core_append",
+                params={"path": str(block_path), "text": new_content},
+                source="memory_ops",
+            )
             return {"ok": True, "summary": f"Appended to core memory block '{block}'."}
 
         elif action == "core_replace":
@@ -118,9 +129,12 @@ class MemoryOpsSkill(BaseSkill):
                 return {"ok": False, "error": f"Text to replace not found in block '{block}'."}
                 
             new_data = data.replace(params.old_content, params.content)
-            with open(block_path, "w", encoding="utf-8") as f:
-                f.write(new_data)
-                
+            await ActionExecutor.execute(
+                domain=ActionDomain.FILE_WRITE,
+                action_name="core_replace",
+                params={"path": str(block_path), "text": new_data},
+                source="memory_ops",
+            )
             return {"ok": True, "summary": f"Replaced content in core memory block '{block}'."}
             
         return {"ok": False, "error": f"Unknown core action: {action}"}
@@ -136,17 +150,15 @@ class MemoryOpsSkill(BaseSkill):
                 return {"ok": False, "error": "Missing 'content' to archive."}
             
             try:
-                # Assuming standard facade pattern
-                import asyncio
-                if hasattr(memory_facade, "add_memory"):
-                    # Use async or sync dynamically
-                    res = memory_facade.add_memory(params.content, metadata={"source": "archival_insert"})
-                    if hasattr(res, "__await__"):
-                        await res
-                elif hasattr(memory_facade, "update_semantic_async"):
-                    await memory_facade.update_semantic_async("archival_" + str(len(params.content)), params.content)
-                else:
-                    return {"ok": False, "error": "Facade missing insertion capability."}
+                await ActionExecutor.execute(
+                    domain=ActionDomain.MEMORY_WRITE,
+                    action_name="archival_insert",
+                    params={
+                        "content": params.content,
+                        "metadata": {"source": "archival_insert"},
+                    },
+                    source="memory_ops",
+                )
                 return {"ok": True, "summary": "Committed to archival storage."}
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_ops', e)

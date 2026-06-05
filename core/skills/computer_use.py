@@ -15,10 +15,15 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills._pyautogui_runtime import get_pyautogui
 from core.skills.base_skill import BaseSkill
 from core.utils.exceptions import capture_and_log
+
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
 
 logger = logging.getLogger("Skills.ComputerUse")
 
@@ -275,18 +280,17 @@ class ComputerUseSkill(BaseSkill):
             except (ImportError, AttributeError) as _exc:
                 logger.debug("Suppressed %s in core.skills.computer_use: %s", type(_exc).__name__, _exc)
 
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(f"AppleScript timed out after {timeout_s}s.") from exc
-        if result.returncode != 0:
-            raise RuntimeError(self._normalize_script_error(result.stderr or result.stdout))
-        return (result.stdout or "").strip()
+        result = get_desktop_action_gateway().run_applescript(
+            script,
+            source="computer_use",
+            timeout=timeout_s,
+        )
+        if not result.get("ok"):
+            stderr = str(result.get("stderr") or result.get("stdout") or "")
+            if result.get("exit_code") == -1:
+                raise TimeoutError(f"AppleScript timed out after {timeout_s}s.")
+            raise RuntimeError(self._normalize_script_error(stderr))
+        return str(result.get("stdout") or "").strip()
 
     @staticmethod
     def _normalize_open_url_target(target: str) -> str:
@@ -341,12 +345,12 @@ class ComputerUseSkill(BaseSkill):
         return text
 
     def _set_clipboard(self, text: str) -> dict[str, Any]:
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             ["pbcopy"],
             input=str(text or ""),
             capture_output=True,
-            text=True,
             timeout=5,
+            source="computer_use",
         )
         if result.returncode != 0:
             return {"ok": False, "error": (result.stderr or result.stdout or "pbcopy failed").strip()}
@@ -354,7 +358,13 @@ class ComputerUseSkill(BaseSkill):
 
     @staticmethod
     def _get_clipboard() -> dict[str, Any]:
-        result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+        result = get_subprocess_gateway().run(
+            ["pbpaste"],
+            capture_output=True,
+            timeout=5,
+            read_only=True,
+            source="computer_use",
+        )
         if result.returncode != 0:
             return {"ok": False, "error": (result.stderr or result.stdout or "pbpaste failed").strip()}
         text = result.stdout or ""
@@ -1040,18 +1050,22 @@ end tell
                             args.insert(2, "4")
 
                 result = await asyncio.to_thread(
-                    subprocess.run, args, capture_output=True, text=True, timeout=30
+                    get_subprocess_gateway().run,
+                    args,
+                    capture_output=True,
+                    timeout=30,
+                    source="computer_use",
                 )
                 output = (result.stdout or result.stderr or "").strip()[:3000]
                 return {"ok": True, "output": output, "exit_code": result.returncode}
 
             elif action == "open_app":
                 result = await asyncio.to_thread(
-                    subprocess.run,
+                    get_subprocess_gateway().run,
                     ["open", "-a", params.target],
                     capture_output=True,
-                    text=True,
                     timeout=10,
+                    source="computer_use",
                 )
                 if result.returncode != 0:
                     error = (result.stderr or result.stdout or "open command failed").strip()
@@ -1066,11 +1080,11 @@ end tell
                     return {"ok": False, "error": "Refusing to open local file URLs from chat."}
                 if shutil.which("open"):
                     result = await asyncio.to_thread(
-                        subprocess.run,
+                        get_subprocess_gateway().run,
                         ["open", target_url],
                         capture_output=True,
-                        text=True,
                         timeout=10,
+                        source="computer_use",
                     )
                     if result.returncode != 0:
                         error = (result.stderr or result.stdout or "open command failed").strip()

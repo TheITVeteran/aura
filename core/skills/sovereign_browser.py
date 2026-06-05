@@ -13,6 +13,9 @@ from core.search.research_pipeline import query_requires_source_reading
 from core.skills.base_skill import BaseSkill
 from core.thought_stream import get_emitter
 
+from core.runtime.action_executor import ActionExecutor
+from core.governance.will import ActionDomain
+
 logger = logging.getLogger("Skills.SovereignBrowser")
 
 class BrowserAction(BaseModel):
