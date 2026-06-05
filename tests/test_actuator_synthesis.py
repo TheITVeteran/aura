@@ -1,16 +1,32 @@
-import ast
 import json
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.actuators.actuator_validator import ActuatorCodeValidator, ValidationResult
 from core.actuators.actuator_synthesis import ActuatorSynthesizer
-from core.actuators.actuator_registry import BaseActuator, ActuatorResult
 
 
-# --- Mock classes for AST base check ---
-class MockBaseActuator:
-    pass
+class RunUntrustedProbe:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def __call__(self, script, **kwargs):
+        self.calls.append({"script": script, "kwargs": kwargs})
+        return dict(self.response)
+
+
+class LocalBrainProbe:
+    def __init__(self, response):
+        self.response = response
+        self.generate_calls = []
+        self.close_calls = 0
+
+    async def generate(self, prompt, **kwargs):
+        self.generate_calls.append({"prompt": prompt, "kwargs": kwargs})
+        return dict(self.response)
+
+    async def close(self):
+        self.close_calls += 1
 
 
 # Clean compliant code string for tests
@@ -101,9 +117,11 @@ def test_validate_ast_syntax_error():
     assert "Syntax error" in res.error
 
 
-def test_validate_sandbox_success():
-    mock_run_untrusted = MagicMock(
-        return_value={
+def test_validate_sandbox_success(monkeypatch):
+    import core.sandbox.runner as sandbox_runner
+
+    run_untrusted = RunUntrustedProbe(
+        {
             "status": "completed",
             "stdout": json.dumps(
                 {
@@ -117,99 +135,130 @@ def test_validate_sandbox_success():
         }
     )
 
-    with patch("core.sandbox.runner.run_untrusted", mock_run_untrusted):
-        res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
-        assert res.success
-        assert res.details["name"] == "safe_actuator"
-        mock_run_untrusted.assert_called_once()
+    monkeypatch.setattr(sandbox_runner, "run_untrusted", run_untrusted)
+    res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
+
+    assert res.success
+    assert res.details["name"] == "safe_actuator"
+    assert len(run_untrusted.calls) == 1
 
 
-def test_validate_sandbox_timeout_or_error():
-    mock_run_untrusted = MagicMock(
-        return_value={
+def test_validate_sandbox_timeout_or_error(monkeypatch):
+    import core.sandbox.runner as sandbox_runner
+
+    monkeypatch.setattr(
+        sandbox_runner,
+        "run_untrusted",
+        RunUntrustedProbe({
             "status": "timeout",
             "stderr": "Execution timed out",
             "stdout": "",
-        }
+        }),
     )
 
-    with patch("core.sandbox.runner.run_untrusted", mock_run_untrusted):
-        res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
-        assert not res.success
-        assert "Sandbox failed with status: timeout" in res.error
+    res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
+    assert not res.success
+    assert "Sandbox failed with status: timeout" in res.error
 
 
-def test_validate_sandbox_json_decode_error():
-    mock_run_untrusted = MagicMock(
-        return_value={
+def test_validate_sandbox_json_decode_error(monkeypatch):
+    import core.sandbox.runner as sandbox_runner
+
+    monkeypatch.setattr(
+        sandbox_runner,
+        "run_untrusted",
+        RunUntrustedProbe({
             "status": "completed",
             "stdout": "Not JSON Output",
-        }
+        }),
     )
 
-    with patch("core.sandbox.runner.run_untrusted", mock_run_untrusted):
-        res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
-        assert not res.success
-        assert "invalid JSON" in res.error
+    res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
+    assert not res.success
+    assert "invalid JSON" in res.error
 
 
-def test_validate_causal_successful_compilation():
-    mock_entity = MagicMock()
-    mock_entity.entity_id = "test_ent"
-    mock_entity.kind = "sensor"
-    mock_entity.capacity = 100
-    mock_entity.load = 10
-    mock_entity.flow_rate = 1.0
-    mock_entity.max_flow_rate = 5.0
-    mock_entity.latency = 0.1
-    mock_entity.coordinates = (0, 0)
-    mock_entity.attributes = {"temp": 20.0}
+def test_validate_causal_successful_compilation(monkeypatch):
+    import core.sandbox.runner as sandbox_runner
 
-    mock_world = MagicMock()
-    mock_world.seed = 42
-    mock_world.sim_time = 1.0
-    mock_world.entities = {"test_ent": mock_entity}
+    responses = [
+        {
+            "status": "completed",
+            "stdout": json.dumps(
+                {
+                    "success": True,
+                    "name": "safe_actuator",
+                    "description": "desc",
+                    "validate_empty": True,
+                    "has_test_params": True,
+                    "test_params": {},
+                }
+            ),
+        },
+        {
+            "status": "completed",
+            "stdout": json.dumps(
+                {
+                    "success": True,
+                    "message": "Success",
+                    "updates": {},
+                }
+            ),
+        },
+    ]
+    calls = []
 
-    with patch(
-        "core.world.world_model.get_physics_world_model", return_value=mock_world
-    ):
-        res = ActuatorCodeValidator.validate_causal(SAFE_CODE)
-        assert res.success
+    def run_untrusted(script, **kwargs):
+        calls.append({"script": script, "kwargs": kwargs})
+        return responses.pop(0)
+
+    monkeypatch.setattr(sandbox_runner, "run_untrusted", run_untrusted)
+    res = ActuatorCodeValidator.validate_causal(SAFE_CODE)
+
+    assert res.success
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_actuator_synthesizer_synthesis():
-    from unittest.mock import AsyncMock
-    mock_client = MagicMock()
-    mock_client.generate = AsyncMock(
-        return_value={"response": "```python\n" + SAFE_CODE + "\n```"}
-    )
-    mock_client.close = AsyncMock(return_value=None)
-
-    synthesizer = ActuatorSynthesizer()
-
+async def test_actuator_synthesizer_synthesis(monkeypatch, tmp_path):
+    import core.actuators.actuator_synthesis as synthesis_module
     from core.actuators.actuator_synthesis import SynthesisRequest
 
-    with patch("core.actuators.actuator_synthesis.LocalBrain", return_value=mock_client):
-        # Patch all validators to pass
-        with patch.object(
-            ActuatorCodeValidator, "validate_ast", return_value=ValidationResult(True)
-        ), patch.object(
-            ActuatorCodeValidator,
-            "validate_sandbox",
-            return_value=ValidationResult(True, details={"name": "safe_actuator"}),
-        ), patch.object(
-            ActuatorCodeValidator,
-            "validate_causal",
-            return_value=ValidationResult(True),
-        ), patch.object(
-            synthesizer,
-            "_governance_approve",
-            return_value=True,
-        ):
+    brain = LocalBrainProbe({"response": "```python\n" + SAFE_CODE + "\n```"})
+    monkeypatch.setattr(synthesis_module, "LocalBrain", lambda: brain)
 
-            req = SynthesisRequest(problem_description="Read temp from sensor")
-            result = await synthesizer.request_synthesis(req)
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "validate_ast",
+        classmethod(lambda cls, source: ValidationResult(True, details={"class_name": "SafeActuator"})),
+    )
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "validate_sandbox",
+        classmethod(
+            lambda cls, source: ValidationResult(
+                True,
+                details={"name": "safe_actuator", "description": "A safe test actuator"},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "validate_causal",
+        classmethod(lambda cls, source: ValidationResult(True)),
+    )
 
-            assert result is not None
-            assert result.name == "safe_actuator"
+    synthesizer = ActuatorSynthesizer(output_dir=str(tmp_path))
+
+    async def governance_approve(actuator_name, source_code, request):
+        return True
+
+    synthesizer._governance_approve = governance_approve
+
+    req = SynthesisRequest(problem_description="Read temp from sensor")
+    result = await synthesizer.request_synthesis(req)
+
+    assert result is not None
+    assert result.name == "safe_actuator"
+    assert len(brain.generate_calls) == 1
+    assert brain.close_calls == 1
