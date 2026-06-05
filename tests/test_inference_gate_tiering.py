@@ -1,9 +1,10 @@
 import asyncio
 import contextlib
+import importlib
+import inspect
 import os
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,10 +12,180 @@ from core.brain.inference_gate import InferenceGate
 from core.utils.deadlines import get_deadline
 
 
+_MISSING = object()
+
+
+class CallProbe:
+    def __init__(self, return_value=None, side_effect=None, **attrs):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+        for name, value in attrs.items():
+            setattr(self, name, value)
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        if isinstance(self.side_effect, list):
+            if not self.side_effect:
+                raise AssertionError("call side effect sequence exhausted")
+            item = self.side_effect.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        return self.return_value
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_called_once_with(self, *args, **kwargs):
+        assert len(self.calls) == 1
+        assert self.calls[0] == {"args": args, "kwargs": kwargs}
+
+    def assert_not_called(self):
+        assert self.calls == []
+
+
+class AsyncCallProbe(CallProbe):
+    async def __call__(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        if isinstance(self.side_effect, list):
+            if not self.side_effect:
+                raise AssertionError("async call side effect sequence exhausted")
+            item = self.side_effect.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        if callable(self.side_effect):
+            result = self.side_effect(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        return self.return_value
+
+    @property
+    def await_args(self):
+        if not self.calls:
+            return SimpleNamespace(args=(), kwargs={})
+        last = self.calls[-1]
+        return SimpleNamespace(args=last["args"], kwargs=last["kwargs"])
+
+    def assert_awaited(self):
+        assert self.calls
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        assert len(self.calls) == 1
+        assert self.calls[0] == {"args": args, "kwargs": kwargs}
+
+    def assert_not_awaited(self):
+        assert self.calls == []
+
+
+class TaskProbe:
+    def __init__(self, done=False):
+        self._done = done
+        self.cancel = CallProbe()
+        self.done_callbacks = []
+
+    def done(self):
+        return self._done
+
+    def add_done_callback(self, callback):
+        self.done_callbacks.append(callback)
+
+    def get_loop(self):
+        return asyncio.get_running_loop()
+
+
+class _replace:
+    def __init__(self, target, new=_MISSING, *, return_value=_MISSING, side_effect=_MISSING):
+        self.target = target
+        self.new = new
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.owner = None
+        self.attr = ""
+        self.original = _MISSING
+        self.replacement = _MISSING
+
+    @staticmethod
+    def _resolve(target):
+        parts = target.split(".")
+        for idx in range(len(parts) - 1, 0, -1):
+            module_name = ".".join(parts[:idx])
+            try:
+                owner = importlib.import_module(module_name)
+            except ModuleNotFoundError:
+                continue
+            for part in parts[idx:-1]:
+                owner = getattr(owner, part)
+            return owner, parts[-1]
+        raise ModuleNotFoundError(target)
+
+    @classmethod
+    def object(cls, owner, attr, new=_MISSING, *, return_value=_MISSING, side_effect=_MISSING):
+        inst = cls("", new, return_value=return_value, side_effect=side_effect)
+        inst.owner = owner
+        inst.attr = attr
+        return inst
+
+    @classmethod
+    @contextlib.contextmanager
+    def dict(cls, mapping, values, clear=False):
+        original = dict(mapping)
+        if clear:
+            mapping.clear()
+        mapping.update(values)
+        try:
+            yield mapping
+        finally:
+            mapping.clear()
+            mapping.update(original)
+
+    def __enter__(self):
+        if self.owner is None:
+            self.owner, self.attr = self._resolve(self.target)
+        owner_dict = getattr(self.owner, "__dict__", {})
+        raw_original = owner_dict.get(self.attr, _MISSING)
+        self.original = raw_original if raw_original is not _MISSING else getattr(self.owner, self.attr)
+        callable_original = self.original
+        if isinstance(callable_original, (staticmethod, classmethod)):
+            callable_original = callable_original.__func__
+        if self.new is not _MISSING:
+            self.replacement = self.new
+        else:
+            rv = None if self.return_value is _MISSING else self.return_value
+            se = None if self.side_effect is _MISSING else self.side_effect
+            probe_cls = AsyncCallProbe if inspect.iscoroutinefunction(callable_original) else CallProbe
+            self.replacement = probe_cls(return_value=rv, side_effect=se)
+        install_value = self.replacement
+        if isinstance(self.original, staticmethod) and not isinstance(install_value, staticmethod):
+            install_value = staticmethod(install_value)
+        elif isinstance(self.original, classmethod) and not isinstance(install_value, classmethod):
+            install_value = classmethod(install_value)
+        setattr(self.owner, self.attr, install_value)
+        return self.replacement
+
+    def __exit__(self, exc_type, exc, tb):
+        setattr(self.owner, self.attr, self.original)
+        return False
+
+
+replace = _replace
+
+
 class _FakeClient:
     def __init__(self, text: str):
         self.text = text
-        self.generate_text_async = AsyncMock(return_value=(True, text, {}))
+        self.generate_text_async = AsyncCallProbe(return_value=(True, text, {}))
 
 
 class _RecordingClient:
@@ -47,7 +218,7 @@ class _SequenceRecordingClient(_RecordingClient):
 
 class _NoTextClient:
     def __init__(self):
-        self.generate_text_async = AsyncMock(return_value=(False, "", {}))
+        self.generate_text_async = AsyncCallProbe(return_value=(False, "", {}))
 
 
 class _NoTextReadyClient(_NoTextClient):
@@ -69,7 +240,7 @@ class _NoTextReadyClient(_NoTextClient):
 
 class _LaneWarmupClient:
     def __init__(self):
-        self.warmup = AsyncMock(side_effect=self._finish_warmup)
+        self.warmup = AsyncCallProbe(side_effect=self._finish_warmup)
         self.state = "cold"
         self.last_error = ""
 
@@ -101,8 +272,8 @@ class _RecoverableFailedLaneClient(_LaneWarmupClient):
         super().__init__()
         self.state = "failed"
         self.last_error = "mlx_runtime_unavailable:metal_device_enumeration_crash"
-        self.refresh_runtime_availability = MagicMock(side_effect=self._refresh)
-        self.is_alive = MagicMock(return_value=False)
+        self.refresh_runtime_availability = CallProbe(side_effect=self._refresh)
+        self.is_alive = CallProbe(return_value=False)
 
     def _refresh(self, *, force_probe=False):
         self.state = "cold"
@@ -115,7 +286,7 @@ class _ColdRecordingLaneClient(_RecordingClient):
         super().__init__(text)
         self.state = "cold"
         self.last_error = ""
-        self.warmup = AsyncMock(side_effect=self._finish_warmup)
+        self.warmup = AsyncCallProbe(side_effect=self._finish_warmup)
 
     async def _finish_warmup(self):
         self.state = "ready"
@@ -232,7 +403,7 @@ async def test_background_requests_stay_off_cortex():
     brainstem = _FakeClient("brainstem")
     cpu = _FakeClient("cpu")
     gate._mlx_client = cortex
-    gate._ensure_cortex_recovery = AsyncMock()
+    gate._ensure_cortex_recovery = AsyncCallProbe()
 
     clients = {
         "/models/brainstem": brainstem,
@@ -242,10 +413,10 @@ async def test_background_requests_stay_off_cortex():
     def _fake_get_mlx_client(model_path=None, **kwargs):
         return clients[model_path]
 
-    with patch.object(InferenceGate, "_background_local_deferral_reason", return_value=None):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace.object(InferenceGate, "_background_local_deferral_reason", return_value=None):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                     result = await gate.generate(
                         "background reflection",
                         context={"prefer_tier": "primary", "origin": "system"},
@@ -261,10 +432,10 @@ async def test_background_requests_stay_off_cortex():
 async def test_background_requests_wait_while_cortex_quiet_window_is_active():
     gate = InferenceGate()
     gate._mlx_client = _LaneWarmupClient()
-    gate._ensure_cortex_recovery = AsyncMock()
+    gate._ensure_cortex_recovery = AsyncCallProbe()
 
-    with patch.object(InferenceGate, "_foreground_quiet_window_active", return_value=True):
-        with patch.object(
+    with replace.object(InferenceGate, "_foreground_quiet_window_active", return_value=True):
+        with replace.object(
             InferenceGate,
             "get_conversation_status",
             return_value={
@@ -288,7 +459,7 @@ async def test_background_requests_wait_when_cortex_has_failed():
     failed_lane = _LaneWarmupClient()
     failed_lane.state = "failed"
     gate._mlx_client = failed_lane
-    gate._ensure_cortex_recovery = AsyncMock()
+    gate._ensure_cortex_recovery = AsyncCallProbe()
 
     result = await gate.generate(
         "background reflection",
@@ -305,7 +476,7 @@ async def test_deep_handoff_uses_solver_then_returns_response():
     cortex = _FakeClient("cortex")
     solver = _FakeClient("solver")
     gate._mlx_client = cortex
-    gate._restore_primary_after_deep_handoff = AsyncMock()
+    gate._restore_primary_after_deep_handoff = AsyncCallProbe()
 
     def _fake_get_mlx_client(model_path=None, **kwargs):
         if model_path == "/models/deep":
@@ -318,16 +489,16 @@ async def test_deep_handoff_uses_solver_then_returns_response():
 
     def _capture_task(coro, **kwargs):
         scheduled.append(coro)
-        return MagicMock(name="task")
+        return TaskProbe(done=False)
 
-    # Mock memory headroom so test doesn't depend on actual system RAM
+    # Fixed memory headroom so test doesn't depend on actual system RAM
     _low_pressure = {"tier": "secondary", "pressure_pct": 40.0, "total_gb": 64.0, "available_gb": 32.0, "max_pressure_pct": 84.0, "min_available_gb": 16.0, "can_admit": True}
-    with patch("asyncio.create_task", side_effect=_capture_task):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                        with patch.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
+    with replace("asyncio.create_task", side_effect=_capture_task):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                        with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
                             result = await gate.generate(
                                 "perform a flagship architecture deep dive",
                                 context={"prefer_tier": "secondary", "deep_handoff": True},
@@ -349,7 +520,7 @@ async def test_deep_handoff_failure_still_schedules_primary_restore():
     solver = _NoTextClient()
     reflex = _NoTextClient()
     gate._mlx_client = cortex
-    gate._schedule_primary_restore_after_deep_handoff = MagicMock()
+    gate._schedule_primary_restore_after_deep_handoff = CallProbe()
 
     def _fake_get_mlx_client(model_path=None, **kwargs):
         if model_path == "/models/deep":
@@ -360,10 +531,10 @@ async def test_deep_handoff_failure_still_schedules_primary_restore():
             return reflex
         raise AssertionError(f"Unexpected model path: {model_path}")
 
-    with patch.object(
+    with replace.object(
         gate,
         "_enforce_foreground_admission",
-        new=AsyncMock(
+        new=AsyncCallProbe(
             return_value={
                 "can_admit": True,
                 "pressure_pct": 40.0,
@@ -371,11 +542,11 @@ async def test_deep_handoff_failure_still_schedules_primary_restore():
             }
         ),
     ):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                        with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                        with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                             await gate.generate(
                                 "perform a flagship architecture deep dive",
                                 context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
@@ -390,9 +561,9 @@ async def test_user_facing_primary_uses_conversational_budget_and_chatml():
     cortex = _RecordingClient("hello")
     gate._mlx_client = cortex
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "Say hi.",
                     context={"origin": "user", "prefer_tier": "primary", "history": []},
@@ -430,10 +601,10 @@ async def test_user_facing_primary_restores_foreground_token_floor(monkeypatch):
     gate._mlx_client = cortex
     monkeypatch.setenv("AURA_FOREGROUND_CHAT_MIN_TOKENS", "1024")
 
-    with patch.object(InferenceGate, "_default_max_tokens_for_request", return_value=512):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
-            with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace.object(InferenceGate, "_default_max_tokens_for_request", return_value=512):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                     result = await gate.generate(
                         "Stay with the thread and answer in a real conversational paragraph.",
                         context={"origin": "user", "prefer_tier": "primary", "history": []},
@@ -454,11 +625,11 @@ async def test_user_facing_primary_retry_uses_clean_cortex_repair_lane(monkeypat
     cortex = _SequenceRecordingClient(["ok", good_reply])
     brainstem = _RecordingClient("brainstem fallback should not be needed")
     gate._mlx_client = cortex
-    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe())
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=brainstem):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=brainstem):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "Answer this live operator check: what objective should Aura pursue and when should she stop?",
                     context={"origin": "api", "prefer_tier": "primary", "history": []},
@@ -486,9 +657,9 @@ async def test_health_probe_primary_lane_uses_adaptive_recurrent_depth_clamp(mon
     cortex = _RecordingClient("local lane ready")
     gate._mlx_client = cortex
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_RecordingClient("fallback")):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_RecordingClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "Reply briefly that the requested local lane is ready.",
                     context={
@@ -554,9 +725,9 @@ async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation(
     cortex = _ColdRecordingLaneClient("hello")
     gate._mlx_client = cortex
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "With me?",
                     context={"origin": "user", "prefer_tier": "primary", "history": []},
@@ -573,14 +744,14 @@ async def test_user_facing_primary_uses_compact_foreground_context_builders():
     gate = InferenceGate()
     cortex = _RecordingClient("hello")
     gate._mlx_client = cortex
-    gate._build_compact_system_prompt = MagicMock(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
-    gate._build_system_prompt = MagicMock(side_effect=AssertionError("full system prompt should not be used"))
-    gate._build_living_mind_context = AsyncMock(side_effect=AssertionError("full living context should not be used"))
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+    gate._build_system_prompt = CallProbe(side_effect=AssertionError("full system prompt should not be used"))
+    gate._build_living_mind_context = AsyncCallProbe(side_effect=AssertionError("full living context should not be used"))
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "With me?",
                     context={"origin": "api", "prefer_tier": "primary", "history": []},
@@ -601,11 +772,11 @@ async def test_user_facing_secondary_uses_compact_foreground_context_builders():
     cortex = _RecordingClient(cortex_reply)
     solver = _RecordingClient(solver_reply)
     gate._mlx_client = cortex
-    gate._build_compact_system_prompt = MagicMock(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
-    gate._build_system_prompt = MagicMock(side_effect=AssertionError("full system prompt should not be used"))
-    gate._build_living_mind_context = AsyncMock(side_effect=AssertionError("full living context should not be used"))
-    gate._schedule_primary_restore_after_deep_handoff = MagicMock()
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+    gate._build_system_prompt = CallProbe(side_effect=AssertionError("full system prompt should not be used"))
+    gate._build_living_mind_context = AsyncCallProbe(side_effect=AssertionError("full living context should not be used"))
+    gate._schedule_primary_restore_after_deep_handoff = CallProbe()
 
     def _fake_get_mlx_client(model_path=None, **kwargs):
         if model_path == "/models/deep":
@@ -626,12 +797,12 @@ async def test_user_facing_secondary_uses_compact_foreground_context_builders():
         "can_admit": True,
     }
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-        with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-            with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                    with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                        with patch.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: low_pressure)):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+        with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+            with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                        with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: low_pressure)):
                             result = await gate.generate(
                                 "Do a root-cause analysis of this async deadlock.",
                                 context={"origin": "api", "prefer_tier": "secondary", "deep_handoff": True, "history": []},
@@ -650,9 +821,9 @@ async def test_protected_primary_chat_failure_does_not_promote_to_solver():
     cortex = _NoTextReadyClient()
     brainstem = _FakeClient("Brainstem fallback kept the live turn alive without loading the deep solver.")
     gate._mlx_client = cortex
-    gate._ensure_cortex_recovery = AsyncMock()
-    gate._build_compact_system_prompt = MagicMock(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
+    gate._ensure_cortex_recovery = AsyncCallProbe()
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
 
     requested_models = []
 
@@ -668,11 +839,11 @@ async def test_protected_primary_chat_failure_does_not_promote_to_solver():
             return _FakeClient("cpu")
         return cortex
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                         result = await gate.generate(
                             "Are you still with me?",
                             context={
@@ -695,9 +866,9 @@ async def test_operator_evidence_contract_refuses_brainstem_fallback():
     cortex = _NoTextReadyClient()
     brainstem = _FakeClient("brainstem must not satisfy operator proof")
     gate._mlx_client = cortex
-    gate._ensure_cortex_recovery = AsyncMock()
-    gate._build_compact_system_prompt = MagicMock(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
+    gate._ensure_cortex_recovery = AsyncCallProbe()
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
 
     requested_models = []
 
@@ -709,10 +880,10 @@ async def test_operator_evidence_contract_refuses_brainstem_fallback():
             return cortex
         return cortex
 
-    with patch("core.brain.inference_gate.asyncio.sleep", new=AsyncMock()):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+    with replace("core.brain.inference_gate.asyncio.sleep", new=AsyncCallProbe()):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
                     result = await gate.generate(
                         "Answer the live operator evidence check.",
                         context={
@@ -801,19 +972,19 @@ async def test_user_facing_primary_preserves_prebuilt_messages_for_local_mlx():
     gate = InferenceGate()
     cortex = _RecordingClient("32B lane online.")
     gate._mlx_client = cortex
-    gate._build_compact_system_prompt = MagicMock(side_effect=AssertionError("prebuilt messages should bypass prompt rebuild"))
-    gate._build_compact_living_mind_context = AsyncMock(return_value="compact-live")
-    gate._build_messages = MagicMock(side_effect=AssertionError("prebuilt messages should bypass history assembly"))
-    gate._build_compact_messages = MagicMock(side_effect=AssertionError("prebuilt messages should bypass history assembly"))
+    gate._build_compact_system_prompt = CallProbe(side_effect=AssertionError("prebuilt messages should bypass prompt rebuild"))
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+    gate._build_messages = CallProbe(side_effect=AssertionError("prebuilt messages should bypass history assembly"))
+    gate._build_compact_messages = CallProbe(side_effect=AssertionError("prebuilt messages should bypass history assembly"))
 
     messages = [
         {"role": "system", "content": "You are Aura."},
         {"role": "user", "content": "Say exactly: 32B lane online."},
     ]
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "Say exactly: 32B lane online.",
                     context={"origin": "api", "prefer_tier": "primary", "messages": messages},
@@ -845,10 +1016,10 @@ async def test_background_primary_downgrades_timeout_and_tier():
     def _fake_get_mlx_client(model_path=None, **kwargs):
         return clients[model_path]
 
-    with patch.object(InferenceGate, "_background_local_deferral_reason", return_value=None):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace.object(InferenceGate, "_background_local_deferral_reason", return_value=None):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                     result = await gate.generate(
                         "background reflection",
                         context={"origin": "system", "prefer_tier": "primary"},
@@ -959,9 +1130,9 @@ async def test_user_facing_primary_falls_back_to_brainstem_when_cortex_fails_wit
     def _fake_get_mlx_client(model_path=None, **kwargs):
         return clients[model_path]
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-        with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                 result = await gate.generate(
                     "You able to speak?",
                     context={"origin": "user", "prefer_tier": "primary", "allow_cloud_fallback": False},
@@ -1070,7 +1241,7 @@ async def test_ensure_foreground_ready_rearms_runtime_failed_lane_before_warmup(
 @pytest.mark.asyncio
 async def test_think_wraps_system_prompt_as_passthrough_messages():
     gate = InferenceGate()
-    gate.generate = AsyncMock(return_value="ok")
+    gate.generate = AsyncCallProbe(return_value="ok")
 
     result = await gate.think(
         "Hello there",
@@ -1093,7 +1264,7 @@ async def test_think_wraps_system_prompt_as_passthrough_messages():
 @pytest.mark.asyncio
 async def test_think_allows_explicit_brief_mode():
     gate = InferenceGate()
-    gate.generate = AsyncMock(return_value="ok")
+    gate.generate = AsyncCallProbe(return_value="ok")
 
     await gate.think(
         "Hello there",
@@ -1110,7 +1281,7 @@ async def test_think_allows_explicit_brief_mode():
 @pytest.mark.asyncio
 async def test_think_forwards_explicit_timeout_to_generate():
     gate = InferenceGate()
-    gate.generate = AsyncMock(return_value="hello")
+    gate.generate = AsyncCallProbe(return_value="hello")
 
     result = await gate.think(
         "With me?",
@@ -1128,7 +1299,7 @@ async def test_think_forwards_explicit_timeout_to_generate():
 @pytest.mark.asyncio
 async def test_think_forwards_purpose_for_originless_expression_calls():
     gate = InferenceGate()
-    gate.generate = AsyncMock(return_value="hello")
+    gate.generate = AsyncCallProbe(return_value="hello")
 
     await gate.think(
         "Hello there",
@@ -1147,17 +1318,17 @@ async def test_think_forwards_purpose_for_originless_expression_calls():
 @pytest.mark.asyncio
 async def test_initialize_defers_eager_warmup_when_explicitly_disabled():
     gate = InferenceGate()
-    client = MagicMock()
-    client.warmup = AsyncMock()
+    client = CallProbe()
+    client.warmup = AsyncCallProbe()
 
-    with patch.dict(
+    with replace.dict(
         os.environ,
         {"AURA_EAGER_CORTEX_WARMUP": "0", "AURA_SAFE_BOOT_DESKTOP": "0"},
         clear=False,
     ):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-            with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
+            with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                     await gate.initialize()
 
     client.warmup.assert_not_awaited()
@@ -1171,19 +1342,19 @@ async def test_initialize_defers_eager_warmup_when_explicitly_disabled():
 @pytest.mark.asyncio
 async def test_initialize_auto_warms_on_high_memory_desktop():
     gate = InferenceGate()
-    client = MagicMock()
-    client.warmup = AsyncMock()
-    vm = MagicMock(total=64 * 1024 ** 3, available=40 * 1024 ** 3, percent=37.0)
+    client = CallProbe()
+    client.warmup = AsyncCallProbe()
+    vm = CallProbe(total=64 * 1024 ** 3, available=40 * 1024 ** 3, percent=37.0)
 
-    with patch.dict(
+    with replace.dict(
         os.environ,
         {"AURA_EAGER_CORTEX_WARMUP": "auto", "AURA_SAFE_BOOT_DESKTOP": "0"},
         clear=False,
     ):
-        with patch("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
-            with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+        with replace("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
+            with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                         await gate.initialize()
 
     client.warmup.assert_awaited_once()
@@ -1197,19 +1368,19 @@ async def test_initialize_auto_warms_on_high_memory_desktop():
 @pytest.mark.asyncio
 async def test_initialize_allows_opt_in_eager_warmup():
     gate = InferenceGate()
-    client = MagicMock()
-    client.warmup = AsyncMock()
-    vm = MagicMock(total=64 * 1024 ** 3, available=42 * 1024 ** 3, percent=34.0)
+    client = CallProbe()
+    client.warmup = AsyncCallProbe()
+    vm = CallProbe(total=64 * 1024 ** 3, available=42 * 1024 ** 3, percent=34.0)
 
-    with patch.dict(
+    with replace.dict(
         os.environ,
         {"AURA_EAGER_CORTEX_WARMUP": "1", "AURA_SAFE_BOOT_DESKTOP": "0"},
         clear=False,
     ):
-        with patch("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
-            with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-                with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+        with replace("core.brain.inference_gate.psutil.virtual_memory", return_value=vm):
+            with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                         await gate.initialize()
 
     client.warmup.assert_awaited_once()
@@ -1222,13 +1393,13 @@ async def test_initialize_allows_opt_in_eager_warmup():
 @pytest.mark.asyncio
 async def test_initialize_starts_inference_maintenance_loop():
     gate = InferenceGate()
-    client = MagicMock()
-    client.warmup = AsyncMock()
+    client = CallProbe()
+    client.warmup = AsyncCallProbe()
 
-    with patch.dict(os.environ, {"AURA_EAGER_CORTEX_WARMUP": "0"}, clear=False):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
-            with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+    with replace.dict(os.environ, {"AURA_EAGER_CORTEX_WARMUP": "0"}, clear=False):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=client):
+            with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
                     await gate.initialize()
 
     assert gate._maintenance_task is not None
@@ -1243,10 +1414,10 @@ async def test_background_requests_defer_under_memory_pressure_when_cortex_is_re
     gate = InferenceGate()
     gate._mlx_client = _LaneWarmupClient()
     gate._mlx_client.state = "ready"
-    gate._ensure_cortex_recovery = AsyncMock()
+    gate._ensure_cortex_recovery = AsyncCallProbe()
 
-    with patch.object(InferenceGate, "_background_memory_pressure_active", return_value=True):
-        with patch.object(
+    with replace.object(InferenceGate, "_background_memory_pressure_active", return_value=True):
+        with replace.object(
             InferenceGate,
             "get_conversation_status",
             return_value={
@@ -1268,9 +1439,9 @@ async def test_background_requests_defer_under_memory_pressure_when_cortex_is_re
 async def test_background_requests_defer_when_foreground_headroom_is_reserved():
     gate = InferenceGate()
     gate._mlx_client = _LaneWarmupClient()
-    gate._ensure_cortex_recovery = AsyncMock()
+    gate._ensure_cortex_recovery = AsyncCallProbe()
 
-    with patch.object(InferenceGate, "_foreground_headroom_reserved", return_value=True):
+    with replace.object(InferenceGate, "_foreground_headroom_reserved", return_value=True):
         result = await gate.generate(
             "background reflection",
             context={"prefer_tier": "primary", "origin": "system"},
@@ -1283,9 +1454,9 @@ async def test_background_requests_defer_when_foreground_headroom_is_reserved():
 @pytest.mark.asyncio
 async def test_foreground_admission_sheds_background_workers_before_retry():
     gate = InferenceGate()
-    gate._shed_background_workers_for_memory_pressure = AsyncMock()
+    gate._shed_background_workers_for_memory_pressure = AsyncCallProbe()
 
-    with patch.object(
+    with replace.object(
         gate,
         "_headroom_snapshot",
         side_effect=[
@@ -1307,7 +1478,7 @@ async def test_foreground_admission_sheds_background_workers_before_retry():
             },
         ],
     ):
-        with patch("core.brain.inference_gate.gc.collect") as gc_collect:
+        with replace("core.brain.inference_gate.gc.collect") as gc_collect:
             snapshot = await gate._enforce_foreground_admission("primary", protected_foreground=False)
 
     assert snapshot["can_admit"] is True
@@ -1317,18 +1488,17 @@ async def test_foreground_admission_sheds_background_workers_before_retry():
 
 def test_cleanup_closes_primary_and_registered_local_clients_once():
     gate = InferenceGate()
-    primary = MagicMock()
-    registered = MagicMock()
+    primary = SimpleNamespace(close=CallProbe())
+    registered = SimpleNamespace(close=CallProbe())
     duplicate = primary
     gate._mlx_client = primary
     gate._initialized = True
-    prewarm_task = MagicMock()
-    prewarm_task.done.return_value = False
+    prewarm_task = TaskProbe(done=False)
     gate._prewarm_task = prewarm_task
     gate._deferred_prewarm_task = None
     gate._maintenance_task = None
 
-    with patch.object(
+    with replace.object(
         gate,
         "_iter_local_clients",
         return_value={"/models/primary": duplicate, "/models/secondary": registered},
@@ -1346,11 +1516,12 @@ def test_cleanup_closes_primary_and_registered_local_clients_once():
 @pytest.mark.asyncio
 async def test_recycle_idle_local_clients_reboots_fragmented_spare():
     gate = InferenceGate()
-    spare = MagicMock()
-    spare.should_recycle_for_fragmentation = MagicMock(return_value=True)
-    spare.reboot_worker = AsyncMock()
+    spare = SimpleNamespace(
+        should_recycle_for_fragmentation=CallProbe(return_value=True),
+        reboot_worker=AsyncCallProbe(),
+    )
 
-    with patch.object(gate, "_iter_local_clients", return_value={"/models/brainstem": spare}):
+    with replace.object(gate, "_iter_local_clients", return_value={"/models/brainstem": spare}):
         await gate._recycle_idle_local_clients()
 
     spare.reboot_worker.assert_awaited_once_with(
@@ -1362,11 +1533,12 @@ async def test_recycle_idle_local_clients_reboots_fragmented_spare():
 @pytest.mark.asyncio
 async def test_solver_hot_spare_stays_deferred_while_cortex_is_ready():
     gate = InferenceGate()
-    solver = MagicMock()
-    solver.is_alive.return_value = False
-    solver.warmup = AsyncMock()
+    solver = SimpleNamespace(
+        is_alive=CallProbe(return_value=False),
+        warmup=AsyncCallProbe(),
+    )
 
-    with patch.object(
+    with replace.object(
         gate,
         "get_conversation_status",
         return_value={
@@ -1375,8 +1547,8 @@ async def test_solver_hot_spare_stays_deferred_while_cortex_is_ready():
             "warmup_in_flight": False,
         },
     ):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=solver):
-            with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=solver):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
                 result = await gate._ensure_hot_spare_ready("Solver")
 
     assert result is False
@@ -1386,11 +1558,12 @@ async def test_solver_hot_spare_stays_deferred_while_cortex_is_ready():
 @pytest.mark.asyncio
 async def test_solver_hot_spare_warmup_uses_background_semantics():
     gate = InferenceGate()
-    solver = MagicMock()
-    solver.warmup = AsyncMock(side_effect=lambda **_kwargs: None)
-    solver.is_alive.side_effect = [False, True]
+    solver = SimpleNamespace(
+        is_alive=CallProbe(side_effect=[False, True]),
+        warmup=AsyncCallProbe(side_effect=lambda **_kwargs: None),
+    )
 
-    with patch.object(
+    with replace.object(
         gate,
         "get_conversation_status",
         return_value={
@@ -1399,8 +1572,8 @@ async def test_solver_hot_spare_warmup_uses_background_semantics():
             "warmup_in_flight": False,
         },
     ):
-        with patch.object(gate, "_background_local_deferral_reason", return_value=None):
-            with patch.object(
+        with replace.object(gate, "_background_local_deferral_reason", return_value=None):
+            with replace.object(
                 gate,
                 "_headroom_snapshot",
                 return_value={
@@ -1412,8 +1585,8 @@ async def test_solver_hot_spare_warmup_uses_background_semantics():
                     "can_admit": True,
                 },
             ):
-                with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=solver):
-                    with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=solver):
+                    with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
                         result = await gate._ensure_hot_spare_ready("Solver")
 
     assert result is True
@@ -1429,7 +1602,7 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
     solver = _RecordingClient(solver_reply)
     brainstem = _FakeClient("brainstem")
     gate._mlx_client = cortex
-    gate._restore_primary_after_deep_handoff = AsyncMock()
+    gate._restore_primary_after_deep_handoff = AsyncCallProbe()
 
     def _fake_get_mlx_client(model_path=None, **kwargs):
         if model_path == "/models/deep":
@@ -1438,7 +1611,7 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
             return brainstem
         raise AssertionError(f"Unexpected model path: {model_path}")
 
-    with patch.object(
+    with replace.object(
         gate,
         "_enforce_foreground_admission",
         side_effect=[
@@ -1454,10 +1627,10 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
             },
         ],
     ):
-        with patch("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with patch("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with patch("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                    with patch("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
                         result = await gate.generate(
                             "Do a deep architecture audit.",
                             context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
@@ -1512,7 +1685,7 @@ def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
 async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch):
     gate = InferenceGate()
     client = _LaneWarmupClient()
-    client.is_alive = MagicMock(return_value=False)
+    client.is_alive = CallProbe(return_value=False)
     gate._mlx_client = client
     monkeypatch.setattr(
         "core.brain.inference_gate.psutil.virtual_memory",
@@ -1536,7 +1709,7 @@ async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(m
     gate = InferenceGate()
     client = _LaneWarmupClient()
     gate._mlx_client = client
-    gate._shed_background_workers_for_memory_pressure = AsyncMock()
+    gate._shed_background_workers_for_memory_pressure = AsyncCallProbe()
     monkeypatch.setattr(
         "core.brain.inference_gate.psutil.virtual_memory",
         lambda: SimpleNamespace(
@@ -1554,11 +1727,11 @@ async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(m
     assert lane["state"] == "ready"
 
 
-def test_desktop_safe_boot_still_schedules_deferred_cortex_prewarm(monkeypatch):
+def test_desktop_safe_boot_skips_deferred_cortex_prewarm(monkeypatch):
     monkeypatch.delenv("AURA_DEFERRED_CORTEX_PREWARM", raising=False)
     monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
 
-    assert InferenceGate._boot_should_schedule_deferred_prewarm() is True
+    assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 
 
 def test_desktop_safe_boot_respects_deferred_cortex_prewarm_opt_out(monkeypatch):
@@ -1600,7 +1773,7 @@ def test_background_local_deferral_protects_cold_cortex_during_safe_boot(monkeyp
     monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
     monkeypatch.setattr(gate, "_should_quiet_background_for_cortex_startup", lambda: False)
     monkeypatch.setattr(gate, "_background_memory_pressure_active", lambda: False)
-    # Mock headroom so real system RAM doesn't interfere with test logic
+    # Fixed headroom so real system RAM doesn't interfere with test logic
     _low_pressure = {"pressure_pct": 40.0, "available_gb": 32.0, "safe": True, "reason": "ok"}
     monkeypatch.setattr(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure))
     monkeypatch.setattr(gate, "_foreground_headroom_reserved", lambda *a, **kw: False)
