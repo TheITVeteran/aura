@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.NarrativeThread")
 
@@ -130,20 +131,10 @@ class NarrativeThread:
                 severity="degraded",
             )
 
-        try:
-            from core.utils.task_tracker import get_task_tracker
-
-            self._task = get_task_tracker().create_task(
-                self._run_refresh_loop(),
-                name="narrative_thread.refresh_loop",
-            )
-        except _RECOVERABLE_NARRATIVE_ERRORS as exc:
-            _record_narrative_degradation(
-                exc,
-                action="started narrative refresh loop with raw asyncio task after task tracker failed",
-                severity="warning",
-            )
-            self._task = asyncio.create_task(self._run_refresh_loop(), name="narrative_thread.refresh_loop")
+        self._task = create_tracked_task(
+            self._run_refresh_loop(),
+            name="narrative_thread.refresh_loop",
+        )
         logger.info("NarrativeThread auto-refresh loop started.")
 
     async def stop(self):

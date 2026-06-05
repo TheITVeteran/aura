@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 import random
@@ -10,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 from core.health.degraded_events import get_unified_failure_state
 from core.kernel.bridge import Phase
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 from core.state.aura_state import AffectVector, AuraState
-from core.utils.task_tracker import get_task_tracker
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -170,22 +169,7 @@ class AffectUpdatePhase(Phase):
             result = update(valence=affect.valence, arousal=affect.arousal)
             if not inspect.isawaitable(result):
                 return
-            try:
-                get_task_tracker().create_task(result, name="affect_update.liquid_substrate")
-            except _AFFECT_UPDATE_ERRORS as tracker_exc:
-                try:
-                    asyncio.create_task(result, name="affect_update.liquid_substrate")
-                except _AFFECT_UPDATE_ERRORS as raw_task_exc:
-                    close = getattr(result, "close", None)
-                    if callable(close):
-                        close()
-                    raise tracker_exc from raw_task_exc
-                self._record_phase_degradation(
-                    state,
-                    tracker_exc,
-                    stage="substrate_telemetry_tracker",
-                    action="scheduled liquid substrate affect telemetry with raw asyncio task after task tracker failed",
-                )
+            create_tracked_task(result, name="affect_update.liquid_substrate")
         except _AFFECT_UPDATE_ERRORS as exc:
             self._record_phase_degradation(
                 state,

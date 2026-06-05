@@ -1,12 +1,14 @@
-import inspect
-from core.runtime.errors import record_degradation
 import asyncio
 import contextvars
+import inspect
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Set
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_owned_asyncio_task
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +27,15 @@ class TaskRecord:
     done: bool = False
     cancelled: bool = False
     failed: bool = False
-    finished_at: Optional[float] = None
-    exception: Optional[str] = None
+    finished_at: float | None = None
+    exception: str | None = None
     last_heartbeat: float = field(default_factory=time.monotonic)
 
-    def age_s(self, now: Optional[float] = None) -> float:
+    def age_s(self, now: float | None = None) -> float:
         current_time = now if now is not None else time.monotonic()
         return max(0.0, current_time - self.created_at)
 
-    def to_dict(self, now: Optional[float] = None) -> Dict[str, Any]:
+    def to_dict(self, now: float | None = None) -> dict[str, Any]:
         duration = None
         if self.finished_at is not None:
             duration = max(0.0, self.finished_at - self.created_at)
@@ -65,18 +67,18 @@ class TaskTracker:
 
     def __init__(self, name: str = "Global", max_concurrent: int = 20):
         self.name = name
-        self.tasks: Set[asyncio.Task] = set()
+        self.tasks: set[asyncio.Task] = set()
         self._max_concurrent = max_concurrent
-        self._semaphore: Optional[asyncio.Semaphore] = None  # Lazy init
+        self._semaphore: asyncio.Semaphore | None = None  # Lazy init
         self._high_water = 0
         self._total_tracked = 0
         self._total_observed = 0
         self._completed_total = 0
         self._cancelled_total = 0
         self._failed_total = 0
-        self._records: Dict[int, TaskRecord] = {}
-        self._recently_completed: Deque[Dict[str, Any]] = deque(maxlen=128)
-        self._installed_loop_factories: Dict[int, Any] = {}
+        self._records: dict[int, TaskRecord] = {}
+        self._recently_completed: deque[dict[str, Any]] = deque(maxlen=128)
+        self._installed_loop_factories: dict[int, Any] = {}
         self._max_records_in_memory = 256  # Bounded history of completed tasks
 
     def _get_semaphore(self) -> asyncio.Semaphore:
@@ -85,23 +87,12 @@ class TaskTracker:
             self._semaphore = asyncio.Semaphore(self._max_concurrent)
         return self._semaphore
 
-    def track(self, coro_or_task, name: Optional[str] = None) -> asyncio.Task:
+    def track(self, coro_or_task, name: str | None = None) -> asyncio.Task:
         """Track a new task or coroutine (no concurrency limit)."""
         if isinstance(coro_or_task, asyncio.Task):
             task = coro_or_task
         else:
-            child_context = contextvars.copy_context()
-            child_context.run(_SKIP_FACTORY_TRACK.set, False)
-            token = _SKIP_FACTORY_TRACK.set(True)
-            try:
-                try:
-                    task = asyncio.create_task(coro_or_task, name=name, context=child_context)
-                except TypeError as exc:
-                    if "context" not in str(exc):
-                        raise
-                    task = asyncio.create_task(coro_or_task, name=name)
-            finally:
-                _SKIP_FACTORY_TRACK.reset(token)
+            task = create_owned_asyncio_task(coro_or_task, name=name)
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="track")
         return task
@@ -110,12 +101,12 @@ class TaskTracker:
     track_task = track
     create_task = track
 
-    def observe(self, task: asyncio.Task, name: Optional[str] = None, source: str = "loop_factory") -> asyncio.Task:
+    def observe(self, task: asyncio.Task, name: str | None = None, source: str = "loop_factory") -> asyncio.Task:
         """Observe a task created outside the tracker so it still gets cleaned up and audited."""
         self._attach(task, name=name, supervision="implicit", source=source)
         return task
 
-    def bounded_track(self, coro, name: Optional[str] = None) -> asyncio.Task:
+    def bounded_track(self, coro, name: str | None = None) -> asyncio.Task:
         """Track a task WITH concurrency limiting via semaphore.
 
         Use this for short-lived tasks (maintenance, learning, reflection).
@@ -131,23 +122,12 @@ class TaskTracker:
                     return await coro()
                 return await coro
 
-        child_context = contextvars.copy_context()
-        child_context.run(_SKIP_FACTORY_TRACK.set, False)
-        token = _SKIP_FACTORY_TRACK.set(True)
-        try:
-            try:
-                task = asyncio.create_task(_bounded(), name=name, context=child_context)
-            except TypeError as exc:
-                if "context" not in str(exc):
-                    raise
-                task = asyncio.create_task(_bounded(), name=name)
-        finally:
-            _SKIP_FACTORY_TRACK.reset(token)
+        task = create_owned_asyncio_task(_bounded(), name=name)
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="bounded_track")
         return task
 
-    def install_loop_hygiene(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def install_loop_hygiene(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Install a task factory so raw asyncio.create_task/loop.create_task calls are still observed."""
         target_loop = loop or asyncio.get_running_loop()
         loop_id = id(target_loop)
@@ -181,7 +161,7 @@ class TaskTracker:
         target_loop.set_task_factory(_factory)
         self._installed_loop_factories[loop_id] = (target_loop, previous_factory)
 
-    def restore_loop_hygiene(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def restore_loop_hygiene(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Restore a loop's original task factory."""
         if loop is not None:
             info = self._installed_loop_factories.pop(id(loop), None)
@@ -204,10 +184,10 @@ class TaskTracker:
             finally:
                 self._installed_loop_factories.pop(loop_id, None)
 
-    def get_stale_tasks(self, min_age_s: float = 900.0, *, include_supervised: bool = False) -> List[Dict[str, Any]]:
+    def get_stale_tasks(self, min_age_s: float = 900.0, *, include_supervised: bool = False) -> list[dict[str, Any]]:
         """Return a sample of long-lived tasks that may need inspection."""
         now = time.monotonic()
-        stale: List[Dict[str, Any]] = []
+        stale: list[dict[str, Any]] = []
         for task in list(self.tasks):
             if task.done():
                 continue
@@ -222,7 +202,7 @@ class TaskTracker:
         stale.sort(key=lambda item: item["age_s"], reverse=True)
         return stale
 
-    def heartbeat(self, task: Optional[asyncio.Task] = None) -> None:
+    def heartbeat(self, task: asyncio.Task | None = None) -> None:
         """Register a heartbeat for the given task, or the current task if None."""
         target_task = task or asyncio.current_task()
         if not target_task:
@@ -234,9 +214,9 @@ class TaskTracker:
 
     def _mark_supervised(self, task: asyncio.Task) -> None:
         try:
-            setattr(task, "_aura_supervised", True)
-            setattr(task, "_aura_task_tracker", self.name)
-            setattr(task, "_aura_task_supervision", "explicit")
+            task._aura_supervised = True
+            task._aura_task_tracker = self.name
+            task._aura_task_supervision = "explicit"
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('task_tracker', e)
             logger.debug("TaskTracker[%s]: failed to mark task supervised: %s", self.name, e)
@@ -245,7 +225,7 @@ class TaskTracker:
         self,
         task: asyncio.Task,
         *,
-        name: Optional[str],
+        name: str | None,
         supervision: str,
         source: str,
     ) -> None:
@@ -275,14 +255,14 @@ class TaskTracker:
                 record.supervision = "explicit"
 
         try:
-            setattr(task, "_aura_task_tracker", self.name)
-            setattr(task, "_aura_task_supervision", record.supervision)
-            setattr(task, "_aura_task_source", record.source)
-            setattr(task, "_aura_task_created_at", record.created_at)
+            task._aura_task_tracker = self.name
+            task._aura_task_supervision = record.supervision
+            task._aura_task_source = record.source
+            task._aura_task_created_at = record.created_at
             if record.supervision == "explicit":
                 self._mark_supervised(task)
             elif not hasattr(task, "_aura_supervised"):
-                setattr(task, "_aura_supervised", False)
+                task._aura_supervised = False
         except (RuntimeError, AttributeError, TypeError) as exc:
             record_degradation('task_tracker', exc)
             logger.debug("TaskTracker[%s]: failed to annotate task: %s", self.name, exc)
@@ -450,7 +430,7 @@ def get_task_tracker() -> TaskTracker:
 task_tracker = _task_tracker
 
 
-def fire_and_track(coro, name: Optional[str] = None) -> asyncio.Task:
+def fire_and_track(coro, name: str | None = None) -> asyncio.Task:
     """Convenience function to create and track a task in one go."""
     tracker = get_task_tracker()
     return tracker.track(coro, name=name)

@@ -20,6 +20,7 @@ import psutil
 
 from core.observability.metrics import get_metrics
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Reaper")
 metrics = get_metrics()
@@ -81,20 +82,10 @@ class LymphaticReaper:
         if self._running:
             return
         self._running = True
-        try:
-            from core.utils.task_tracker import get_task_tracker
-
-            self._task = get_task_tracker().create_task(
-                self._run_loop(),
-                name="lymphatic_reaper.loop",
-            )
-        except _REAPER_ERRORS as exc:
-            _record_reaper_degradation(
-                exc,
-                action="started lymphatic reaper with raw asyncio task after task tracker failed",
-                severity="warning",
-            )
-            self._task = asyncio.create_task(self._run_loop(), name="lymphatic_reaper.loop")
+        self._task = create_tracked_task(
+            self._run_loop(),
+            name="lymphatic_reaper.loop",
+        )
         logger.info("Lymphatic Reaper active (interval %.1fs)", self._interval)
 
     async def stop(self) -> None:

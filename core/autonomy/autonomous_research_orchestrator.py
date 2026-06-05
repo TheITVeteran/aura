@@ -30,28 +30,32 @@ import sqlite3
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-from core.autonomy.curiosity_scheduler import CuriosityScheduler, SchedulingDecision
-from core.autonomy.content_method_router import MethodRouter
-from core.autonomy.content_fetcher import ContentFetcher
 from core.autonomy.comprehension_loop import ComprehensionLoop, ComprehensionRecord
-from core.autonomy.reflection_loop import ReflectionLoop, ReflectionRecord
-from core.autonomy.depth_gate import DepthGate, DepthReport
-from core.autonomy.memory_persister import (
-    MemoryPersister,
-    EpisodicEvent,
-    CommitReceipt,
+from core.autonomy.content_fetcher import ContentFetcher
+from core.autonomy.content_method_router import MethodRouter
+from core.autonomy.content_progress_tracker import (
+    ProgressEntry,
+    ProgressLog,
 )
 from core.autonomy.content_progress_tracker import (
-    ProgressLog,
-    ProgressEntry,
     load as load_progress,
 )
+from core.autonomy.curiosity_scheduler import CuriosityScheduler, SchedulingDecision
+from core.autonomy.depth_gate import DepthGate, DepthReport
+from core.autonomy.memory_persister import (
+    CommitReceipt,
+    EpisodicEvent,
+    MemoryPersister,
+)
+from core.autonomy.reflection_loop import ReflectionLoop, ReflectionRecord
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.AutonomousResearchOrchestrator")
 
@@ -73,7 +77,7 @@ def _record_research_degradation(
     *,
     action: str,
     severity: Severity = "degraded",
-    extra: Optional[Dict[str, Any]] = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     record_degradation(
         "autonomous_research_orchestrator",
@@ -89,19 +93,19 @@ class EngagementResult:
     """Single engagement's outcome."""
     item_title: str
     started_at: float
-    completed_at: Optional[float] = None
-    decision: Optional[Dict[str, Any]] = None
-    sources_engaged: List[str] = field(default_factory=list)
-    priority_levels_engaged: List[int] = field(default_factory=list)
+    completed_at: float | None = None
+    decision: dict[str, Any] | None = None
+    sources_engaged: list[str] = field(default_factory=list)
+    priority_levels_engaged: list[int] = field(default_factory=list)
     depth_passed: bool = False
     depth_score: float = 0.0
-    depth_failures: List[str] = field(default_factory=list)
-    persist_receipt: Optional[Dict[str, Any]] = None
+    depth_failures: list[str] = field(default_factory=list)
+    persist_receipt: dict[str, Any] | None = None
     inference_failures: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     session_id: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "item_title": self.item_title,
             "started_at": self.started_at,
@@ -122,17 +126,17 @@ class EngagementResult:
 class AutonomousResearchOrchestrator:
     def __init__(
         self,
-        scheduler: Optional[CuriosityScheduler] = None,
-        router: Optional[MethodRouter] = None,
-        fetcher: Optional[ContentFetcher] = None,
-        comprehension: Optional[ComprehensionLoop] = None,
-        reflection: Optional[ReflectionLoop] = None,
-        gate: Optional[DepthGate] = None,
-        persister: Optional[MemoryPersister] = None,
+        scheduler: CuriosityScheduler | None = None,
+        router: MethodRouter | None = None,
+        fetcher: ContentFetcher | None = None,
+        comprehension: ComprehensionLoop | None = None,
+        reflection: ReflectionLoop | None = None,
+        gate: DepthGate | None = None,
+        persister: MemoryPersister | None = None,
         sessions_dir: Path = SESSIONS_DIR,
         loop_interval: float = DEFAULT_LOOP_INTERVAL,
         max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
-        on_engagement_complete: Optional[Callable[[EngagementResult], None]] = None,
+        on_engagement_complete: Callable[[EngagementResult], None] | None = None,
     ) -> None:
         self._scheduler = scheduler or CuriosityScheduler()
         self._router = router or MethodRouter()
@@ -146,12 +150,12 @@ class AutonomousResearchOrchestrator:
         self._max_failures = max_consecutive_failures
         self._on_complete = on_engagement_complete
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._consecutive_failures = 0
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    async def run_once(self) -> Optional[EngagementResult]:
+    async def run_once(self) -> EngagementResult | None:
         decision = self._scheduler.pick_next()
         if decision is None:
             logger.info("scheduler returned no candidate; nothing to do")
@@ -162,7 +166,10 @@ class AutonomousResearchOrchestrator:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._loop())
+        self._task = create_tracked_task(
+            self._loop(),
+            name="autonomous_research_orchestrator.loop",
+        )
 
     async def stop_loop(self) -> None:
         self._running = False
@@ -170,7 +177,7 @@ class AutonomousResearchOrchestrator:
             self._task.cancel()
             try:
                 await asyncio.wait_for(self._task, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass  # no-op: intentional
 
     # ── Internal loop ─────────────────────────────────────────────────────
@@ -502,7 +509,7 @@ class AutonomousResearchOrchestrator:
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
-    def _receipt_to_dict(self, receipt: CommitReceipt) -> Dict[str, Any]:
+    def _receipt_to_dict(self, receipt: CommitReceipt) -> dict[str, Any]:
         return {
             "accepted": receipt.accepted,
             "episodic_committed": receipt.episodic_committed,
@@ -542,7 +549,7 @@ class AutonomousResearchOrchestrator:
                 },
             )
 
-    def _save_session(self, path: Path, payload: Dict[str, Any]) -> None:
+    def _save_session(self, path: Path, payload: dict[str, Any]) -> None:
         phase = str(payload.get("phase", "unknown"))
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -562,7 +569,7 @@ class AutonomousResearchOrchestrator:
             )
 
 
-def _iso(ts: Optional[float]) -> str:
+def _iso(ts: float | None) -> str:
     if ts is None:
         return ""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(ts)))

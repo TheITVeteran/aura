@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Network.HiveNode")
 
@@ -118,20 +119,10 @@ class HiveNode:
                 self.port = int(bound[1])
             logger.info("Hive Node [%s] listening on %s:%d", self.node_id, self.host, self.port)
 
-            try:
-                from core.utils.task_tracker import get_task_tracker
-
-                self._gossip_task = get_task_tracker().create_task(
-                    self._gossip_loop(),
-                    name="hive_node.gossip_loop",
-                )
-            except _HIVE_ERRORS as task_exc:
-                _record_hive_degradation(
-                    task_exc,
-                    action="started hive gossip loop with raw asyncio task after task tracker failed",
-                    severity="warning",
-                )
-                self._gossip_task = asyncio.create_task(self._gossip_loop(), name="hive_node.gossip_loop")
+            self._gossip_task = create_tracked_task(
+                self._gossip_loop(),
+                name="hive_node.gossip_loop",
+            )
 
             async with self.server:
                 await self.server.serve_forever()

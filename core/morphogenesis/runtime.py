@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 from .field import MorphogenField
 from .metabolism import MetabolismManager
@@ -56,7 +57,7 @@ class MorphogeneticRuntime:
     """Bounded self-organisation loop.
 
     Key hardening properties:
-      - uses TaskTracker instead of raw asyncio.create_task when available
+      - uses canonical task ownership instead of raw asyncio.create_task
       - never applies source-code patches directly
       - bridges high-danger events into AdaptiveImmuneSystem
       - persists registry through atomic writer when available
@@ -113,20 +114,10 @@ class MorphogeneticRuntime:
             )
         self._stopping.clear()
         self._started_at = time.time()
-        try:
-            from core.utils.task_tracker import get_task_tracker
-            self._task = get_task_tracker().create_task(
-                self._run_loop(),
-                name="morphogenesis.runtime",
-            )
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            self._last_degradation_at = time.time()
-            _record_morphogenesis_runtime_degradation(
-                exc,
-                action="started morphogenesis runtime with raw asyncio task after task tracker failed",
-                severity="warning",
-            )
-            self._task = asyncio.create_task(self._run_loop(), name="morphogenesis.runtime")
+        self._task = create_tracked_task(
+            self._run_loop(),
+            name="morphogenesis.runtime",
+        )
         logger.info("MorphogeneticRuntime started.")
 
     async def stop(self) -> None:

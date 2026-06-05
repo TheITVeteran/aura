@@ -13,12 +13,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from core.perception.affordance_schema import AffordanceKnowledgeBase
 from core.brain.causal_world_model import CausalWorldModel
+from core.perception.affordance_schema import AffordanceKnowledgeBase
+from core.runtime.task_ownership import create_tracked_task, fire_and_forget
 
 logger = logging.getLogger("Aura.EmbodiedSimulator")
 
@@ -29,18 +29,18 @@ class PhysicalEntity:
     class_name: str
     position: np.ndarray  # 3D coordinates [x, y, z]
     velocity: np.ndarray  = field(default_factory=lambda: np.zeros(3))
-    state: Dict[str, float] = field(default_factory=dict) # e.g. {"temperature": 0.5, "integrity": 1.0}
+    state: dict[str, float] = field(default_factory=dict) # e.g. {"temperature": 0.5, "integrity": 1.0}
     last_updated: float = field(default_factory=time.time)
 
 class SceneGraph:
     """Maintains the spatial and relational state of the immediate environment."""
     
     def __init__(self):
-        self.entities: Dict[str, PhysicalEntity] = {}
+        self.entities: dict[str, PhysicalEntity] = {}
         self.agent_position = np.zeros(3)
         self.agent_velocity = np.zeros(3)
 
-    def add_or_update_entity(self, entity_id: str, class_name: str, position: np.ndarray, state: Dict[str, float] = None):
+    def add_or_update_entity(self, entity_id: str, class_name: str, position: np.ndarray, state: dict[str, float] = None):
         if entity_id in self.entities:
             self.entities[entity_id].position = position
             if state:
@@ -54,7 +54,7 @@ class SceneGraph:
                 state=state or {}
             )
 
-    def get_nearby_entities(self, radius: float) -> List[PhysicalEntity]:
+    def get_nearby_entities(self, radius: float) -> list[PhysicalEntity]:
         nearby = []
         for ent in self.entities.values():
             dist = np.linalg.norm(ent.position - self.agent_position)
@@ -72,14 +72,17 @@ class ContinuousSimulatorLoop:
         self.causal_model = causal_model
         
         self.is_running = False
-        self._loop_task: Optional[asyncio.Task] = None
+        self._loop_task: asyncio.Task | None = None
         self.tick_rate_hz = 10.0  # 10 updates per second
 
     async def start(self):
         if self.is_running:
             return
         self.is_running = True
-        self._loop_task = asyncio.create_task(self._physics_loop())
+        self._loop_task = create_tracked_task(
+            self._physics_loop(),
+            name="embodied_simulator.physics_loop",
+        )
         logger.info("Embodied Simulator: Continuous physics loop STARTED.")
 
     async def stop(self):
@@ -126,8 +129,10 @@ class ContinuousSimulatorLoop:
                 if threat_level > 0.0:
                     delta = np.zeros(64, dtype=np.float32)
                     delta[1] = min(0.5, threat_level) # Arousal
-                    # Fire and forget injection
-                    asyncio.create_task(substrate.inject_stimulus(delta, weight=0.2))
+                    fire_and_forget(
+                        substrate.inject_stimulus(delta, weight=0.2),
+                        name="embodied_simulator.inject_stimulus",
+                    )
         except (ImportError, AttributeError, RuntimeError) as e:
             logger.debug("Embodied grounding injection failed: %s", e)
 
@@ -142,20 +147,28 @@ class ContinuousSimulatorLoop:
             
         ent = self.scene.entities[entity_id]
         
-        # Look up affordance priors
+        # Affordance priors modulate intervention strength instead of sitting
+        # beside the simulator as narrative-only state.
         affs = self.affordance_kb.query(entities=[ent.class_name], action=action)
+        confidence = max((aff.confidence for aff in affs), default=0.0)
+        risk = max((aff.risk_level for aff in affs), default=0.0)
+        bounded_intensity = max(0.0, min(1.0, float(intensity)))
+        effective_intensity = bounded_intensity * (1.0 + (0.25 * confidence)) * (1.0 - (0.5 * risk))
+        effective_intensity = max(0.0, min(1.25, effective_intensity))
+        ent.state["last_affordance_confidence"] = confidence
+        ent.state["last_affordance_risk"] = risk
         
         # Execute "Physics" Simulation (Stubbed for actual environment hooks)
         # e.g., if action is 'push', alter velocity
         if action == "push":
-            force = intensity * 5.0
+            force = effective_intensity * 5.0
             ent.velocity[0] += force
             outcome_magnitude = force
         elif action == "heat":
-            ent.state["temperature"] = ent.state.get("temperature", 0.0) + (intensity * 10.0)
+            ent.state["temperature"] = ent.state.get("temperature", 0.0) + (effective_intensity * 10.0)
             outcome_magnitude = ent.state["temperature"]
         else:
-            outcome_magnitude = intensity
+            outcome_magnitude = effective_intensity
             
         # Explicit SCM Discovery via do-calculus
         # "I forced 'push' on 'block' and observed velocity increase"
@@ -165,7 +178,7 @@ class ContinuousSimulatorLoop:
         self.causal_model.discover_causality_via_intervention(
             source=source_node,
             target=target_node,
-            source_val=intensity,
+            source_val=effective_intensity,
             target_val_observed=outcome_magnitude
         )
         

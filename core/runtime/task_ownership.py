@@ -55,6 +55,11 @@ def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: str | None) -
         _SKIP_FACTORY_TRACK.reset(token)
 
 
+def create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: str | None = None) -> asyncio.Task:
+    """Create a raw asyncio task inside the canonical task-ownership sink."""
+    return _create_owned_asyncio_task(awaitable, name=name)
+
+
 def create_tracked_task(
     awaitable: Awaitable[Any],
     *,

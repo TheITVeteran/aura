@@ -13,13 +13,15 @@ import json
 import logging
 import math
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.SensorimotorGrounding")
 
@@ -93,7 +95,7 @@ def observation_to_vector(observation: dict[str, Any] | None, *, dim: int = 64) 
     return np.tanh(vec).astype(np.float32)
 
 
-def _read_sensor_file(path: Path) -> Optional[dict[str, Any]]:
+def _read_sensor_file(path: Path) -> dict[str, Any] | None:
     try:
         if not path.exists():
             return None
@@ -126,13 +128,16 @@ class SensorimotorGroundingBridge:
     running: bool = False
     observations_injected: int = 0
     last_observation: dict[str, Any] = field(default_factory=dict)
-    _task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
+    _task: asyncio.Task | None = field(default=None, init=False, repr=False)
 
     async def start(self) -> None:
         if self.running:
             return
         self.running = True
-        self._task = asyncio.create_task(self._loop(), name="Aura.SensorimotorGrounding")
+        self._task = create_tracked_task(
+            self._loop(),
+            name="Aura.SensorimotorGrounding",
+        )
 
     async def stop(self) -> None:
         self.running = False

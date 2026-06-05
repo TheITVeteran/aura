@@ -64,14 +64,6 @@ ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
-    "core/utils/task_tracker.py": {
-        "justification": "Registers and tracks async tasks for memory leak prevention.",
-        "compensating_tests": "tests/test_task_tracker.py"
-    },
-    "core/networking/hive_node.py": {
-        "justification": "Handles low-level socket connections and raw network tasks in the swarm mesh.",
-        "compensating_tests": "tests/test_hive_node.py"
-    },
     "core/runtime/autonomy_conductor.py": {
         "justification": "Coordinates autonomous research threads and handles persistent loops.",
         "compensating_tests": "tests/test_autonomy_conductor.py"
@@ -80,45 +72,13 @@ EXEMPT_FILES = {
         "justification": "Autonomously detects failures and implements local rolling hot-patches.",
         "compensating_tests": "tests/test_self_healing.py"
     },
-    "core/autonomy/autonomous_research_orchestrator.py": {
-        "justification": "Manages long-horizon research plans and persistent search targets.",
-        "compensating_tests": "tests/test_autonomous_research_orchestrator.py"
-    },
     "core/resilience/stall_watchdog.py": {
         "justification": "Implements a non-blocking daemon thread to restart frozen executors.",
         "compensating_tests": "tests/test_stall_watchdog.py"
     },
-    "core/environment/embodied_simulator.py": {
-        "justification": "Simulates local device interactions in a sandboxed digital environment.",
-        "compensating_tests": "tests/test_embodied_simulator.py"
-    },
-    "core/morphogenesis/runtime.py": {
-        "justification": "Handles structural morphing and dynamic class re-definition during self-repair.",
-        "compensating_tests": "tests/test_morphogenesis.py"
-    },
-    "core/ops/lymphatic_reaper.py": {
-        "justification": "Performs low-level file and thread garbage collection.",
-        "compensating_tests": "tests/test_lymphatic_reaper.py"
-    },
     "core/skills/sovereign_network.py": {
         "justification": "Manages secure socket layers for sovereign network operations.",
         "compensating_tests": "tests/test_sovereign_network.py"
-    },
-    "core/phases/affect_update.py": {
-        "justification": "Modulates cognitive steering vectors by updating somatic chemical indicators.",
-        "compensating_tests": "tests/test_affect_update.py"
-    },
-    "core/brain/llm/nucleus_manager.py": {
-        "justification": "Manages local model routing interfaces and port allocations.",
-        "compensating_tests": "tests/test_nucleus_manager.py"
-    },
-    "core/brain/llm/sensorimotor_grounding.py": {
-        "justification": "Bridges text inputs to actual OS coordinates and hardware sensors.",
-        "compensating_tests": "tests/test_sensorimotor_grounding.py"
-    },
-    "core/narrative_thread.py": {
-        "justification": "Tracks the historical agentic narrative flow across memory frames.",
-        "compensating_tests": "tests/test_narrative_thread.py"
     },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",

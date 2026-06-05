@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import Severity, record_degradation
+from core.runtime.task_ownership import fire_and_forget
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
 
@@ -494,7 +495,13 @@ class NucleusManager(LLMProvider):
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         # Run in executor to avoid blocking the loop
-        asyncio.create_task(asyncio.to_thread(_thread_worker))
+        worker_task = fire_and_forget(
+            asyncio.to_thread(_thread_worker),
+            name="nucleus_manager.stream_worker",
+        )
+        if worker_task is None:
+            await queue.put("[NUCLEUS ERROR] failed to schedule stream worker")
+            await queue.put(None)
 
         stream_open = True
         while stream_open:
