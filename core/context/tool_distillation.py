@@ -64,13 +64,23 @@ class ToolOutputDistillationService:
         filepath = os.path.join(self._output_dir, filename)
 
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                if command:
-                    f.write(f"# Command: {command}\n")
-                    f.write(f"# Timestamp: {timestamp}\n")
-                    f.write(f"# Output size: {len(content)} chars\n")
-                    f.write("# " + "=" * 70 + "\n\n")
-                f.write(content)
+            payload = ""
+            if command:
+                payload = (
+                    f"# Command: {command}\n"
+                    f"# Timestamp: {timestamp}\n"
+                    f"# Output size: {len(content)} chars\n"
+                    f"# {'=' * 70}\n\n"
+                )
+            payload += content
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                filepath,
+                payload,
+                encoding="utf-8",
+                source="tool_distillation.save_raw_output",
+            )
             return filepath
         except (OSError, IOError) as e:
             record_degradation('tool_distillation', e)

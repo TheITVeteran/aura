@@ -11,14 +11,14 @@ logger = logging.getLogger("Meta.CognitiveTrace")
 class CognitiveTrace:
     """Records deep traces of Aura's reasoning process for auditing and debugging.
     """
-    
+
     def __init__(self, trace_id: str = None):
         self.trace_id = trace_id or str(int(time.time()))
         self.steps: List[Dict[str, Any]] = []
         self.start_time = time.time()
         self.log_dir = str(config.paths.home_dir / "traces")
         os.makedirs(self.log_dir, exist_ok=True)
-        
+
     def record_step(self, step_type: str, content: Any, metadata: Dict[str, Any] = None):
         """Record a single step in the reasoning chain."""
         self.steps.append({
@@ -27,18 +27,23 @@ class CognitiveTrace:
             "metadata": metadata or {},
             "timestamp": time.time() - self.start_time
         })
-        
+
     def save(self):
         """Save the trace to disk."""
         filename = f"trace_{self.trace_id}.json"
         path = os.path.join(self.log_dir, filename)
         try:
-            with open(path, "w") as f:
-                json.dump({
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                path,
+                json.dumps({
                     "id": self.trace_id,
                     "duration": time.time() - self.start_time,
                     "steps": self.steps
-                }, f, indent=2)
+                }, indent=2),
+                source="cognitive_trace.save",
+            )
             logger.info("Cognitive Trace saved: %s", path)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('cognitive_trace', e)

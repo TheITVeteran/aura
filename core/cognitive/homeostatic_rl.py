@@ -852,21 +852,18 @@ class HomeostaticRL:
             self._last_save = time.time()
             self._dirty = False
 
-        # Write outside the lock to minimize hold time
-        tmp_path = self._state_path.with_suffix(".tmp")
         try:
-            with open(tmp_path, "w") as f:
-                json.dump(data, f, indent=2)
-            tmp_path.replace(self._state_path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._state_path,
+                json.dumps(data, indent=2),
+                source="homeostatic_rl.save_state",
+            )
             logger.debug("HomeostaticRL state saved to %s", self._state_path)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('homeostatic_rl', e)
             logger.error("Failed to save HomeostaticRL state: %s", e)
-            # Clean up partial write
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass  # no-op: intentional
 
     def _load_state(self) -> None:
         """Restore state from disk if a save file exists."""

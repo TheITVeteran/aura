@@ -73,9 +73,9 @@ class ActionConsequenceGraph:
             "timestamp": time.time()
         }
         self.links.append(entry)
-        
+
         self.links = self.links[-1000:]
-            
+
         self._save()
         logger.info("Causal Link Recorded: %s -> %s", action_name, 'Success' if success else 'Failure')
 
@@ -101,7 +101,7 @@ class ActionConsequenceGraph:
         keys2 = set(p2.keys())
         common = keys1.intersection(keys2)
         if not common: return True # Broad match if no params specified
-        
+
         # Check values for common keys
         matches = 0
         for k in common:
@@ -120,8 +120,13 @@ class ActionConsequenceGraph:
             self._last_save = now
             self._dirty = False
             os.makedirs(os.path.dirname(self.persist_path), exist_ok=True)
-            with open(self.persist_path, "w") as f:
-                json.dump(self.links, f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self.persist_path,
+                json.dumps(self.links, indent=2),
+                source="world_model.acg.save",
+            )
         except (OSError, IOError) as e:
             record_degradation('acg', e)
             logger.error("Failed to save ACG: %s", e)

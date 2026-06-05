@@ -366,7 +366,6 @@ class StructuralImprover:
             result = get_subprocess_gateway().run(
                 [sys.executable, "-m", "py_compile", *[str(path) for path in files]],
                 capture_output=True,
-                text=True,
                 timeout=self.validation_timeout_s,
                 cwd=str(self.root),
                 read_only=True,

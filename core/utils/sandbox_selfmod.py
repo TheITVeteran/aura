@@ -8,12 +8,12 @@ Safe Self-Modification Sandbox:
 """
 
 from core.runtime.errors import record_degradation
-import subprocess
 import tempfile
 import os
 import shutil
 import logging
 import time
+from subprocess import TimeoutExpired
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger("aura.sandbox_selfmod")
@@ -23,14 +23,19 @@ def _run_cmd(cmd, cwd=None, timeout=60):
     logger.debug("Running command: %s in %s", cmd, cwd)
     import shlex
     cmd_list = shlex.split(cmd) if isinstance(cmd, str) else cmd
-    proc = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, text=True)
     try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, err = proc.communicate()
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        proc = get_subprocess_gateway().run(
+            cmd_list,
+            cwd=cwd,
+            timeout=timeout,
+            capture_output=True,
+            source="sandbox_selfmod.run_cmd",
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except TimeoutExpired:
         raise RuntimeError(f"Command timeout: {cmd} (cwd={cwd})")
-    return proc.returncode, out, err
 
 
 def test_patch_in_sandbox(repo_root: str, patch_text: str, test_cmd: str = "pytest -q", timeout: int = 120) -> Dict[str, Any]:
@@ -56,8 +61,14 @@ def test_patch_in_sandbox(repo_root: str, patch_text: str, test_cmd: str = "pyte
 
         # 2) apply patch
         patch_file = os.path.join(tmpdir, "patch.diff")
-        with open(patch_file, "w", encoding="utf-8") as fh:
-            fh.write(patch_text)
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().write_text(
+            patch_file,
+            patch_text,
+            encoding="utf-8",
+            source="sandbox_selfmod.write_patch",
+        )
 
         rc, out, err = _run_cmd(f"git apply {patch_file}", cwd=tmpdir, timeout=30)
         if rc != 0:

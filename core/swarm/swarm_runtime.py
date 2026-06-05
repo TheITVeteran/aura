@@ -1,43 +1,39 @@
-"""core/swarm/swarm_runtime.py — Swarm Runtime Orchestrator.
+"""core/swarm/swarm_runtime.py — Swarm Job Orchestration.
+
+Dispatches distributed tasks across sandboxed worker pools.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, List
+from typing import Any, Dict, List
 
-from core.swarm.ray_backend import RayBackend
-from core.swarm.worker_pool import LocalWorkerPool
+from core.swarm.worker_pool import LocalWorkerPool, WorkerProposal, WorkerType
 
 logger = logging.getLogger("Aura.SwarmRuntime")
 
 
 class SwarmRuntime:
-    """Entry point for managing computing resource pools and routing parallel subtasks."""
+    """Manages long-running parallel tasks distributed across local and remote workers."""
 
     def __init__(self) -> None:
-        self.ray_backend = RayBackend()
-        self.local_pool = LocalWorkerPool()
+        self.pool = LocalWorkerPool()
 
-    async def run_subtasks(self, tasks: List[Callable[[], Any]]) -> List[Any]:
-        """Runs subtasks in parallel across Ray if available, else local process pool."""
-        logger.info("🐝 Swarm Runtime routing %d subtasks...", len(tasks))
-        if self.ray_backend.is_available():
-            logger.info("🐝 Swarm: Routing to Ray cluster backend.")
-            return await self.ray_backend.execute_parallel(tasks)
-        else:
-            logger.info("🐝 Swarm: Routing to Local Worker Pool.")
-            return await self.local_pool.execute_all(tasks)
+    async def dispatch_mission_tasks(
+        self,
+        task_specs: List[Dict[str, Any]],
+    ) -> List[WorkerProposal]:
+        """Distribute objective tasks to specialized workers."""
+        logger.info("🐝 SwarmRuntime: dispatching %d tasks to workers", len(task_specs))
 
-    def shutdown(self) -> None:
-        self.local_pool.shutdown()
+        jobs = []
+        for spec in task_specs:
+            wtype_str = spec.get("worker_type", "critic")
+            try:
+                wtype = WorkerType(wtype_str)
+            except ValueError:
+                wtype = WorkerType.CRITIC
 
+            jobs.append(self.pool.run_worker_job(wtype, spec.get("payload", {})))
 
-# Singleton
-_swarm_instance: SwarmRuntime | None = None
-
-
-def get_swarm_runtime() -> SwarmRuntime:
-    global _swarm_instance
-    if _swarm_instance is None:
-        _swarm_instance = SwarmRuntime()
-    return _swarm_instance
+        results = await asyncio.gather(*jobs)
+        return list(results)

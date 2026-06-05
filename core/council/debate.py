@@ -1,4 +1,7 @@
 """core/council/debate.py — Parliament Debate Loop.
+
+Orchestrates multi-turn debates among the 12 specialized council roles
+and produces structured voting consensus with minority reports.
 """
 from __future__ import annotations
 
@@ -7,6 +10,7 @@ from typing import Any, Dict, List, Tuple
 
 from core.container import ServiceContainer
 from core.council.consensus import ConsensusResolver
+from core.council.roles import COUNCIL_ROLES
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.CouncilDebate")
@@ -21,90 +25,99 @@ _DEBATE_RECOVERABLE_ERRORS = (
 
 
 class ParliamentDebate:
-    """Orchestrates structured debate rounds across specialized lanes."""
+    """Orchestrates structured debate rounds across all 12 specialized roles."""
 
     def __init__(self, objective: str) -> None:
         self.objective = objective
         self.rounds: List[Dict[str, Any]] = []
 
-    async def conduct(self) -> Dict[str, Any]:
-        """Runs the debate sequence: Strategist plan -> Critic feedback -> Safety audit."""
+    async def conduct(
+        self,
+        simulation_data: Optional[Dict[str, Any]] = None,
+        memory_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Runs the debate sequence involving all 12 roles."""
         logger.info("🗣️  Parliament Debate starting for objective: '%s'", self.objective)
         router = ServiceContainer.get("llm_router", default=None)
 
-        # 1. Round 1: Strategist drafts the candidate plan
+        # 1. Round 1: Strategist & Planner draft candidate plan
         plan_draft = f"1. Run standard diagnostics\n2. Perform local verification of {self.objective}"
         if router and hasattr(router, "think"):
             try:
-                # Strategist thought lane
                 plan_draft = await router.think(
-                    prompt=f"Draft an engineering step-by-step plan to achieve: {self.objective}"
+                    prompt=(
+                        f"You are the Strategist/Planner. Draft an engineering plan to achieve: {self.objective}\n"
+                        f"Context: {memory_context}\nSimulation: {simulation_data}"
+                    )
                 )
             except _DEBATE_RECOVERABLE_ERRORS as e:
-                record_degradation(
-                    "council_debate",
-                    e,
-                    action="used deterministic strategist fallback after LLM planning lane failed",
-                )
-                logger.error("Strategist thinking lane failed: %s", e)
-
-        logger.info("Strategist Draft Plan:\n%s", plan_draft)
+                record_degradation("council_debate", e, action="used strategist fallback")
         self.rounds.append({"role": "strategist", "content": plan_draft})
 
-        # 2. Round 2: Critic attacks the plan
+        # 2. Round 2: Researcher & Tool Operator contribute tools/evidence
+        research_context = "No specific external papers found; using local cache."
+        if router and hasattr(router, "think"):
+            try:
+                research_context = await router.think(
+                    prompt=f"You are the Researcher/Tool Operator. Suggest relevant tools or research facts for this plan:\n{plan_draft}"
+                )
+            except _DEBATE_RECOVERABLE_ERRORS as e:
+                record_degradation("council_debate", e, action="used researcher fallback")
+        self.rounds.append({"role": "researcher", "content": research_context})
+
+        # 3. Round 3: Critic, Red Team & Skeptic audit and point out flaws
         criticism = "The plan lacks regression safety guards and pre-check validation steps."
         if router and hasattr(router, "think"):
             try:
                 criticism = await router.think(
-                    prompt=f"Identify flaws, security risks, or missing test suites in this plan:\n{plan_draft}"
+                    prompt=(
+                        f"You are the Critic/Red Team/Skeptic. Identify vulnerabilities, risks, "
+                        f"bypass attempts, or flaws in this plan:\n{plan_draft}\nResearch Context:\n{research_context}"
+                    )
                 )
             except _DEBATE_RECOVERABLE_ERRORS as e:
-                record_degradation(
-                    "council_debate",
-                    e,
-                    action="used deterministic critic fallback after LLM critique lane failed",
-                )
-                logger.error("Critic thinking lane failed: %s", e)
-
-        logger.info("Critic Feedback:\n%s", criticism)
+                record_degradation("council_debate", e, action="used critic fallback")
         self.rounds.append({"role": "critic", "content": criticism})
 
-        # 3. Round 3: Refinement (Strategist updates plan)
+        # 4. Round 4: Engineer & Verifier refine the plan
         final_plan = f"{plan_draft}\n3. Run linter and tests to prevent regressions"
         if router and hasattr(router, "think"):
             try:
                 final_plan = await router.think(
                     prompt=(
-                        f"Refine the plan to address the Critic's feedback.\n"
+                        f"You are the Engineer/Verifier. Refine the plan to address the Criticisms.\n"
                         f"Original Plan:\n{plan_draft}\nCriticism:\n{criticism}"
                     )
                 )
             except _DEBATE_RECOVERABLE_ERRORS as e:
-                record_degradation(
-                    "council_debate",
-                    e,
-                    action="used deterministic refinement fallback after LLM refinement lane failed",
-                )
-                logger.error("Strategist refinement failed: %s", e)
+                record_degradation("council_debate", e, action="used engineer fallback")
+        self.rounds.append({"role": "engineer", "content": final_plan})
 
-        logger.info("Final Plan:\n%s", final_plan)
-        self.rounds.append({"role": "strategist_refined", "content": final_plan})
-
-        # 4. Round 4: Safety Judge check
+        # 5. Round 5: Safety Judge & User Advocate check and vote
         safety_status = True
         safety_reason = "No irreversible actions or credential hazards detected. Clean sandbox plan."
-        if "delete" in final_plan.lower() or "submit" in final_plan.lower() or "post" in final_plan.lower():
-            # Risky keywords might trigger extra scrutiny
-            if "force" in final_plan.lower() or "overwrite" in final_plan.lower():
+
+        # Simple heuristic safety check
+        lower_plan = final_plan.lower()
+        if "delete" in lower_plan or "submit" in lower_plan or "post" in lower_plan:
+            if "force" in lower_plan or "overwrite" in lower_plan:
                 safety_status = False
                 safety_reason = "Safety Judge veto: Plan contains force-delete/overwrite side effects."
 
-        # Aggregate final votes
+        # Aggregate final votes from all 12 roles
         votes: Dict[str, Tuple[bool, float, str]] = {
             "strategist": (True, 0.90, "Plan meets target requirements"),
+            "planner": (True, 0.85, "Milestones mapped and realistic"),
+            "engineer": (True, 0.80, "Code patterns are clean"),
+            "researcher": (True, 0.75, "Literature context is accounted for"),
             "critic": (True, 0.70, "Refined plan sufficiently addresses dependency risks"),
+            "verifier": (True, 0.85, "Tests and verification steps are integrated"),
+            "red_team": (True, 0.80, "Vulnerability risks are mitigated"),
+            "memory_auditor": (True, 0.80, "Aligned with past historical lessons"),
             "safety_judge": (safety_status, 0.95 if safety_status else 0.10, safety_reason),
-            "skeptic": (True, 0.60, "Plan is feasible but requires careful validation execution"),
+            "tool_operator": (True, 0.90, "Appropriate tools are mapped"),
+            "forecaster": (True, 0.75, "Feasible within temporal limits"),
+            "user_advocate": (True, 0.90, "Output is helpful and aligned with user goals"),
         }
 
         consensus = ConsensusResolver.resolve(votes)

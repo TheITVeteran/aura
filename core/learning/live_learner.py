@@ -456,8 +456,14 @@ class LiveLearner:
                 self._buffer.append(example)
                 # Persist immediately (survive crashes)
                 try:
-                    with open(self._buffer_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(example) + "\n")
+                    from core.runtime.file_write_gateway import get_file_write_gateway
+
+                    get_file_write_gateway().append_text(
+                        self._buffer_path,
+                        json.dumps(example) + "\n",
+                        encoding="utf-8",
+                        source="live_learner.append_example",
+                    )
                 except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
                     _record_live_learning_degradation(
                         "live_learner",
@@ -774,9 +780,14 @@ class LiveLearner:
             if not rows and split != "train":
                 continue
             path = data_dir / f"{split}.jsonl"
-            with open(path, "w", encoding="utf-8") as f:
-                for row in rows:
-                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                path,
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                encoding="utf-8",
+                source=f"live_learner.write_split.{split}",
+            )
             counts[split] = len(rows)
         return data_dir, counts
 

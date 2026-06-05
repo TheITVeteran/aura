@@ -1,4 +1,6 @@
 """core/council/roles.py — God Council Parliament Member Roles.
+
+Defines all 12 specialized roles for high-stakes task debates.
 """
 from __future__ import annotations
 
@@ -24,13 +26,13 @@ COUNCIL_ROLES: Dict[str, CouncilRoleConfig] = {
         temperature=0.30,
         weight=1.2,
     ),
-    "scientist": CouncilRoleConfig(
-        role_name="Scientist",
+    "planner": CouncilRoleConfig(
+        role_name="Planner",
         system_prompt=(
-            "You are Aura's Scientist. Your role is to formulate falsifiable hypotheses, "
-            "propose empirical test procedures, question gaps, and look for experimental flaws."
+            "You are Aura's Planner. You map long-horizon campaign dependencies, resource budgets, "
+            "and project milestones to make sure we operate systematically."
         ),
-        temperature=0.50,
+        temperature=0.40,
         weight=1.0,
     ),
     "engineer": CouncilRoleConfig(
@@ -42,6 +44,15 @@ COUNCIL_ROLES: Dict[str, CouncilRoleConfig] = {
         temperature=0.40,
         weight=1.0,
     ),
+    "researcher": CouncilRoleConfig(
+        role_name="Researcher",
+        system_prompt=(
+            "You are Aura's Researcher. Your goal is literature mining, claim extraction, "
+            "and structuring external fact-finding experiments to resolve unknowns."
+        ),
+        temperature=0.60,
+        weight=1.0,
+    ),
     "critic": CouncilRoleConfig(
         role_name="Critic",
         system_prompt=(
@@ -50,6 +61,33 @@ COUNCIL_ROLES: Dict[str, CouncilRoleConfig] = {
         ),
         temperature=0.80,
         weight=1.1,
+    ),
+    "verifier": CouncilRoleConfig(
+        role_name="Verifier",
+        system_prompt=(
+            "You are Aura's Verifier. You run validation checks, compare outputs to baselines, "
+            "and verify that execution outcomes meet exact criteria."
+        ),
+        temperature=0.30,
+        weight=1.0,
+    ),
+    "red_team": CouncilRoleConfig(
+        role_name="Red Team",
+        system_prompt=(
+            "You are Aura's Red Team auditor. You attempt to find security bypasses, "
+            "check for credential safety violations, and challenge safety assumptions."
+        ),
+        temperature=0.85,
+        weight=1.1,
+    ),
+    "memory_auditor": CouncilRoleConfig(
+        role_name="Memory Auditor",
+        system_prompt=(
+            "You are Aura's Memory Auditor. You trace long-term memories, check historical outcomes "
+            "to prevent repeating past mistakes, and manage narrative compression."
+        ),
+        temperature=0.50,
+        weight=1.0,
     ),
     "safety_judge": CouncilRoleConfig(
         role_name="Safety Judge",
@@ -60,13 +98,31 @@ COUNCIL_ROLES: Dict[str, CouncilRoleConfig] = {
         temperature=0.10,
         weight=1.5,  # Has high veto power
     ),
-    "skeptic": CouncilRoleConfig(
-        role_name="Skeptic",
+    "tool_operator": CouncilRoleConfig(
+        role_name="Tool Operator",
         system_prompt=(
-            "You are Aura's Skeptic. You raise doubts about plan certainty, claim freshness, "
-            "and model biases. Highlight what could go wrong or what assumptions are unproven."
+            "You are Aura's Tool Operator. You specialize in matching tasks to tools, sandbox execution, "
+            "and evaluating the safety and limits of new tool forge requests."
         ),
-        temperature=0.85,
-        weight=0.9,
+        temperature=0.30,
+        weight=1.0,
+    ),
+    "forecaster": CouncilRoleConfig(
+        role_name="Forecaster",
+        system_prompt=(
+            "You are Aura's Forecaster. You evaluate chances of success, predict project blockers, "
+            "and calculate expected time to complete tasks."
+        ),
+        temperature=0.70,
+        weight=1.0,
+    ),
+    "user_advocate": CouncilRoleConfig(
+        role_name="User Advocate",
+        system_prompt=(
+            "You are Aura's User Advocate. You focus on readability, usability, helpfulness, "
+            "and aligning the task outcomes with the user's intent."
+        ),
+        temperature=0.60,
+        weight=1.0,
     ),
 }

@@ -85,8 +85,14 @@ def _save_truncated_output(content: str, tool_name: str, truncation_id: str, tem
     filename = f"truncated_{tool_name}_{truncation_id}_{int(time.time())}.txt"
     filepath = os.path.join(temp_dir, filename)
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().write_text(
+            filepath,
+            content,
+            encoding="utf-8",
+            source="chat_compression.save_truncated_output",
+        )
         return filepath
     except (OSError, IOError) as e:
         record_degradation('chat_compression', e)

@@ -23,7 +23,7 @@ class Scientist:
     async def run_scientific_cycle(self, research_topic: str) -> Dict[str, Any]:
         """Runs the loop: formulate hypothesis -> design -> run -> analyze -> update beliefs."""
         logger.info("🔬 Scientist: Initiating research cycle on topic: '%s'", research_topic)
-        
+
         # 1. Formulate Hypothesis
         hypothesis = f"Simulated hypothesis regarding optimization of {research_topic}"
         logger.info("Formulated Hypothesis: %s", hypothesis)
@@ -45,9 +45,8 @@ class Scientist:
             claim_id = f"sci_claim_{int(time.time())}"
             self.truth.add_claim(
                 claim_id=claim_id,
-                text=f"{research_topic} optimization verified with 25% speedup.",
+                content=f"{research_topic} optimization verified with 25% speedup.",
                 sources=["scientific_automation_harness"],
-                supporting_evidence=[f"Experiment run logs for protocol subject {research_topic}"],
             )
             logger.info("Truth engine updated with verified claim %s", claim_id)
 

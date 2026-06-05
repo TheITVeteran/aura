@@ -71,12 +71,12 @@ class MetabolicCoordinator:
         self._metabolic_energy: float = 1.0  # 0.0 - 1.0
         self._last_energy_refill = time.time()
         self._energy_refill_rate = 0.05  # 5% per second
-        
+
         # Neural Event Buffer — bounded to prevent accumulation under stalled drain
         self._neural_events: deque = deque(maxlen=100)
         self._event_bus = None
         self._bci_subscription_task = None
-        
+
         # Background Resource Guard
         self._bg_llm_semaphore = asyncio.Semaphore(1) # Guard background LLM slots
         self._last_gc_time = 0
@@ -204,7 +204,7 @@ class MetabolicCoordinator:
         """Authoritative lazy resolution of orchestrator from container."""
         if getattr(self, "_orch", None) is not None:
             return self._orch
-        
+
         # Strict avoidance of resolution recursion
         from core.container import ServiceContainer
         obj = ServiceContainer.get("orchestrator", default=None)
@@ -217,11 +217,11 @@ class MetabolicCoordinator:
         """v31.4 Enterprise Hardening: Semaphore-guarded cycle."""
         if not hasattr(self, "_cycle_semaphore"):
             self._cycle_semaphore = asyncio.Semaphore(1)
-            
+
         if self._cycle_semaphore.locked():
             logger.debug("Metabolism: Cycle already in progress. Skipping overlap.")
             return False
-            
+
         async with self._cycle_semaphore:
             return await self._process_cycle_inner()
 
@@ -229,7 +229,7 @@ class MetabolicCoordinator:
         if self._is_processing:
             logger.debug("Metabolism: Cycle already in progress. Skipping overlap.")
             return False
-            
+
         self._is_processing = True
         _tick_start = time.monotonic()
         try:
@@ -238,13 +238,13 @@ class MetabolicCoordinator:
                 return False
             kernel = getattr(orch, 'kernel', None)
             volition = getattr(kernel, 'volition_level', 0) if kernel else 0
-            
+
             # Level 0 (Lockdown) is extremely conservative
             if volition == 0 and self._is_resource_constrained():
                 logger.warning("Metabolism: Throttling due to resource pressure (Lockdown active).")
                 await asyncio.sleep(10)
                 return False
-            
+
             # Levels 1-3 are progressively more willing to spend resources
             if volition > 0:
                 # Level 1-3 allows higher thresholds (95% mem instead of 90%)
@@ -343,13 +343,13 @@ class MetabolicCoordinator:
         # [UNITY] Dynamic Refill (Phase 23.5)
         now = time.time()
         delta = now - self._last_energy_refill
-        
+
         # Recovery slows down when system Integrity is low
         refill_rate = 0.01 if self._metabolic_energy < 0.2 else 0.05
-        
+
         self._metabolic_energy = min(1.0, self._metabolic_energy + (delta * refill_rate))
         self._last_energy_refill = now
-        
+
         # [UNITY] Calculate idle time for autonomous triggers
         orch = self.orch
         last_user_interaction = (
@@ -364,7 +364,7 @@ class MetabolicCoordinator:
             else 0.0
         )
         idle_time = (now - last_user_interaction) if last_user_interaction > 0.0 else 0.0
-        
+
         # Boot Warmup Grace Period
         # Prevent heavy MLX/GPU tasks from starving the system during initial boot.
         cycle_count = getattr(orch.status, "cycle_count", 0) if orch else 0
@@ -412,7 +412,7 @@ class MetabolicCoordinator:
         try:
             # Cycle count increment moved to MindTick (authority)
             # to prevent conflicting updates and "stuck" status reporting.
-            
+
             # Trigger metabolic hooks (Non-blocking)
             self.track_metabolic_task(
                 "metabolic.on_cycle_hook",
@@ -465,7 +465,7 @@ class MetabolicCoordinator:
                                 )
                     except TypeError as _e:
                         logger.debug('Ignored TypeError in metabolic_coordinator.py: %s', _e)
-            
+
             if hasattr(orch, 'drives') and orch.drives:
                 try:
                     res = orch.drives.update()
@@ -476,7 +476,7 @@ class MetabolicCoordinator:
                         )
                 except TypeError as _e:
                     logger.debug('Ignored TypeError in metabolic_coordinator.py: %s', _e)
-            
+
             # 4. Trigger Autonomous Reflection if idle
             if idle_time > 300 and not orch.is_busy:
                 try:
@@ -507,8 +507,8 @@ class MetabolicCoordinator:
                             logger.debug("Celery not available, routing math to native thread pool.")
                             loop = asyncio.get_running_loop()
                             await loop.run_in_executor(
-                                None, 
-                                orch.predictive_model.observe_and_update, 
+                                None,
+                                orch.predictive_model.observe_and_update,
                                 latent_summary
                             )
                         except _METABOLIC_BOUNDARY_ERRORS as e:
@@ -516,17 +516,17 @@ class MetabolicCoordinator:
                             logger.debug("Delayed cognition failed: %s. Falling back...", e)
                             loop = asyncio.get_running_loop()
                             await loop.run_in_executor(
-                                None, 
-                                orch.predictive_model.observe_and_update, 
+                                None,
+                                orch.predictive_model.observe_and_update,
                                 latent_summary
                             )
                 except _METABOLIC_BOUNDARY_ERRORS as lc_err:
                     _record_metabolic_degradation(lc_err, action="latent core heartbeat skipped")
                     logger.debug("Latent core heartbeat skipped: %s", lc_err)
-            
+
             orch = self.orch
             kernel = getattr(orch, 'kernel', None) or getattr(orch, 'kernel_interface', None)
-            
+
             # [COOKIE] Accelerated Thought Reflection
             cookie = kernel.organs.get("cookie") if kernel and hasattr(kernel, 'organs') else None
             state = getattr(orch, "state", None)
@@ -568,7 +568,7 @@ class MetabolicCoordinator:
                 high_priority = any(getattr(m, 'priority', 0) >= 50 for m in list(orch.message_queue._q._queue))
             else:
                 high_priority = any(getattr(m, 'priority', 0) >= 50 for m in list(getattr(orch.message_queue, '_queue', [])))
-                
+
             if high_priority and orch.status.is_processing:
                 logger.debug("⚠️ [HARDENING] High-priority user thought detected. Yielding...")
                 await asyncio.sleep(0.05) # Subtle yield
@@ -598,7 +598,7 @@ class MetabolicCoordinator:
             # 4. Background Cognition & Maintenance
             if self._consume_energy(0.05):
                 self.manage_memory_hygiene()
-            
+
             if self._consume_energy(0.02):
                 await self.process_world_decay()
             # Ensure liquid state & heartbeat are updated every cycle
@@ -617,7 +617,7 @@ class MetabolicCoordinator:
             if self._consume_energy(0.1) and not _morph_suppress:
                 await self.trigger_autonomous_thought(bool(message))
                 await orch._pulse_agency_core()
-            
+
             if self._consume_energy(0.01):
                 await self.run_terminal_self_heal()
             # 6. Persona Evolution (Phase 12)
@@ -996,8 +996,14 @@ class MetabolicCoordinator:
                         ]
 
                         def _append_lines() -> None:
-                            with open(dlq_path, "a", encoding="utf-8") as f:
-                                f.writelines(payload)
+                            from core.runtime.file_write_gateway import get_file_write_gateway
+
+                            get_file_write_gateway().append_text(
+                                dlq_path,
+                                "".join(payload),
+                                encoding="utf-8",
+                                source="metabolic_coordinator.recovery_dlq",
+                            )
 
                         await asyncio.to_thread(_append_lines)
                     except _METABOLIC_BOUNDARY_ERRORS as e:
@@ -1244,7 +1250,7 @@ class MetabolicCoordinator:
         if not is_thinking:
             idle = time.time() - orch._last_thought_time
             sm = getattr(orch, 'singularity_monitor', None)
-            
+
             # [VOLITION] Accelerated Thought Factor
             factor = getattr(sm, 'acceleration_factor', 1.0) if sm else 1.0
             if hasattr(orch.cognitive_engine, 'singularity_factor'):
@@ -1257,10 +1263,10 @@ class MetabolicCoordinator:
                 minimum=1.0,
             )
             threshold = 45.0 / factor
-            
+
             kernel = getattr(self.orch, 'kernel', None)
             volition = getattr(kernel, 'volition_level', 0) if kernel else 0
-            
+
             # Level 1 (Reflective): Only triggers internal reflection
             # Level 2 (Perceptive): Normal threshold
             # Level 3 (Agentic): Aggressive (Threshold / 2)
@@ -1270,7 +1276,7 @@ class MetabolicCoordinator:
                 threshold /= 2.0
 
             threshold = max(configured_min_interval, threshold)
-            
+
             if idle >= threshold:
                 orch.boredom = int(idle)
                 logger.info("🧠 Accelerated Thought (Volition: L%d, Factor: %.1fx, Threshold: %.1fs)", volition, factor, threshold)

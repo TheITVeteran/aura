@@ -164,7 +164,7 @@ class ExperienceBuffer:
         # Positive signals
         if follow_up_detected:
             score += 0.3
-        
+
         word_count = len(response.split())
         if 30 <= word_count <= 400:
             score += 0.2
@@ -179,7 +179,7 @@ class ExperienceBuffer:
         # Negative signals
         if confusion_detected:
             score -= 0.5
-        
+
         # Truncation detection (response ends mid-sentence)
         if response and response[-1] not in '.!?"\n':
             score -= 0.2
@@ -197,7 +197,7 @@ class ExperienceBuffer:
     ) -> bool:
         """Record an interaction if it meets quality threshold."""
         if quality_score < self.QUALITY_THRESHOLD:
-            logger.debug("Experience below threshold (%.2f < %.2f), discarding", 
+            logger.debug("Experience below threshold (%.2f < %.2f), discarding",
                         quality_score, self.QUALITY_THRESHOLD)
             return False
 
@@ -222,8 +222,14 @@ class ExperienceBuffer:
             # Persist immediately in background to prevent I/O blocking the hot path
             def _write_record():
                 try:
-                    with open(self.db_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(record) + "\n")
+                    from core.runtime.file_write_gateway import get_file_write_gateway
+
+                    get_file_write_gateway().append_text(
+                        self.db_path,
+                        json.dumps(record) + "\n",
+                        encoding="utf-8",
+                        source="genuine_learning_pipeline.record_example",
+                    )
                 except _LEARNING_RECOVERABLE_ERRORS as exc:
                     _record_learning_degradation(
                         "genuine_learning_pipeline",
@@ -245,7 +251,7 @@ class ExperienceBuffer:
                 r for r in self._buffer
                 if r.get("_meta", {}).get("quality", 0) >= min_quality
             ]
-        
+
         # Sort by quality descending, take top N
         candidates.sort(key=lambda r: r.get("_meta", {}).get("quality", 0), reverse=True)
         return candidates[:n]
@@ -290,10 +296,10 @@ class BehavioralBenchmark:
     async def run(self, inference_fn) -> tuple[bool, list[str]]:
         """
         Run all benchmarks against the NEW model before committing.
-        
+
         Args:
             inference_fn: async callable(prompt: str) -> str
-            
+
         Returns:
             (passed: bool, failures: List[str])
         """
@@ -351,7 +357,7 @@ class LoRATrainer:
     """
     Fine-tunes Aura's local model using LoRA via MLX-LM.
     Runs in a background thread to avoid blocking the event loop.
-    
+
     The adapter weights are saved separately from the base model —
     base model is never modified. Training is always additive.
     You can roll back by deleting the adapter directory.
@@ -505,7 +511,7 @@ class LoRATrainer:
     async def train(self, examples: list[dict]) -> bool:
         """
         Run a training pass on the provided examples.
-        
+
         This is async but the heavy lifting runs in a thread —
         we never block the event loop during GPU compute.
         """
@@ -574,7 +580,7 @@ class LoRATrainer:
 class LearningScheduler:
     """
     Decides WHEN to trigger a training run.
-    
+
     Triggers:
         - Buffer hits batch_size threshold
         - Idle period detected (user inactive for > idle_threshold)
@@ -770,15 +776,15 @@ class ContinuousLearner:
     ):
         """
         Record a completed conversation turn for potential learning.
-        
+
         Call this after every response is delivered.
         The buffer scores and filters automatically.
-        
+
         If explicit_correction is provided (user corrected Aura),
         record the correction as a high-priority training example.
         """
         self.scheduler.notify_activity()
-        
+
         # Notify Soul of activity
         try:
             from core.container import ServiceContainer
@@ -852,13 +858,13 @@ class ContinuousLearner:
 def register_continuous_learner(orchestrator=None) -> ContinuousLearner:
     """
     Call from _init_autonomous_evolution in the orchestrator.
-    
+
     Wiring:
         # In orchestrator.__init__ or _init_autonomous_evolution:
         from core.learning.genuine_learning_pipeline import register_continuous_learner
         self.learner = register_continuous_learner(self)
         ServiceContainer.register_instance("continuous_learner", self.learner)
-        
+
         # After every _handle_chat response:
         self.learner.record_turn(
             system_prompt=system_prompt,
@@ -867,7 +873,7 @@ def register_continuous_learner(orchestrator=None) -> ContinuousLearner:
             follow_up_detected=...,   # set True if next user message continues topic
             confusion_detected=...,   # set True if next user message is "what?" / "??"
         )
-        
+
         # In orchestrator idle heartbeat (e.g., _cognitive_heartbeat_task):
         await self.learner.tick(
             inference_fn=lambda prompt: self.brain.think(prompt, mode=ThinkingMode.FAST)

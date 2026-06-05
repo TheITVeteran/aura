@@ -1,55 +1,96 @@
-"""core/twins/digital_twin.py — Digital Twins."""
+"""core/twins/digital_twin.py — Digital Twin Simulation.
+
+Models the state of Aura's codebase, host operating system, active projects,
+and workflows to simulate modifications and run impact assessments before acting.
+"""
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
 
 logger = logging.getLogger("Aura.DigitalTwin")
 
 
+@dataclass
+class EnvironmentState:
+    codebase_sha: str = "main"
+    os_platform: str = "darwin"
+    available_disk_bytes: int = 100 * 1024 * 1024 * 1024
+    active_processes: List[str] = field(default_factory=list)
+    environment_variables: Dict[str, str] = field(default_factory=dict)
+    files: Dict[str, str] = field(default_factory=dict)
+
+
 class DigitalTwin:
-    """Manages virtual replicas of local/cloud infrastructure to preview action side effects."""
+    """Simulates codebase, computer system, and workflow state changes."""
 
-    def __init__(self, target_name: str) -> None:
-        self.target_name = target_name
-        self.virtual_state: Dict[str, Any] = {}
+    def __init__(self, mode: str = "codebase") -> None:
+        self.mode = mode
+        self.state = EnvironmentState()
 
-    def sync_state(self, real_state: Dict[str, Any]) -> None:
-        """Syncs virtual state with actual operational parameters."""
-        self.virtual_state = dict(real_state)
-        logger.info("Digital twin for '%s' synchronized.", self.target_name)
+    def sync_state(self, state_dict: Dict[str, Any]) -> None:
+        """Sync files or process snapshots into the environment state."""
+        self.state.files.update(state_dict)
+        logger.info("📐 DigitalTwin: synchronized %d files in mode '%s'", len(state_dict), self.mode)
 
-    def simulate_impact(self, modification: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculates dry-run outcomes of system modifications.
-        
-        Zero-modification policy is enforced on the actual system during simulation.
-        """
-        logger.info("Simulating impact of change on twin '%s'", self.target_name)
-        
-        simulated_state = dict(self.virtual_state)
-        predicted_errors = []
+    def simulate_impact(self, change_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Check proposed modifications for compiling issues or errors."""
+        logger.info("📐 DigitalTwin: simulating impact check...")
+
         is_safe = True
+        errors = []
 
-        # Example code change simulation
-        if modification.get("type") == "code_patch":
-            patched_file = modification.get("file", "")
-            if "syntax_error" in modification.get("code", ""):
-                predicted_errors.append(f"Syntax error predicted in {patched_file}")
-                is_safe = False
-            simulated_state[patched_file] = "modified"
-
-        # Example file deletion simulation
-        elif modification.get("type") == "delete_file":
-            deleted_file = modification.get("file", "")
-            if deleted_file in simulated_state:
-                del simulated_state[deleted_file]
-            else:
-                predicted_errors.append(f"File not found for deletion: {deleted_file}")
-                is_safe = False
+        code = change_dict.get("code", "")
+        if "syntax_error" in code or "SyntaxError" in code:
+            is_safe = False
+            errors.append("SyntaxError: invalid syntax (line 1)")
 
         return {
-            "target": self.target_name,
             "is_safe": is_safe,
-            "predicted_errors": predicted_errors,
-            "predicted_state": simulated_state,
+            "predicted_errors": errors,
+            "remedy": "Re-generate patch without syntax error markers" if errors else None,
+        }
+
+    def update_snapshot(self, state_updates: Dict[str, Any]) -> None:
+        for k, v in state_updates.items():
+            if hasattr(self.state, k):
+                setattr(self.state, k, v)
+
+    def simulate_change(
+        self,
+        change_type: str,  # codebase_patch, file_write, shell_execution
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Model the effect of an action, predicting failures and reversibility."""
+        logger.info("📐 DigitalTwin: simulating impact for '%s'", change_type)
+
+        reversible = True
+        breaks_compilation = False
+        disk_delta = 0
+        failure_probability = 0.05
+
+        if change_type == "codebase_patch":
+            patch = params.get("patch", "")
+            if "syntax error" in patch.lower() or "exec(" in patch.lower():
+                breaks_compilation = True
+                failure_probability = 0.95
+            reversible = True
+        elif change_type == "shell_execution":
+            cmd = params.get("command", "")
+            if "rm -rf" in cmd:
+                reversible = False
+                failure_probability = 0.30
+                disk_delta = -10 * 1024 * 1024
+            elif "git checkout" in cmd:
+                reversible = True
+
+        return {
+            "change_type": change_type,
+            "reversible": reversible,
+            "breaks_compilation": breaks_compilation,
+            "predicted_disk_delta_bytes": disk_delta,
+            "failure_probability": failure_probability,
+            "risk_score": 0.9 if not reversible else (0.5 if breaks_compilation else 0.1),
+            "remedy_plan": "git reset --hard HEAD" if reversible else "Restore from backup_restore archive",
         }

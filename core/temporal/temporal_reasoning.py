@@ -64,7 +64,7 @@ class PastEvent:
     success: bool
     externalities: list[str]  # Unintended consequences
     lessons_learned: list[str]
-    
+
     def to_dict(self):
         d = asdict(self)
         d['outcome_type'] = self.outcome_type.value
@@ -84,7 +84,7 @@ class FuturePrediction:
     opportunities: list[str]
     recommended: bool
     reasoning: str
-    
+
     def to_dict(self):
         d = asdict(self)
         d['confidence'] = self.confidence.value
@@ -93,10 +93,10 @@ class FuturePrediction:
 
 class PastReflectionEngine:
     """Analyzes past events to extract lessons and patterns.
-    
+
     "Those who cannot remember the past are condemned to repeat it."
     """
-    
+
     def __init__(
         self,
         cognitive_engine,
@@ -105,16 +105,16 @@ class PastReflectionEngine:
         self.brain = cognitive_engine
         self.memory_path = Path(memory_db)
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # In-memory cache
         self.past_events: list[PastEvent] = []
         self.max_cache = 1000
-        
+
         # Load existing memories
         self._load_past_events()
-        
+
         logger.info("PastReflectionEngine initialized with %d past events", len(self.past_events))
-    
+
     async def record_event(
         self,
         action: str,
@@ -124,23 +124,23 @@ class PastReflectionEngine:
         success: bool
     ) -> PastEvent:
         """Record an event that just happened.
-        
+
         Args:
             action: What action was taken
             context: Situation/environment when action occurred
             intended_outcome: What was hoped to happen
             actual_outcome: What actually happened
             success: Whether outcome matched intent
-            
+
         Returns:
             PastEvent object
 
         """
         logger.info("Recording past event: %s -> %s", action, actual_outcome)
-        
+
         # Determine outcome type
         outcome_type = self._classify_outcome(actual_outcome, success)
-        
+
         # Substring matching for robustness against tool name variations
         # Substring matching for robustness against tool name variations
         skip_keywords = ["status", "cardio", "health", "diag", "check", "ping", "verify", "speak", "say", "convers", "search", "read", "lookup"]
@@ -155,14 +155,14 @@ class PastReflectionEngine:
             try:
                 ext_coro = self._identify_externalities(action, intended_outcome, actual_outcome, context)
                 less_coro = self._extract_lessons(action, intended_outcome, actual_outcome, success, [])
-                
+
                 externalities, lessons = await asyncio.gather(ext_coro, less_coro)
             except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('temporal_reasoning', e)
                 logger.error("Error in temporal analysis: %s", e, exc_info=True)
                 externalities = []
                 lessons = []
-        
+
         # Create event record
         event = PastEvent(
             timestamp=time.time(),
@@ -175,43 +175,43 @@ class PastReflectionEngine:
             externalities=externalities,
             lessons_learned=lessons
         )
-        
+
         # Store
         self.past_events.append(event)
         if len(self.past_events) > self.max_cache:
             self.past_events = self.past_events[-self.max_cache:]
-        
+
         await self._persist_event(event)
-        
+
         return event
-    
+
     async def reflect_on_similar(self, current_situation: str) -> dict[str, Any]:
         """Reflect on past events similar to current situation.
-        
+
         Args:
             current_situation: Description of current situation
-            
+
         Returns:
             Reflection with relevant past events and lessons
 
         """
         logger.info("Reflecting on similar situations to: %s", current_situation[:100])
-        
+
         # Find similar past events
         similar = self._find_similar_events(current_situation)
-        
+
         if not similar:
             return {
                 "found_similar": False,
                 "recommendation": "No similar past experience to guide this decision"
             }
-        
+
         # Analyze patterns
         analysis = self._analyze_event_pattern(similar)
-        
+
         # Generate reflection using LLM
         reflection = await self._generate_reflection(current_situation, similar, analysis)
-        
+
         return {
             "found_similar": True,
             "similar_events": [e.to_dict() for e in similar[:5]],
@@ -219,29 +219,29 @@ class PastReflectionEngine:
             "reflection": reflection,
             "recommendation": self._extract_recommendation(reflection)
         }
-    
+
     async def learn_from_failure(self, failed_action: str, context: dict[str, Any]) -> dict[str, Any]:
         """Deep analysis of why something failed.
-        
+
         Args:
             failed_action: Action that failed
             context: Context of failure
-            
+
         Returns:
             Analysis with corrective strategies
 
         """
         logger.info("Learning from failure: %s", failed_action)
-        
+
         # Find all past failures of similar actions
         similar_failures = [
             e for e in self.past_events
             if not e.success and self._is_similar_action(e.action, failed_action)
         ]
-        
+
         if not similar_failures:
             return {"lessons": ["First failure of this type - establish baseline"]}
-        
+
         # Analyze failure pattern
         prompt = f"""Analyze this pattern of failures to identify root cause.
 
@@ -265,11 +265,11 @@ Return JSON:
   "corrective_strategy": "specific approach",
   "success_criteria": ["criterion1", "criterion2"]
 }}"""
-        
+
         try:
             thought = await self.brain.think(prompt)
             analysis = json.loads(_strip_json_fence(thought.content))
-            
+
             return {
                 "failure_count": len(similar_failures),
                 **analysis
@@ -278,20 +278,20 @@ Return JSON:
             record_degradation('temporal_reasoning', e)
             logger.error("Failure analysis error: %s", e, exc_info=True)
             return {"error": str(e)}
-    
+
     def _classify_outcome(self, outcome: str, success: bool) -> OutcomeType:
         """Classify whether outcome was positive/negative/neutral"""
         if not success:
             return OutcomeType.NEGATIVE
-        
+
         # Use sentiment analysis on outcome description
         positive_words = ['success', 'good', 'better', 'improved', 'solved', 'fixed']
         negative_words = ['failed', 'worse', 'broken', 'error', 'problem']
-        
+
         outcome_lower = outcome.lower()
         pos_count = sum(1 for word in positive_words if word in outcome_lower)
         neg_count = sum(1 for word in negative_words if word in outcome_lower)
-        
+
         if pos_count > neg_count:
             return OutcomeType.POSITIVE
         elif neg_count > pos_count:
@@ -300,7 +300,7 @@ Return JSON:
             return OutcomeType.MIXED
         else:
             return OutcomeType.NEUTRAL
-    
+
     async def _identify_externalities(
         self,
         action: str,
@@ -320,7 +320,7 @@ List any unintended consequences (good or bad) that weren't part of the original
 Return as JSON array: ["consequence1", "consequence2"]
 Return [] if no externalities.
 Ensure valid JSON."""
-        
+
         try:
             thought = await self.brain.think(prompt)
             response = _strip_json_fence(thought.content)
@@ -340,7 +340,7 @@ Ensure valid JSON."""
             record_degradation('temporal_reasoning', e)
             logger.debug("Failed to identify externalities: %s", e)
             return []
-    
+
     async def _extract_lessons(
         self,
         action: str,
@@ -360,7 +360,7 @@ Externalities: {json.dumps(externalities)}
 
 Generate 2-3 specific, actionable lessons learned.
 Format as JSON array: ["lesson1", "lesson2"]"""
-        
+
         try:
             thought = await self.brain.think(prompt)
             response = _strip_json_fence(thought.content)
@@ -379,66 +379,66 @@ Format as JSON array: ["lesson1", "lesson2"]"""
             record_degradation('temporal_reasoning', e)
             logger.debug("Failed to extract lessons: %s", e)
             return [f"Document {'success' if success else 'failure'} of {action}"]
-    
+
     def _find_similar_events(self, situation: str, limit: int = 10) -> list[PastEvent]:
         """Find past events similar to current situation"""
         # Fast associative keyword clustering (heavy embeddings are deferred to Vector Memory)
-        
+
         keywords = set(situation.lower().split())
-        
+
         scored_events = []
         for event in self.past_events:
             event_text = f"{event.action} {event.context} {event.actual_outcome}".lower()
             event_keywords = set(event_text.split())
-            
+
             # Jaccard similarity
             intersection = keywords & event_keywords
             union = keywords | event_keywords
             similarity = len(intersection) / len(union) if union else 0
-            
+
             if similarity > 0.1:  # Threshold
                 scored_events.append((similarity, event))
-        
+
         # Sort by similarity
         scored_events.sort(reverse=True, key=lambda x: x[0])
-        
+
         return [event for _, event in scored_events[:limit]]
-    
+
     def _analyze_event_pattern(self, events: list[PastEvent]) -> dict[str, Any]:
         """Analyze patterns in a set of events"""
         if not events:
             return {}
-        
+
         total = len(events)
         successes = sum(1 for e in events if e.success)
-        
+
         # Outcome type distribution
         outcome_dist = {}
         for event in events:
             outcome_dist[event.outcome_type.value] = outcome_dist.get(event.outcome_type.value, 0) + 1
-        
+
         # Common externalities
         all_externalities = []
         for event in events:
             all_externalities.extend(event.externalities)
-        
+
         externality_counts = {}
         for ext in all_externalities:
             externality_counts[ext] = externality_counts.get(ext, 0) + 1
-        
+
         common_externalities = sorted(
             externality_counts.items(),
             key=lambda x: x[1],
             reverse=True
         )[:5]
-        
+
         return {
             "total_events": total,
             "success_rate": successes / total if total > 0 else 0,
             "outcome_distribution": outcome_dist,
             "common_externalities": [ext for ext, _ in common_externalities]
         }
-    
+
     async def _generate_reflection(
         self,
         current_situation: str,
@@ -465,14 +465,14 @@ Based on this history, provide:
 4. Recommended approach
 
 Be specific and actionable."""
-        
+
         try:
             thought = await self.brain.think(prompt)
             return thought.content
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('temporal_reasoning', e)
             return f"Reflection unavailable: {e}"
-    
+
     def _extract_recommendation(self, reflection: str) -> str:
         """Extract key recommendation from reflection"""
         lines = reflection.split('\n')
@@ -480,7 +480,7 @@ Be specific and actionable."""
             if 'recommend' in line.lower():
                 return line.strip()
         return "Consider past patterns when deciding"
-    
+
     def _is_similar_action(self, action1: str, action2: str) -> bool:
         """Check if two actions are similar"""
         # Simple word overlap for now
@@ -488,7 +488,7 @@ Be specific and actionable."""
         words2 = set(action2.lower().split())
         overlap = words1 & words2
         return len(overlap) >= 2
-    
+
     def _format_events(self, events: list[PastEvent]) -> str:
         """Format events for LLM prompts"""
         formatted = []
@@ -503,23 +503,28 @@ Event {i}:
   Lessons: {', '.join(event.lessons_learned)}
 """)
         return '\n'.join(formatted)
-    
+
     async def _persist_event(self, event: PastEvent):
         """Save event to disk without blocking the event loop"""
         def write_sync():
             try:
-                with open(self.memory_path, 'a') as f:
-                    f.write(json.dumps(event.to_dict()) + '\n')
+                from core.runtime.file_write_gateway import get_file_write_gateway
+
+                get_file_write_gateway().append_text(
+                    self.memory_path,
+                    json.dumps(event.to_dict()) + "\n",
+                    source="temporal_reasoning.persist_event",
+                )
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('temporal_reasoning', e)
                 logger.error("Failed to persist event: %s", e)
         await asyncio.to_thread(write_sync)
-    
+
     def _load_past_events(self):
         """Load past events from disk"""
         if not self.memory_path.exists():
             return
-        
+
         try:
             with open(self.memory_path) as f:
                 for line in f:
@@ -529,11 +534,11 @@ Event {i}:
                          data['outcome_type'] = OutcomeType(data['outcome_type'])
                     event = PastEvent(**data)
                     self.past_events.append(event)
-            
+
             # Keep only recent events in memory
             if len(self.past_events) > self.max_cache:
                 self.past_events = self.past_events[-self.max_cache:]
-            
+
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('temporal_reasoning', e)
             logger.error("Failed to load past events: %s", e)
@@ -541,11 +546,11 @@ Event {i}:
 
 class FuturePredictionEngine:
     """Predicts outcomes of potential actions before taking them.
-    
+
     "The best way to predict the future is to invent it."
     But before inventing, simulate it.
     """
-    
+
     def __init__(
         self,
         cognitive_engine,
@@ -553,9 +558,9 @@ class FuturePredictionEngine:
     ):
         self.brain = cognitive_engine
         self.past = past_reflection  # Use past to inform future
-        
+
         logger.info("FuturePredictionEngine initialized")
-    
+
     async def predict_outcome(
         self,
         action: str,
@@ -563,30 +568,30 @@ class FuturePredictionEngine:
         goal: str | None = None
     ) -> FuturePrediction:
         """Predict what will happen if action is taken.
-        
+
         Args:
             action: Action being considered
             context: Current situation
             goal: What's trying to be achieved (optional)
-            
+
         Returns:
             FuturePrediction with confidence levels
 
         """
         logger.info("Predicting outcome for: %s", action)
-        
+
         # Check past for similar situations
         past_reflection = self.past.reflect_on_similar(f"{action} in context {context}")
-        
+
         # Generate prediction using LLM
         prediction_data = await self._generate_prediction(action, context, goal, past_reflection)
-        
+
         # Calculate confidence
         confidence, confidence_score = self._calculate_confidence(prediction_data, past_reflection)
-        
+
         # Assess recommendation
         recommended = self._should_recommend(prediction_data, confidence_score)
-        
+
         prediction = FuturePrediction(
             action=action,
             predicted_outcomes=prediction_data.get('outcomes', []),
@@ -598,11 +603,11 @@ class FuturePredictionEngine:
             recommended=recommended,
             reasoning=prediction_data.get('reasoning', '')
         )
-        
+
         logger.info("Prediction: %s confidence, recommended=%s", confidence.value, recommended)
-        
+
         return prediction
-    
+
     async def compare_options(
         self,
         options: list[str],
@@ -610,29 +615,29 @@ class FuturePredictionEngine:
         goal: str
     ) -> dict[str, Any]:
         """Compare multiple possible actions.
-        
+
         Args:
             options: List of possible actions
             context: Current situation
             goal: What's trying to be achieved
-            
+
         Returns:
             Comparison with ranked recommendations
 
         """
         logger.info("Comparing %d options for goal: %s", len(options), goal)
-        
+
         predictions = []
         for option in options:
             pred = await self.predict_outcome(option, context, goal)
             predictions.append(pred)
-        
+
         # Rank by confidence and positive outcomes
         ranked = self._rank_options(predictions)
-        
+
         # Generate comparison summary
         comparison = await self._generate_comparison(options, predictions, ranked, goal)
-        
+
         return {
             "goal": goal,
             "options_considered": len(options),
@@ -641,7 +646,7 @@ class FuturePredictionEngine:
             "recommendation": comparison.get('recommendation'),
             "reasoning": comparison.get('reasoning')
         }
-    
+
     async def _generate_prediction(
         self,
         action: str,
@@ -657,7 +662,7 @@ Past Experience:
 {past_reflection.get('reflection', '')}
 Success rate in similar situations: {past_reflection.get('pattern_analysis', {}).get('success_rate', 0)*100:.0f}%
 """
-        
+
         prompt = f"""Predict the outcome of taking this action.
 
 Action: {action}
@@ -686,7 +691,7 @@ Return JSON:
   "opportunities": ["opportunity1", "opportunity2"],
   "reasoning": "why this prediction"
 }}"""
-        
+
         try:
             thought = await self.brain.think(prompt)
             response = thought.content.strip()
@@ -704,7 +709,7 @@ Return JSON:
                 "opportunities": [],
                 "reasoning": f"Error: {e}"
             }
-    
+
     def _calculate_confidence(
         self,
         prediction_data: dict[str, Any],
@@ -713,11 +718,11 @@ Return JSON:
         """Calculate confidence level and score"""
         # Start with LLM's stated confidence
         stated = prediction_data.get('confidence', 'maybe').lower()
-        
+
         # Adjust based on past experience
         if past_reflection.get('found_similar'):
             success_rate = past_reflection.get('pattern_analysis', {}).get('success_rate', 0.5)
-            
+
             # Higher past success = higher confidence
             if success_rate > 0.8:
                 confidence_boost = 0.2
@@ -730,7 +735,7 @@ Return JSON:
         else:
             # No past data = less confident
             confidence_boost = -0.1
-        
+
         # Map stated confidence to score
         confidence_map = {
             'certain': 0.95,
@@ -739,10 +744,10 @@ Return JSON:
             'unlikely': 0.25,
             'uncertain': 0.1
         }
-        
+
         base_score = confidence_map.get(stated, 0.5)
         final_score = max(0.0, min(1.0, base_score + confidence_boost))
-        
+
         # Map score to level
         if final_score >= 0.9:
             level = ConfidenceLevel.CERTAIN
@@ -754,23 +759,23 @@ Return JSON:
             level = ConfidenceLevel.UNLIKELY
         else:
             level = ConfidenceLevel.UNCERTAIN
-        
+
         return level, final_score
-    
+
     def _should_recommend(self, prediction_data: dict[str, Any], confidence_score: float) -> bool:
         """Decide whether to recommend this action"""
         # Don't recommend if confidence is too low
         if confidence_score < 0.4:
             return False
-        
+
         # Check risk/opportunity balance
         risks = len(prediction_data.get('risks', []))
         opportunities = len(prediction_data.get('opportunities', []))
-        
+
         # More opportunities than risks = recommend
         if opportunities > risks and confidence_score >= 0.5:
             return True
-        
+
         # High confidence positive outcome
         outcomes = prediction_data.get('outcomes', [])
         if outcomes:
@@ -780,30 +785,30 @@ Return JSON:
                 positive_words = ['success', 'good', 'improve', 'solve', 'fix']
                 if any(word in description for word in positive_words):
                     return True
-        
+
         return False
-    
+
     def _rank_options(self, predictions: list[FuturePrediction]) -> list[dict[str, Any]]:
         """Rank options by desirability"""
         ranked = []
-        
+
         for pred in predictions:
             # Score based on confidence, risks, opportunities
             score = pred.confidence_score
             score += len(pred.opportunities) * 0.1
             score -= len(pred.risks) * 0.1
             score += 0.2 if pred.recommended else 0.0
-            
+
             ranked.append({
                 "action": pred.action,
                 "score": score,
                 "confidence": pred.confidence.value,
                 "recommended": pred.recommended
             })
-        
+
         ranked.sort(key=lambda x: x['score'], reverse=True)
         return ranked
-    
+
     async def _generate_comparison(
         self,
         options: list[str],
@@ -826,7 +831,7 @@ Options (ranked by predicted success):
    Risks: {', '.join(pred.risks)}
    Opportunities: {', '.join(pred.opportunities)}
 """
-        
+
         prompt += """
 Provide:
 1. Top recommendation and why
@@ -834,7 +839,7 @@ Provide:
 3. Any important caveats
 
 Be concise (2-3 sentences)."""
-        
+
         try:
             thought = await self.brain.think(prompt)
             return {

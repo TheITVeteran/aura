@@ -679,10 +679,14 @@ class RecursiveSelfImprovementLoop:
     def _append_ledger(self, result: ImprovementCycleResult) -> None:
         try:
             payload = self._serialize_result(result)
-            with open(self.ledger_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                self.ledger_path,
+                json.dumps(payload, sort_keys=True, default=str) + "\n",
+                encoding="utf-8",
+                source="recursive_self_improvement.append_ledger",
+            )
         except _RSI_RECOVERABLE_ERRORS as exc:
             _record_rsi_degradation(
                 "recursive_self_improvement",

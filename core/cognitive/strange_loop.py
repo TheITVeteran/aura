@@ -882,11 +882,13 @@ class StrangeLoop:
                 "current_state": self._current_state.tolist(),
                 "previous_state": self._previous_state.tolist(),
             }
-            # Write atomically via temp file.
-            tmp_path = path.with_suffix(".tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(payload, f)
-            tmp_path.replace(path)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                path,
+                json.dumps(payload),
+                source="strange_loop.persist_weights",
+            )
             logger.debug(
                 "StrangeLoop: persisted weights at tick %d", self._tick_count,
             )

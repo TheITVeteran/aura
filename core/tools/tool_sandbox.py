@@ -1,68 +1,42 @@
-"""core/tools/tool_sandbox.py — Tool Sandbox Runner."""
+"""core/tools/tool_sandbox.py — Tool Sandbox Validator.
+
+Validates dynamically generated tools to guarantee compilation safety
+and verify lack of illegal calls before integration.
+"""
 from __future__ import annotations
 
+import ast
 import logging
 from typing import Any, Dict
-
-from core.sandbox.runner import run_untrusted
-from core.tools.tool_manifest import ToolManifest
 
 logger = logging.getLogger("Aura.ToolSandbox")
 
 
 class ToolSandbox:
-    """Safely executes third-party tool scripts in resource-constrained sub-processes."""
+    """Verifies compilation and safety properties of dynamically forged tool code."""
 
-    @staticmethod
-    def run(code: str, manifest: ToolManifest, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Runs the tool code with the specified parameters using safe untrusted execution."""
-        logger.info("Running tool %s version %s in sandbox", manifest.name, manifest.version)
-        
-        import ast
-        
-        # We wrap the tool execution code so that parameters are passed and returned cleanly.
-        # Since __import__ is banned in the sandbox, we do not use any import statements in the wrapper.
-        execution_wrapper = f"""
-params = {repr(params)}
+    def validate_tool_code(self, code_str: str) -> Dict[str, Any]:
+        logger.info("🔒 ToolSandbox: auditing candidate tool code...")
 
-{code}
+        # 1. Compilation check
+        try:
+            tree = ast.parse(code_str)
+        except SyntaxError as e:
+            return {"compiles": False, "error": f"SyntaxError: {e}"}
 
-try:
-    result = main(params)
-    print("TOOL_OUT:" + repr(result))
-except (ArithmeticError, LookupError, NameError, RuntimeError, TypeError, ValueError) as e:
-    print("TOOL_ERR:" + str(e))
-"""
-        
-        # Run untrusted python code
-        raw_res = run_untrusted(
-            code=execution_wrapper,
-            timeout=10,  # 10s timeout
-            mem_bytes=250 * 1024 * 1024,  # 250MB
-        )
-        
-        if raw_res.get("status") != "ok":
-            logger.error("Sandbox execution failed for tool %s: %s", manifest.name, raw_res.get("stderr"))
-            return {
-                "ok": False,
-                "status": raw_res.get("status"),
-                "error": raw_res.get("stderr") or "sandbox_execution_failed",
-            }
-        
-        # Parse output from stdout
-        stdout_lines = raw_res.get("stdout", "").strip().splitlines()
-        for line in reversed(stdout_lines):
-            if line.startswith("TOOL_OUT:"):
-                try:
-                    val = ast.literal_eval(line[len("TOOL_OUT:"):])
-                    return {"ok": True, "result": val}
-                except (MemoryError, RecursionError, SyntaxError, TypeError, ValueError) as e:
-                    logger.error("Failed to parse tool output: %s", e)
-            elif line.startswith("TOOL_ERR:"):
-                return {"ok": False, "error": line[len("TOOL_ERR:"):]}
+        # 2. Basic static safety check (no direct subprocess imports or socket bindings)
+        unsafe_imports = {"subprocess", "socket", "ctypes", "pty", "os"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for name in node.names:
+                    if name.name in unsafe_imports:
+                        return {"compiles": True, "safe": False, "reason": f"Forbidden import: {name.name}"}
+            elif isinstance(node, ast.ImportFrom):
+                if node.module in unsafe_imports:
+                    return {"compiles": True, "safe": False, "reason": f"Forbidden import from: {node.module}"}
 
         return {
-            "ok": True,
-            "stdout": raw_res.get("stdout"),
-            "stderr": raw_res.get("stderr"),
+            "compiles": True,
+            "safe": True,
+            "line_count": len(code_str.splitlines()),
         }

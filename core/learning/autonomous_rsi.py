@@ -408,7 +408,6 @@ if __name__ == '__main__':
     print(json.dumps({{"result": result}}))
 """
     import os
-    import subprocess
     import tempfile
 
     tmp_path = None
@@ -418,12 +417,14 @@ if __name__ == '__main__':
             tmp_path = f.name
 
         # Security: sandboxed subprocess execution of generated successor code.
-        proc = subprocess.run(
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        proc = get_subprocess_gateway().run(
             [sys.executable, "-I", "-B", tmp_path],
             input=json.dumps({"kind": task.kind, "metadata": task.metadata}),
-            text=True,
             capture_output=True,
             timeout=1.0,
+            source="autonomous_rsi.evaluate_candidate",
         )
 
         if proc.returncode == 0 and proc.stdout:
@@ -775,9 +776,14 @@ class ExternalLedgerMirror:
             "mirrored_at": time.time(),
         }
         payload["mirror_hash"] = _sha(payload)
-        with open(self.path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
-            handle.flush()
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        get_file_write_gateway().append_text(
+            self.path,
+            json.dumps(payload, sort_keys=True, default=str) + "\n",
+            encoding="utf-8",
+            source="autonomous_rsi.generation_mirror",
+        )
         return payload
 
     def verify(self) -> bool:

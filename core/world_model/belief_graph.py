@@ -50,22 +50,22 @@ class BeliefGraph:
     def __init__(self, persist_path: str = None, causal_path: str = None):
         self.graph = nx.DiGraph()
         self.self_node_id = "AURA_SELF"
-        
+
         self._persist_path = persist_path or str(config.paths.home_dir / "world_model.json")
         self._causal_path = causal_path or str(config.paths.home_dir / "causal_graph.json")
-        
+
         self.causal_links: List[Dict[str, Any]] = [] # Renamed from self.causal_links to self.links in the instruction, but keeping original name for consistency with other methods.
         self._last_save = 0.0 # For main graph
         self._dirty = False # For main graph
         self._causal_last_save = 0.0 # For causal links
         self._causal_dirty = False # For causal links
-        
+
         # Phase 44: Index sets for O(E) optimization (BUG-044)
         self._goal_edges = set()
         self._strong_edges = set()
         self._weak_edges = set()
         self._suspended_edges = set()
-        
+
         self._load()
         self._load_causal()
         self._initialize_self()
@@ -76,7 +76,7 @@ class BeliefGraph:
         """Creates or updates the anchored self-representation."""
         if self.self_node_id not in self.graph:
             self.graph.add_node(
-                self.self_node_id, 
+                self.self_node_id,
                 type="sentient_agent",
                 attributes={
                     "name": "Aura",
@@ -130,19 +130,19 @@ class BeliefGraph:
             existing = self.graph[source][target]
             if existing.get('relation') != relation:
                 return {"source": source, "target": target, **existing}
-        
+
         # Check for functional contradiction (e.g., Aura | state | idle vs Aura | state | busy)
         # This requires more metadata about relations, but for now we look at all relations from source
         if source not in self.graph:
             return None
-            
+
         for t, data in self.graph[source].items():
             # Goal relations are not functional (you can have many goals)
             if data.get('relation') == relation and t != target and relation != "pursue_goal":
                 # E.g. "User | name | Bryan" vs "User | name | John"
                 # This is a contradiction for many-to-one relations.
                 return {"source": source, "target": t, **data}
-                
+
         return None
 
     def update_belief(self, source: str, relation: str, target: str, confidence_score: float = 0.1, centrality: float = 0.1, is_goal: bool = False):
@@ -239,10 +239,10 @@ class BeliefGraph:
             new_conf = max(0.0, min(1.0, (edge_data['confidence'] * 0.8) + (confidence_score * 0.2)))
             # Centrality creeps up with repeated evidence
             new_cent = max(edge_data.get('centrality', 0.1), centrality)
-            
+
             self.graph.add_edge(
-                source, target, 
-                relation=relation, 
+                source, target,
+                relation=relation,
                 confidence=new_conf,
                 centrality=new_cent,
                 last_updated=time.time(),
@@ -252,18 +252,18 @@ class BeliefGraph:
         else:
             # New belief
             self.graph.add_edge(
-                source, target, 
-                relation=relation, 
+                source, target,
+                relation=relation,
                 confidence=max(0.0, min(1.0, confidence_score)),
                 centrality=centrality,
                 last_updated=time.time(),
                 evidence_count=1,
                 is_goal=is_goal
             )
-            
+
         # Update indices (BUG-044)
         self._update_indices(source, target, relation, confidence_score, is_goal)
-            
+
         logger.info("Belief Updated: %s -[%s]-> %s (Cent: %.2f)", source, relation, target, centrality)
         self._save()
 
@@ -285,7 +285,7 @@ class BeliefGraph:
             if o_new != o_old:
                 self._remove_from_indices(s, o_old)
                 self.graph.remove_edge(s, o_old)
-            
+
             self.graph.add_edge(s, o_new, relation=p, confidence=new_conf, centrality=new_cent, last_updated=time.time(), evidence_count=1)
             self._update_indices(s, o_new, p, new_conf, False) # Goals are resolved differently, assuming not goal here
         else:
@@ -295,7 +295,7 @@ class BeliefGraph:
             edge_data['evidence_count'] = edge_data.get('evidence_count', 1) + 1
             edge_data['last_updated'] = time.time()
             self._update_indices(s, o_old, old_p, edge_data['confidence'], edge_data.get('is_goal', False))
-        
+
         self._save()
 
     def contradict_belief(self, source: str, relation: str, target: str, strength: float = 0.3):
@@ -339,7 +339,7 @@ class BeliefGraph:
 
         if total_dissonance > 0.8:
             return False, total_dissonance, "; ".join(conflicts)
-        
+
         return True, total_dissonance, "Coherent"
 
     def _remove_from_indices(self, u: str, v: str):
@@ -353,18 +353,18 @@ class BeliefGraph:
     def _update_indices(self, u: str, v: str, p: str, conf: float, is_goal: bool):
         """Internal helper to maintain cached index sets (BUG-044)."""
         edge_key = (u, v)
-        
+
         # Update goal index
         if is_goal:
             self._goal_edges.add(edge_key)
         else:
             self._goal_edges.discard(edge_key)
-            
+
         # Update confidence indices
         self._strong_edges.discard(edge_key)
         self._weak_edges.discard(edge_key)
         self._suspended_edges.discard(edge_key)
-        
+
         if conf >= 0.8:
             self._strong_edges.add(edge_key)
         elif 0.1 <= conf < 0.8: # Adjusted to match get_weak_beliefs logic partially but expanded
@@ -388,27 +388,27 @@ class BeliefGraph:
     async def query_federated(self, entity: str) -> List[Dict[str, Any]]:
         """Phase 16.2: Query both local beliefs and remote peers."""
         local_beliefs = self.get_beliefs_about(entity)
-        
+
         from core.container import ServiceContainer
         sync_service = ServiceContainer.get("belief_sync", default=None)
-        
+
         if not sync_service:
             return local_beliefs
-            
+
         remote_beliefs = await sync_service.query_peers(entity)
-        
+
         # Merge results (local takes precedence for metadata, but remote expands the graph)
         seen = {f"{b['source']}->{b['relation']}->{b['target']}" for b in local_beliefs}
         merged = list(local_beliefs)
-        
+
         for rb in remote_beliefs:
             key = f"{rb['source']}->{rb['relation']}->{rb['target']}"
             if key not in seen:
                 # Add remote belief with lower initial confidence
-                rb['confidence'] *= 0.8 
+                rb['confidence'] *= 0.8
                 merged.append(rb)
                 seen.add(key)
-                
+
         return merged
 
     def get_beliefs(self) -> Dict[str, Any]:
@@ -423,17 +423,17 @@ class BeliefGraph:
         """
         if not self.graph.has_edge(source, target):
             return 1.0
-        
+
         edge = self.graph[source][target]
         count = edge.get('evidence_count', 1)
-        
+
         # Base uncertainty from evidence volume
         base_uncertainty = 1.0 / (1.0 + math.log(count + 1))
-        
+
         # If confidence is middle-of-the-road (0.5), uncertainty is higher
         conf = edge.get('confidence', 0.5)
         conf_entropy = 1.0 - abs(conf - 0.5) * 2.0 # 1.0 at conf=0.5, 0.0 at conf=0 or 1
-        
+
         return max(0.0, min(1.0, 0.7 * base_uncertainty + 0.3 * conf_entropy))
 
     def get_strong_beliefs(self, threshold: float = 0.8) -> List[Dict[str, Any]]:
@@ -474,11 +474,11 @@ class BeliefGraph:
                     to_remove.append((u, v))
                 else:
                     self._update_indices(u, v, d.get('relation', ''), d['confidence'], d.get('is_goal', False))
-        
+
         for u, v in to_remove:
             self._remove_from_indices(u, v)
             self.graph.remove_edge(u, v)
-            
+
         if to_remove:
             self._save()
             logger.info("Belief decay: %d beliefs dissolved", len(to_remove))
@@ -519,9 +519,14 @@ class BeliefGraph:
             }
             for u, v, d in self.graph.edges(data=True):
                 data["edges"].append({"source": u, "target": v, **d})
-                
-            with open(self._persist_path, "w") as f:
-                json.dump(data, f, indent=2)
+
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._persist_path,
+                json.dumps(data, indent=2),
+                source="belief_graph.save_graph",
+            )
         except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.error("Failed to save world model: %s", e)
@@ -531,17 +536,17 @@ class BeliefGraph:
             if os.path.exists(self._persist_path):
                 with open(self._persist_path, "r") as f:
                     data = json.load(f)
-                
+
                 # Restore nodes
                 for node_id, attrs in data.get("nodes", {}).items():
                     self.graph.add_node(node_id, **attrs)
-                
+
                 # Restore edges
                 for edge in data.get("edges", []):
                     source = edge.pop("source")
                     target = edge.pop("target")
                     self.graph.add_edge(source, target, **edge)
-                    
+
                 logger.info("Loaded %d beliefs from disk", self.graph.number_of_edges())
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('belief_graph', e)
@@ -551,7 +556,7 @@ class BeliefGraph:
     def record_outcome(self, action: Union[str, Dict[str, Any]], context: str, outcome: Any, success: bool):
         action_name = action if isinstance(action, str) else action.get("tool", "unknown")
         params = {} if isinstance(action, str) else action.get("params", {})
-        
+
         entry = {
             "action": action_name,
             "params": params,
@@ -563,7 +568,7 @@ class BeliefGraph:
         self.causal_links.append(entry)
         if len(self.causal_links) > 1000:
             self.causal_links = self.causal_links[-1000:]
-        
+
         # Metacognitive Feedback Loop
         try:
             from core.container import ServiceContainer
@@ -621,8 +626,13 @@ class BeliefGraph:
             self._causal_last_save = now
             self._causal_dirty = False
             os.makedirs(os.path.dirname(self._causal_path), exist_ok=True)
-            with open(self._causal_path, "w") as f:
-                json.dump(self.causal_links, f, indent=2)
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().write_text(
+                self._causal_path,
+                json.dumps(self.causal_links, indent=2),
+                source="belief_graph.save_causal",
+            )
         except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.error("Failed to save ACG: %s", e)

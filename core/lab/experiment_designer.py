@@ -1,47 +1,46 @@
-"""core/lab/experiment_designer.py — Research Experiment Designer.
+"""core/lab/experiment_designer.py — Experiment Designer.
+
+Designs execution/simulation scripts to test generated hypotheses.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Dict, List
+
+from core.lab.hypothesis_engine import Hypothesis
 
 logger = logging.getLogger("Aura.ExperimentDesigner")
 
 
-@dataclass
-class ExperimentProtocol:
-    protocol_id: str
-    steps: List[str]
-    parameters: Dict[str, Any]
-    target_metric: str
-
-
 class ExperimentDesigner:
-    """Creates benchmark protocols and simulation intervention steps."""
+    """Creates concrete experiment plans to validate hypotheses."""
 
-    @staticmethod
-    def design_protocol(hypothesis_id: str, statement: str) -> ExperimentProtocol:
-        logger.info("🔬 Designing experiment protocol for hypothesis: %s", hypothesis_id)
-        
-        # Determine steps based on hypothesis keywords
-        steps = [
-            "Initialize local sandbox workspace",
-            "Set up test database sqlite instance",
-            "Measure baseline queries latency (1000 runs)",
-            "Apply target index optimizations",
-            "Measure post-optimization queries latency (1000 runs)",
-            "Compare delta metrics",
-        ]
-        parameters = {
-            "runs": 1000,
-            "table_size": 50000,
-            "index_columns": ["node_id"],
+    def design_experiment(
+        self,
+        hypothesis: Hypothesis,
+        mined_facts: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        logger.info("🧪 Designing experiment to test: '%s'", hypothesis.statement)
+
+        # Design parameters based on mined benchmarks
+        control_value = 1.0
+        if mined_facts:
+            control_value = mined_facts[0].get("value", 1.0)
+
+        return {
+            "name": f"exp_test_{hypothesis.hypothesis_id}",
+            "hypothesis_id": hypothesis.hypothesis_id,
+            "independent_variable": hypothesis.variables.get("independent", "x"),
+            "dependent_variable": hypothesis.variables.get("dependent", "y"),
+            "steps": [
+                "Initialize test environment baseline",
+                f"Apply independent variable stimulus ({hypothesis.variables.get('independent')})",
+                "Measure dependent variable output",
+                "Perform statistical verification against baseline",
+            ],
+            "parameters": {
+                "runs": 5,
+                "control_value": control_value,
+                "stimulus_multiplier": 2.0,
+            }
         }
-        
-        return ExperimentProtocol(
-            protocol_id=f"proto_{hypothesis_id}",
-            steps=steps,
-            parameters=parameters,
-            target_metric="latency_delta_ratio",
-        )

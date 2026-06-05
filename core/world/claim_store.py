@@ -1,69 +1,90 @@
-"""core/world/claim_store.py — Structured Semantic Claim Repository.
+"""core/world/claim_store.py — Living Claim Store & Graph.
 
-Exposes metadata, freshness indicators, contradiction matching, and confidence thresholds.
+Stores factual claims about the external world with:
+  source, timestamp, confidence, contradiction links, freshness,
+  uncertainty, affected missions, and possible actions.
 """
 from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("Aura.ClaimStore")
 
 
 @dataclass
-class SemanticClaim:
+class WorldClaim:
     claim_id: str
     content: str
     source: str
     timestamp: float = field(default_factory=time.time)
-    confidence: float = 0.50
-    freshness: float = 1.0  # Degrades over time (decay calculation)
-    supporting_evidence: List[str] = field(default_factory=list)
-    contradictions: List[str] = field(default_factory=list)
-    impact_score: float = 0.50
+    confidence: float = 0.5
+    freshness: float = 1.0  # 1.0 is fresh, decaying to 0.0 over time
+    uncertainty: float = 0.5
+    contradiction_links: List[str] = field(default_factory=list)
+    affected_missions: List[str] = field(default_factory=list)
+    possible_actions: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class ClaimStore:
-    """Stores and links claims ingested from external perception connectives."""
+    """Stores and indexes all claims ingested from external sources."""
 
     def __init__(self) -> None:
-        self.claims: Dict[str, SemanticClaim] = {}
+        self.claims: Dict[str, WorldClaim] = {}
 
-    def add_claim(self, claim: SemanticClaim) -> None:
-        self.claims[claim.claim_id] = claim
-        logger.info("Claim Ingested [%s]: %s (conf: %.2f)", claim.claim_id, claim.content[:80], claim.confidence)
-        self._detect_contradictions(claim)
+    def add_claim(
+        self,
+        content: str,
+        source: str,
+        *,
+        confidence: float = 0.5,
+        uncertainty: float = 0.5,
+        affected_missions: Optional[List[str]] = None,
+        possible_actions: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> WorldClaim:
+        claim_id = f"claim_{int(time.time())}_{hash(content) % 100000}"
+        claim = WorldClaim(
+            claim_id=claim_id,
+            content=content,
+            source=source,
+            timestamp=time.time(),
+            confidence=confidence,
+            uncertainty=uncertainty,
+            affected_missions=affected_missions or [],
+            possible_actions=possible_actions or [],
+            metadata=metadata or {},
+        )
+        self.claims[claim_id] = claim
+        logger.info("📋 Claim Ingested: '%s' from %s", content[:60], source)
+        return claim
 
-    def get_claim(self, claim_id: str) -> Optional[SemanticClaim]:
+    def get_claim(self, claim_id: str) -> Optional[WorldClaim]:
         return self.claims.get(claim_id)
 
-    def list_claims(self) -> List[SemanticClaim]:
-        return list(self.claims.values())
+    def link_contradiction(self, cid1: str, cid2: str) -> None:
+        c1 = self.claims.get(cid1)
+        c2 = self.claims.get(cid2)
+        if c1 and c2:
+            if cid2 not in c1.contradiction_links:
+                c1.contradiction_links.append(cid2)
+            if cid1 not in c2.contradiction_links:
+                c2.contradiction_links.append(cid1)
+            c1.uncertainty = min(1.0, c1.uncertainty + 0.2)
+            c2.uncertainty = min(1.0, c2.uncertainty + 0.2)
 
-    def _detect_contradictions(self, new_claim: SemanticClaim) -> None:
-        """Simple keyword-based contradiction detector stub. Establishes links."""
-        for cid, claim in self.claims.items():
-            if cid == new_claim.claim_id:
-                continue
-            # If claims reference similar objects but assert opposite predicates
-            keywords = set(new_claim.content.lower().split())
-            match_count = sum(1 for w in claim.content.lower().split() if w in keywords)
-            
-            # Simple simulation: if highly similar but containing contradictory indicators
-            if match_count > 4 and ("not" in new_claim.content.lower() != ("not" in claim.content.lower())):
-                new_claim.contradictions.append(cid)
-                claim.contradictions.append(new_claim.claim_id)
-                logger.warning("⚠️ Contradiction detected between [%s] and [%s]!", new_claim.claim_id, cid)
+    def decay_freshness(self, decay_rate_per_hour: float = 0.01) -> None:
+        now = time.time()
+        for claim in self.claims.values():
+            age_hours = (now - claim.timestamp) / 3600.0
+            claim.freshness = max(0.0, 1.0 - (age_hours * decay_rate_per_hour))
 
+    def get_fresh_claims(self, threshold: float = 0.5) -> List[WorldClaim]:
+        self.decay_freshness()
+        return [c for c in self.claims.values() if c.freshness >= threshold]
 
-# Singleton
-_claim_store_instance: ClaimStore | None = None
-
-
-def get_claim_store() -> ClaimStore:
-    global _claim_store_instance
-    if _claim_store_instance is None:
-        _claim_store_instance = ClaimStore()
-    return _claim_store_instance
+    def query_by_mission(self, mission_id: str) -> List[WorldClaim]:
+        return [c for c in self.claims.values() if mission_id in c.affected_missions]

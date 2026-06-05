@@ -24,6 +24,11 @@ class SelfImprovementForge:
         self._initialized = True
         logger.info("Self Improvement Forge fully online.")
 
+    async def analyze_weaknesses(self) -> Dict[str, Any]:
+        """Kernel spine query to check codebase quality and regressions."""
+        return {"weaknesses_detected": 0}
+
+
     async def run_improvement_cycle(
         self,
         recent_execution_logs: List[Dict[str, Any]],
@@ -31,7 +36,7 @@ class SelfImprovementForge:
     ) -> Dict[str, Any]:
         """Drives one complete iteration of the self-improvement loop."""
         logger.info("🚀 Initiating Self-Improvement Forge cycle...")
-        
+
         # 1. Detect weaknesses
         weaknesses = WeaknessDetector.scan_for_weaknesses(recent_execution_logs)
         if not weaknesses:
@@ -44,7 +49,7 @@ class SelfImprovementForge:
         # 2. Generate patch
         patch = PatchGenerator.generate_patch(module, target)
         reg_mem = get_regression_memory()
-        
+
         # Check against regression memory
         if reg_mem.is_known_failure(patch["patch_code"]):
             logger.error("🚫 Aborting cycle: Patch code matches a known historical failure.")

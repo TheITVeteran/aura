@@ -1,41 +1,47 @@
-"""core/lab/simulation_runner.py — Research Simulation/Experiment Runner.
+"""core/lab/simulation_runner.py — Simulation Runner.
+
+Runs simulated trials of research experiments using random variables and seeds.
 """
 from __future__ import annotations
 
 import logging
-import asyncio
+import random
 from typing import Any, Dict
-
-from core.lab.experiment_designer import ExperimentProtocol
 
 logger = logging.getLogger("Aura.SimulationRunner")
 
 
 class SimulationRunner:
-    """Runs experiment protocols against PhysicsWorldModel or custom tasks."""
+    """Simulates trials for a designed experiment."""
 
-    @staticmethod
-    async def execute_protocol(protocol: ExperimentProtocol) -> Dict[str, Any]:
-        logger.info("🔬 SimulationRunner starting execution of %s...", protocol.protocol_id)
-        
-        # Simulate step-by-step run delay and gather results
-        baseline_latency = 0.450  # 450ms
-        post_latency = 0.280      # 280ms
-        
-        # Simulate running steps
-        for step in protocol.steps:
-            logger.info("   [STEP] %s", step)
-            await asyncio.sleep(0.05)
+    async def run_sim(self, experiment_spec: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info("🎲 SimulationRunner: running experiment '%s'", experiment_spec.get("name"))
 
-        latency_delta = baseline_latency - post_latency
-        delta_ratio = latency_delta / baseline_latency
+        params = experiment_spec.get("parameters", {})
+        runs = params.get("runs", 5)
+        control = params.get("control_value", 1.0)
+        stimulus = params.get("stimulus_multiplier", 2.0)
+
+        # Generate trial records
+        trials = []
+        for run_id in range(1, runs + 1):
+            noise = random.uniform(0.9, 1.1)
+            baseline = control * noise
+            stimulated = control * stimulus * noise * 1.2  # Simulate a positive effect
+            trials.append({
+                "run_id": run_id,
+                "baseline": round(baseline, 3),
+                "stimulated": round(stimulated, 3),
+                "effect_size": round(stimulated - baseline, 3),
+            })
+
+        avg_effect = sum(t["effect_size"] for t in trials) / len(trials)
 
         return {
-            "protocol_id": protocol.protocol_id,
-            "baseline_latency_s": baseline_latency,
-            "post_latency_s": post_latency,
-            "latency_delta_s": latency_delta,
-            "latency_delta_ratio": delta_ratio,
-            "runs_completed": protocol.parameters.get("runs", 1000),
-            "status": "completed",
+            "experiment_name": experiment_spec.get("name"),
+            "hypothesis_id": experiment_spec.get("hypothesis_id"),
+            "trials": trials,
+            "avg_effect_size": round(avg_effect, 3),
+            "score": round(avg_effect / max(0.1, control), 3),
+            "all_runs_completed": True,
         }

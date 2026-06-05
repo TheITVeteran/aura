@@ -6,11 +6,11 @@ pass/fail counts, and timing.
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.TestRunner")
@@ -31,16 +31,16 @@ class TestRunner:
         started = time.time()
 
         try:
-            result = subprocess.run(
-                test_command.split(),
+            # Execute command via approved subprocess gateway to pass linter
+            proc = get_subprocess_gateway().run(
+                argv=test_command.split(),
                 cwd=repo_path,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
+                source="test_runner",
             )
             duration = time.time() - started
-            stdout = result.stdout[-2000:] if result.stdout else ""
-            stderr = result.stderr[-1000:] if result.stderr else ""
+            stdout = proc.stdout if proc.stdout else ""
+            stderr = proc.stderr if proc.stderr else ""
 
             # Parse pytest output for pass/fail counts
             passed = 0
@@ -61,8 +61,8 @@ class TestRunner:
                                 pass
 
             return {
-                "all_passed": result.returncode == 0,
-                "return_code": result.returncode,
+                "all_passed": proc.returncode == 0,
+                "return_code": proc.returncode,
                 "passed": passed,
                 "failed": failed,
                 "duration_s": round(duration, 2),
@@ -70,7 +70,7 @@ class TestRunner:
                 "stderr_tail": stderr[-500:],
             }
 
-        except subprocess.TimeoutExpired:
+        except TimeoutError:
             return {"all_passed": False, "error": "timeout", "duration_s": timeout}
         except (OSError, RuntimeError) as e:
             record_degradation("test_runner", e, action="test execution failed")

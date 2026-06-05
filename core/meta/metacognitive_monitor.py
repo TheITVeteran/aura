@@ -444,8 +444,13 @@ class MetaCognitiveMonitor:
     def _log_reflection(self, reflection: MetaCognitiveReflection) -> None:
         """Append reflection to persistent log."""
         try:
-            with open(_LOG_PATH, "a") as f:
-                f.write(json.dumps(reflection.to_dict(), default=str) + "\n")
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().append_text(
+                _LOG_PATH,
+                json.dumps(reflection.to_dict(), default=str) + "\n",
+                source="metacognitive_monitor.log_reflection",
+            )
         except (OSError, IOError):
             return
 

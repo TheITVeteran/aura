@@ -1,35 +1,28 @@
-"""core/lab/research_memory.py — Research Lab Memory Store.
+"""core/lab/research_memory.py — Research Memory Store.
+
+Persists findings and outcomes of scientific research cycles.
 """
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import asdict, dataclass
-from typing import Dict, List
+import time
+from typing import Any, Dict, List
 
 logger = logging.getLogger("Aura.ResearchMemory")
 
 
-@dataclass
-class ResearchMemo:
-    memo_id: str
-    topic: str
-    hypothesis_statement: str
-    validated: bool
-    data_points: Dict[str, Any]
-    summary_prose: str
-
-
-class ResearchMemoryStore:
-    """Manages files tracking completed research memos and datasets."""
+class ResearchMemory:
+    """Stores validated conclusions and logs of research cycles."""
 
     def __init__(self) -> None:
-        self.memos: Dict[str, ResearchMemo] = {}
+        self.findings: Dict[str, Dict[str, Any]] = {}
 
-    def save_memo(self, memo: ResearchMemo) -> None:
-        self.memos[memo.memo_id] = memo
-        logger.info("🔬 Saved research memo [%s]: %s (validated: %s)", 
-                    memo.memo_id, memo.topic, memo.validated)
+    def save_research_outcome(self, cycle_id: str, conclusion: Dict[str, Any]) -> None:
+        self.findings[cycle_id] = {
+            "conclusion": conclusion,
+            "timestamp": time.time(),
+        }
+        logger.info("💾 Saved research finding for cycle '%s'", cycle_id)
 
-    def list_memos(self) -> List[ResearchMemo]:
-        return list(self.memos.values())
+    def list_findings(self) -> List[Dict[str, Any]]:
+        return [{"cycle_id": k, **v} for k, v in self.findings.items()]
