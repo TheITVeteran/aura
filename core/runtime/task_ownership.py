@@ -8,6 +8,7 @@ from core.runtime.errors import record_degradation
 
 
 import asyncio
+import contextvars
 import inspect
 import logging
 from contextlib import suppress
@@ -34,6 +35,26 @@ def close_awaitable(awaitable: Any) -> None:
             cancel()
 
 
+def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: Optional[str]) -> asyncio.Task:
+    """Create a fallback task while preserving strict task-owner semantics."""
+
+    try:
+        from core.utils.task_tracker import _SKIP_FACTORY_TRACK
+    except (ImportError, AttributeError, RuntimeError):
+        return asyncio.create_task(awaitable, name=name)
+
+    child_context = contextvars.copy_context()
+    child_context.run(_SKIP_FACTORY_TRACK.set, False)
+    token = _SKIP_FACTORY_TRACK.set(True)
+    try:
+        try:
+            return asyncio.create_task(awaitable, name=name, context=child_context)
+        except TypeError:
+            return asyncio.create_task(awaitable, name=name)
+    finally:
+        _SKIP_FACTORY_TRACK.reset(token)
+
+
 def create_tracked_task(
     awaitable: Awaitable[Any],
     *,
@@ -56,7 +77,7 @@ def create_tracked_task(
                 task = tracker.track(awaitable, name=name)
 
         if task is None:
-            task = asyncio.create_task(awaitable, name=name)
+            task = _create_owned_asyncio_task(awaitable, name=name)
             if tracker is not None:
                 try:
                     if hasattr(tracker, "observe"):

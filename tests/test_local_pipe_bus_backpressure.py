@@ -19,6 +19,14 @@ class _FakeConnection:
         self.closed = True
 
 
+class _FakeTask:
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
 def test_fire_and_forget_pipe_send_drops_during_backpressure():
     async def scenario():
         read_conn = _FakeConnection()
@@ -63,6 +71,74 @@ def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
             assert len(write_conn.sent) <= 1
         finally:
             bus._shutdown_executor()
+
+    asyncio.run(scenario())
+
+
+def test_stop_treats_task_cancellation_as_normal_shutdown(monkeypatch):
+    async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        monkeypatch.setattr(
+            module,
+            "record_degradation",
+            lambda *args, **kwargs: records.append((args, kwargs)),
+        )
+
+        async def fake_wait_for(_task, timeout):
+            assert timeout == 1.0
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)
+
+        read_conn = _FakeConnection()
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._reader_task = _FakeTask()
+
+        await bus.stop()
+
+        assert bus._reader_task.cancelled is True
+        assert records == []
+        assert read_conn.closed is True
+        assert write_conn.closed is True
+
+    asyncio.run(scenario())
+
+
+def test_stop_records_shutdown_timeouts_as_degradation(monkeypatch):
+    async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        monkeypatch.setattr(
+            module,
+            "record_degradation",
+            lambda *args, **kwargs: records.append((args, kwargs)),
+        )
+
+        async def fake_wait_for(_task, timeout):
+            assert timeout == 1.0
+            raise TimeoutError("shutdown wait timed out")
+
+        monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)
+
+        read_conn = _FakeConnection()
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._reader_task = _FakeTask()
+        bus._dispatcher_task = _FakeTask()
+
+        await bus.stop()
+
+        assert bus._reader_task.cancelled is True
+        assert bus._dispatcher_task.cancelled is True
+        assert [record[0][0] for record in records] == ["local_pipe_bus", "local_pipe_bus"]
+        assert [record[1]["action"] for record in records] == [
+            "reader task did not stop before shutdown timeout",
+            "dispatcher task did not stop before shutdown timeout",
+        ]
 
     asyncio.run(scenario())
 

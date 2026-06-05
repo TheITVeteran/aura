@@ -28,7 +28,7 @@ _ACTOR_BUS_SEND_ERRORS = (
 
 class BusDegraded(Exception):  # noqa: N818 - public compatibility name.
     """Raised when the bus health probe fails or congestion is too high."""
-    pass  # no-op: intentional
+
 
 class ActorBus:
     """Unified Actor Bus abstraction with health gating and congestion control.

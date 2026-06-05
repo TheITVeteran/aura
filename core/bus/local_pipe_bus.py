@@ -333,8 +333,15 @@ class LocalPipeBus:
             self._reader_task.cancel()
             try:
                 await asyncio.wait_for(self._reader_task, timeout=1.0)
-            except (TimeoutError, asyncio.CancelledError):
-                pass # Normal during shutdown
+            except asyncio.CancelledError:
+                logger.debug("📡 LocalPipeBus reader task cancelled during shutdown")
+            except TimeoutError as e:
+                record_degradation(
+                    "local_pipe_bus",
+                    e,
+                    action="reader task did not stop before shutdown timeout",
+                )
+                logger.warning("📡 LocalPipeBus reader did not stop before shutdown timeout")
             except (RuntimeError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Error during stop: %s", e)
@@ -342,9 +349,15 @@ class LocalPipeBus:
             self._dispatcher_task.cancel()
             try:
                 await asyncio.wait_for(self._dispatcher_task, timeout=1.0)
-            except (TimeoutError, asyncio.CancelledError):
-                logger.debug("Suppressed bare exception")
-                pass  # no-op: intentional
+            except asyncio.CancelledError:
+                logger.debug("📡 LocalPipeBus dispatcher task cancelled during shutdown")
+            except TimeoutError as e:
+                record_degradation(
+                    "local_pipe_bus",
+                    e,
+                    action="dispatcher task did not stop before shutdown timeout",
+                )
+                logger.warning("📡 LocalPipeBus dispatcher did not stop before shutdown timeout")
             except (RuntimeError, AttributeError) as e:
                 record_degradation('local_pipe_bus', e)
                 logger.error("📡 LocalPipeBus: Dispatcher stop error: %s", e)
@@ -447,14 +460,6 @@ class LocalPipeBus:
                 or time.monotonic() < getattr(self, "_write_suppressed_until", 0.0)
             ):
                 return  # Already closed — silently skip, no spam
-            
-            # Fast-fail check if connection is completely broken at the OS level
-            try:
-                # We can't poll writing, but we can check if it's explicitly broken if there's a quick way
-                pass  # no-op: intentional
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
-                record_degradation('local_pipe_bus', _e)
-                logger.debug('Ignored Exception in local_pipe_bus.py: %s', _e)
 
             write_lock = self._get_write_lock()
             if write_lock.locked():
@@ -523,10 +528,7 @@ class LocalPipeBus:
                     "pipe closed during fire-and-forget send; transport marked unhealthy",
                 )
                 logger.info("📡 Bus pipe closed (normal shutdown): %s", str(e)[:60])
-            try:
-                self._safe_close_connection(self.write_conn)
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # Already closed, expected
+            self._safe_close_connection(self.write_conn)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('local_pipe_bus', e)
             if self._is_running:

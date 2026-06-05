@@ -118,14 +118,14 @@ def _record_unowned_task(coro) -> None:
         from core.health.degraded_events import record_degraded_event
 
         record_degraded_event("strict_runtime.unowned_task", violation)
-    except (ImportError, AttributeError, RuntimeError):
-        pass  # no-op: intentional
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("Strict task violation telemetry unavailable: %s", exc)
     if os.environ.get("AURA_STRICT_RUNTIME") == "1":
         if hasattr(coro, "close"):
             try:
                 coro.close()
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("Could not close unowned coroutine after strict violation: %s", exc)
         raise RuntimeError(
             f"AURA_STRICT_RUNTIME: unowned asyncio.create_task: {violation['coro']}"
         )
