@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+import core.self_modification.mutation_safety as mutation_safety_mod
 from core.self_modification.mutation_safety import (
+    MutationDiagnostics,
     MutationOutcome,
     QuarantineStore,
     SafeMutationEvaluator,
@@ -160,6 +162,101 @@ def test_quarantine_layout(evaluator, tmp_path):
     assert (entry / "stderr.log").exists()
     payload = json.loads((entry / "result.json").read_text(encoding="utf-8"))
     assert payload["outcome"] == "runtime_exception"
+
+
+def test_quarantine_writes_artifacts_through_file_gateway(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeFileWriteGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            target = Path(path)
+            calls.append((target.name, source))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(
+        mutation_safety_mod,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+
+    diag = MutationDiagnostics(
+        outcome=MutationOutcome.RUNTIME_EXCEPTION,
+        runtime_seconds=0.1,
+        exit_code=14,
+        stdout="out",
+        stderr="err",
+    )
+
+    entry = QuarantineStore(tmp_path / "quarantine").quarantine(
+        source="raise RuntimeError('bad')\n",
+        test_source="assert False\n",
+        diagnostics=diag,
+    )
+
+    assert entry.exists()
+    assert {
+        ("source.py", "core.self_modification.mutation_safety.quarantine_source"),
+        ("test.py", "core.self_modification.mutation_safety.quarantine_test"),
+        ("stdout.log", "core.self_modification.mutation_safety.quarantine_stdout"),
+        ("stderr.log", "core.self_modification.mutation_safety.quarantine_stderr"),
+        ("result.json", "core.self_modification.mutation_safety.quarantine_result"),
+    }.issubset(set(calls))
+
+
+def test_evaluator_uses_gateways_for_temp_files_and_child_process(tmp_path, monkeypatch):
+    file_write_sources = []
+    subprocess_calls = []
+
+    class FakeFileWriteGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            file_write_sources.append(source)
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding=encoding)
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return (
+                b'__MUTATION_RESULT__:{"outcome":"passed","traceback":"","extra":{}}\n',
+                b"",
+            )
+
+    class FakeSubprocessGateway:
+        def spawn(self, argv, **kwargs):
+            subprocess_calls.append((tuple(argv), kwargs))
+            return FakeProcess()
+
+    monkeypatch.setattr(
+        mutation_safety_mod,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+    monkeypatch.setattr(
+        mutation_safety_mod,
+        "get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    evaluator = SafeMutationEvaluator(
+        timeout_seconds=1.0,
+        memory_mb=128,
+        quarantine=QuarantineStore(tmp_path / "q"),
+    )
+    diag = evaluator.evaluate("x = 1\n", test_source="assert x == 1\n")
+
+    assert diag.outcome is MutationOutcome.PASSED
+    assert {
+        "core.self_modification.mutation_safety.candidate_source",
+        "core.self_modification.mutation_safety.test_source",
+        "core.self_modification.mutation_safety.bootstrap_source",
+    }.issubset(set(file_write_sources))
+    assert subprocess_calls
+    _argv, kwargs = subprocess_calls[0]
+    assert kwargs["source"] == "core.self_modification.mutation_safety.evaluator_subprocess"
+    assert kwargs["text"] is False
 
 
 def test_passed_does_not_quarantine(evaluator):

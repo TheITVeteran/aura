@@ -32,10 +32,9 @@ to be vetted before being applied.
 """
 from __future__ import annotations
 
-import logging
-logger = logging.getLogger("core.self_modification.mutation_safety")
 import ast
 import json
+import logging
 import os
 import resource
 import signal
@@ -46,9 +45,14 @@ import textwrap
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+logger = logging.getLogger("core.self_modification.mutation_safety")
 
 
 # Exit codes the bootstrap uses to signal each typed outcome.  Chosen so
@@ -63,7 +67,7 @@ _BOOTSTRAP_EXIT = {
 }
 
 
-class MutationOutcome(str, Enum):
+class MutationOutcome(StrEnum):
     PASSED = "passed"
     COMPILE_FAIL = "compile_fail"
     IMPORT_FAIL = "import_fail"
@@ -78,14 +82,14 @@ class MutationDiagnostics:
     outcome: MutationOutcome
     runtime_seconds: float
     exit_code: int
-    signal_number: Optional[int] = None
+    signal_number: int | None = None
     stdout: str = ""
     stderr: str = ""
     traceback_text: str = ""
-    quarantine_path: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    quarantine_path: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["outcome"] = self.outcome.value
         return d
@@ -245,7 +249,7 @@ class QuarantineStore:
     only to triage them.  Each entry gets a uuid-based directory.
     """
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(self, root: Path | None = None):
         self.root = (
             Path(root)
             if root is not None
@@ -257,24 +261,47 @@ class QuarantineStore:
         self,
         *,
         source: str,
-        test_source: Optional[str],
+        test_source: str | None,
         diagnostics: MutationDiagnostics,
     ) -> Path:
         entry_id = f"mut-{uuid.uuid4()}"
         entry_dir = self.root / entry_id
         entry_dir.mkdir(parents=True, exist_ok=False)
-        (entry_dir / "source.py").write_text(source, encoding="utf-8")
+        file_gateway = get_file_write_gateway()
+        file_gateway.write_text(
+            entry_dir / "source.py",
+            source,
+            encoding="utf-8",
+            source="core.self_modification.mutation_safety.quarantine_source",
+        )
         if test_source:
-            (entry_dir / "test.py").write_text(test_source, encoding="utf-8")
-        (entry_dir / "stdout.log").write_text(diagnostics.stdout, encoding="utf-8")
-        (entry_dir / "stderr.log").write_text(diagnostics.stderr, encoding="utf-8")
-        (entry_dir / "result.json").write_text(
+            file_gateway.write_text(
+                entry_dir / "test.py",
+                test_source,
+                encoding="utf-8",
+                source="core.self_modification.mutation_safety.quarantine_test",
+            )
+        file_gateway.write_text(
+            entry_dir / "stdout.log",
+            diagnostics.stdout,
+            encoding="utf-8",
+            source="core.self_modification.mutation_safety.quarantine_stdout",
+        )
+        file_gateway.write_text(
+            entry_dir / "stderr.log",
+            diagnostics.stderr,
+            encoding="utf-8",
+            source="core.self_modification.mutation_safety.quarantine_stderr",
+        )
+        file_gateway.write_text(
+            entry_dir / "result.json",
             json.dumps(diagnostics.to_dict(), indent=2, default=str),
             encoding="utf-8",
+            source="core.self_modification.mutation_safety.quarantine_result",
         )
         return entry_dir
 
-    def list_entries(self) -> List[Path]:
+    def list_entries(self) -> list[Path]:
         if not self.root.exists():
             return []
         return sorted(p for p in self.root.iterdir() if p.is_dir())
@@ -296,7 +323,7 @@ class SafeMutationEvaluator:
         *,
         timeout_seconds: float = 30.0,
         memory_mb: int = 512,
-        quarantine: Optional[QuarantineStore] = None,
+        quarantine: QuarantineStore | None = None,
     ):
         self.timeout_seconds = float(timeout_seconds)
         self.memory_mb = int(memory_mb)
@@ -306,7 +333,7 @@ class SafeMutationEvaluator:
         self,
         source: str,
         *,
-        test_source: Optional[str] = None,
+        test_source: str | None = None,
     ) -> MutationDiagnostics:
         start = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="aura_mutation_") as tmp_dir:
@@ -314,10 +341,26 @@ class SafeMutationEvaluator:
             source_path = tmp / "candidate.py"
             test_path = tmp / "test.py" if test_source else None
             bootstrap_path = tmp / "_bootstrap.py"
-            source_path.write_text(source, encoding="utf-8")
+            file_gateway = get_file_write_gateway()
+            file_gateway.write_text(
+                source_path,
+                source,
+                encoding="utf-8",
+                source="core.self_modification.mutation_safety.candidate_source",
+            )
             if test_path is not None:
-                test_path.write_text(test_source or "", encoding="utf-8")
-            bootstrap_path.write_text(_BOOTSTRAP_SOURCE, encoding="utf-8")
+                file_gateway.write_text(
+                    test_path,
+                    test_source or "",
+                    encoding="utf-8",
+                    source="core.self_modification.mutation_safety.test_source",
+                )
+            file_gateway.write_text(
+                bootstrap_path,
+                _BOOTSTRAP_SOURCE,
+                encoding="utf-8",
+                source="core.self_modification.mutation_safety.bootstrap_source",
+            )
 
             cmd = [
                 sys.executable,
@@ -329,13 +372,15 @@ class SafeMutationEvaluator:
                 cmd.append(str(test_path))
 
             try:
-                proc = subprocess.Popen(
+                proc = get_subprocess_gateway().spawn(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=str(tmp),
                     env=self._safe_env(),
+                    text=False,
                     preexec_fn=self._set_rlimits if hasattr(os, "fork") else None,
+                    source="core.self_modification.mutation_safety.evaluator_subprocess",
                 )
             except (subprocess.SubprocessError, OSError) as e:  # pragma: no cover - subprocess setup is platform-bound
                 diag = MutationDiagnostics(
@@ -392,8 +437,8 @@ class SafeMutationEvaluator:
         *,
         stdout: str,
         stderr: str,
-        exit_code: Optional[int],
-        signal_number: Optional[int],
+        exit_code: int | None,
+        signal_number: int | None,
         runtime: float,
     ) -> MutationDiagnostics:
         # 1) Look for the bootstrap's structured marker first; it is the
@@ -434,7 +479,7 @@ class SafeMutationEvaluator:
         )
 
     @staticmethod
-    def _extract_marker(stdout: str) -> Optional[Dict[str, Any]]:
+    def _extract_marker(stdout: str) -> dict[str, Any] | None:
         marker = "__MUTATION_RESULT__:"
         for line in reversed(stdout.splitlines()):
             if line.startswith(marker):
@@ -452,7 +497,7 @@ class SafeMutationEvaluator:
             return MutationOutcome.RUNTIME_EXCEPTION
 
     @staticmethod
-    def _coerce_outcome_from_code(exit_code: Optional[int]) -> MutationOutcome:
+    def _coerce_outcome_from_code(exit_code: int | None) -> MutationOutcome:
         if exit_code is None:
             return MutationOutcome.RUNTIME_EXCEPTION
         for name, code in _BOOTSTRAP_EXIT.items():
@@ -461,7 +506,7 @@ class SafeMutationEvaluator:
         return MutationOutcome.RUNTIME_EXCEPTION
 
     @staticmethod
-    def _python_startup_flags(source: str, test_source: Optional[str]) -> List[str]:
+    def _python_startup_flags(source: str, test_source: str | None) -> list[str]:
         if SafeMutationEvaluator._source_needs_site_packages(source):
             return []
         if test_source and SafeMutationEvaluator._source_needs_site_packages(test_source):
@@ -491,7 +536,7 @@ class SafeMutationEvaluator:
     def _maybe_quarantine(
         self,
         source: str,
-        test_source: Optional[str],
+        test_source: str | None,
         diag: MutationDiagnostics,
     ) -> None:
         if diag.outcome is MutationOutcome.PASSED:
@@ -529,7 +574,7 @@ class SafeMutationEvaluator:
             logger.debug("Suppressed %s in core.self_modification.mutation_safety: %s", type(_exc).__name__, _exc)
 
     @staticmethod
-    def _safe_env() -> Dict[str, str]:
+    def _safe_env() -> dict[str, str]:
         env = dict(os.environ)
         for key in list(env):
             up = key.upper()

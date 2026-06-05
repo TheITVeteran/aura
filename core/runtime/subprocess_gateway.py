@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import IO, Any
 
@@ -217,6 +217,7 @@ class SubprocessGateway:
         env: Mapping[str, str] | None = None,
         text: bool = True,
         start_new_session: bool = True,
+        preexec_fn: Callable[[], None] | None = None,
         read_only: bool = False,
         offline_tooling: bool = False,
         source: str = "unknown",
@@ -254,6 +255,7 @@ class SubprocessGateway:
                 shell=False,
                 text=text,
                 start_new_session=start_new_session,
+                preexec_fn=preexec_fn,
             )
             proc._aura_gateway_streams = tuple(opened_streams)  # type: ignore[attr-defined]
             return proc

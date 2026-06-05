@@ -140,10 +140,6 @@ EXEMPT_FILES = {
         "justification": "Applies safe parameter adjustments to plastic network layers.",
         "compensating_tests": "tests/test_safe_optimizer.py"
     },
-    "core/self_modification/mutation_safety.py": {
-        "justification": "Statically analyzes patch syntax before self-repair actions.",
-        "compensating_tests": "tests/test_mutation_safety.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"

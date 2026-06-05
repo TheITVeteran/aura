@@ -249,3 +249,13 @@ def test_spawn_routes_stdout_and_stderr_to_gateway_owned_paths(
 
     assert stdout_path.read_text(encoding="utf-8").strip() == "gateway-out"
     assert stderr_path.read_text(encoding="utf-8").strip() == "gateway-err"
+
+
+def test_spawn_accepts_preexec_fn_for_resource_fenced_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    proc = subprocess_gateway.SubprocessGateway().spawn(
+        [sys.executable, "-c", "print('preexec-supported')"],
+        preexec_fn=None,
+        source="test.subprocess_gateway.preexec_none",
+    )
+    assert proc.wait(timeout=5) == 0
