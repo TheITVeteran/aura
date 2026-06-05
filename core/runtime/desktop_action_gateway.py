@@ -14,6 +14,7 @@ from core.governance_context import (
     require_governance,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.DesktopActionGateway")
 _DESKTOP_ACTION_RECOVERABLE_ERRORS = (
@@ -64,13 +65,11 @@ class DesktopActionGateway:
             }
 
         try:
-            proc = subprocess.run(
+            proc = get_subprocess_gateway().run(
                 ["osascript", "-e", script],
                 capture_output=True,
-                text=True,
                 timeout=timeout_s,
-                check=False,
-                shell=False,
+                source=f"desktop_action_gateway:{source}",
             )
             return {
                 "ok": proc.returncode == 0,

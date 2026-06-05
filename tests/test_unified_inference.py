@@ -196,7 +196,8 @@ async def test_local_brain_stream_failure_yields_visible_marker(monkeypatch):
     brain = LocalBrain(model_name="test-model")
 
     async def _failing_request_json(*_args, **_kwargs):
-        raise ConnectionError("stream offline")
+        reason = "stream offline"
+        raise ConnectionError(reason)
 
     monkeypatch.setattr(brain, "_request_json", _failing_request_json)
 

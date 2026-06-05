@@ -272,7 +272,7 @@ class SelfOptimizer:
                 total -= len(removed)
 
         stdout = process.stdout
-        while True:
+        while process.returncode is None:
             if abortable and getattr(self, "_abort_requested", False):
                 logger.warning("🧠 Nucleus: Memory critical! Terminating LoRA training...")
                 process.terminate()

@@ -34,11 +34,11 @@ async def test_leviathan_kernel_registration():
 
 
 @pytest.mark.asyncio
-async def test_external_actuation():
+async def test_external_actuation(tmp_path):
     """Ensures file and browser actuators safely route requests."""
     # Test file actuation does not crash and gets routed
     res = await FileActuator.write_file(
-        path="/tmp/test_actuate.txt",
+        path=str(tmp_path / "test_actuate.txt"),
         content="actuation test data",
         source="test_suite",
     )

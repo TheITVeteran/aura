@@ -38,7 +38,6 @@ import hashlib
 import json
 import logging
 import shutil
-import tarfile
 import tempfile
 import time
 import uuid
@@ -49,6 +48,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.archive_gateway import get_archive_gateway
 
 logger = logging.getLogger("Aura.Migration")
 
@@ -154,11 +154,11 @@ _ARCHIVE_PATHS: List[Path] = [
 
 
 def _build_archive(archive_path: Path) -> int:
-    archive_path.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive_path, "w:gz") as tar:
-        for src in _ARCHIVE_PATHS:
-            if src.exists():
-                tar.add(src, arcname=src.name)
+    get_archive_gateway().create_tar_gz_from_sources(
+        archive_path,
+        _ARCHIVE_PATHS,
+        source_label="sovereignty.migration.archive",
+    )
     return archive_path.stat().st_size
 
 

@@ -106,3 +106,29 @@ def test_non_proof_tooling_still_denied_in_test_mode_with_live_governance(
             offline_tooling=True,
             source="training_tooling:test",
         )
+
+
+def test_spawn_routes_stdout_and_stderr_to_gateway_owned_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    stdout_path = tmp_path / "child.stdout"
+    stderr_path = tmp_path / "child.stderr"
+
+    proc = subprocess_gateway.SubprocessGateway().spawn(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('gateway-out'); print('gateway-err', file=sys.stderr)",
+        ],
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        source="test.subprocess_gateway.path_streams",
+    )
+    assert proc.wait(timeout=5) == 0
+    for stream in getattr(proc, "_aura_gateway_streams", ()):
+        stream.close()
+
+    assert stdout_path.read_text(encoding="utf-8").strip() == "gateway-out"
+    assert stderr_path.read_text(encoding="utf-8").strip() == "gateway-err"

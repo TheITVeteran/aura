@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from core.runtime.action_executor import ActionExecutor
 from core.governance.will import ActionDomain
+from core.governance_context import GovernanceViolation
 
 logger = logging.getLogger("Aura.GitHubConnector")
 
@@ -32,7 +33,9 @@ class GitHubConnector:
                     "repo_url": f"https://github.com/{library_name}",
                     "notes": "Autonomous patch updates and capability enhancements.",
                 }
-        except Exception as e:
+        except GovernanceViolation:
+            raise
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             logger.warning("GitHub check failed, using fallback: %s", e)
 
         return {

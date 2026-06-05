@@ -429,7 +429,8 @@ class SensoryMotorCortex:
         try:
             from html.parser import HTMLParser
 
-            import requests
+            from core.governance_context import GovernanceViolation
+            from core.runtime.network_gateway import get_network_gateway
 
             class SnippetParser(HTMLParser):
                 def __init__(self):
@@ -448,11 +449,20 @@ class SensoryMotorCortex:
                         self.snippets.append(data.strip())
 
             url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
-            resp = requests.get(url, timeout=10,
-                                headers={"User-Agent": "Mozilla/5.0 Aura/1.0"})
+            resp = get_network_gateway().request(
+                "GET",
+                url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 Aura/1.0"},
+                source="sensory_motor_cortex.duckduckgo_search",
+            )
+            if not resp.get("ok"):
+                return ""
             parser = SnippetParser()
-            parser.feed(resp.text)
+            parser.feed(bytes(resp.get("content") or b"").decode("utf-8", errors="replace"))
             return " ".join(parser.snippets[:8])
+        except GovernanceViolation:
+            raise
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_motor_cortex', e)
             logger.debug("requests_fetch failed: %s", e)

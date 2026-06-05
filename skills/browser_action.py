@@ -20,9 +20,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import requests
-
+from core.governance_context import GovernanceViolation
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 try:
     from infrastructure import BaseSkill
@@ -295,16 +295,30 @@ class UnifiedBrowserSkill(BaseSkill):
                 "User-Agent": "Mozilla/5.0 (compatible; Aura/2.0; +https://github.com/aura)",
                 "Accept": "text/html, text/plain, application/json",
             }
-            response = requests.get(url, timeout=15, headers=headers, stream=True)
-            response.raise_for_status()
+            response = get_network_gateway().request(
+                "GET",
+                url,
+                timeout=15,
+                headers=headers,
+                source="skills.browser_action.text_only_fetch",
+            )
+            if not response.get("ok"):
+                return {
+                    "ok": False,
+                    "error": response.get("error") or f"HTTP {response.get('status_code')}",
+                }
 
             # Size limiting: abort if > 10MB
-            content_length = response.headers.get("content-length")
+            response_headers = response.get("headers") or {}
+            content_length = response_headers.get("content-length")
             if content_length and int(content_length) > 10 * 1024 * 1024:
                 return {"ok": False, "error": "Content exceeds 10MB limit"}
 
-            raw_content = response.text[:500000]  # 500KB safety cap
-            content_type = response.headers.get("content-type", "")
+            raw_content = bytes(response.get("content") or b"").decode(
+                "utf-8",
+                errors="replace",
+            )[:500000]  # 500KB safety cap
+            content_type = response_headers.get("content-type", "")
 
             # HTML → text conversion
             if "text/html" in content_type:
@@ -355,6 +369,8 @@ class UnifiedBrowserSkill(BaseSkill):
                     "content": content[:12000],  # Increased from 5000
                     "note": "Content fetched via HTTP because browsers failed."
                 }
+        except GovernanceViolation:
+            raise
         except (ImportError, AttributeError, RuntimeError) as e:
             logger.warning("Text-only fetch failed: %s", e)
         

@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from core.runtime.action_executor import ActionExecutor
 from core.governance.will import ActionDomain
+from core.governance_context import GovernanceViolation
 
 logger = logging.getLogger("Aura.WebConnector")
 
@@ -33,7 +34,9 @@ class WebConnector:
                     "headline": f"DuckDuckGo search result for {query}",
                     "source_url": f"https://duckduckgo.com/?q={query}",
                 }]
-        except Exception as e:
+        except GovernanceViolation:
+            raise
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             logger.warning("Network call failed, using heuristic news source: %s", e)
 
         # Fallback news items

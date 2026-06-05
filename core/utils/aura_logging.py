@@ -1,11 +1,12 @@
 from core.runtime.errors import record_degradation
 import logging
 import sqlite3
-import requests
 import json
 import os
 from datetime import datetime
 from typing import Optional
+
+from core.runtime.network_gateway import get_network_gateway
 
 # Configuration (Ideally these would come from core.config)
 DB_FILE = "data/aura_memory.db"
@@ -85,7 +86,15 @@ class WebhookAlertHandler(logging.Handler):
                 "content": f"🚨 **AURA CRITICAL ALERT** 🚨\n```text\n{log_entry}\n```"
             }
             # Short timeout to avoid hanging the main loop
-            requests.post(self.webhook_url, json=payload, timeout=2.0)
+            get_network_gateway().request(
+                "POST",
+                self.webhook_url,
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=2.0,
+                operational_telemetry=True,
+                source="observability:aura_logging.webhook",
+            )
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('aura_logging', e)
             import sys

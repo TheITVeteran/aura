@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from core.runtime.action_executor import ActionExecutor
 from core.governance.will import ActionDomain
+from core.governance_context import GovernanceViolation
 
 logger = logging.getLogger("Aura.PapersConnector")
 
@@ -30,9 +31,11 @@ class PapersConnector:
                 return [{
                     "title": f"ArXiv research matching {query}",
                     "abstract": "Deep mathematical modeling and empirical outcomes of structured local cognitive environments.",
-                    "pdf_url": "http://arxiv.org/pdf/dummy",
+                    "pdf_url": f"https://arxiv.org/search/?query={query}&searchtype=all",
                 }]
-        except Exception as e:
+        except GovernanceViolation:
+            raise
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             logger.warning("Paper search failed, using fallback: %s", e)
 
         return [

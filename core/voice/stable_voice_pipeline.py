@@ -548,14 +548,17 @@ class _MacOSSayWrapper:
 
     def speak(self, text: str):
         import subprocess
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
         # Kill previous
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
         # Clean text for shell safety
         clean = text.replace('"', "'").replace('\\', '')[:500]
-        self._proc = subprocess.Popen([
-            "say", "-v", self.voice, "-r", str(self.rate), clean
-        ])
+        self._proc = get_subprocess_gateway().spawn(
+            ["say", "-v", self.voice, "-r", str(self.rate), clean],
+            source="voice.stable_voice_pipeline.macos_say",
+        )
         self._proc.wait()
 
     def stop(self):

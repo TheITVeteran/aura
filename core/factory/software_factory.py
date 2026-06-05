@@ -144,7 +144,7 @@ class SoftwareFactory:
             job.stage = PipelineStage.REVIEW
             job.stage = PipelineStage.COMPLETED
 
-        except Exception as e:
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             job.error = str(e)
             job.stage = PipelineStage.FAILED
             logger.error("🏭 Factory job %s failed at stage %s: %s", job.job_id, job.stage, e)

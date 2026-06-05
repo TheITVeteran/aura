@@ -57,7 +57,7 @@ def test_enterprise_gate_baseline_blocks_static_regressions(tmp_path: Path):
 
     assert report["python_files"] >= 2000
     assert (
-        report["counts"]["broad_exception_review"]
+        report["counts"].get("broad_exception_review", 0)
         <= baseline["max_counts"]["broad_exception_review"]
     )
     assert not [

@@ -83,6 +83,8 @@ safe_builtins = {
     'bytes': builtins.bytes, 'callable': builtins.callable, 'chr': builtins.chr,
     'complex': builtins.complex, 'dict': builtins.dict, 'dir': builtins.dir,
     'Exception': builtins.Exception,
+    'NameError': builtins.NameError,
+    'RuntimeError': builtins.RuntimeError,
     'divmod': builtins.divmod, 'enumerate': builtins.enumerate, 'filter': builtins.filter,
     'float': builtins.float, 'format': builtins.format, 'frozenset': builtins.frozenset,
     'getattr': builtins.getattr, 'hash': builtins.hash,

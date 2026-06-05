@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 from core.runtime.action_executor import ActionExecutor
 from core.governance.will import ActionDomain
+from core.governance_context import GovernanceViolation
 
 logger = logging.getLogger("Aura.DataConnector")
 
@@ -28,7 +29,9 @@ class DataConnector:
             )
             if res.get("ok"):
                 return {"USD_EUR": 0.92, "inflation_indexed": False}
-        except Exception as e:
+        except GovernanceViolation:
+            raise
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             logger.warning("Forex/Indicator fetch failed, using fallback: %s", e)
 
         return {

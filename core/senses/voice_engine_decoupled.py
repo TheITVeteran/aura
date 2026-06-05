@@ -111,6 +111,7 @@ class DecoupledVoiceEngine:
         """Internal synthesis call. Respects interrupt_flag."""
         import subprocess
         import re
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
         
         # Clean markdown and URLs before speaking
         clean = re.sub(r"```[\s\S]*?```", "", text)
@@ -122,10 +123,11 @@ class DecoupledVoiceEngine:
             return
             
         try:
-            self._current_proc = subprocess.Popen(
+            self._current_proc = get_subprocess_gateway().spawn(
                 ["say", clean],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                source="senses.voice_engine_decoupled.macos_say",
             )
             
             # Poll so we can interrupt it instantly

@@ -22,7 +22,7 @@ async def test_minimal_boot_profile(monkeypatch):
 
     class MockOrchestrator:
         def stop(self):
-            pass
+            return None
 
     async def mock_boot_orchestrator(*args, **kwargs):
         from core.container import ServiceContainer
@@ -68,4 +68,3 @@ async def test_minimal_boot_profile(monkeypatch):
         # Reset ServiceContainer locked state
         from core.container import ServiceContainer
         ServiceContainer._locked = False
-

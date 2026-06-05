@@ -14,6 +14,7 @@ import subprocess
 from typing import Optional, Dict, Any
 
 from core.runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 try:
     import psutil
@@ -180,7 +181,14 @@ class PlatformRoot:
         """System-level check for the compiler service."""
         try:
             # Check if MTLCompilerService is in our process pool
-            out = subprocess.check_output(["ps", "aux"], text=True, stderr=subprocess.DEVNULL)
+            result = get_subprocess_gateway().run(
+                ["ps", "aux"],
+                capture_output=True,
+                timeout=5.0,
+                read_only=True,
+                source="sovereign.platform_root.ps_aux",
+            )
+            out = result.stdout
             if "MTLCompilerService" not in out:
                 logger.warning("⚠️ [PLATFORM ROOT] MTLCompilerService not visible in process list.")
                 # We can't 'start' it directly easily as it's an XPC service,

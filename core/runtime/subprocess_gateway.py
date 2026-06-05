@@ -21,6 +21,8 @@ from core.governance_context import (
 )
 
 _EFFECT_DOMAINS = (
+    "environment_action",
+    "external_action",
     "tool_execution",
     "state_mutation",
     "file_write",
@@ -53,6 +55,18 @@ def _coerce_cwd(cwd: str | os.PathLike[str] | None) -> str | None:
     if cwd is None:
         return None
     return str(Path(cwd).expanduser().resolve())
+
+
+def _open_spawn_stream(path: str | os.PathLike[str], *, text: bool) -> IO[Any]:
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(str(target), flags, 0o600)
+    try:
+        return os.fdopen(fd, "w", encoding="utf-8") if text else os.fdopen(fd, "wb")
+    except (OSError, ValueError):
+        os.close(fd)
+        raise
 
 
 def _validate_offline_tooling_bypass(
@@ -175,14 +189,10 @@ class SubprocessGateway:
         opened_streams: list[IO[Any]] = []
         try:
             if stdout_path is not None:
-                stdout_target = Path(stdout_path).expanduser()
-                stdout_target.parent.mkdir(parents=True, exist_ok=True)
-                stdout = open(stdout_target, "w", encoding="utf-8") if text else open(stdout_target, "wb")
+                stdout = _open_spawn_stream(stdout_path, text=text)
                 opened_streams.append(stdout)
             if stderr_path is not None:
-                stderr_target = Path(stderr_path).expanduser()
-                stderr_target.parent.mkdir(parents=True, exist_ok=True)
-                stderr = open(stderr_target, "w", encoding="utf-8") if text else open(stderr_target, "wb")
+                stderr = _open_spawn_stream(stderr_path, text=text)
                 opened_streams.append(stderr)
 
             proc = subprocess.Popen(
@@ -197,7 +207,7 @@ class SubprocessGateway:
             )
             setattr(proc, "_aura_gateway_streams", tuple(opened_streams))
             return proc
-        except Exception:
+        except (OSError, subprocess.SubprocessError, ValueError):
             for stream in opened_streams:
                 try:
                     stream.close()

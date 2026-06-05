@@ -351,7 +351,7 @@ class LeviathanKernel:
                 "verified": verification.get("verified", False),
             }
 
-        except Exception as e:
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             trace.error = str(e)
             trace.completed_at = time.time()
             self._spine_history.append(trace)

@@ -3985,10 +3985,12 @@ class UnitaryResponsePhase(Phase):
                             "🌐 Browser returned no content. Trying lightweight HTTP fallback..."
                         )
                         try:
+                            import json as _json
                             import html
                             from html.parser import HTMLParser
 
-                            import httpx
+                            from core.governance_context import GovernanceViolation
+                            from core.runtime.network_gateway import get_network_gateway
 
                             class _TextExtractor(HTMLParser):
                                 def __init__(self):
@@ -4080,19 +4082,25 @@ class UnitaryResponsePhase(Phase):
                                             "Accept-Language": "en-US,en;q=0.9",
                                         }
 
-                                    async with httpx.AsyncClient(
-                                        follow_redirects=True,
+                                    resp = get_network_gateway().request(
+                                        "GET",
+                                        fetch_url,
                                         timeout=20.0,
                                         headers=headers,
-                                    ) as client:
-                                        resp = await client.get(fetch_url)
+                                        source="phases.response_generation_unitary.http_fallback",
+                                    )
+                                    resp_status = int(resp.get("status_code") or 0)
+                                    resp_text = bytes(resp.get("content") or b"").decode(
+                                        "utf-8",
+                                        errors="replace",
+                                    )
 
-                                        if resp.status_code == 200:
+                                    if resp_status == 200:
                                             import re as _re
 
                                             if is_reddit:
                                                 try:
-                                                    data = resp.json()
+                                                    data = _json.loads(resp_text)
                                                     if isinstance(data, list):
                                                         post_data = (
                                                             data[0]
@@ -4153,7 +4161,7 @@ class UnitaryResponsePhase(Phase):
 
                                             else:
                                                 # Jina Proxy returns markdown
-                                                page_text = resp.text.strip()
+                                                page_text = resp_text.strip()
                                                 page_title = str(url)[:80]
                                                 first_line = page_text.split("\n")[0]
                                                 if first_line.startswith("Title: "):
@@ -4179,10 +4187,22 @@ class UnitaryResponsePhase(Phase):
                                                         "🌐 Jina Proxy failed or blocked. Trying native HTML fallback..."
                                                     )
                                                     # Ultimate Native Fallback
-                                                    native_resp = await client.get(str(url))
-                                                    if native_resp.status_code == 200:
+                                                    native_resp = get_network_gateway().request(
+                                                        "GET",
+                                                        str(url),
+                                                        timeout=20.0,
+                                                        headers=headers,
+                                                        source="phases.response_generation_unitary.native_html_fallback",
+                                                    )
+                                                    native_status = int(
+                                                        native_resp.get("status_code") or 0
+                                                    )
+                                                    native_text_raw = bytes(
+                                                        native_resp.get("content") or b""
+                                                    ).decode("utf-8", errors="replace")
+                                                    if native_status == 200:
                                                         extractor = _TextExtractor()
-                                                        extractor.feed(native_resp.text)
+                                                        extractor.feed(native_text_raw)
                                                         native_text = html.unescape(
                                                             extractor.get_text()
                                                         ).strip()
@@ -4195,7 +4215,7 @@ class UnitaryResponsePhase(Phase):
                                                         if len(native_text) > 200:
                                                             title_match = _re.search(
                                                                 r"<title[^>]*>(.*?)</title>",
-                                                                native_resp.text,
+                                                                native_text_raw,
                                                                 _re.IGNORECASE | _re.DOTALL,
                                                             )
                                                             native_title = (
@@ -4216,14 +4236,16 @@ class UnitaryResponsePhase(Phase):
                                                     else:
                                                         logger.warning(
                                                             "🌐 HTTP fallback (Native HTML) got status %d",
-                                                            native_resp.status_code,
+                                                            native_status,
                                                         )
-                                        else:
-                                            logger.warning(
-                                                "🌐 HTTP fallback got status %d for: %s",
-                                                resp.status_code,
-                                                fetch_url[:80],
-                                            )
+                                    else:
+                                        logger.warning(
+                                            "🌐 HTTP fallback got status %d for: %s",
+                                            resp_status,
+                                            fetch_url[:80],
+                                        )
+                                except GovernanceViolation:
+                                    raise
                                 except _RESPONSE_RECOVERABLE_ERRORS as http_exc:
                                     _record_response_degradation(
                                         http_exc,
@@ -4235,8 +4257,8 @@ class UnitaryResponsePhase(Phase):
                                     logger.warning(
                                         "🌐 HTTP fallback error for %s: %s", str(url)[:80], http_exc
                                     )
-                        except ImportError:
-                            logger.warning("🌐 httpx not available for lightweight fallback")
+                        except GovernanceViolation:
+                            raise
                         except _RESPONSE_RECOVERABLE_ERRORS as fallback_exc:
                             _record_response_degradation(
                                 fallback_exc,
@@ -4245,6 +4267,8 @@ class UnitaryResponsePhase(Phase):
                                 severity="error",
                             )
                             logger.warning("🌐 HTTP fallback failed: %s", fallback_exc)
+                except GovernanceViolation:
+                    raise
                 except _RESPONSE_RECOVERABLE_ERRORS as browse_exc:
                     _record_response_degradation(
                         browse_exc,

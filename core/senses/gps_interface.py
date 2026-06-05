@@ -1,8 +1,10 @@
 from core.runtime.errors import record_degradation
+import json
 import logging
-import requests
 import time
 from typing import Tuple, Optional
+
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.GpsInterface")
 
@@ -31,9 +33,16 @@ class GpsInterface:
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
-                response = requests.get("https://ipinfo.io/json", timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
+                response = get_network_gateway().request(
+                    "GET",
+                    "https://ipinfo.io/json",
+                    timeout=10,
+                    source="senses.gps_interface.lookup",
+                )
+                if response.get("status_code") == 200:
+                    data = json.loads(
+                        bytes(response.get("content") or b"").decode("utf-8", errors="replace")
+                    )
                     loc = data.get("loc", "").split(",")
                     if len(loc) == 2:
                         self.latitude = float(loc[0])
@@ -44,7 +53,7 @@ class GpsInterface:
                         self._last_fetch_mono = now
                         logger.info("📍 GPS: located system at %s: %s, %s", data.get('city', 'Unknown City'), self.latitude, self.longitude)
                         return
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (json.JSONDecodeError, OSError, ConnectionError, TimeoutError, TypeError, ValueError) as e:
                 record_degradation('gps_interface', e)
                 if attempt < max_retries:
                     logger.warning("📍 GPS attempt %s failed: %s. Retrying...", attempt+1, e)

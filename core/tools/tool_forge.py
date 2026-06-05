@@ -87,7 +87,7 @@ class ToolForge:
                         f"Ensure it implements a run() method. Output only python code."
                     )
                 )
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 logger.warning("Tool code generation failed: %s", e)
 
         if not code:

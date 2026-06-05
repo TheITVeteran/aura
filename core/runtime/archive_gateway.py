@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import tarfile
+from collections.abc import Iterable
 from pathlib import Path
 
 from core.governance_context import governance_runtime_active, require_governance
@@ -45,6 +46,28 @@ class ArchiveGateway:
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_path, "w:gz") as tf:
             tf.add(source_path, arcname=arcname or source_path.name)
+        return archive_path
+
+    def create_tar_gz_from_sources(
+        self,
+        archive: str | Path,
+        sources: Iterable[str | Path],
+        *,
+        source_label: str = "unknown",
+    ) -> Path:
+        if governance_runtime_active():
+            require_governance(
+                f"archive_gateway.create_tar_gz_from_sources:{source_label}",
+                strict=True,
+                allowed_domains=_ARCHIVE_DOMAINS,
+            )
+        archive_path = Path(archive).expanduser()
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, "w:gz") as tf:
+            for source in sources:
+                source_path = Path(source).expanduser()
+                if source_path.exists():
+                    tf.add(source_path, arcname=source_path.name)
         return archive_path
 
     def extract_tar_gz(

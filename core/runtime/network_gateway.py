@@ -32,6 +32,10 @@ _NETWORK_RECOVERABLE_ERRORS = (
     ValueError,
 )
 _HTTP_METHODS = {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+_OPERATIONAL_TELEMETRY_SOURCE_PREFIXES = (
+    "observability:",
+    "telemetry:",
+)
 
 
 class NetworkGateway:
@@ -50,6 +54,7 @@ class NetworkGateway:
         timeout: float = 30.0,
         source: str = "unknown",
         read_only: bool = False,
+        operational_telemetry: bool = False,
     ) -> dict[str, Any]:
         """Perform a synchronous HTTP request."""
         method_text = _coerce_method(method)
@@ -58,7 +63,11 @@ class NetworkGateway:
         request_headers = _coerce_headers(headers)
         request_data = _coerce_data(data)
 
-        if not read_only and governance_runtime_active():
+        telemetry_bypass = _validate_operational_telemetry_bypass(
+            operational_telemetry=operational_telemetry,
+            source=source,
+        )
+        if not read_only and not telemetry_bypass and governance_runtime_active():
             require_governance(
                 f"network_gateway.request:{source}",
                 strict=True,
@@ -149,6 +158,18 @@ def _coerce_data(data: Optional[bytes | str]) -> bytes | None:
     if isinstance(data, str):
         return data.encode("utf-8")
     raise TypeError("request data must be bytes, string, or None")
+
+
+def _validate_operational_telemetry_bypass(*, operational_telemetry: bool, source: str) -> bool:
+    if not operational_telemetry:
+        return False
+    if not any(source.startswith(prefix) for prefix in _OPERATIONAL_TELEMETRY_SOURCE_PREFIXES):
+        raise ValueError(
+            "operational telemetry network bypass requires a source prefix of "
+            f"{', '.join(_OPERATIONAL_TELEMETRY_SOURCE_PREFIXES)}"
+        )
+    logger.info("operational telemetry network request source=%s", source)
+    return True
 
 
 _gateway: Optional[NetworkGateway] = None

@@ -1,6 +1,7 @@
 from core.runtime.errors import record_degradation
 import logging
 import subprocess
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Senses.Notifications")
 
@@ -34,12 +35,19 @@ class DesktopNotifier:
                 script += f' sound name "{safe_sound}"'
 
             # Run AppleScript to trigger the native macOS toast
-            subprocess.run(
+            result = get_subprocess_gateway().run(
                 ["osascript", "-e", script],
-                check=True,
                 capture_output=True,
-                timeout=5
+                timeout=5,
+                source="senses.notifications.desktop_notification",
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    result.args,
+                    result.stdout,
+                    result.stderr,
+                )
             logger.debug("Pushed macOS notification: %s | %s", title, message)
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('notifications', e)

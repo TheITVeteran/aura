@@ -108,7 +108,7 @@ class ResearchLab:
             cycle.next_step = f"Investigate variables affecting {cycle.hypothesis.variables.get('independent', 'target')}"
             cycle.stage = ResearchStage.COMPLETED
 
-        except Exception as e:
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:
             cycle.stage = ResearchStage.FAILED
             cycle.error = str(e)
             logger.error("🔬 Research cycle %s failed at stage %s: %s", cycle.cycle_id, cycle.stage, e)

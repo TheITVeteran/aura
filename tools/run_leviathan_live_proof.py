@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,11 +49,11 @@ async def main() -> int:
     print("⚡ Executing live actions to generate receipts...")
     
     # File write transaction
-    dummy_file = Path("/tmp/leviathan_live_proof_dummy.txt")
+    proof_file = Path(tempfile.gettempdir()) / "leviathan_live_proof_file.txt"
     await ActionExecutor.execute(
         domain=ActionDomain.FILE_WRITE,
         action_name="leviathan_proof.write_file",
-        params={"path": str(dummy_file), "text": "Leviathan live proof execution content"},
+        params={"path": str(proof_file), "text": "Leviathan live proof execution content"},
         source="leviathan_live_proof"
     )
 
@@ -64,9 +65,8 @@ async def main() -> int:
         source="leviathan_live_proof"
     )
 
-    # Clean up dummy file
-    if dummy_file.exists():
-        dummy_file.unlink()
+    if proof_file.exists():
+        proof_file.unlink()
 
     # 3. Export signed decision receipts to the canonical location
     dest_dir = Path("artifacts/current/external_live_validation")
