@@ -6,20 +6,18 @@ from typing import Optional, List, Dict
 
 # Import the code to test
 from core.brain.llm.local_agent_client import LocalAgentClient
-from core.capability_engine import SkillMetadata, _coerce_and_harmonize_params, _get_base_types
+from core.capability_engine import SkillMetadata, _coerce_and_harmonize_params
 from research.protocols.resource_quotas import ComputeGovernor, QuotaExceededError
 
 
-# Subclass to satisfy abstract base class methods in LLMProvider
-class MockLocalAgentClient(LocalAgentClient):
+class StreamingLocalAgentClientProbe(LocalAgentClient):
     def generate_stream(self, *args, **kwargs):
         return iter(())
 
 
 # 1. TEST REACT PARSER & JSON RECONSTRUCTION
 def test_parse_tool_call_robustness():
-    # Use the test subclass that implements generate_stream
-    client = MockLocalAgentClient()
+    client = StreamingLocalAgentClientProbe()
 
     # Case A: Truncated JSON with missing closing brackets/braces
     raw_truncated = '{"tool": "web_search", "args": {"query": "Aura AGI"'
@@ -194,7 +192,7 @@ def test_compute_governor_stateful_simulations():
     from research.protocols.resource_quotas import get_compute_governor
     gov = get_compute_governor()
     
-    # Reset/Mock state
+    # Reset quota state
     gov.state.update({
         "max_tokens_per_hour": 100000,
         "max_concurrent_sims": 2
@@ -285,13 +283,12 @@ async def test_capability_engine_execute_pydantic_recovery():
     from pydantic import BaseModel
     import logging
 
-    # Create a dummy skill metadata with a Pydantic model
-    class DummySchema(BaseModel):
+    class EchoSchema(BaseModel):
         required_field: str
         optional_field: int = 42
 
-    class DummySkill:
-        name = "dummy_skill"
+    class EchoSkill:
+        name = "echo_skill"
         inputs = {"required_field": "A required test field"}
         
         async def execute(self, required_field: str, optional_field: int = 42):
@@ -301,17 +298,17 @@ async def test_capability_engine_execute_pydantic_recovery():
     engine.logger = logging.getLogger("Test")
     
     meta = SkillMetadata(
-        name="dummy_skill",
-        description="A dummy test skill.",
-        input_model=DummySchema,
-        skill_class=DummySkill,
+        name="echo_skill",
+        description="An echo test skill.",
+        input_model=EchoSchema,
+        skill_class=EchoSkill,
         enabled=True
     )
-    engine.skills["dummy_skill"] = meta
-    engine.instances["dummy_skill"] = DummySkill()
+    engine.skills["echo_skill"] = meta
+    engine.instances["echo_skill"] = EchoSkill()
 
     # Case A: Execute with type mismatches that can be coerced
-    result = await engine.execute("dummy_skill", {"required_field": 12345, "optional_field": "99"})
+    result = await engine.execute("echo_skill", {"required_field": 12345, "optional_field": "99"})
     assert result.get("ok") is True
     assert result.get("required") == "12345"  # coerced to str
     assert result.get("optional") == 99        # coerced to int
@@ -319,6 +316,6 @@ async def test_capability_engine_execute_pydantic_recovery():
     # Case B: Execute with missing required field (should trigger self-healing recovery loop)
     # The recovery loop will try minimal subset, and if it completely fails, fall back gracefully
     # with an _error marker without crashing the executor loop.
-    result_fail = await engine.execute("dummy_skill", {"optional_field": "100"})
+    result_fail = await engine.execute("echo_skill", {"optional_field": "100"})
     assert result_fail.get("ok") is False
-    assert "dummy" in result_fail.get("error", "").lower() or "validation" in result_fail.get("error", "").lower()
+    assert "echo" in result_fail.get("error", "").lower() or "validation" in result_fail.get("error", "").lower()

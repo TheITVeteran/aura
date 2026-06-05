@@ -10,7 +10,8 @@ resource stakes ledger, structural mutator audit chain). When any
 component is missing the test records an explicit skip rather than
 silently passing, so evidence mode can catch that too.
 
-Writes `tests/CONTINUITY_TORTURE_RESULTS.json`.
+The CLI writes `tests/CONTINUITY_TORTURE_RESULTS.json`; callers can pass an
+explicit output path to keep smoke tests from mutating tracked artifacts.
 """
 from __future__ import annotations
 
@@ -273,7 +274,7 @@ def _state_to_dict(state: ViabilityState) -> Dict[str, Any]:
     }
 
 
-def run_torture() -> Dict[str, Any]:
+def run_torture(out_path: Path | str | None = None) -> Dict[str, Any]:
     import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="continuity_torture_"))
@@ -308,7 +309,8 @@ def run_torture() -> Dict[str, Any]:
         "failures": failures,
         "cleanup_error": cleanup_error,
     }
-    out_path = ROOT / "tests" / "CONTINUITY_TORTURE_RESULTS.json"
+    out_path = Path(out_path) if out_path is not None else ROOT / "tests" / "CONTINUITY_TORTURE_RESULTS.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 

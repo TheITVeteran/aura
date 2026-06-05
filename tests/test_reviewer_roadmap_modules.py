@@ -68,7 +68,7 @@ def test_evidence_mode_override_wins(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-class _StubAgencyCore:
+class _PulseAgencyCoreProbe:
     def __init__(self) -> None:
         self.orchestrator = None
 
@@ -93,9 +93,9 @@ class _StubAgencyCore:
         }
 
 
-class _MountedFacade(AgencyFacade):  # pragma: no cover - test stub wiring
+class _FacadeProbe(AgencyFacade):  # pragma: no cover - direct facade harness
     def __init__(self):
-        self.orchestrator = None  # bypass AgencyCore __init__
+        self.orchestrator = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -103,10 +103,9 @@ class _MountedFacade(AgencyFacade):  # pragma: no cover - test stub wiring
 
 @pytest.mark.asyncio
 async def test_agency_facade_full_cycle(monkeypatch):
-    facade = _MountedFacade()
-    # Patch the required pulse method to the stub's coroutine
-    stub = _StubAgencyCore()
-    facade.pulse = stub.pulse  # type: ignore[method-assign]
+    facade = _FacadeProbe()
+    pulse_probe = _PulseAgencyCoreProbe()
+    facade.pulse = pulse_probe.pulse  # type: ignore[method-assign]
 
     proposals = await facade.propose_initiatives({})
     assert proposals and isinstance(proposals[0], InitiativeProposal)
@@ -129,7 +128,7 @@ async def test_agency_facade_full_cycle(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agency_facade_no_executor_is_explicit_failure_receipt():
-    facade = _MountedFacade()
+    facade = _FacadeProbe()
     decision = {
         "approved": True,
         "receipt_id": "will-1",
@@ -151,7 +150,7 @@ async def test_agency_facade_no_executor_is_explicit_failure_receipt():
 @pytest.mark.asyncio
 async def test_agency_facade_executor_error_returns_classified_failure_receipt():
     get_degradation_tracker().reset()
-    facade = _MountedFacade()
+    facade = _FacadeProbe()
     decision = {
         "approved": True,
         "receipt_id": "will-2",
@@ -180,7 +179,7 @@ async def test_agency_facade_executor_error_returns_classified_failure_receipt()
 
 @pytest.mark.asyncio
 async def test_agency_facade_error_dict_from_executor_is_failure():
-    facade = _MountedFacade()
+    facade = _FacadeProbe()
     decision = {
         "approved": True,
         "receipt_id": "will-3",
@@ -262,10 +261,10 @@ def test_causal_courtroom_smoke(tmp_path, monkeypatch):
     assert "full_aura" in report["conditions"]
 
 
-def test_continuity_torture_smoke():
+def test_continuity_torture_smoke(tmp_path):
     from tests.continuity_torture import run_torture
 
-    report = run_torture()
+    report = run_torture(out_path=tmp_path / "continuity_torture_results.json")
     assert "results" in report and report["results"]
     assert isinstance(report["passed"], bool)
 

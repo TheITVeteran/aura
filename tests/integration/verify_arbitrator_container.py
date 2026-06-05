@@ -1,73 +1,58 @@
-import sys
-import unittest.mock as mock
-
-# Mock pydantic to avoid version mismatch errors
-mock_pydantic = mock.MagicMock()
-sys.modules['pydantic'] = mock_pydantic
-
 import asyncio
-import time
-import types
+
+import pytest
+
+from core.container import ContainerError, ServiceContainer
 from core.resilience.resource_arbitrator import get_resource_arbitrator
-from core.container import ServiceContainer
 
-async def test_arbitrator():
+
+@pytest.mark.asyncio
+async def test_arbitrator_blocks_evolution_while_inference_active(tmp_path):
     arbitrator = get_resource_arbitrator()
-    
-    print("Test 1: Inference blocks Evolution")
-    async with arbitrator.inference_context():
-        print("Main: Inference lock acquired.")
-        
-        evo_blocked = True
-        
-        async def background_evo():
-            nonlocal evo_blocked
-            async with arbitrator.evolution_context():
-                evo_blocked = False
-                print("Background: Evolution lock acquired!")
-        
-        evo_task = asyncio.create_task(background_evo())
-        await asyncio.sleep(1) # Wait for task to try lock
-        
-        if evo_blocked:
-            print("✅ Evolution correctly blocked by Inference.")
-        else:
-            print("❌ Evolution NOT blocked by Inference!")
-            
-    await asyncio.sleep(0.5)
-    if not evo_blocked:
-        print("✅ Evolution proceeded after Inference release.")
-    else:
-        print("❌ Evolution still blocked after Inference release!")
+    original_lock_path = arbitrator._lock_path
+    original_inference_active = arbitrator._inference_active
+    original_evolution_active = arbitrator._evolution_active
+    original_mp_fd = arbitrator._mp_fd
+    arbitrator._lock_path = str(tmp_path / "vram.lock")
+    arbitrator._inference_active = False
+    arbitrator._evolution_active = False
+    arbitrator._mp_fd = None
 
-async def test_container():
-    print("\nTest 2: ServiceContainer Hardening")
-    # Reset registry for test
-    ServiceContainer._registration_locked = False
-    ServiceContainer._services = {} # Reset to plain dict
-    
-    ServiceContainer.register("test_service", lambda: {"id": 1})
-    ServiceContainer.lock_registration()
-    print("Container locked.")
-    
-    # 1. Test register() early return
-    ServiceContainer.register("rogue_service", lambda: {"id": 666})
-    if "rogue_service" not in ServiceContainer._services:
-        print("✅ Successfully prevented rogue registration (Early return).")
-    else:
-        print("❌ Rogue service found in registry!")
-
-    # 2. Test direct mutation of MappingProxy
     try:
-        ServiceContainer._services["rogue_direct"] = mock.MagicMock()
-        print("❌ Managed to directly mutate frozen registry!")
-    except TypeError:
-        print("✅ Correctly rejected direct mutation of frozen registry (MappingProxy verified).")
+        async with arbitrator.inference_context(timeout=0.25):
+            evolution_result = await arbitrator.acquire_evolution(timeout=0.05)
+            assert evolution_result is False
 
-async def main():
-    await test_arbitrator()
-    await test_container()
+        async with arbitrator.evolution_context(timeout=0.25) as acquired:
+            assert acquired is True
+    finally:
+        if arbitrator._evolution_active:
+            arbitrator.release_evolution()
+        arbitrator._lock_path = original_lock_path
+        arbitrator._inference_active = original_inference_active
+        arbitrator._evolution_active = original_evolution_active
+        arbitrator._mp_fd = original_mp_fd
+
+
+def test_container_registration_lock_rejects_new_factories():
+    saved_services = dict(ServiceContainer._services)
+    saved_aliases = dict(ServiceContainer._aliases)
+    saved_locked = ServiceContainer._registration_locked
+    try:
+        ServiceContainer.clear()
+        ServiceContainer.register("test_service", lambda: {"id": 1})
+        ServiceContainer.lock_registration()
+
+        with pytest.raises(ContainerError):
+            ServiceContainer.register("rogue_service", lambda: {"id": 666})
+
+        assert "rogue_service" not in ServiceContainer._services
+        assert ServiceContainer.get("test_service") == {"id": 1}
+    finally:
+        ServiceContainer._services = saved_services
+        ServiceContainer._aliases = saved_aliases
+        ServiceContainer._registration_locked = saved_locked
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    raise SystemExit(pytest.main([__file__]))
