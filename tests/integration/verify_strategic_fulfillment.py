@@ -3,15 +3,33 @@
 """tests/verify_strategic_fulfillment.py
 Simulation of a multi-step project fulfillment with error recovery.
 """
-import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 from core.container import ServiceContainer
 from core.data.project_store import ProjectStore
 from core.strategic_planner import StrategicPlanner
+
+
+class StrategicBrainProbe:
+    def __init__(self, content: str):
+        self.content = content
+        self.think_calls = []
+
+    async def think(self, *args, **kwargs):
+        self.think_calls.append({"args": args, "kwargs": kwargs})
+        return SimpleNamespace(content=self.content)
+
+
+class NeuralFeedProbe:
+    def __init__(self):
+        self.events = []
+
+    def push(self, message, **kwargs):
+        self.events.append({"message": message, "kwargs": kwargs})
 
 
 class TestStrategicFulfillment(unittest.IsolatedAsyncioTestCase):
@@ -21,11 +39,20 @@ class TestStrategicFulfillment(unittest.IsolatedAsyncioTestCase):
         db_path.unlink(missing_ok=True)
         self.db_path = str(db_path)
         
+        replan_json = {
+            "project_name": "Project Singularity",
+            "tasks": [
+                {"description": "Consult external advisors", "priority": 15},
+                {"description": "Alternative algorithm trial", "priority": 14},
+            ],
+        }
+
         self.store = ProjectStore(self.db_path)
-        self.brain = MagicMock()
+        self.brain = StrategicBrainProbe(f"```json\n{json.dumps(replan_json)}\n```")
         self.planner = StrategicPlanner(self.brain, self.store)
+        self.neural_feed = NeuralFeedProbe()
         ServiceContainer.register_instance("strategic_planner", self.planner)
-        ServiceContainer.register_instance("neural_feed", MagicMock())
+        ServiceContainer.register_instance("neural_feed", self.neural_feed)
 
     async def test_full_fulfillment_cycle(self):
         # 1. Manually create a 5-step project
@@ -55,25 +82,10 @@ class TestStrategicFulfillment(unittest.IsolatedAsyncioTestCase):
         self.planner.mark_task_failed(t3.id, "Algorithm deadlock: No solutions found.")
         
         # 4. Trigger Reflection Loop (Replanning)
-        # Mock brain response for replanning
-        import json
-        replan_json = {
-            "project_name": "Project Singularity",
-            "tasks": [
-                { "description": "Consult external advisors", "priority": 15 },
-                { "description": "Alternative algorithm trial", "priority": 14 }
-            ]
-        }
-        
-        mock_thought = MagicMock()
-        mock_thought.content = f"```json\n{json.dumps(replan_json)}\n```"
-        
-        # Async mock setup
-        self.brain.think.return_value = asyncio.Future()
-        self.brain.think.return_value.set_result(mock_thought)
-        
         success = await self.planner.replan_project(project.id, "Algorithm deadlock")
         self.assertTrue(success)
+        self.assertEqual(len(self.brain.think_calls), 1)
+        self.assertEqual(len(self.neural_feed.events), 1)
         
         # 5. Verify next task is the NEW one
         next_t = self.planner.get_next_task(project.id)

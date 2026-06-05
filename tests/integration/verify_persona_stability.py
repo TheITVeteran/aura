@@ -1,8 +1,7 @@
-import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 # Ensure we can import from the core directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -11,6 +10,31 @@ from core.container import ServiceContainer
 from core.brain.identity import IdentityService, KinshipMarker
 from core.agency_core import AgencyCore
 from core.brain.llm.compiler import PromptCompiler
+
+
+class OrchestratorProbe:
+    current_goal = "Maintain homeostasis and observe."
+    liquid_state = SimpleNamespace(
+        current=SimpleNamespace(energy=0.8, curiosity=0.7, frustration=0.0)
+    )
+    personality_engine = None
+
+
+class PersonalityProbe:
+    def __init__(self):
+        self.state = {"core_traits": {"Sovereign": 0.9, "Curious": 0.8}}
+
+    def get_state(self):
+        return dict(self.state)
+
+
+class SubstrateProbe:
+    def __init__(self):
+        self.status = {"integrity": 0.95, "complexity": 0.72}
+
+    def get_status(self):
+        return dict(self.status)
+
 
 class TestPersonaStability(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -28,27 +52,20 @@ class TestPersonaStability(unittest.IsolatedAsyncioTestCase):
         ServiceContainer.register_instance("identity", self.identity)
         
         # 2. Setup AgencyCore
-        self.mock_orch = MagicMock()
-        self.agency = AgencyCore(orchestrator=self.mock_orch)
+        self.orchestrator = OrchestratorProbe()
+        self.agency = AgencyCore(orchestrator=self.orchestrator)
         ServiceContainer.register_instance("agency_core", self.agency)
         
         # 3. Setup PromptCompiler
         self.compiler = PromptCompiler()
         ServiceContainer.register_instance("prompt_compiler", self.compiler)
         
-        # 4. Mock other dependencies for PromptCompiler
-        self.mock_personality = MagicMock()
-        self.mock_personality.get_state.return_value = {
-            "core_traits": {"Sovereign": 0.9, "Curious": 0.8}
-        }
-        ServiceContainer.register_instance("personality_engine", self.mock_personality)
-        
-        self.mock_substrate = MagicMock()
-        self.mock_substrate.get_status.return_value = {
-            "integrity": 0.95,
-            "complexity": 0.72
-        }
-        ServiceContainer.register_instance("conscious_substrate", self.mock_substrate)
+        # 4. Concrete dependencies for PromptCompiler
+        self.personality = PersonalityProbe()
+        ServiceContainer.register_instance("personality_engine", self.personality)
+
+        self.substrate = SubstrateProbe()
+        ServiceContainer.register_instance("conscious_substrate", self.substrate)
 
     async def test_prompt_compilation_with_monologue(self):
         """Verify that internal monologue is correctly injected into the system prompt."""
@@ -81,16 +98,15 @@ class TestPersonaStability(unittest.IsolatedAsyncioTestCase):
     async def test_mood_instability_and_grounding(self):
         """Verify that internal state changes are reflected in the prompt while maintaining identity."""
         # Case A: High Energy / Positive Mood
-        self.agency._mood = "Electrified" # Manual set for test
-        # We need a way to mock get_emotional_context to return our test mood
-        self.agency.get_emotional_context = MagicMock(return_value={"mood": "Electrified"})
-        
+        self.agency._mood = "Electrified"
+        self.agency.get_emotional_context = lambda: {"mood": "Electrified"}
+
         prompt_high = self.compiler.compile()
         self.assertIn("Electrified", prompt_high)
         
         # Case B: Low Energy / Reflective Mood
-        self.agency.get_emotional_context = MagicMock(return_value={"mood": "Melancholy"})
-        
+        self.agency.get_emotional_context = lambda: {"mood": "Melancholy"}
+
         prompt_low = self.compiler.compile()
         self.assertIn("Melancholy", prompt_low)
         self.assertNotIn("Electrified", prompt_low)
@@ -103,4 +119,3 @@ class TestPersonaStability(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
