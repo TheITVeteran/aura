@@ -41,8 +41,7 @@ class SkillEvolutionEngine:
         # Fallback to general skill list if no active errors detected via Omni
         if not targets:
             capability_engine = ServiceContainer.get("capability_engine", default=None)
-            if capability_engine:
-                all_skills = list(capability_engine.skills.keys())
+            all_skills = list(getattr(capability_engine, "skills", {}) or {})
             if all_skills:
                 import random
                 targets = random.sample(all_skills, min(2, len(all_skills)))

@@ -1,102 +1,152 @@
-"""verify_phase_9.py — Verification for Phase 9: Self-Architect & Recursive Mastery.
-"""
+from types import SimpleNamespace
 
-import asyncio
-import logging
-import sys
-import os
-from pathlib import Path
+import pytest
 
-# Add core to path
-sys.path.append(str(Path(__file__).parent))
-
-from core.container import ServiceContainer, ServiceLifetime
-from core.agency_core import AgencyCore, AgencyState
+from core.agency_core import AgencyCore
 from core.code_refiner import CodeRefinerService
+from core.container import ServiceContainer
 from core.skill_evolution import SkillEvolutionEngine
 from core.system_monitor import SystemStateMonitor
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Aura.Verify.Phase9")
 
-async def verify_recursive_mastery():
-    logger.info("🚀 Starting Phase 9 Verification: Self-Architect & Recursive Mastery...")
+class _ShardRecorder:
+    def __init__(self):
+        self.shards = []
 
-    # Mock Config for CodeRefiner
-    class MockConfig:
+    async def spawn_shard(self, **kwargs):
+        self.shards.append(kwargs)
+        return True
+
+
+class _CompletedTask:
+    def add_done_callback(self, callback):
+        callback(self)
+
+    def cancelled(self):
+        return False
+
+    def exception(self):
+        return None
+
+
+class _ClosingTracker:
+    def create_task(self, awaitable, name=None):
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
+        return _CompletedTask()
+
+
+class _RegistryRecorder:
+    def __init__(self):
+        self.updates = []
+
+    def get_state(self):
+        return SimpleNamespace(reasoning_queue_size=0)
+
+    async def update(self, **kwargs):
+        self.updates.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_code_refiner_audits_core_tree_and_records_proposals(tmp_path):
+    source = tmp_path / "dense_module.py"
+    source.write_text("\n\n".join(f"def function_{index}():\n    return {index}" for index in range(31)))
+
+    refiner = CodeRefinerService()
+    refiner.root_dir = tmp_path
+
+    proposals = await refiner.audit_core()
+
+    assert refiner.proposals == proposals
+    assert any(proposal.category == "complexity" for proposal in proposals)
+    assert any(proposal.file_path == str(source) for proposal in proposals)
+
+
+@pytest.mark.asyncio
+async def test_skill_evolution_selects_error_targets_and_spawns_research(monkeypatch):
+    swarm = _ShardRecorder()
+    services = {
+        "omni_tool": SimpleNamespace(
+            _execution_logs={
+                "filesystem_repair": [{"status": "error"} for _ in range(4)] + [{"status": "ok"}]
+            }
+        ),
+        "sovereign_swarm": swarm,
+    }
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: services.get(name, default)))
+
+    evolver = SkillEvolutionEngine()
+
+    targets = await evolver.identify_evolution_targets()
+    await evolver.spawn_evolution_shard(targets[0])
+
+    assert targets == ["filesystem_repair"]
+    assert len(swarm.shards) == 1
+    assert swarm.shards[0]["context"] == {"target_skill": "filesystem_repair"}
+    assert "filesystem_repair" in swarm.shards[0]["objective"]
+
+
+@pytest.mark.asyncio
+async def test_skill_evolution_falls_back_when_capability_registry_is_empty(monkeypatch):
+    services = {
+        "omni_tool": SimpleNamespace(_execution_logs={}),
+        "capability_engine": SimpleNamespace(),
+    }
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: services.get(name, default)))
+
+    targets = await SkillEvolutionEngine().identify_evolution_targets()
+
+    assert targets == ["web_search", "memory_query"]
+
+
+@pytest.mark.asyncio
+async def test_system_monitor_audits_stability_from_registered_services(monkeypatch):
+    registry = _RegistryRecorder()
+    services = {
+        "sovereign_swarm": SimpleNamespace(shards=[object(), object()]),
+        "code_refiner": SimpleNamespace(proposals=[object(), object()]),
+    }
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: services.get(name, default)))
+    monkeypatch.setattr("core.state_registry.get_registry", lambda: registry)
+    monkeypatch.setattr("core.system_monitor.get_task_tracker", lambda: _ClosingTracker())
+
+    health = await SystemStateMonitor().audit_stability()
+
+    assert health.active_shards == 2
+    assert health.unresolved_refinements == 2
+    assert health.cognitive_stability == pytest.approx(0.86)
+
+
+@pytest.mark.asyncio
+async def test_agency_self_architect_routes_to_skill_evolution(monkeypatch):
+    class _Evolver:
         def __init__(self):
-            class Paths:
-                project_dir = Path(__file__).parent
-            self.paths = Paths()
+            self.spawned = []
 
-    # 1. Setup Mock Container and Services using patch
-    from unittest.mock import patch, MagicMock
-    
-    # Mock SovereignSwarm for SkillEvolution
-    class MockSwarm:
-        def __init__(self):
-            self.shards = []
-        async def spawn_shard(self, **kwargs):
-            logger.info(f"Mock swarm spawning shard: {kwargs.get('objective')}")
-            self.shards.append(kwargs)
-            return True
+        async def identify_evolution_targets(self):
+            return ["adaptive_browser_use"]
 
-    with patch("core.config.config", MockConfig()), \
-         patch("core.container.ServiceContainer.get") as mock_get:
-        
-        # Setup mock ServiceContainer.get responses
-        mock_swarm = MockSwarm()
-        mock_refiner = CodeRefinerService()
-        mock_evolver = SkillEvolutionEngine()
-        mock_monitor = SystemStateMonitor()
-        
-        def container_get_mock(name, default=None):
-            return {
-                "code_refiner": mock_refiner,
-                "skill_evolution": mock_evolver,
-                "system_monitor": mock_monitor,
-                "sovereign_swarm": mock_swarm,
-                "capability_engine": None
-            }.get(name, default)
-            
-        mock_get.side_effect = container_get_mock
+        async def spawn_evolution_shard(self, skill_name):
+            self.spawned.append(skill_name)
 
-        # 2. Test CodeRefiner
-        logger.info("\n--- Test 1: Code Refiner Analysis ---")
-        proposals = await mock_refiner.analyze_file(Path(__file__))
-        logger.info(f"Proposals for this verifier: {len(proposals)}")
-        for p in proposals:
-            logger.info(f"Proposal: {p.description}")
+    evolver = _Evolver()
+    services = {
+        "code_refiner": object(),
+        "skill_evolution": evolver,
+        "system_monitor": SimpleNamespace(audit_stability=lambda: None),
+    }
 
-        # 3. Test SkillEvolution
-        logger.info("\n--- Test 2: Skill Evolution ---")
-        targets = await mock_evolver.identify_evolution_targets()
-        logger.info(f"Evolution targets: {targets}")
-        if targets:
-            await mock_evolver.spawn_evolution_shard(targets[0])
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: services.get(name, default)))
+    monkeypatch.setattr("core.agency.agency_core.random.random", lambda: 0.5)
 
-        # 4. Test SystemMonitor
-        logger.info("\n--- Test 3: System Stability Audit ---")
-        health = await mock_monitor.audit_stability()
-        if health:
-            logger.info(f"System Health: Stability={health.cognitive_stability:.2f}, Active Shards={health.active_shards}")
-
-    # 5. Test AgencyCore Integration
-    logger.info("\n--- Test 4: AgencyCore Integration ---")
-    agency = AgencyCore()
-    # Force high initiative and frustration for trigger
+    agency = AgencyCore(orchestrator=SimpleNamespace())
     agency.state.initiative_energy = 0.9
     agency.state.frustration_level = 0.8
-    
-    # Trigger pathway
-    action = await agency._pathway_self_architect(now=sys.float_info.max/2, idle_seconds=300)
-    if action:
-        logger.info(f"✅ Self-Architect triggered: {action['type']}")
-        logger.info(f"Message: {action['message']}")
-    else:
-        logger.info("ℹ️ Self-Architect did not trigger (random chance or state check).")
 
-    logger.info("\n✅ Phase 9 Verification COMPLETE.")
+    action = await agency._pathway_self_architect(now=1000.0, idle_seconds=300.0)
 
-if __name__ == "__main__":
-    asyncio.run(verify_recursive_mastery())
+    assert action["type"] == "skill_evolution"
+    assert action["skill"] == "adaptive_browser_use"
+    assert evolver.spawned == ["adaptive_browser_use"]

@@ -25,7 +25,10 @@ class CodeRefinerService:
     
     def __init__(self):
         from core.config import config
-        self.root_dir = config.paths.project_dir / "core"
+        project_root = getattr(config.paths, "project_root", None) or getattr(config.paths, "project_dir", None)
+        if project_root is None:
+            project_root = Path(__file__).resolve().parents[1]
+        self.root_dir = Path(project_root) / "core"
         self.proposals: List[RefinementProposal] = []
         logger.info("CodeRefinerService initialized.")
 
@@ -96,6 +99,7 @@ class CodeRefinerService:
             
         return proposals
 
+    async def audit_core(self) -> List[RefinementProposal]:
         """Audit all core files."""
         all_proposals = []
         files = await asyncio.to_thread(list, self.root_dir.glob("**/*.py"))
@@ -106,6 +110,10 @@ class CodeRefinerService:
         self.proposals = all_proposals
         logger.info("Audit complete. Found %s refinement targets.", len(all_proposals))
         return all_proposals
+
+    async def audit_all_core_files(self) -> List[RefinementProposal]:
+        """Compatibility alias for callers that need explicit naming."""
+        return await self.audit_core()
 
     def get_highest_impact_proposals(self, limit: int = 5) -> List[RefinementProposal]:
         """Fetch priority targets."""
