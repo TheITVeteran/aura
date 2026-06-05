@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 
-from tools.production_surface_lint import AstLinter
+from tools.production_surface_lint import EXEMPT_FILES, AstLinter
 
 
 def _findings(source: str) -> list[str]:
@@ -218,3 +218,59 @@ def save(path):
     )
 
     assert "unapproved_direct_file_write" not in kinds
+
+
+def test_lint_has_no_audited_production_exemptions() -> None:
+    assert EXEMPT_FILES == {}
+
+
+def test_lint_blocks_builtin_dynamic_code_execution() -> None:
+    kinds = _findings(
+        """
+def run(source):
+    code = compile(source, "<dynamic>", "exec")
+    exec(code, {})
+"""
+    )
+
+    assert kinds.count("raw_dynamic_code") == 2
+
+
+def test_lint_blocks_builtins_dynamic_code_execution() -> None:
+    kinds = _findings(
+        """
+import builtins
+
+def run(source):
+    return builtins.compile(source, "<dynamic>", "exec")
+"""
+    )
+
+    assert "raw_dynamic_code" in kinds
+
+
+def test_lint_allows_non_dynamic_compile_method_calls() -> None:
+    kinds = _findings(
+        """
+class Compiler:
+    def compile(self, value):
+        return value
+
+def run(compiler, observation):
+    return compiler.compile(observation)
+"""
+    )
+
+    assert "raw_dynamic_code" not in kinds
+
+
+def test_lint_allows_dynamic_code_only_in_canonical_gateway() -> None:
+    kinds = _findings_for_path(
+        """
+def run(code_object, globals_dict):
+    exec(code_object, globals_dict)
+""",
+        "core/runtime/dynamic_execution_gateway.py",
+    )
+
+    assert "raw_dynamic_code" not in kinds

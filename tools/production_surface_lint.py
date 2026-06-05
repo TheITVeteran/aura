@@ -62,29 +62,10 @@ ALWAYS_EXCLUDED_DIRS = {
 }
 ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
-# Production files that have audited and approved exceptions
-EXEMPT_FILES = {
-    "core/agency/repl_daemon.py": {
-        "justification": "Provides a local Python REPL for direct shell interactions.",
-        "compensating_tests": "tests/test_repl_daemon.py"
-    },
-    "core/brain/react_loop.py": {
-        "justification": "Executes ReAct cognitive thought loops.",
-        "compensating_tests": "tests/test_react_loop.py"
-    },
-    "core/kernel/shadow_kernel.py": {
-        "justification": "Maintains a redundant hot-standby system state.",
-        "compensating_tests": "tests/test_shadow_kernel.py"
-    },
-    "core/runtime/self_repair_ladder.py": {
-        "justification": "Implements self-debugging and hot-patching compilation layers.",
-        "compensating_tests": "tests/test_self_repair_ladder.py"
-    },
-    "core/environments/terminal_grid/state_compiler.py": {
-        "justification": "Compiles and serializes the terminal grid environment state.",
-        "compensating_tests": "tests/test_terminal_grid_state.py"
-    },
-}
+# Production files with audited exceptions. The target for closure is zero; keep
+# this structure only so the gate can report regressions if a future exception is
+# deliberately introduced with compensating evidence.
+EXEMPT_FILES: dict[str, dict[str, str]] = {}
 
 
 @dataclass
@@ -245,7 +226,7 @@ class AstLinter(ast.NodeVisitor):
                 node,
                 "Blocking sleep in async function is prohibited.",
             )
-        elif name in {"compile", "eval", "exec"}:
+        elif self._is_builtin_dynamic_code_call(node):
             self.add(
                 "critical",
                 "raw_dynamic_code",
@@ -356,6 +337,15 @@ class AstLinter(ast.NodeVisitor):
         if isinstance(func, ast.Name):
             parts.append(func.id)
         return ".".join(reversed(parts))
+
+    def _is_builtin_dynamic_code_call(self, node: ast.Call) -> bool:
+        if isinstance(node.func, ast.Name):
+            name = self._canonical_call_name(node.func.id)
+            return name in {"compile", "eval", "exec", "builtins.compile", "builtins.eval", "builtins.exec"}
+        if isinstance(node.func, ast.Attribute):
+            name = self._canonical_call_name(self._call_name_from_func(node.func))
+            return name in {"builtins.compile", "builtins.eval", "builtins.exec"}
+        return False
 
     def _has_subprocess_callable_arg(self, node: ast.Call) -> bool:
         forbidden = {

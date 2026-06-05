@@ -1,21 +1,21 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-from core.security.ast_guard import ASTGuard, DEFAULT_SAFE_MODULES, SecurityViolation
 
-import multiprocessing
-import traceback
-import json
-import os
-import sys
-import builtins
-import time
 import asyncio
-import copy
+import builtins
+import json
 import logging
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
-from .bridge import Phase
+import multiprocessing
+import time
+import traceback
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
+from core.runtime.errors import record_degradation
+from core.security.ast_guard import DEFAULT_SAFE_MODULES, ASTGuard, SecurityViolation
 from core.state.aura_state import AuraState
+
+from .bridge import Phase
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -99,7 +99,18 @@ def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: mult
         # builtins/import surface. The mutation can define helpers and a
         # validate(state_dict) function, but it cannot perform file, process,
         # network, importlib, or introspection escapes.
-        exec(mutated_code, sandbox_globals, sandbox_globals)  # nosec
+        dynamic_gateway = get_dynamic_execution_gateway()
+        code_object = dynamic_gateway.compile_source(
+            mutated_code,
+            filename="<shadow_mutation>",
+            mode="exec",
+            source="shadow_kernel.sandbox_worker",
+        )
+        dynamic_gateway.execute_code_object(
+            code_object,
+            globals_dict=sandbox_globals,
+            source="shadow_kernel.sandbox_worker",
+        )
         
         state_dict = json.loads(serialized_state)
         validator = sandbox_globals.get("validate")
@@ -120,10 +131,10 @@ class ShadowExecutionPhase(Phase):
     Headless sandbox validator.
     Runs mutations in a separate process to prevent host-kernel contamination.
     """
-    def __init__(self, kernel: "AuraKernel"):
+    def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
 
-    async def execute(self, state: AuraState, objective: Optional[str] = None, **kwargs) -> AuraState:
+    async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """
         [ZENITH-v2] Dual-Phase Validation: Behavioral + Structural.
         """

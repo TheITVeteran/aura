@@ -1,6 +1,4 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import httpx
 import json
 import logging
 import re
@@ -8,8 +6,12 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from html.parser import HTMLParser
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
+import httpx
+
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
+from core.runtime.errors import record_degradation
 from core.runtime.governance_policy import allow_simple_query_bypass
 from core.runtime.network_gateway import get_network_gateway
 
@@ -108,8 +110,8 @@ class Thought:
 class Action:
     """A discrete operation to execute."""
     action_type: ActionType
-    tool_name: Optional[str] = None
-    params: Dict[str, Any] = field(default_factory=dict)
+    tool_name: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
     raw_output: str = ""                   # LLM's raw action specification
 
 
@@ -118,7 +120,7 @@ class Observation:
     """The grounded result of executing an action."""
     content: str
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
     source: str = ""
     timestamp: float = field(default_factory=time.time)
 
@@ -137,7 +139,7 @@ class ReActStep:
 class ReActTrace:
     """The full reasoning trace for one query."""
     query: str
-    steps: List[ReActStep] = field(default_factory=list)
+    steps: list[ReActStep] = field(default_factory=list)
     final_answer: str = ""
     total_steps: int = 0
     reasoning_summary: str = ""
@@ -196,7 +198,6 @@ class ActionExecutor:
 
     async def execute(self, action: Action) -> Observation:
         """Route and execute an action, returning a grounded observation."""
-        start = time.time()
         try:
             if action.action_type == ActionType.MEMORY_QUERY:
                 return await self._execute_memory_query(action)
@@ -224,7 +225,7 @@ class ActionExecutor:
     async def _execute_memory_query(self, action: Action) -> Observation:
         from core.container import ServiceContainer
         query = action.params.get("query", "")
-        results: List[str] = []
+        results: list[str] = []
 
         # Episodic memory — hybrid similarity + keyword recall
         try:
@@ -462,7 +463,7 @@ class ActionExecutor:
                     except (httpx.HTTPError, ValueError, OSError) as html_err:
                         _record_react_degradation(html_err, action="returned search index unavailable observation")
                     return Observation(content=f"Search index dependency unavailable: {sc_err}", success=False)
-                except (ImportError, AttributeError, RuntimeError) as sc_err:
+                except (AttributeError, RuntimeError) as sc_err:
                     _record_react_degradation(sc_err, action="returned search index completely blocked observation")
                     return Observation(content=f"Search index completely blocked: {sc_err}", success=False)
                 
@@ -565,23 +566,23 @@ class ActionExecutor:
         except SyntaxError as e:
             return Observation(content=f"Syntax error: {e}", success=False)
 
-        BLOCKED_MODULES = self._SANDBOX_BLOCKED_MODULES
-        BLOCKED_BUILTINS = self._SANDBOX_BLOCKED_BUILTINS
+        blocked_modules = self._SANDBOX_BLOCKED_MODULES
+        blocked_builtins = self._SANDBOX_BLOCKED_BUILTINS
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] in BLOCKED_MODULES:
+                    if alias.name.split(".")[0] in blocked_modules:
                         return Observation(content=f"Blocked: import of '{alias.name}' is not allowed", success=False)
             elif isinstance(node, ast.ImportFrom):
-                if node.module and node.module.split(".")[0] in BLOCKED_MODULES:
+                if node.module and node.module.split(".")[0] in blocked_modules:
                     return Observation(content=f"Blocked: import from '{node.module}' is not allowed", success=False)
             elif isinstance(node, ast.Call):
                 func = node.func
-                if isinstance(func, ast.Name) and func.id in BLOCKED_BUILTINS:
+                if isinstance(func, ast.Name) and func.id in blocked_builtins:
                     return Observation(content=f"Blocked: call to '{func.id}' is not allowed", success=False)
                 elif isinstance(func, ast.Attribute):
-                    if isinstance(func.value, ast.Name) and func.value.id in BLOCKED_MODULES:
+                    if isinstance(func.value, ast.Name) and func.value.id in blocked_modules:
                         return Observation(content=f"Blocked: '{func.value.id}.{func.attr}' is not allowed", success=False)
             elif isinstance(node, ast.Attribute):
                 # Block dunder escape vectors like obj.__class__.__mro__[-1].__subclasses__()
@@ -592,7 +593,6 @@ class ActionExecutor:
 
         try:
             import builtins
-            import importlib
             import io
             from contextlib import redirect_stdout
 
@@ -602,7 +602,7 @@ class ActionExecutor:
 
             def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
                 root = name.split(".")[0]
-                if root in BLOCKED_MODULES:
+                if root in blocked_modules:
                     raise ImportError(f"Blocked: import of '{name}' is not allowed in the sandbox")
                 return real_import(name, globals, locals, fromlist, level)
 
@@ -624,7 +624,13 @@ class ActionExecutor:
                 }
             }
 
-            import math, json as _json, statistics, fractions, decimal, itertools, functools
+            import decimal
+            import fractions
+            import functools
+            import itertools
+            import json as _json
+            import math
+            import statistics
             safe_globals["math"] = math
             safe_globals["json"] = _json
             safe_globals["statistics"] = statistics
@@ -633,9 +639,21 @@ class ActionExecutor:
             safe_globals["itertools"] = itertools
             safe_globals["functools"] = functools
 
-            exec_result: Dict[str, Any] = {}
+            exec_result: dict[str, Any] = {}
             with redirect_stdout(output_buf):
-                exec(code, safe_globals, exec_result)  # noqa: S102
+                dynamic_gateway = get_dynamic_execution_gateway()
+                code_object = dynamic_gateway.compile_source(
+                    code,
+                    filename="<react_python_sandbox>",
+                    mode="exec",
+                    source="react_loop.python_sandbox",
+                )
+                dynamic_gateway.execute_code_object(
+                    code_object,
+                    globals_dict=safe_globals,
+                    locals_dict=exec_result,
+                    source="react_loop.python_sandbox",
+                )
 
             output = output_buf.getvalue()
             result_val = exec_result.get("result", "")
@@ -717,7 +735,7 @@ class ReActResponseParser:
     ACTION_PATTERN  = re.compile(r"Action:\s*(\w+)", re.IGNORECASE)
     INPUT_PATTERN   = re.compile(r"ActionInput:\s*(.+?)(?=Thought:|$)", re.DOTALL | re.IGNORECASE)
 
-    def parse(self, llm_output: str) -> Tuple[Optional[Thought], Optional[Action]]:
+    def parse(self, llm_output: str) -> tuple[Thought | None, Action | None]:
         """Parse LLM output into a (Thought, Action) pair."""
         thought_match = self.THOUGHT_PATTERN.search(llm_output)
         action_match  = self.ACTION_PATTERN.search(llm_output)
@@ -809,7 +827,7 @@ class ReActLoop:
                 return True
         return False
 
-    def _format_trace(self, steps: List[ReActStep]) -> str:
+    def _format_trace(self, steps: list[ReActStep]) -> str:
         """Format previous steps for injection into the next LLM call."""
         if not steps:
             return "No previous steps."
@@ -824,7 +842,7 @@ class ReActLoop:
         
         return "\n".join(parts)
 
-    async def _run_generator(self, query: str, context: Dict[str, Any] = None):
+    async def _run_generator(self, query: str, context: dict[str, Any] = None):
         """
         The core reasoning async generator.
         Yields events:
@@ -988,7 +1006,7 @@ class ReActLoop:
                                 trace.steps[-1].observation.content[:200] if trace.steps else ""
                             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             trace.terminated_reason = "timeout"
             trace.final_answer = "That required more reasoning time than I had. Here's what I know so far: " + (
                 trace.steps[-1].observation.content[:200] if trace.steps else "no stable observation was available before timeout."
@@ -1020,8 +1038,8 @@ class ReActLoop:
             if episodic is None or not hasattr(episodic, "record_episode_async"):
                 return
 
-            tools_used: List[str] = []
-            lessons: List[str] = []
+            tools_used: list[str] = []
+            lessons: list[str] = []
             saw_error = False
             for step in trace.steps:
                 if step.action and step.action.action_type:
@@ -1074,7 +1092,7 @@ class ReActLoop:
             _record_react_degradation(exc, action="skipped episode persistence to episodic memory")
             logger.debug("ReAct: episode recording skipped: %s", exc)
 
-    async def run(self, query: str, context: Dict[str, Any] = None) -> ReActTrace:
+    async def run(self, query: str, context: dict[str, Any] = None) -> ReActTrace:
         """
         Run the full ReAct reasoning loop for a query.
         Collects all events from _run_generator and returns the trace.
@@ -1086,7 +1104,7 @@ class ReActLoop:
         
         return final_trace or ReActTrace(query=query, final_answer="Reasoning failed to conclude.")
 
-    async def run_stream(self, query: str, context: Dict[str, Any] = None, priority: bool = False):
+    async def run_stream(self, query: str, context: dict[str, Any] = None, priority: bool = False):
         """
         Streaming version — yields thoughts and final answer as they happen.
         """

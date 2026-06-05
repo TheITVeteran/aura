@@ -5,6 +5,7 @@ import os
 import sys
 import traceback
 
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 
 _REPL_EXECUTION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
@@ -47,7 +48,18 @@ def main() -> None:
                     # Execute in an isolated namespace by default. Stateful
                     # mode is opt-in to avoid contaminating independent tool
                     # calls with hidden prior variables.
-                    exec(code, namespace)  # nosec
+                    dynamic_gateway = get_dynamic_execution_gateway()
+                    code_object = dynamic_gateway.compile_source(
+                        code,
+                        filename="<aura_repl>",
+                        mode="exec",
+                        source="agency.repl_daemon",
+                    )
+                    dynamic_gateway.execute_code_object(
+                        code_object,
+                        globals_dict=namespace,
+                        source="agency.repl_daemon",
+                    )
                     success = True
                 except _REPL_EXECUTION_ERRORS:
                     traceback.print_exc(file=out)

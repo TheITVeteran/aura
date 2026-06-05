@@ -18,14 +18,14 @@ alone — this module enforces that contract.
 """
 from __future__ import annotations
 
-
 import ast
 import logging
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable, List, Optional, Sequence, Union
 
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.self_modification.mutation_safety import (
     MutationOutcome,
     QuarantineStore,
@@ -101,19 +101,19 @@ BANNED_AST_PATTERNS: tuple = (
 class RungResult:
     rung: str
     ok: bool
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @dataclass
 class LadderReport:
-    rungs: List[RungResult] = field(default_factory=list)
+    rungs: list[RungResult] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
         return bool(self.rungs) and all(r.ok for r in self.rungs)
 
     @property
-    def first_failure(self) -> Optional[RungResult]:
+    def first_failure(self) -> RungResult | None:
         for r in self.rungs:
             if not r.ok:
                 return r
@@ -122,17 +122,17 @@ class LadderReport:
 
 # Caller-provided probes can be sync or async, returning bool or
 # raising on failure.
-ProbeResult = Union[bool, Awaitable[bool]]
+ProbeResult = bool | Awaitable[bool]
 Probe = Callable[[], ProbeResult]
 
 
 @dataclass
 class SelfRepairProbes:
-    targeted: Optional[Probe] = None
-    boot_smoke: Optional[Probe] = None
-    one_turn: Optional[Probe] = None
-    shutdown: Optional[Probe] = None
-    rollback: Optional[Probe] = None
+    targeted: Probe | None = None
+    boot_smoke: Probe | None = None
+    one_turn: Probe | None = None
+    shutdown: Probe | None = None
+    rollback: Probe | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,12 @@ class SelfRepairProbes:
 
 def _check_syntax(patch_source: str) -> RungResult:
     try:
-        compile(patch_source, "<self_repair_patch>", "exec")
+        get_dynamic_execution_gateway().compile_source(
+            patch_source,
+            filename="<self_repair_patch>",
+            mode="exec",
+            source="self_repair_ladder.syntax",
+        )
     except SyntaxError as exc:
         return RungResult(RUNG_SYNTAX, False, f"syntax error: {exc}")
     return RungResult(RUNG_SYNTAX, True)
@@ -154,7 +159,7 @@ def _check_ast_safety(patch_source: str) -> RungResult:
     except SyntaxError as exc:
         return RungResult(RUNG_AST_SAFETY, False, f"unparseable: {exc}")
 
-    bad: List[str] = []
+    bad: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -168,7 +173,7 @@ def _check_ast_safety(patch_source: str) -> RungResult:
             func = node.func
             name = None
             if isinstance(func, ast.Attribute):
-                parts: List[str] = []
+                parts: list[str] = []
                 cur = func
                 while isinstance(cur, ast.Attribute):
                     parts.append(cur.attr)
@@ -213,7 +218,7 @@ def _check_import(patch_source: str, module_name: str = "aura_self_repair_candid
     return RungResult(RUNG_IMPORT, True)
 
 
-async def _run_probe(rung: str, probe: Optional[Probe]) -> RungResult:
+async def _run_probe(rung: str, probe: Probe | None) -> RungResult:
     if probe is None:
         return RungResult(rung, True, reason="no probe provided")
     try:
@@ -235,7 +240,7 @@ async def _run_probe(rung: str, probe: Optional[Probe]) -> RungResult:
 async def validate_patch(
     patch_source: str,
     *,
-    probes: Optional[SelfRepairProbes] = None,
+    probes: SelfRepairProbes | None = None,
     stop_on_first_failure: bool = True,
 ) -> LadderReport:
     """Run the full validation ladder. Returns a LadderReport.
