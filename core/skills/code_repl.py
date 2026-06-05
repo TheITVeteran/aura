@@ -21,7 +21,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.governance.will import ActionDomain
+from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.CodeREPL")
@@ -274,57 +277,40 @@ class CodeREPLSkill(BaseSkill):
     async def _execute_via_subprocess(
         self, code: str, timeout_s: int, cwd: Path
     ) -> dict[str, Any] | None:
-        """Execute via the canonical subprocess gateway as a last-resort backend."""
+        """Execute via the canonical ActionExecutor subprocess pathway."""
         import sys
-
-        from core.runtime.subprocess_gateway import get_subprocess_gateway
 
         temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False, dir=str(cwd)
-            ) as f:
-                f.write(code)
-                temp_path = f.name
-
-            process = await get_subprocess_gateway().spawn_async(
-                [sys.executable, temp_path],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(cwd),
-                source="tool_execution:code_repl",
+            fd, temp_path = tempfile.mkstemp(suffix=".py", dir=str(cwd))
+            os.close(fd)
+            get_file_write_gateway().write_text(
+                temp_path,
+                code,
+                encoding="utf-8",
+                source="core.skills.code_repl.temp_script",
             )
 
-            try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout_s
-                )
-            except TimeoutError:
-                process.kill()
-                try:
-                    await asyncio.wait_for(process.communicate(), timeout=2.0)
-                except _REPL_RECOVERABLE_ERRORS as _exc:
-                    logger.debug("Suppressed %s in core.skills.code_repl: %s", type(_exc).__name__, _exc)
-                return {
-                    "ok": False,
-                    "error": f"Execution timed out after {timeout_s}s",
-                    "engine": "subprocess",
-                }
+            # Execute via ActionExecutor
+            res = await ActionExecutor.execute(
+                domain=ActionDomain.TOOL_EXECUTION,
+                action_name="code_repl.run_script",
+                params={
+                    "argv": [sys.executable, temp_path],
+                    "cwd": str(cwd),
+                    "timeout": float(timeout_s),
+                },
+                source="code_repl",
+            )
 
-            stdout = stdout_b.decode("utf-8", errors="replace")
-            stderr = stderr_b.decode("utf-8", errors="replace")
-
+            # Map ActionExecutor result to expected REPL format
             return {
-                "ok": process.returncode == 0,
-                "stdout": stdout,
-                "stderr": stderr,
-                "returncode": process.returncode,
+                "ok": res.get("ok", False),
+                "stdout": res.get("stdout", ""),
+                "stderr": res.get("stderr", ""),
+                "returncode": res.get("exit_code", -1),
                 "engine": "subprocess",
-                "summary": (
-                    "Code executed via subprocess."
-                    if process.returncode == 0
-                    else f"Subprocess exited with code {process.returncode}."
-                ),
+                "summary": res.get("error", "Code executed via ActionExecutor."),
             }
 
         except _REPL_RECOVERABLE_ERRORS as exc:
