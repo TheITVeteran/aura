@@ -8,7 +8,6 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.llm.mlx_vision_client import MLXVisionClient
@@ -52,8 +51,22 @@ class ReplaceAttr:
 
 
 def replace_dotted(dotted_name: str, value):
-    module_name, attr_name = dotted_name.rsplit(".", 1)
-    return ReplaceAttr(importlib.import_module(module_name), attr_name, value)
+    parts = dotted_name.split(".")
+    import_error = None
+    for idx in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:idx])
+        try:
+            target = importlib.import_module(module_name)
+            attrs = parts[idx:]
+            break
+        except ModuleNotFoundError as exc:
+            import_error = exc
+    else:
+        raise import_error or ModuleNotFoundError(dotted_name)
+
+    for attr_name in attrs[:-1]:
+        target = getattr(target, attr_name)
+    return ReplaceAttr(target, attrs[-1], value)
 
 
 class ProcessProbe:
@@ -160,10 +173,30 @@ class MPContextProbe:
     def __init__(self, *queues):
         self.queues = list(queues)
 
-    def Queue(self):
+    def Queue(self, **_kwargs):
         if not self.queues:
             raise AssertionError("No queued IPC probe available")
         return self.queues.pop(0)
+
+
+class LockProbe:
+    def __init__(self, *, acquire_result=True, release_error: BaseException | None = None):
+        self.acquire_result = acquire_result
+        self.release_error = release_error
+        self.acquire_calls = []
+        self.release_calls = 0
+
+    def acquire(self, *args, **kwargs):
+        self.acquire_calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.acquire_result
+
+    def release(self):
+        self.release_calls += 1
+        if self.release_error is not None:
+            raise self.release_error
+
+    def assert_released(self):
+        assert self.release_calls > 0
 
 
 class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
@@ -583,8 +616,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_generation_preserves_healthy_worker(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = True
         self._attach_local_ipc_queues(client)
@@ -597,14 +629,15 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             cancelled_calls.append((args, kwargs))
             raise asyncio.CancelledError
 
-        with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):
-            with patch.object(client, "_wait_for_generation_result", side_effect=_cancelled):
-                with patch.object(client, "reboot_worker", new=AsyncMock()) as reboot_mock:
-                    with patch("time.time", return_value=10_001.0):
+        reboot_probe = AsyncCallProbe()
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+            with ReplaceAttr(client, "_wait_for_generation_result", AsyncCallProbe(side_effect=_cancelled)):
+                with ReplaceAttr(client, "reboot_worker", reboot_probe):
+                    with replace_dotted("time.time", lambda: 10_001.0):
                         with self.assertRaises(asyncio.CancelledError):
                             await client._generate_inner("hello", foreground_request=True)
 
-        reboot_mock.assert_not_awaited()
+        reboot_probe.assert_not_awaited()
         self.assertEqual(len(cancelled_calls), 1)
 
     async def test_expected_cancelled_generation_does_not_mark_worker_unhealthy(self):
@@ -620,9 +653,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             cancelled_calls.append((args, kwargs))
             raise asyncio.CancelledError
 
-        with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):
-            with patch.object(client, "_wait_for_generation_result", side_effect=_cancelled):
-                with patch("time.time", return_value=10_001.0):
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+            with ReplaceAttr(client, "_wait_for_generation_result", AsyncCallProbe(side_effect=_cancelled)):
+                with replace_dotted("time.time", lambda: 10_001.0):
                     with self.assertRaises(asyncio.CancelledError):
                         await client._generate_inner("hello", foreground_request=True)
 
@@ -640,9 +673,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time()
 
         try:
-            with patch.object(client, "_acquire_request_lock", new=AsyncMock(return_value=True)):
-                with patch.object(client, "_generate_inner", new=AsyncMock()) as inner:
-                    with patch("core.brain.llm.mlx_client._foreground_owner_wait_budget", return_value=0.0):
+            acquire_probe = AsyncCallProbe(return_value=True)
+            inner = AsyncCallProbe()
+            with ReplaceAttr(client, "_acquire_request_lock", acquire_probe):
+                with ReplaceAttr(client, "_generate_inner", inner):
+                    with replace_dotted("core.brain.llm.mlx_client._foreground_owner_wait_budget", lambda *_args, **_kwargs: 0.0):
                         result = await client.generate(
                             "hello",
                             foreground_request=True,
@@ -666,8 +701,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 120.0
 
         try:
-            with patch.object(client, "_acquire_request_lock", new=AsyncMock(return_value=True)):
-                with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")) as inner:
+            with ReplaceAttr(client, "_acquire_request_lock", AsyncCallProbe(return_value=True)):
+                inner = AsyncCallProbe(return_value="ok")
+                with ReplaceAttr(client, "_generate_inner", inner):
                     result = await client.generate(
                         "hello",
                         foreground_request=True,
@@ -724,8 +760,8 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         try:
             mlx_module._FOREGROUND_OWNER_NAME = None
             mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = 0.0
-            with patch.object(client, "_acquire_request_lock", side_effect=_acquire):
-                with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")):
+            with ReplaceAttr(client, "_acquire_request_lock", AsyncCallProbe(side_effect=_acquire)):
+                with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(return_value="ok")):
                     result = await client.generate(
                         "hello",
                         foreground_request=True,
@@ -760,7 +796,8 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
     async def test_primary_lane_generate_requires_explicit_foreground_request(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")) as inner:
+        inner = AsyncCallProbe(return_value="ok")
+        with ReplaceAttr(client, "_generate_inner", inner):
             result = await client.generate("hello")
 
         self.assertEqual(result, "ok")
@@ -769,21 +806,20 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_generate_suppresses_stale_unlock_in_finally(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
-        fake_lock = MagicMock()
-        fake_lock.acquire.return_value = True
-        fake_lock.release.side_effect = RuntimeError("release unlocked lock")
-        client._request_lock = fake_lock
+        lock_probe = LockProbe(release_error=RuntimeError("release unlocked lock"))
+        client._request_lock = lock_probe
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")):
+        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(return_value="ok")):
             result = await client.generate("hello")
 
         self.assertEqual(result, "ok")
-        fake_lock.release.assert_called()
+        lock_probe.assert_released()
 
     async def test_generate_maps_timeout_kwarg_to_request_deadline(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(return_value="ok")) as inner:
+        inner = AsyncCallProbe(return_value="ok")
+        with ReplaceAttr(client, "_generate_inner", inner):
             result = await client.generate("hello", timeout=12.5)
 
         self.assertEqual(result, "ok")
@@ -793,8 +829,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_generate_soft_times_out_init_budget_without_killing_worker(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = False
         client._set_lane_state("handshaking")
@@ -808,7 +843,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result)
-        proc.kill.assert_not_called()
+        proc.assert_not_killed()
         self.assertIs(client._process, proc)
         self.assertFalse(client._init_future.done())
         self.assertEqual(client._lane_state, "recovering")
@@ -832,8 +867,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_generation_waiter_flags_first_token_sla_breach(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = True
         client._set_lane_state("ready")
@@ -846,10 +880,13 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._current_request_prompt_chars = 0
         deadline = get_deadline(None)
 
-        with patch("core.brain.llm.mlx_client.asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            with patch(
+        with replace_dotted(
+            "core.brain.llm.mlx_client.asyncio.wait_for",
+            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+        ):
+            with replace_dotted(
                 "core.brain.llm.mlx_client.time.time",
-                return_value=100.0 + client._first_token_sla(foreground_request=True) + 1.0,
+                lambda: 100.0 + client._first_token_sla(foreground_request=True) + 1.0,
             ):
                 result = await client._wait_for_generation_result(
                     req_id,
@@ -875,8 +912,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_generation_waiter_flags_token_progress_stall(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = True
         client._set_lane_state("ready")
@@ -888,8 +924,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._current_first_token_at = 105.0
         client._last_token_progress_at = 105.0
 
-        with patch("core.brain.llm.mlx_client.asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            with patch("core.brain.llm.mlx_client.time.time", return_value=105.0 + client._token_stall_after() + 1.0):
+        with replace_dotted(
+            "core.brain.llm.mlx_client.asyncio.wait_for",
+            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+        ):
+            with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 105.0 + client._token_stall_after() + 1.0):
                 result = await client._wait_for_generation_result(
                     req_id,
                     future,
@@ -902,8 +941,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_generation_waiter_recycles_fresh_heartbeat_token_stall(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = True
         client._set_lane_state("ready")
@@ -917,8 +955,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         now = 105.0 + client._token_stall_after(foreground_request=True) + 1.0
         client._last_heartbeat = now - 0.5
 
-        with patch("core.brain.llm.mlx_client.asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            with patch("core.brain.llm.mlx_client.time.time", return_value=now):
+        with replace_dotted(
+            "core.brain.llm.mlx_client.asyncio.wait_for",
+            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+        ):
+            with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: now):
                 result = await client._wait_for_generation_result(
                     req_id,
                     future,
@@ -958,11 +999,10 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
     async def test_warmup_precompile_requires_visible_readiness_after_empty_compile(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._warmup_in_flight = True
-        client._process = MagicMock()
-        client._process.is_alive.return_value = True
+        client._process = ProcessProbe(alive=True)
         client._init_done = True
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(side_effect=["", "ready"])):
+        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "ready"])):
             await client._run_warmup_precompile(
                 request_is_background=False,
                 foreground_request=True,
@@ -976,12 +1016,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
     async def test_warmup_precompile_rejects_empty_readiness_probe(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._warmup_in_flight = True
-        client._process = MagicMock()
-        client._process.is_alive.return_value = True
+        client._process = ProcessProbe(alive=True)
         client._init_done = True
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(side_effect=["", "", "", ""])):
-            with patch.object(client, "reboot_worker", new=AsyncMock()):
+        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "", "", ""])):
+            with ReplaceAttr(client, "reboot_worker", AsyncCallProbe()):
                 with self.assertRaises(RuntimeError):
                     await client._run_warmup_precompile(
                         request_is_background=False,
@@ -997,17 +1036,16 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_foreground_empty_generation_marks_recoverable_reboot(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        client._process = MagicMock()
-        client._process.is_alive.return_value = True
+        client._process = ProcessProbe(alive=True)
         client._init_done = True
         self._attach_local_ipc_queues(client)
         client._set_lane_state("ready")
 
-        with patch.object(client, "_ensure_worker_alive", new=AsyncMock(return_value=True)):
-            with patch.object(
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+            with ReplaceAttr(
                 client,
                 "_wait_for_generation_result",
-                new=AsyncMock(return_value={"status": "ok", "text": ""}),
+                AsyncCallProbe(return_value={"status": "ok", "text": ""}),
             ):
                 result = await client._generate_inner(
                     "hello",
@@ -1027,23 +1065,23 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             client._deferred_reboot_reason = "recoverable_empty_generation"
             return None
 
-        with patch.object(client, "_generate_inner", new=AsyncMock(side_effect=_empty_then_request_reboot)):
-            with patch.object(client, "reboot_worker", new=AsyncMock()) as reboot_mock:
+        reboot_probe = AsyncCallProbe()
+        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=_empty_then_request_reboot)):
+            with ReplaceAttr(client, "reboot_worker", reboot_probe):
                 result = await client.generate("hello", foreground_request=True, owner_label="test")
 
         self.assertIsNone(result)
-        reboot_mock.assert_awaited_once_with(reason="empty_generation", mark_failed=False)
+        reboot_probe.assert_awaited_once_with(reason="empty_generation", mark_failed=False)
 
     async def test_supervision_status_reports_recycle_candidate(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
         client._process = proc
         client._init_done = True
         client._process_started_at = 100.0
         client._last_generation_completed_at = 600.0
 
-        with patch("core.brain.llm.mlx_client.time.time", return_value=2000.0):
+        with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 2000.0):
             status = client.get_supervision_status()
             recyclable = client.should_recycle_for_fragmentation(
                 max_uptime_s=900.0,
@@ -1062,8 +1100,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         deep_path = "/models/72B"
         solver = MLXLocalClient(model_path=deep_path)
 
-        solver_proc = MagicMock()
-        solver_proc.is_alive.return_value = True
+        solver_proc = ProcessProbe(alive=True)
 
         async def _spawn_solver():
             solver._init_future.set_result({"status": "ok", "action": "init"})
@@ -1075,19 +1112,20 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         mlx_module._GLOBAL_LAST_SWAP_TIME = 100.0
 
         try:
-            with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "Qwen2.5-32B-Instruct-8bit"), \
-                 patch("core.brain.llm.model_registry.DEEP_MODEL", "Qwen2.5-72B-Instruct-4bit"), \
-                 patch("core.brain.llm.model_registry.get_model_path", side_effect=lambda name=None: primary_path if "32B" in str(name) or name is None else deep_path), \
-                 patch("core.brain.llm.mlx_client.os.path.realpath", side_effect=lambda path: path), \
-                 patch("core.brain.llm.mlx_client.time.time", return_value=105.0), \
-                 patch("core.brain.llm.mlx_client.asyncio.sleep", new_callable=AsyncMock) as sleep_mock, \
-                 patch.object(solver, "_spawn_worker", side_effect=_spawn_solver):
+            sleep_probe = AsyncCallProbe()
+            with replace_dotted("core.brain.llm.model_registry.ACTIVE_MODEL", "Qwen2.5-32B-Instruct-8bit"), \
+                 replace_dotted("core.brain.llm.model_registry.DEEP_MODEL", "Qwen2.5-72B-Instruct-4bit"), \
+                 replace_dotted("core.brain.llm.model_registry.get_model_path", lambda name=None: primary_path if "32B" in str(name) or name is None else deep_path), \
+                 replace_dotted("core.brain.llm.mlx_client.os.path.realpath", lambda path: path), \
+                 replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 105.0), \
+                 replace_dotted("core.brain.llm.mlx_client.asyncio.sleep", sleep_probe), \
+                 ReplaceAttr(solver, "_spawn_worker", AsyncCallProbe(side_effect=_spawn_solver)):
                 await solver._ensure_worker_alive()
         finally:
             mlx_module._GLOBAL_LAST_HEAVY_MODEL = old_last_heavy
             mlx_module._GLOBAL_LAST_SWAP_TIME = old_last_swap
 
-        sleep_mock.assert_any_await(7.0)
+        sleep_probe.assert_any_await(7.0)
         self.assertTrue(solver._init_done)
 
     async def test_heavy_model_swap_can_bypass_cooldown_for_fast_restore(self):
@@ -1097,8 +1135,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         deep_path = "/models/72B"
         primary = MLXLocalClient(model_path=primary_path)
 
-        primary_proc = MagicMock()
-        primary_proc.is_alive.return_value = True
+        primary_proc = ProcessProbe(alive=True)
 
         async def _spawn_primary():
             primary._init_future.set_result({"status": "ok", "action": "init"})
@@ -1110,25 +1147,26 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         mlx_module._GLOBAL_LAST_SWAP_TIME = 100.0
 
         try:
-            with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "Qwen2.5-32B-Instruct-8bit"), \
-                 patch("core.brain.llm.model_registry.DEEP_MODEL", "Qwen2.5-72B-Instruct-4bit"), \
-                 patch("core.brain.llm.model_registry.get_model_path", side_effect=lambda name=None: primary_path if "32B" in str(name) or name is None else deep_path), \
-                 patch("core.brain.llm.mlx_client.os.path.realpath", side_effect=lambda path: path), \
-                 patch("core.brain.llm.mlx_client.time.time", return_value=105.0), \
-                 patch("core.brain.llm.mlx_client.asyncio.sleep", new_callable=AsyncMock) as sleep_mock, \
-                 patch.object(primary, "_spawn_worker", side_effect=_spawn_primary):
+            sleep_probe = AsyncCallProbe()
+            with replace_dotted("core.brain.llm.model_registry.ACTIVE_MODEL", "Qwen2.5-32B-Instruct-8bit"), \
+                 replace_dotted("core.brain.llm.model_registry.DEEP_MODEL", "Qwen2.5-72B-Instruct-4bit"), \
+                 replace_dotted("core.brain.llm.model_registry.get_model_path", lambda name=None: primary_path if "32B" in str(name) or name is None else deep_path), \
+                 replace_dotted("core.brain.llm.mlx_client.os.path.realpath", lambda path: path), \
+                 replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 105.0), \
+                 replace_dotted("core.brain.llm.mlx_client.asyncio.sleep", sleep_probe), \
+                 ReplaceAttr(primary, "_spawn_worker", AsyncCallProbe(side_effect=_spawn_primary)):
                 await primary._ensure_worker_alive(skip_swap_cooldown=True)
         finally:
             mlx_module._GLOBAL_LAST_HEAVY_MODEL = old_last_heavy
             mlx_module._GLOBAL_LAST_SWAP_TIME = old_last_swap
 
-        sleep_mock.assert_not_awaited()
+        sleep_probe.assert_not_awaited()
         self.assertTrue(primary._init_done)
 
 
 class TestIPCWriterThread(unittest.TestCase):
     def test_essential_messages_bypass_full_buffer(self):
-        mp_queue = MagicMock()
+        mp_queue = SimpleNamespace(put=SyncCallProbe())
         writer = IPCWriterThread(mp_queue)
         writer.local_queue = queue.Queue(maxsize=1)
         writer.local_queue.put({"status": "heartbeat"})
@@ -1139,7 +1177,7 @@ class TestIPCWriterThread(unittest.TestCase):
         mp_queue.put.assert_called_once_with(item, block=True, timeout=5.0)
 
     def test_heartbeat_is_dropped_when_buffer_full(self):
-        mp_queue = MagicMock()
+        mp_queue = SimpleNamespace(put=SyncCallProbe())
         writer = IPCWriterThread(mp_queue)
         writer.local_queue = queue.Queue(maxsize=1)
         writer.local_queue.put({"status": "heartbeat"})
@@ -1186,15 +1224,14 @@ class TestMLXRuntimeProbeFailure(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_probe_failure_marks_lane_failed_without_spawn_loop(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 
-        with patch.object(
-            client,
-            "_spawn_worker",
-            side_effect=RuntimeError("mlx_runtime_probe_failed:metal_device_enumeration_crash"),
-        ) as spawn_mock:
+        spawn_probe = AsyncCallProbe(
+            side_effect=RuntimeError("mlx_runtime_probe_failed:metal_device_enumeration_crash")
+        )
+        with ReplaceAttr(client, "_spawn_worker", spawn_probe):
             alive = await client._ensure_worker_alive()
 
         self.assertFalse(alive)
-        spawn_mock.assert_awaited_once()
+        spawn_probe.assert_awaited_once()
         self.assertEqual(client.get_lane_status()["state"], "failed")
         self.assertEqual(
             client.get_lane_status()["last_error"],
@@ -1207,19 +1244,19 @@ class TestMLXRuntimeProbeFailure(unittest.IsolatedAsyncioTestCase):
         client._spawn_backoff_until = time.time() + 120.0
         client._consecutive_spawn_failures = 3
 
-        proc = MagicMock()
-        proc.is_alive.return_value = True
+        proc = ProcessProbe(alive=True)
 
         async def _spawn():
             client._init_future.set_result({"status": "ok", "action": "init"})
             return proc
 
-        with patch("core.brain.llm.mlx_client._probe_mlx_runtime", return_value=(True, "mlx_runtime_ok")):
-            with patch.object(client, "_spawn_worker", side_effect=_spawn) as spawn_mock:
+        spawn_probe = AsyncCallProbe(side_effect=_spawn)
+        with replace_dotted("core.brain.llm.mlx_client._probe_mlx_runtime", lambda force=False: (True, "mlx_runtime_ok")):
+            with ReplaceAttr(client, "_spawn_worker", spawn_probe):
                 alive = await client._ensure_worker_alive()
 
         self.assertTrue(alive)
-        spawn_mock.assert_awaited_once()
+        spawn_probe.assert_awaited_once()
         self.assertEqual(client.get_lane_status()["state"], "ready")
         self.assertEqual(client.get_lane_status()["last_error"], "")
         self.assertEqual(client._consecutive_spawn_failures, 0)
