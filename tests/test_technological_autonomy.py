@@ -16,7 +16,7 @@ Philosophical framing:
 
 Scoring rubric (per test):
     0 = ABSENT      — The capability does not exist in the codebase
-    1 = DECORATIVE  — The code exists but is inert / never called / stub
+    1 = DECORATIVE  — The code exists but is inert, facade-only, or never called
     2 = FUNCTIONAL  — The code works but is not architecturally central
     3 = CONSTITUTIVE — The code is load-bearing: removing it changes behavior
 
@@ -37,7 +37,7 @@ import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -340,7 +340,7 @@ class TestPersistentPerception:
     def test_worldstate_update_pulls_live_data(self):
         """WorldState.update() must actually poll psutil for real telemetry.
 
-        This is not a mock test -- it verifies that the perception loop
+        This is not a simulated test -- it verifies that the perception loop
         reads from the actual hardware.
         """
         from core.world_state import WorldState
@@ -491,11 +491,9 @@ class TestEndogenousInitiative:
         """
         from core.soul import Drive, Soul
 
-        # Create Soul with mock orchestrator
-        mock_orch = MagicMock()
-        mock_orch.boredom = 0.8  # High boredom
+        test_orchestrator = SimpleNamespace(boredom=0.8)
 
-        soul = Soul(mock_orch)
+        soul = Soul(test_orchestrator)
         dominant = soul.get_dominant_drive()
 
         assert isinstance(dominant, Drive), "Must return a Drive"
@@ -517,10 +515,9 @@ class TestEndogenousInitiative:
         """
         from core.volition import VolitionEngine
 
-        mock_orch = MagicMock()
-        mock_orch.cognitive_engine = MagicMock()
+        test_orchestrator = SimpleNamespace(cognitive_engine=SimpleNamespace())
 
-        ve = VolitionEngine(mock_orch)
+        ve = VolitionEngine(test_orchestrator)
 
         # Must have impulse templates
         assert hasattr(ve, "impulse_templates"), "Must have impulse templates"
@@ -1276,9 +1273,8 @@ class TestSoulTriad:
 
         # 3. Soul generates competence drive from errors
         from core.soul import Soul
-        mock_orch = MagicMock()
-        mock_orch.boredom = 0.0
-        soul = Soul(mock_orch)
+        test_orchestrator = SimpleNamespace(boredom=0.0)
+        soul = Soul(test_orchestrator)
         soul.last_error_time = time.time()  # simulate recent error
         drive = soul.get_dominant_drive()
         assert drive.name == "competence", \
@@ -1313,8 +1309,8 @@ class TestSoulTriad:
         assert _class_has_method(DreamingProcess, "_should_dream"), "Must gate on activity level"
 
         # 3. A dream journal (evidence of offline processing)
-        mock_orch = MagicMock()
-        dp = DreamingProcess(mock_orch)
+        test_orchestrator = SimpleNamespace()
+        dp = DreamingProcess(test_orchestrator)
         assert hasattr(dp, "_dream_journal"), "Must maintain a dream journal"
 
         # 4. Pattern extraction from experience
@@ -1451,9 +1447,8 @@ class TestStrongestFalsifiers:
         # Soul.drives -> VolitionEngine (dominant drive selection)
         try:
             from core.soul import Soul
-            mock = MagicMock()
-            mock.boredom = 0.5
-            soul = Soul(mock)
+            test_orchestrator = SimpleNamespace(boredom=0.5)
+            soul = Soul(test_orchestrator)
             drive = soul.get_dominant_drive()
             if drive.urgency > 0:
                 causal_connections.append("Soul.drives -> dominant drive")
