@@ -25,7 +25,10 @@ from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.runtime.errors import record_degradation
-from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS, required_probe_groups_pass
+from core.runtime.health_contract import (
+    required_probe_blockers,
+    required_probe_groups_pass,
+)
 from core.runtime_tools import get_runtime_state
 from core.scheduler import scheduler
 from core.version import VERSION, version_string
@@ -1801,29 +1804,7 @@ def _heartbeat_probe_blockers(required_probes: Any) -> list[str]:
     A healthy heartbeat is a launch contract, not a process ping. It must have
     every required probe group and every group must report ok.
     """
-    if not isinstance(required_probes, dict):
-        return ["runtime_required_probes"]
-
-    blockers: list[str] = []
-    if not required_probe_groups_pass(required_probes):
-        blockers.append("runtime_required_probes")
-
-    for group_name, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
-        group = required_probes.get(group_name)
-        if not isinstance(group, dict):
-            blockers.append(f"probe:{group_name}")
-            continue
-        if not bool(group.get("ok", False)):
-            blockers.append(f"probe:{group_name}")
-            continue
-        components = group.get("components")
-        if not isinstance(components, dict):
-            blockers.append(f"probe:{group_name}")
-            continue
-        if any(components.get(component) is not True for component in expected_components):
-            blockers.append(f"probe:{group_name}")
-
-    return list(dict.fromkeys(blockers))
+    return required_probe_blockers(required_probes)
 
 
 @router.get("/health/heartbeat")

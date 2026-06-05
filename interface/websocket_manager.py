@@ -60,7 +60,7 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
     """Return a heartbeat that cannot be mistaken for transport-only health."""
     try:
         from core.runtime.health_contract import (
-            REQUIRED_HEALTH_PROBE_GROUPS,
+            required_probe_blockers,
             required_probe_groups_pass,
             required_probe_status,
             runtime_health_report,
@@ -69,20 +69,7 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         report = runtime_health_report()
         required = required_probe_status(report)
         healthy = bool(report.get("healthy", False)) and required_probe_groups_pass(required)
-        blockers = []
-        if not healthy:
-            blockers.append("runtime_required_probes")
-            for name, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
-                probe = required.get(name)
-                if not isinstance(probe, dict) or not bool(probe.get("ok", False)):
-                    blockers.append(f"probe:{name}")
-                    continue
-                components = probe.get("components")
-                if not isinstance(components, dict):
-                    blockers.append(f"probe:{name}")
-                    continue
-                if any(components.get(component) is not True for component in expected_components):
-                    blockers.append(f"probe:{name}")
+        blockers = required_probe_blockers(required) if not healthy else []
         return {
             "type": kind,
             "timestamp": time.time(),
@@ -91,7 +78,7 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
             "healthy": healthy,
             "runtime_status": str(report.get("status", "unknown")),
             "required_probes": required,
-            "blockers": list(dict.fromkeys(blockers)),
+            "blockers": blockers,
         }
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("websocket_manager", exc)

@@ -20,6 +20,7 @@ from core.runtime.health_contract import (
     ServiceRequirement,
     ServiceTier,
     evaluate_health,
+    required_probe_blockers,
     required_probe_groups_pass,
     required_probe_status,
     runtime_health_report,
@@ -337,6 +338,22 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
     }
 
     assert required_probe_groups_pass(forged) is False
+    assert required_probe_blockers(forged) == [
+        "runtime_required_probes",
+        "probe:tool_governance",
+    ]
+
+
+def test_required_probe_blockers_fail_closed_on_malformed_payloads():
+    assert required_probe_blockers(None) == ["runtime_required_probes"]
+    assert required_probe_blockers({"all_passed": True}) == [
+        "runtime_required_probes",
+        "probe:kernel",
+        "probe:inference",
+        "probe:memory",
+        "probe:scheduler",
+        "probe:tool_governance",
+    ]
 
 
 def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
@@ -359,3 +376,4 @@ def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
     assert report["healthy"] is False
     assert report["operational"] is False
     assert report["status_code"] == 503
+    assert report["probe_blockers"] == ["runtime_required_probes", "probe:inference", "probe:memory", "probe:scheduler", "probe:tool_governance"]

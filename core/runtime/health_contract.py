@@ -329,6 +329,7 @@ class HealthVerdict:
         }
         required_probes = _required_probe_status_from_services(report_services)
         required_probe_ok = required_probe_groups_pass(required_probes)
+        probe_blockers = required_probe_blockers(required_probes)
         healthy = self.level == HealthLevel.HEALTHY and required_probe_ok
         operational = self.is_operational and required_probe_ok
         return {
@@ -339,6 +340,7 @@ class HealthVerdict:
             "status_code": 200 if operational else 503,
             "timestamp_unix": self.timestamp,
             "required_probes": required_probes,
+            "probe_blockers": probe_blockers,
             "tier_summary": tier_summary,
             "failures": {
                 "critical": [_service_status_payload(status) for status in self.critical_failures],
@@ -401,6 +403,34 @@ def required_probe_groups_pass(required_probes: Any) -> bool:
             if components.get(component) is not True:
                 return False
     return True
+
+
+def required_probe_blockers(required_probes: Any) -> list[str]:
+    """Return canonical blockers for malformed or failing required probes."""
+
+    if not isinstance(required_probes, dict):
+        return ["runtime_required_probes"]
+
+    blockers: list[str] = []
+    if not required_probe_groups_pass(required_probes):
+        blockers.append("runtime_required_probes")
+
+    for group_name, expected_components in REQUIRED_HEALTH_PROBE_GROUPS.items():
+        group = required_probes.get(group_name)
+        if not isinstance(group, dict):
+            blockers.append(f"probe:{group_name}")
+            continue
+        if not bool(group.get("ok", False)):
+            blockers.append(f"probe:{group_name}")
+            continue
+        components = group.get("components")
+        if not isinstance(components, dict):
+            blockers.append(f"probe:{group_name}")
+            continue
+        if any(components.get(component) is not True for component in expected_components):
+            blockers.append(f"probe:{group_name}")
+
+    return list(dict.fromkeys(blockers))
 
 
 def required_probe_status(report: dict[str, Any]) -> dict[str, Any]:
