@@ -1,11 +1,11 @@
 """Tests for the single-tenant install boundary."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
+import core.runtime.tenant_boundary as tenant_boundary_mod
 from core.runtime.tenant_boundary import (
     DEFAULT_TENANT_ID,
     TENANT_FILE,
@@ -44,6 +44,39 @@ def test_stamp_writes_tenant_json(tmp_path: Path):
     assert stamp.tenant_id == "alpha"
     assert stamp.install_id.startswith("install-")
     assert stamp.created_at > 0
+
+
+def test_stamp_persists_through_file_write_gateway(tmp_path: Path, monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class FakeFileWriteGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            calls.append(
+                {
+                    "path": Path(path),
+                    "encoding": encoding,
+                    "source": source,
+                }
+            )
+            Path(path).write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(
+        tenant_boundary_mod,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+
+    boundary = TenantBoundary(tmp_path, tenant_id="alpha")
+    stamp = boundary.stamp()
+
+    assert stamp.tenant_id == "alpha"
+    assert calls == [
+        {
+            "path": tmp_path / TENANT_FILE,
+            "encoding": "utf-8",
+            "source": "core.runtime.tenant_boundary.write_stamp",
+        }
+    ]
 
 
 def test_stamp_is_idempotent_for_same_tenant(tmp_path: Path):

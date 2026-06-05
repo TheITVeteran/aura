@@ -132,10 +132,6 @@ EXEMPT_FILES = {
         "justification": "Tracks the historical agentic narrative flow across memory frames.",
         "compensating_tests": "tests/test_narrative_thread.py"
     },
-    "core/runtime/tenant_boundary.py": {
-        "justification": "Maintains multi-tenant isolation boundaries in cloud environments.",
-        "compensating_tests": "tests/test_tenant_boundary.py"
-    },
     "core/runtime/diagnostics_bundle.py": {
         "justification": "Packages and serializes runtime logs and SQLite database traces.",
         "compensating_tests": "tests/test_diagnostics_bundle.py"

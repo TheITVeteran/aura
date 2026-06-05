@@ -30,8 +30,9 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 SCHEMA_VERSION = 1
 DEFAULT_TENANT_ID = "default"
@@ -62,16 +63,16 @@ class TenantStamp:
     install_id: str
     created_at: float
     schema_version: int = SCHEMA_VERSION
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class TenantBoundary:
     """Single-tenant boundary check at a data directory."""
 
-    def __init__(self, data_dir: Path, *, tenant_id: Optional[str] = None):
+    def __init__(self, data_dir: Path, *, tenant_id: str | None = None):
         self.data_dir = Path(data_dir)
         self.tenant_id = (tenant_id or configured_tenant_id()).strip() or DEFAULT_TENANT_ID
-        self._cached_stamp: Optional[TenantStamp] = None
+        self._cached_stamp: TenantStamp | None = None
 
     @property
     def stamp_path(self) -> Path:
@@ -114,11 +115,11 @@ class TenantBoundary:
         self._cached_stamp = stamp
         return stamp
 
-    def current_stamp(self) -> Optional[TenantStamp]:
+    def current_stamp(self) -> TenantStamp | None:
         return self._read_stamp()
 
     # ------------------------------------------------------------------
-    def _read_stamp(self) -> Optional[TenantStamp]:
+    def _read_stamp(self) -> TenantStamp | None:
         if not self.stamp_path.exists():
             return None
         try:
@@ -144,6 +145,9 @@ class TenantBoundary:
             "schema_version": stamp.schema_version,
             "metadata": stamp.metadata,
         }
-        tmp = self.stamp_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(body, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(self.stamp_path)
+        get_file_write_gateway().write_text(
+            self.stamp_path,
+            json.dumps(body, indent=2, sort_keys=True),
+            encoding="utf-8",
+            source="core.runtime.tenant_boundary.write_stamp",
+        )
