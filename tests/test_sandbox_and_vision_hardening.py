@@ -44,6 +44,36 @@ def test_secure_sandbox_launch_failure_is_degraded_result(monkeypatch, tmp_path:
     assert result.security_violations == ["process launch unavailable"]
 
 
+def test_secure_sandbox_launches_through_subprocess_gateway(monkeypatch, tmp_path: Path) -> None:
+    spawn_calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return "Python 3.x\n", ""
+
+    class FakeSubprocessGateway:
+        def spawn(self, argv, **kwargs):
+            spawn_calls.append((tuple(argv), kwargs))
+            return FakeProcess()
+
+    runtime_sandbox = sandbox.SecureSandbox(workdir=tmp_path / "work")
+    monkeypatch.setattr(
+        sandbox,
+        "get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    result = runtime_sandbox.execute_command(["python", "-V"])
+
+    assert result.success is True
+    assert spawn_calls
+    _argv, kwargs = spawn_calls[0]
+    assert kwargs["source"] == "security.sandbox.execute_command"
+    assert kwargs["cwd"] == str(runtime_sandbox.workdir)
+
+
 def test_code_repair_sandbox_does_not_swallow_programmer_fault(monkeypatch, tmp_path: Path) -> None:
     repair_sandbox = code_sandbox.CodeRepairSandbox()
 

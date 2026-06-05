@@ -23,6 +23,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 HAS_UNIX = os.name == "posix"
 _SANDBOX_EXECUTION_ERRORS = (
@@ -281,7 +282,7 @@ class SecureSandbox:
                 profile_path.chmod(0o600)
                 cmd = ["sandbox-exec", "-f", str(profile_path)] + cmd
 
-            process = subprocess.Popen(
+            process = get_subprocess_gateway().spawn(
                 cmd,
                 stdin=subprocess.PIPE if input_data else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -289,7 +290,8 @@ class SecureSandbox:
                 text=True,
                 cwd=str(self.workdir),
                 env=env,
-                preexec_fn=self._set_resource_limits if HAS_UNIX else None
+                preexec_fn=self._set_resource_limits if HAS_UNIX else None,
+                source="security.sandbox.execute_command",
             )
 
             try:

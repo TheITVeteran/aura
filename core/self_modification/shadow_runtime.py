@@ -8,9 +8,6 @@ configurable soak period.
 This goes beyond SandboxTester (which only validates syntax + imports) by
 running the full modified system for N seconds to catch runtime failures.
 """
-from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
-from core.utils.exceptions import capture_and_log
 import asyncio
 import logging
 import os
@@ -20,17 +17,30 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.ShadowRuntime")
+_PROTECTED_SAFETY_MODULES = frozenset({
+    "constitutional_guard.py",
+    "master_moral_integration.py",
+    "emergency_protocol.py",
+    "heartstone_values.py",
+    "behavior_controller.py",
+    "safety_registry.py",
+    "identity_guard.py",
+})
 
 
 @dataclass
 class ShadowResult:
     """Result of a shadow runtime test."""
     passed: bool
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     runtime_seconds: float = 0.0
     exit_code: int = 0
     stdout_tail: str = ""
@@ -55,12 +65,8 @@ class ShadowRuntime:
     MIN_PHI_FOR_SELF_MOD: float = 0.45
 
     def __init__(self, code_base_path: str = "."):
-        # Issue 93: Version Guard
-        if sys.version_info < (3, 9):
-             raise RuntimeError("ShadowRuntime requires Python 3.9+ for ast.unparse support")
-
         self.code_base = Path(code_base_path).resolve()
-        self._active_shadow: Optional[Path] = None
+        self._active_shadow: Path | None = None
         self._lock = asyncio.Lock() # Issue 94: Singleton lock for resource control
         self._current_phi: float = 1.0  # Assume integrated until told otherwise
 
@@ -77,7 +83,7 @@ class ShadowRuntime:
         original_code: str,
         patched_code: str,
         soak_seconds: int = 15,
-        boot_script: Optional[str] = None,
+        boot_script: str | None = None,
     ) -> ShadowResult:
         """Test a code mutation in an isolated shadow copy.
         
@@ -112,15 +118,6 @@ class ShadowRuntime:
         # Preflight: Block mutations to safety-critical modules entirely.
         # These files must never be patched by the autonomous optimizer —
         # a reward-hacking agent could otherwise neutralize its own guardrails.
-        _PROTECTED_SAFETY_MODULES = frozenset({
-            "constitutional_guard.py",
-            "master_moral_integration.py",
-            "emergency_protocol.py",
-            "heartstone_values.py",
-            "behavior_controller.py",
-            "safety_registry.py",
-            "identity_guard.py",
-        })
         target_filename = Path(file_path).name
         if target_filename in _PROTECTED_SAFETY_MODULES:
             logger.critical(
@@ -157,7 +154,12 @@ class ShadowRuntime:
 
                 # 3. Apply mutation in shadow
                 shadow_file.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(shadow_file, patched_code, encoding="utf-8")
+                get_file_write_gateway().write_text(
+                    shadow_file,
+                    patched_code,
+                    encoding="utf-8",
+                    source="core.self_modification.shadow_runtime.shadow_patch",
+                )
                 logger.info("🔮 Mutation applied to shadow: %s", file_path)
 
                 # 4. Run validation
@@ -186,7 +188,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
 
                 # 5. Execute in subprocess with soak timeout
                 proc_result = await self._run_in_subprocess(
-                    boot_script, shadow_dir, timeout=soak_seconds
+                    boot_script, shadow_dir, timeout_seconds=soak_seconds
                 )
 
                 result.exit_code = proc_result["exit_code"]
@@ -204,7 +206,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                     result.passed = True
                     logger.info("✅ Shadow runtime test PASSED for %s (%.1fs)", file_path, time.monotonic() - start_time)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result.errors.append(f"Shadow runtime timed out after {soak_seconds}s")
                 logger.warning("⏰ Shadow runtime timed out for %s", file_path)
             except (ImportError, AttributeError, RuntimeError) as e:
@@ -217,7 +219,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                 if shadow_dir and shadow_dir.exists():
                     try:
                         shutil.rmtree(shadow_dir, ignore_errors=True)
-                    except (OSError, IOError) as e:
+                    except OSError as e:
                         record_degradation('shadow_runtime', e)
                         capture_and_log(e, {'module': __name__})
                 self._active_shadow = None
@@ -256,7 +258,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                         )
                     else:
                         shutil.copy2(item, dest)
-                except (OSError, IOError) as e:
+                except OSError as e:
                     record_degradation('shadow_runtime', e)
                     logger.debug("Shadow copy skip %s: %s", item.name, e)
 
@@ -264,30 +266,38 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
         return shadow_dir
 
     async def _run_in_subprocess(
-        self, script: str, cwd: Path, timeout: int = 30
-    ) -> dict:
+        self, script: str, cwd: Path, timeout_seconds: int = 30
+    ) -> dict[str, str | int]:
         """Run a Python script in a subprocess."""
         script_path = cwd / "_shadow_boot.py"
-        atomic_write_text(script_path, script, encoding="utf-8")
+        get_file_write_gateway().write_text(
+            script_path,
+            script,
+            encoding="utf-8",
+            source="core.self_modification.shadow_runtime.shadow_boot_script",
+        )
 
+        proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "python3", str(script_path),
+            proc = await get_subprocess_gateway().spawn_async(
+                [sys.executable, str(script_path)],
                 cwd=str(cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                source="core.self_modification.shadow_runtime.shadow_boot",
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                proc.communicate(), timeout=timeout_seconds
             )
             return {
                 "exit_code": proc.returncode or 0,
                 "stdout": stdout.decode("utf-8", errors="replace"),
                 "stderr": stderr.decode("utf-8", errors="replace"),
             }
-        except asyncio.TimeoutError:
-            proc.kill()
+        except TimeoutError:
+            if proc is not None:
+                proc.kill()
             return {"exit_code": -1, "stdout": "", "stderr": "Timeout"}
 
     @property
@@ -296,7 +306,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
 
 
 # Singleton
-_instance: Optional[ShadowRuntime] = None
+_instance: ShadowRuntime | None = None
 
 def get_shadow_runtime(code_base: str = ".") -> ShadowRuntime:
     global _instance

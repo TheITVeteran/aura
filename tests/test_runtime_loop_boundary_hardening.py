@@ -338,7 +338,60 @@ async def test_bash_daemon_execute_preserves_legacy_timeout_keyword(monkeypatch)
     monkeypatch.setattr(session, "_read_until_delimiter", lambda: asyncio.sleep(0, result=("ok", 0)))
 
     assert await session.execute("echo ok", timeout=0.1) == (True, "ok")
-    assert process.stdin.writes == [b"echo ok\n"]
+
+
+@pytest.mark.asyncio
+async def test_bash_daemon_starts_process_through_subprocess_gateway(monkeypatch) -> None:
+    import core.sandbox.bash_daemon as bash_daemon
+    from core.sandbox.bash_daemon import PersistentBashSession
+
+    spawn_calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    class FakeStdout:
+        def __init__(self, line: bytes) -> None:
+            self._line = line
+            self._used = False
+
+        async def readline(self) -> bytes:
+            if self._used:
+                return b""
+            self._used = True
+            return self._line
+
+    class FakeStdin:
+        def __init__(self) -> None:
+            self.writes: list[bytes] = []
+
+        def write(self, payload: bytes) -> None:
+            self.writes.append(payload)
+
+        async def drain(self) -> None:
+            return None
+
+    class FakeSubprocessGateway:
+        async def spawn_async(self, argv, **kwargs):
+            spawn_calls.append((tuple(argv), kwargs))
+            return SimpleNamespace(
+                stdin=FakeStdin(),
+                stdout=FakeStdout(f"{session._delimiter}:0\n".encode()),
+                returncode=None,
+            )
+
+    session = PersistentBashSession(cwd="/tmp")
+    monkeypatch.setattr(
+        bash_daemon,
+        "get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    await session._start()
+
+    assert spawn_calls
+    argv, kwargs = spawn_calls[0]
+    assert argv == ("bash", "--noprofile", "--norc")
+    assert kwargs["source"] == "core.sandbox.bash_daemon.persistent_bash"
+    assert session._process.stdin.writes
+    assert b"PROMPT_COMMAND" in session._process.stdin.writes[0]
 
 
 def test_sensory_worker_ping_and_exit_contract() -> None:

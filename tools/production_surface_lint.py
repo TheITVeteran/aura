@@ -160,18 +160,6 @@ EXEMPT_FILES = {
         "justification": "Implements self-debugging and hot-patching compilation layers.",
         "compensating_tests": "tests/test_self_repair_ladder.py"
     },
-    "core/sandbox/bash_daemon.py": {
-        "justification": "Spawns long-running bash shells inside temporary workspaces.",
-        "compensating_tests": "tests/test_bash_daemon.py"
-    },
-    "core/self_modification/shadow_runtime.py": {
-        "justification": "Boots a redundant shadow process to test new code stability.",
-        "compensating_tests": "tests/test_shadow_runtime.py"
-    },
-    "security/sandbox.py": {
-        "justification": "Implements core execution constraints and security filters.",
-        "compensating_tests": "tests/test_sandbox.py"
-    },
     "core/environments/terminal_grid/state_compiler.py": {
         "justification": "Compiles and serializes the terminal grid environment state.",
         "compensating_tests": "tests/test_terminal_grid_state.py"

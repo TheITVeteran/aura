@@ -11,6 +11,7 @@ import logging
 import os
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.BashDaemon")
 _BASH_READ_ERRORS = (RuntimeError, AttributeError, TypeError, ValueError, UnicodeError)
@@ -31,13 +32,14 @@ class PersistentBashSession:
     async def _start(self) -> None:
         env = os.environ.copy()
         # Start bash and immediately set it to print our delimiter after every command
-        self._process = await asyncio.create_subprocess_exec(
-            "bash", "--noprofile", "--norc",
+        self._process = await get_subprocess_gateway().spawn_async(
+            ["bash", "--noprofile", "--norc"],
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=self.cwd,
-            env=env
+            env=env,
+            source="core.sandbox.bash_daemon.persistent_bash",
         )
         
         # Setup bash to echo the delimiter and the exit code
