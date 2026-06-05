@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import httpx
 import numpy as np
 import pytest
@@ -37,7 +35,7 @@ async def test_ensure_identity_anchor():
 
 
 @pytest.mark.asyncio
-async def test_run_ollama_fallback():
+async def test_run_ollama_fallback(monkeypatch):
     engine = UnifiedInferenceEngine()
     modulation = InferenceModulation(
         temperature=0.8,
@@ -48,49 +46,74 @@ async def test_run_ollama_fallback():
         urgency=0.5,
     )
 
-    mock_brain_instance = MagicMock()
-    mock_brain_instance.chat = AsyncMock(
-        return_value={"response": "This is a response from Ollama fallback", "thought": "thought"}
+    import core.brain.local_llm as local_llm
+
+    class LocalBrainProbe:
+        instances = []
+
+        def __init__(self, model_name: str):
+            self.model_name = model_name
+            self.chat_calls = []
+            LocalBrainProbe.instances.append(self)
+
+        async def __aenter__(self):
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *_args):
+            self.exited = True
+            return None
+
+        async def chat(self, **kwargs):
+            self.chat_calls.append(kwargs)
+            return {
+                "response": "This is a response from Ollama fallback",
+                "thought": "thought",
+            }
+
+    monkeypatch.setattr(local_llm, "LocalBrain", LocalBrainProbe)
+
+    result = await engine._run_ollama_fallback(
+        messages=[{"role": "user", "content": "hello"}],
+        model_name="default_model",
+        modulation=modulation,
+        options=None,
     )
-    mock_brain_instance.__aenter__ = AsyncMock(return_value=mock_brain_instance)
-    mock_brain_instance.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("core.brain.local_llm.LocalBrain", return_value=mock_brain_instance):
-        result = await engine._run_ollama_fallback(
-            messages=[{"role": "user", "content": "hello"}],
-            model_name="default_model",
-            modulation=modulation,
-            options=None,
-        )
+    assert result["response"] == "This is a response from Ollama fallback"
+    assert result["thought"] == "thought"
 
-        assert result["response"] == "This is a response from Ollama fallback"
-        assert result["thought"] == "thought"
-
-        # Verify chat call options had modulated params
-        called_options = mock_brain_instance.chat.call_args[1]["options"]
-        assert called_options["temperature"] == 0.8
-        assert called_options["top_p"] == 0.95
-        assert called_options["repeat_penalty"] == 1.1
+    brain = LocalBrainProbe.instances[-1]
+    assert brain.model_name == "default_model"
+    assert brain.entered is True
+    assert brain.exited is True
+    called_options = brain.chat_calls[0]["options"]
+    assert called_options["temperature"] == 0.8
+    assert called_options["top_p"] == 0.95
+    assert called_options["repeat_penalty"] == 1.1
 
 
 @pytest.mark.asyncio
-async def test_generate_unified_routing():
+async def test_generate_unified_routing(monkeypatch):
     engine = UnifiedInferenceEngine()
+    import core.brain.llm.model_registry as model_registry
 
-    # Mock all model registry functions
-    mock_registry = {
-        "get_local_backend": lambda: "llama_cpp",
-        "get_lane_model_name": lambda name: "model_name",
-        "get_lane_runtime_model_path": lambda name: "model_path.gguf",
-        "get_lane_context_window": lambda name: 8192,
-    }
+    monkeypatch.setattr(model_registry, "get_local_backend", lambda: "llama_cpp")
+    monkeypatch.setattr(model_registry, "get_lane_model_name", lambda name: "model_name")
+    monkeypatch.setattr(
+        model_registry,
+        "get_lane_runtime_model_path",
+        lambda name: "model_path.gguf",
+    )
+    monkeypatch.setattr(model_registry, "get_lane_context_window", lambda name: 8192)
 
-    # Helper for running direct vs fallback
-    with patch.multiple("core.brain.llm.model_registry", **mock_registry):
-        # Case 1: llama_cpp backend available, gguf loaded
-        mock_llama = MagicMock()
-        mock_llama.create_chat_completion = MagicMock(
-            return_value={
+    class LlamaProbe:
+        def __init__(self):
+            self.chat_calls = []
+
+        def create_chat_completion(self, **kwargs):
+            self.chat_calls.append(kwargs)
+            return {
                 "choices": [
                     {
                         "message": {"content": "<think>thinking process</think>final answer"},
@@ -98,20 +121,38 @@ async def test_generate_unified_routing():
                     }
                 ]
             }
-        )
 
-        with patch.object(engine, "_get_llama_instance", return_value=mock_llama):
-            res = await engine.generate_unified(prompt="test prompt")
-            assert res["response"] == "final answer"
-            assert res["thought"] == "thinking process"
+    llama_probe = LlamaProbe()
+    load_calls = []
 
-        # Case 2: llama_cpp backend, but model instance load fails -> falls back to Ollama
-        mock_fallback = AsyncMock(return_value={"response": "fallback answer", "thought": ""})
-        with patch.object(engine, "_get_llama_instance", return_value=None):
-            with patch.object(engine, "_run_ollama_fallback", mock_fallback):
-                res = await engine.generate_unified(prompt="test prompt")
-                assert res["response"] == "fallback answer"
-                mock_fallback.assert_called_once()
+    def get_llama_instance(model_path, context_size):
+        load_calls.append((model_path, context_size))
+        return llama_probe
+
+    engine._get_llama_instance = get_llama_instance
+
+    res = await engine.generate_unified(prompt="test prompt")
+    assert res["response"] == "final answer"
+    assert res["thought"] == "thinking process"
+    assert load_calls == [("model_path.gguf", 8192)]
+    assert llama_probe.chat_calls
+
+    fallback_calls = []
+
+    def missing_llama_instance(model_path, context_size):
+        load_calls.append((model_path, context_size, "missing"))
+        return None
+
+    async def fallback_probe(*args, **kwargs):
+        fallback_calls.append((args, kwargs))
+        return {"response": "fallback answer", "thought": ""}
+
+    engine._get_llama_instance = missing_llama_instance
+    engine._run_ollama_fallback = fallback_probe
+
+    res = await engine.generate_unified(prompt="test prompt")
+    assert res["response"] == "fallback answer"
+    assert fallback_calls
 
 
 @pytest.mark.asyncio

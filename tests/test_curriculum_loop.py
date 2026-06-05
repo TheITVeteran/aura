@@ -109,10 +109,10 @@ def test_gap_detector_requires_minimum_resolved(ledger):
 
 
 # ---------------------------------------------------------------------------
-# closed loop with stub attempter
+# closed loop with deterministic attempter
 # ---------------------------------------------------------------------------
-def _stub_attempter_factory(success_after: int) -> Tuple[list, callable]:
-    """Stub LLM that fails the first ``success_after`` calls then succeeds."""
+def _scripted_attempter_factory(success_after: int) -> Tuple[list, callable]:
+    """Deterministic attempter that fails ``success_after`` calls before success."""
     calls: List[str] = []
 
     def attempter(task: LearningTask) -> Tuple[bool, float, str]:
@@ -129,7 +129,7 @@ def _truth_oracle(task: LearningTask) -> bool:
 
 
 def test_loop_converges_when_attempter_eventually_succeeds(ledger, lessons):
-    calls, attempter = _stub_attempter_factory(success_after=3)
+    calls, attempter = _scripted_attempter_factory(success_after=3)
     seed_task = LearningTask(
         task_id="seed-1",
         belief="add_two",
@@ -154,7 +154,7 @@ def test_loop_converges_when_attempter_eventually_succeeds(ledger, lessons):
 
 
 def test_loop_records_improving_trend(ledger, lessons):
-    _, attempter = _stub_attempter_factory(success_after=2)
+    _, attempter = _scripted_attempter_factory(success_after=2)
     seed_task = LearningTask(
         task_id="seed-improve",
         belief="add",
@@ -178,7 +178,7 @@ def test_loop_records_improving_trend(ledger, lessons):
 
 
 def test_loop_persists_lessons(ledger, lessons):
-    _, attempter = _stub_attempter_factory(success_after=1)
+    _, attempter = _scripted_attempter_factory(success_after=1)
     seed_task = LearningTask(
         task_id="seed-persist",
         belief="x",
@@ -200,7 +200,7 @@ def test_loop_persists_lessons(ledger, lessons):
 
 
 def test_loop_writes_into_prediction_ledger(ledger, lessons):
-    _, attempter = _stub_attempter_factory(success_after=0)
+    _, attempter = _scripted_attempter_factory(success_after=0)
     seed_task = LearningTask(
         task_id="seed-write",
         belief="x",
