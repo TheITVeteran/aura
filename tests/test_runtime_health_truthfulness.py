@@ -47,6 +47,26 @@ def test_fail_closed_degradation_records_before_optional_raise(monkeypatch):
     assert get_degradation_tracker().count("event_bus", "critical") == 2
 
 
+def test_fail_closed_warning_degradation_still_marks_failed_closed(monkeypatch):
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    registry = _install_fail_closed_event_bus(monkeypatch)
+    get_degradation_tracker().reset()
+
+    record_degradation(
+        "event_bus",
+        RuntimeError("background process lacks accessibility context"),
+        severity="warning",
+        action="fail-closed service probe failed",
+        enforce_failure_policy=False,
+    )
+
+    health = registry.get("event_bus")
+    assert health is not None
+    assert health.status == "failed_closed"
+    assert get_degradation_tracker().count("event_bus", "critical") == 1
+
+
 def test_event_bus_records_degraded_health_without_callback_raise(monkeypatch):
     from core.event_bus import AuraEventBus
 

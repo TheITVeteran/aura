@@ -1,98 +1,40 @@
 import asyncio
-import logging
-from unittest.mock import MagicMock, AsyncMock
-from core.orchestrator import RobustOrchestrator
-from core.brain.cognitive_engine import CognitiveEngine, ThinkingMode
+from pathlib import Path
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("TestTimeout")
-
-TIMEOUT_TEST_RECOVERABLE_ERRORS = (
-    AssertionError,
-    AttributeError,
-    ImportError,
-    RuntimeError,
-    TypeError,
-    ValueError,
-)
+import pytest
 
 
-async def test_timeout_resolution():
-    """
-    Verify that the Orchestrator's watchdog (60s) properly handles 
-    a long-running Cognitive Engine task (e.g., 40s) without triggering premature timeout.
-    """
-    # 1. Setup Mock Engine
-    mock_engine = MagicMock(spec=CognitiveEngine)
-    
-    # Simulate a thought that takes 40 seconds (longer than previous 30s watchdog)
-    async def slow_think(*args, **kwargs):
-        logger.info("Starting slow thought simulation (40s)...")
-        await asyncio.sleep(40) # Longer than old 30s, shorter than new 60s
-        mock_thought = MagicMock()
-        mock_thought.content = "Success: I finished thinking."
-        mock_thought.action = None
-        return mock_thought
+class SlowThinkingEngine:
+    def __init__(self, delay_s: float):
+        self.delay_s = delay_s
+        self.calls = []
 
-    mock_engine.think = slow_think
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        await asyncio.sleep(self.delay_s)
+        return type("Thought", (), {"content": "finished", "action": None})()
 
-    # 2. Setup Orchestrator
-    orchestrator = RobustOrchestrator()
-    orchestrator.cognitive_engine = mock_engine
-    orchestrator.conversation_history = []
-    
-    # Mock execute_tool to prevent actual side effects
-    orchestrator.execute_tool = AsyncMock(return_value={"ok": True})
 
-    # 3. Simulate message processing
-    # We wrap the orchestrator logic or just call the specific loop part
-    # Since the orchestrator loop is a long-running method, we'll try to trigger the specific logic
-    
-    logger.info("Triggering orchestrator cognitive analysis...")
-    
-    # Use a small timeout for the test to catch if it triggers the BREAK early
-    # But it should finish successfully in ~40s
-    try:
-        # We simulate the part of the loop in orchestrator.py:542-578
-        # We'll use a wrapper to run it
-        
-        message = "Test long thought"
-        current_cycle = 1
-        
-        # This mirrors the logic in orchestrator.py
-        try:
-            from core.brain.personality_engine import get_personality_engine
-            personality_context = {}
-            # Mock personality if needed, but orchestrator handles it
-            
-            thought = await asyncio.wait_for(
-                orchestrator.cognitive_engine.think(
-                    objective=message,
-                    context={
-                        "history": [],
-                        "cycle": current_cycle,
-                        "personality": {}
-                    },
-                    mode=ThinkingMode.CREATIVE
-                ),
-                timeout=60.0
-            )
-            logger.info(f"Thought received: {thought.content}")
-            assert "Success" in thought.content
-            print("✅ TEST PASSED: Watchdog did not trigger early for 40s thought.")
-            
-        except asyncio.TimeoutError:
-            print("❌ TEST FAILED: Watchdog triggered early (before 60s).")
-            return False
-        except TIMEOUT_TEST_RECOVERABLE_ERRORS as e:
-            print(f"❌ TEST ERROR: {e}")
-            return False
+def test_live_thinking_watchdog_uses_current_runtime_budget():
+    source = Path("core/orchestrator/mixins/incoming_logic.py").read_text(encoding="utf-8")
 
-    except TIMEOUT_TEST_RECOVERABLE_ERRORS as e:
-        print(f"Test setup error: {e}")
-        return False
-    return True
+    assert "timeout=300.0" in source
+    assert "Thinking task exceeded 300s limit" in source
 
-if __name__ == "__main__":
-    raise SystemExit(0 if asyncio.run(test_timeout_resolution()) else 1)
+
+@pytest.mark.asyncio
+async def test_timeout_guard_allows_work_below_budget():
+    engine = SlowThinkingEngine(delay_s=0.01)
+
+    thought = await asyncio.wait_for(engine.think(objective="long analysis"), timeout=0.25)
+
+    assert thought.content == "finished"
+    assert engine.calls == [{"objective": "long analysis"}]
+
+
+@pytest.mark.asyncio
+async def test_timeout_guard_cancels_work_above_budget():
+    engine = SlowThinkingEngine(delay_s=0.25)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(engine.think(objective="stalled analysis"), timeout=0.01)
