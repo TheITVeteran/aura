@@ -413,6 +413,4 @@ def atomic_write(file_path: str, content: str) -> None:
     except (OSError, IOError) as e:
         record_degradation('atomic_storage', e)
         logger.error("Standalone atomic write failed for %s: %s", file_path, e)
-        if temp_path.exists():
-            temp_path.unlink()
         raise

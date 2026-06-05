@@ -6,7 +6,7 @@ and produces structured voting consensus with minority reports.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.council.consensus import ConsensusResolver
