@@ -253,7 +253,7 @@ async def test_swarm_review_fails_closed_when_delegator_missing(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_swarm_review_allows_explicit_force_without_delegator(monkeypatch):
+async def test_swarm_review_force_fails_closed_without_delegator(monkeypatch):
     recorded = []
     monkeypatch.setattr(
         sm_mod,
@@ -271,8 +271,10 @@ async def test_swarm_review_allows_explicit_force_without_delegator(monkeypatch)
             force=True,
         )
 
-    assert result is True
-    assert recorded == []
+    assert result is False
+    assert recorded
+    assert recorded[0][1]["receipt_required"] is True
+    assert recorded[0][1]["extra"] == {"review": "swarm", "force": True}
 
 
 def test_safe_modification_stats_expose_report_fields():

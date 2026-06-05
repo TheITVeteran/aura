@@ -52,6 +52,25 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _deep_repair_block_reason(origin: str = "self_healing_deep_repair") -> str:
+    """Return a reason deep repair must not run in this runtime mode."""
+
+    if not _env_flag("AURA_ENABLE_DEEP_REPAIR", False):
+        return "deep_repair_disabled"
+    try:
+        from core.runtime.background_policy import background_loop_start_reason
+
+        return background_loop_start_reason(origin)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        record_degradation(
+            "self_healing",
+            exc,
+            action="blocked deep repair because background policy was unavailable",
+            receipt_required=True,
+        )
+        return "background_policy_unavailable"
+
+
 @dataclass
 class WatchEntry:
     name: str
@@ -171,7 +190,8 @@ class SelfHealing:
         try:
             if w.restarts >= 3:
                 module_path = self._module_path_for_watch(w)
-                if module_path and _env_flag("AURA_ENABLE_DEEP_REPAIR", False):
+                block_reason = _deep_repair_block_reason("self_healing_watchdog_deep_repair")
+                if module_path and not block_reason:
                     logger.warning("Deep repair triggered for %s (%s)", w.name, module_path)
                     scheduled = self.schedule_deep_repair(
                         module_path,
@@ -184,7 +204,7 @@ class SelfHealing:
                     w.last_heartbeat_at = time.time()
                 else:
                     record["result"] = (
-                        "deep_repair_disabled"
+                        block_reason
                         if module_path
                         else "deep_repair_failed_no_module_path"
                     )
@@ -271,6 +291,13 @@ class SelfHealing:
         """Schedule a ReimplementationLab repair without blocking the watchdog."""
 
         key = str(module_path)
+        block_reason = _deep_repair_block_reason("self_healing_schedule_deep_repair")
+        if block_reason:
+            return {
+                "result": block_reason,
+                "module_path": key,
+                "reason": reason,
+            }
         existing = self._deep_repairs.get(key)
         if existing is not None and not existing.done():
             return {
@@ -322,6 +349,11 @@ class SelfHealing:
             "reason": reason,
             "metadata": metadata or {},
         }
+        block_reason = _deep_repair_block_reason("self_healing_request_deep_repair")
+        if block_reason:
+            record["result"] = block_reason
+            await self._append_record_async(record)
+            return record
         try:
             from core.container import ServiceContainer
 

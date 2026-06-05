@@ -58,3 +58,80 @@ def test_boot_sequence_failure_fails_closed(monkeypatch):
     degraded = manager.orchestrator.status.health_metrics["boot_degraded_components"]
     assert degraded[-1]["component"] == "boot_sequence"
     assert degraded[-1]["severity"] == "critical"
+
+
+def test_boot_manager_self_modification_monitor_needs_runtime_promotion_opt_in(monkeypatch):
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION", raising=False)
+    manager = _manager()
+    manager.orchestrator.cognitive_engine = object()
+    manager.orchestrator.auto_fix_enabled = True
+
+    class FakeSelfModifier:
+        def __init__(self, *_args, **_kwargs):
+            self.started = False
+
+        def runtime_promotion_enabled(self):
+            return False
+
+        def start_monitoring(self):
+            self.started = True
+
+    monkeypatch.setattr(
+        "core.self_modification.self_modification_engine.AutonomousSelfModificationEngine",
+        FakeSelfModifier,
+    )
+
+    manager._init_autonomous_evolution()
+
+    assert isinstance(manager.orchestrator.self_modifier, FakeSelfModifier)
+    assert manager.orchestrator.self_modifier.started is False
+
+
+def test_boot_manager_starts_self_modification_monitor_only_after_runtime_opt_in(monkeypatch):
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    manager = _manager()
+    manager.orchestrator.cognitive_engine = object()
+    manager.orchestrator.auto_fix_enabled = True
+
+    class FakeSelfModifier:
+        def __init__(self, *_args, **_kwargs):
+            self.started = False
+
+        def runtime_promotion_enabled(self):
+            return True
+
+        def start_monitoring(self):
+            self.started = True
+
+    monkeypatch.setattr(
+        "core.self_modification.self_modification_engine.AutonomousSelfModificationEngine",
+        FakeSelfModifier,
+    )
+
+    manager._init_autonomous_evolution()
+
+    assert isinstance(manager.orchestrator.self_modifier, FakeSelfModifier)
+    assert manager.orchestrator.self_modifier.started is True
+
+
+def test_boot_manager_disables_self_modification_engine_for_foreground_only_boot(monkeypatch):
+    monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
+    manager = _manager()
+    manager.orchestrator.cognitive_engine = object()
+    manager.orchestrator.auto_fix_enabled = True
+
+    class FakeSelfModifier:
+        def __init__(self, *_args, **_kwargs):
+            self.construct_attempted = True
+            raise AssertionError("foreground-only boot must not construct self-modification engine")
+
+    monkeypatch.setattr(
+        "core.self_modification.self_modification_engine.AutonomousSelfModificationEngine",
+        FakeSelfModifier,
+    )
+
+    manager._init_autonomous_evolution()
+
+    assert manager.orchestrator.self_modifier is None

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 import sys
 import traceback
 
@@ -9,8 +10,14 @@ from core.runtime.errors import record_degradation
 _REPL_EXECUTION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 
 
+def _stateful_execution_enabled() -> bool:
+    raw = os.environ.get("AURA_PYTHON_SANDBOX_STATEFUL", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
-    namespace: dict[str, object] = {}
+    shared_namespace: dict[str, object] = {}
+    stateful = _stateful_execution_enabled()
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if callable(reconfigure):
         reconfigure(line_buffering=True)
@@ -34,9 +41,12 @@ def main() -> None:
             
             out = io.StringIO()
             success = False
+            namespace = shared_namespace if stateful else {}
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 try:
-                    # Execute the code in the shared namespace
+                    # Execute in an isolated namespace by default. Stateful
+                    # mode is opt-in to avoid contaminating independent tool
+                    # calls with hidden prior variables.
                     exec(code, namespace)  # nosec
                     success = True
                 except _REPL_EXECUTION_ERRORS:

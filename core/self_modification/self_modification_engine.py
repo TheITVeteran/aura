@@ -671,19 +671,17 @@ class AutonomousSelfModificationEngine:
 
         swarm = ServiceContainer.get("agent_delegator", default=None)
         if not swarm:
-            if force:
-                logger.warning(
-                    "Swarm Delegator unavailable; continuing only because force=True was requested."
-                )
-                return True
             _record_self_modification_degradation(
                 RuntimeError("agent_delegator unavailable for self-modification review"),
-                action="Rejected fix because required swarm review was unavailable",
+                action=(
+                    "Rejected fix because required swarm review was unavailable; "
+                    "force=True does not bypass independent review"
+                ),
                 severity="degraded",
                 receipt_required=True,
-                extra={"review": "swarm", "force": False},
+                extra={"review": "swarm", "force": bool(force)},
             )
-            logger.error("Swarm Delegator unavailable. Rejecting unsupervised self-modification.")
+            logger.error("Swarm Delegator unavailable. Rejecting self-modification.")
             return False
 
         fix = proposal["fix"]

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from core.agency import repl_daemon
 from core.agency.tool_orchestrator import ToolOrchestrator
 from core.container import ServiceContainer
 from core.runtime.errors import DependencyUnavailable, get_degradation_tracker
@@ -39,6 +42,58 @@ class LaunchShouldNotRun:
     async def __call__(self) -> None:
         self.called = True
         raise AssertionError("sandbox launch should not run after cleanup failure")
+
+
+def _daemon_frame(code: str) -> str:
+    return f"{len(code.encode('utf-8'))}\n{code}\n"
+
+
+def _daemon_payloads(output: str) -> list[dict[str, str | bool]]:
+    lines = output.splitlines()
+    payloads: list[dict[str, str | bool]] = []
+    index = 0
+    while index < len(lines):
+        size = int(lines[index])
+        index += 1
+        payload = lines[index]
+        index += 1
+        assert len(payload.encode("utf-8")) == size
+        payloads.append(json.loads(payload))
+    return payloads
+
+
+def test_repl_daemon_isolates_python_namespaces_by_default(monkeypatch):
+    monkeypatch.delenv("AURA_PYTHON_SANDBOX_STATEFUL", raising=False)
+    input_stream = io.StringIO(
+        _daemon_frame("x = 7\nprint('set')") + _daemon_frame("print('x' in globals())")
+    )
+    output_stream = io.StringIO()
+
+    monkeypatch.setattr(repl_daemon.sys, "stdin", input_stream)
+    monkeypatch.setattr(repl_daemon.sys, "stdout", output_stream)
+
+    repl_daemon.main()
+
+    payloads = _daemon_payloads(output_stream.getvalue())
+    assert payloads[0] == {"success": True, "output": "set\n"}
+    assert payloads[1] == {"success": True, "output": "False\n"}
+
+
+def test_repl_daemon_stateful_python_namespace_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv("AURA_PYTHON_SANDBOX_STATEFUL", "1")
+    input_stream = io.StringIO(
+        _daemon_frame("x = 7\nprint('set')") + _daemon_frame("print('x' in globals())")
+    )
+    output_stream = io.StringIO()
+
+    monkeypatch.setattr(repl_daemon.sys, "stdin", input_stream)
+    monkeypatch.setattr(repl_daemon.sys, "stdout", output_stream)
+
+    repl_daemon.main()
+
+    payloads = _daemon_payloads(output_stream.getvalue())
+    assert payloads[0] == {"success": True, "output": "set\n"}
+    assert payloads[1] == {"success": True, "output": "True\n"}
 
 
 @pytest.mark.asyncio

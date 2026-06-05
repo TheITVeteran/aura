@@ -38,7 +38,9 @@ async def test_llm_code_generator_uses_router_and_validates_python():
 
 
 @pytest.mark.asyncio
-async def test_self_healing_request_deep_repair_uses_registered_lab(tmp_path):
+async def test_self_healing_request_deep_repair_uses_registered_lab(tmp_path, monkeypatch):
+    monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "1")
+
     class Lab:
         async def run_reconstruction(self, module_path, max_attempts=None, metadata=None):
             assert module_path == "core/example.py"
@@ -67,7 +69,9 @@ async def test_self_healing_request_deep_repair_uses_registered_lab(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_code_repair_fallback_calls_self_healing_deep_repair():
+async def test_code_repair_fallback_calls_self_healing_deep_repair(monkeypatch):
+    monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "1")
+
     class Lab:
         async def run_reconstruction(self, module_path, max_attempts=None, metadata=None):
             assert metadata["trigger"] == "patch_repair_failed"
@@ -92,3 +96,44 @@ async def test_code_repair_fallback_calls_self_healing_deep_repair():
 
     assert record["result"] == "deep_repair_succeeded"
     assert record["lab_result"]["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_self_healing_deep_repair_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("AURA_ENABLE_DEEP_REPAIR", raising=False)
+
+    class Lab:
+        def __init__(self):
+            self.reconstruction_attempts = 0
+
+        async def run_reconstruction(self, *_args, **_kwargs):
+            self.reconstruction_attempts += 1
+            raise AssertionError("deep repair must not run without explicit opt-in")
+
+    ServiceContainer.clear()
+    lab = Lab()
+    ServiceContainer.register_instance("reimplementation_lab", lab, required=False)
+    healer = SelfHealing()
+
+    record = await healer.request_deep_repair(
+        "core/example.py",
+        reason="patch_repair_failed",
+        metadata={"stage": "validation"},
+        max_attempts=1,
+    )
+
+    assert record["result"] == "deep_repair_disabled"
+    assert lab.reconstruction_attempts == 0
+
+
+def test_self_healing_schedule_deep_repair_respects_foreground_only_runtime(monkeypatch):
+    monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "1")
+    monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
+    healer = SelfHealing()
+
+    record = healer.schedule_deep_repair(
+        "core/example.py",
+        reason="watchdog_restart_exhausted",
+    )
+
+    assert record["result"] == "foreground_only_runtime"

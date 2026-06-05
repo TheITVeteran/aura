@@ -248,16 +248,27 @@ class BootManager:
 
     def _init_autonomous_evolution(self):
         try:
+            from core.runtime.background_policy import foreground_only_runtime
             from core.self_modification.self_modification_engine import (
                 AutonomousSelfModificationEngine,
             )
+            if foreground_only_runtime():
+                self.logger.info("Self-modification engine disabled for foreground-only boot.")
+                self.orchestrator.self_modifier = None
+                return
             self.orchestrator.self_modifier = AutonomousSelfModificationEngine(
                 self.orchestrator.cognitive_engine,
                 code_base_path=str(config.paths.base_dir),
                 auto_fix_enabled=self.orchestrator.auto_fix_enabled
             )
-            if config.security.auto_fix_enabled:
-                self.orchestrator.self_modifier.start_monitoring()
+            modifier = self.orchestrator.self_modifier
+            if config.security.auto_fix_enabled and modifier.runtime_promotion_enabled():
+                modifier.start_monitoring()
+            elif config.security.auto_fix_enabled:
+                self.logger.info(
+                    "Self-modification engine registered in proposal-only mode; "
+                    "runtime promotion requires explicit operator opt-in."
+                )
         except (ImportError, AttributeError, RuntimeError) as e:
             self._record_degradation(
                 e,

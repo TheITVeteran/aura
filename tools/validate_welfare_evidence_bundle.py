@@ -21,7 +21,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -333,6 +332,17 @@ def validate_semantic_stream() -> list[ValidationResult]:
     return results
 
 
+_VALIDATOR_ERRORS = (
+    AssertionError,
+    ImportError,
+    ModuleNotFoundError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 def run_full_validation() -> BundleValidation:
     """Run all validation checks."""
     bundle = BundleValidation(timestamp=time.strftime("%Y-%m-%dT%H:%M:%S"))
@@ -350,7 +360,7 @@ def run_full_validation() -> BundleValidation:
         try:
             for result in validator():
                 bundle.add(result)
-        except Exception as exc:
+        except _VALIDATOR_ERRORS as exc:
             bundle.add(ValidationResult(
                 name=f"{validator.__name__}_error",
                 passed=False,
@@ -413,11 +423,8 @@ def main():
 
     if args.run_tests:
         print("\nRunning pytest suite...")
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/being/", "-v", "--tb=short"],
-            cwd=str(project_root),
-        )
-        return result.returncode
+        import pytest
+        return pytest.main(["tests/being/", "-v", "--tb=short"])
 
     return 0 if bundle.overall == "PASS" else 1
 

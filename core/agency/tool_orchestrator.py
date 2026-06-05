@@ -109,8 +109,12 @@ class ToolOrchestrator:
 
     async def execute_python(self, script_content: str) -> tuple[bool, str]:
         """
-        Asynchronously executes a Python script in a STATEFUL sandbox daemon.
-        Variables persist across calls!
+        Asynchronously execute Python in the sandbox daemon.
+
+        Each call is isolated by default so hidden variables from earlier tool
+        attempts cannot contaminate later reasoning. Operators can opt into a
+        stateful daemon by setting ``AURA_PYTHON_SANDBOX_STATEFUL=1`` before
+        launch.
         """
         # Autonomous Code Validation (Anti-NameError/TypeError)
         from core.utils.code_guardian import CodeGuardian
