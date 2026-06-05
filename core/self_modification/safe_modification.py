@@ -166,13 +166,13 @@ class GitIntegration:
         if not self.git_available:
             return False
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 ["git", "status", "--porcelain"],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=5,
+                read_only=True,
+                source="core.self_modification.safe_modification.git_status",
             )
             return bool(result.stdout.strip())
         except (subprocess.SubprocessError, OSError) as e:
@@ -194,13 +194,12 @@ class GitIntegration:
         try:
             branch_name = self._validate_branch_name(branch_name)
             # Create branch
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 ["git", "checkout", "-b", branch_name],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=10,
+                source="core.self_modification.safe_modification.create_branch",
             )
 
             if result.returncode == 0:
@@ -223,18 +222,21 @@ class GitIntegration:
         try:
             file_path = self._validate_path(file_path)
             # Stage file
-            await asyncio.to_thread(
-                subprocess.run, ["git", "add", file_path], cwd=self.repo_path, check=True, timeout=5
+            await get_subprocess_gateway().run_async(
+                ["git", "add", file_path],
+                cwd=self.repo_path,
+                check=True,
+                timeout=5,
+                source="core.self_modification.safe_modification.git_add",
             )
 
             # Commit
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 ["git", "commit", "-m", message],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=10,
+                source="core.self_modification.safe_modification.git_commit",
             )
 
             if result.returncode != 0:
@@ -242,13 +244,13 @@ class GitIntegration:
                 return None
 
             # Get commit hash
-            hash_result = await asyncio.to_thread(
-                subprocess.run,
+            hash_result = await get_subprocess_gateway().run_async(
                 ["git", "rev-parse", "HEAD"],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=5,
+                read_only=True,
+                source="core.self_modification.safe_modification.rev_parse_head",
             )
 
             commit_hash = hash_result.stdout.strip()
@@ -267,23 +269,22 @@ class GitIntegration:
 
         try:
             # Checkout main
-            await asyncio.to_thread(
-                subprocess.run,
+            await get_subprocess_gateway().run_async(
                 ["git", "checkout", "main"],
                 cwd=self.repo_path,
                 check=True,
                 timeout=5,
+                source="core.self_modification.safe_modification.checkout_main_for_merge",
             )
 
             branch_name = self._validate_branch_name(branch_name)
             # Merge
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 ["git", "merge", "--no-ff", branch_name, "-m", f"Auto-merge: {branch_name}"],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=10,
+                source="core.self_modification.safe_modification.merge_to_main",
             )
 
             if result.returncode == 0:
@@ -305,12 +306,12 @@ class GitIntegration:
 
         try:
             branch_name = self._validate_branch_name(branch_name)
-            await asyncio.to_thread(
-                subprocess.run,
+            await get_subprocess_gateway().run_async(
                 ["git", "branch", "-D", branch_name],
                 cwd=self.repo_path,
                 check=True,
                 timeout=5,
+                source="core.self_modification.safe_modification.delete_branch",
             )
             logger.info("Deleted branch: %s", branch_name)
             return True
@@ -325,12 +326,12 @@ class GitIntegration:
             return False
 
         try:
-            await asyncio.to_thread(
-                subprocess.run,
+            await get_subprocess_gateway().run_async(
                 ["git", "checkout", "main"],
                 cwd=self.repo_path,
                 check=True,
                 timeout=5,
+                source="core.self_modification.safe_modification.checkout_main",
             )
             return True
         except (subprocess.SubprocessError, OSError):
@@ -342,13 +343,13 @@ class GitIntegration:
             return None
 
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 cwd=self.repo_path,
                 capture_output=True,
-                text=True,
                 timeout=5,
+                read_only=True,
+                source="core.self_modification.safe_modification.current_branch",
             )
             return result.stdout.strip()
         except (subprocess.SubprocessError, OSError):

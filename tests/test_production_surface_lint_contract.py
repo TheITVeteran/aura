@@ -37,6 +37,20 @@ async def main():
     assert "unapproved_direct_subprocess" in kinds
 
 
+def test_lint_blocks_subprocess_callable_wrapped_in_to_thread() -> None:
+    kinds = _findings(
+        """
+import asyncio
+import subprocess
+
+async def main():
+    await asyncio.to_thread(subprocess.run, ["python", "-V"])
+"""
+    )
+
+    assert "unapproved_direct_subprocess" in kinds
+
+
 def test_lint_blocks_path_constructor_write_text() -> None:
     kinds = _findings(
         """

@@ -64,10 +64,6 @@ ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
-    "core/runtime/atomic_writer.py": {
-        "justification": "Executes direct OS filesystem writes with robust flock locks to write files atomically.",
-        "compensating_tests": "tests/test_atomic_writer.py"
-    },
     "core/runtime/task_ownership.py": {
         "justification": "Manages low-level async tasks and executes raw asyncio task creation with robust tracking.",
         "compensating_tests": "tests/test_task_ownership.py"
@@ -75,10 +71,6 @@ EXEMPT_FILES = {
     "core/utils/task_tracker.py": {
         "justification": "Registers and tracks async tasks for memory leak prevention.",
         "compensating_tests": "tests/test_task_tracker.py"
-    },
-    "core/utils/asyncio_patch.py": {
-        "justification": "Monkey-patches asyncio event loops to recover from third-party library hangs.",
-        "compensating_tests": "tests/test_asyncio_patch.py"
     },
     "core/networking/hive_node.py": {
         "justification": "Handles low-level socket connections and raw network tasks in the swarm mesh.",
@@ -99,10 +91,6 @@ EXEMPT_FILES = {
     "core/autonomy/autonomous_research_orchestrator.py": {
         "justification": "Manages long-horizon research plans and persistent search targets.",
         "compensating_tests": "tests/test_autonomous_research_orchestrator.py"
-    },
-    "core/resilience/dream_cycle.py": {
-        "justification": "Triggers counterfactual simulation cycles for offline learning.",
-        "compensating_tests": "tests/test_dream_cycle.py"
     },
     "core/resilience/stall_watchdog.py": {
         "justification": "Implements a non-blocking daemon thread to restart frozen executors.",
@@ -172,10 +160,6 @@ EXEMPT_FILES = {
         "justification": "Builds hash-chained governance ledger files.",
         "compensating_tests": "tests/test_audit_chain.py"
     },
-    "core/self_improvement/deterministic_comparator.py": {
-        "justification": "Compares performance across distinct model checkpoints without user inputs.",
-        "compensating_tests": "tests/test_deterministic_comparator.py"
-    },
     "core/self_improvement/blinded_workspace.py": {
         "justification": "Provides isolated filesystem scopes for un-mocked self-debug runs.",
         "compensating_tests": "tests/test_blinded_workspace.py"
@@ -207,10 +191,6 @@ EXEMPT_FILES = {
     "core/environment/outcome/ledger.py": {
         "justification": "Maintains persistent action outcome ledgers.",
         "compensating_tests": "tests/test_outcome_ledger.py"
-    },
-    "core/sensory_integration.py": {
-        "justification": "Coordinates sensory updates (audio, display, keyboard) into consciousness.",
-        "compensating_tests": "tests/test_sensory_integration.py"
     },
     "core/external_chat.py": {
         "justification": "Exposes standard external network messaging interfaces.",
@@ -247,10 +227,6 @@ EXEMPT_FILES = {
     "core/self_modification/shadow_runtime.py": {
         "justification": "Boots a redundant shadow process to test new code stability.",
         "compensating_tests": "tests/test_shadow_runtime.py"
-    },
-    "security/code_sandbox.py": {
-        "justification": "Implements OS-level sandboxing profiles and confinement walls.",
-        "compensating_tests": "tests/test_code_sandbox.py"
     },
     "security/sandbox.py": {
         "justification": "Implements core execution constraints and security filters.",
@@ -404,7 +380,8 @@ class AstLinter(ast.NodeVisitor):
                 f"Dynamic code execution call {name} outside sandbox is prohibited.",
             )
 
-        # Check direct subprocess/command calls
+        # Check direct subprocess/command calls, including subprocess callables
+        # passed through wrappers such as asyncio.to_thread(subprocess.run, ...).
         if name in {
             "subprocess.run",
             "subprocess.Popen",
@@ -418,7 +395,7 @@ class AstLinter(ast.NodeVisitor):
         )) or name in {
             "create_subprocess_exec",
             "create_subprocess_shell",
-        }:
+        } or self._has_subprocess_callable_arg(node):
             self.add(
                 "high",
                 "unapproved_direct_subprocess",
@@ -485,6 +462,22 @@ class AstLinter(ast.NodeVisitor):
         if isinstance(func, ast.Name):
             parts.append(func.id)
         return ".".join(reversed(parts))
+
+    @staticmethod
+    def _has_subprocess_callable_arg(node: ast.Call) -> bool:
+        forbidden = {
+            "subprocess.run",
+            "subprocess.Popen",
+            "subprocess.call",
+            "subprocess.check_call",
+            "subprocess.check_output",
+            "asyncio.create_subprocess_exec",
+            "asyncio.create_subprocess_shell",
+        }
+        for arg in node.args:
+            if AstLinter._call_name_from_func(arg) in forbidden:
+                return True
+        return False
 
     @staticmethod
     def _attribute_receiver_name(node: ast.Call) -> str:

@@ -1,13 +1,14 @@
 """skills/network_ops.py
 Real Network Operations utilizing OS commands.
 """
+import asyncio
 import logging
 import platform
 import socket
 import subprocess
-import asyncio
-from typing import Any, Dict
+from typing import Any
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from infrastructure import BaseSkill
 
 logger = logging.getLogger("Skills.NetworkOps")
@@ -16,7 +17,7 @@ class NetworkOpsSkill(BaseSkill):
     name = "network_ops"
     description = "Checks network connectivity and interface status using real system calls."
 
-    async def execute(self, goal: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, goal: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         action = goal.get("action", "check_connection")
         
         if action == "check_connection":
@@ -26,16 +27,16 @@ class NetworkOpsSkill(BaseSkill):
         else:
             return {"ok": False, "error": f"Unknown action: {action}"}
 
-    async def _check_connection(self, host="8.8.8.8", port=53, timeout=3) -> Dict[str, Any]:
+    async def _check_connection(self, host="8.8.8.8", port=53, timeout_s=3) -> dict[str, Any]:
         """Checks actual internet connectivity via socket (async offload)."""
         def _sync_check():
             sock = None
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(timeout)
+                sock.settimeout(timeout_s)
                 sock.connect((host, port))
                 return True, "Real connection established."
-            except socket.error as ex:
+            except OSError as ex:
                 return False, str(ex)
             finally:
                 if sock:
@@ -57,7 +58,7 @@ class NetworkOpsSkill(BaseSkill):
                 "message": "Failed to connect to real external host."
             }
 
-    async def _list_interfaces(self) -> Dict[str, Any]:
+    async def _list_interfaces(self) -> dict[str, Any]:
         """Runs OS command to verify network hardware (async offload)."""
         system = platform.system()
         cmd = []
@@ -72,7 +73,13 @@ class NetworkOpsSkill(BaseSkill):
              return {"ok": False, "error": "Unsupported OS"}
 
         try:
-             result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, check=True)
+             result = await get_subprocess_gateway().run_async(
+                 cmd,
+                 capture_output=True,
+                 check=True,
+                 read_only=True,
+                 source="skills.network_ops:list_interfaces",
+             )
              return {
                  "ok": True,
                  "output": result.stdout[:1000] # Truncate for safety

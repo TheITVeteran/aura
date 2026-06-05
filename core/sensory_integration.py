@@ -10,7 +10,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 try:
     from .container import ServiceContainer, ServiceLifetime
@@ -159,7 +161,7 @@ class VisionSystem:
         except ImportError:
             logger.debug("OpenCV is unavailable; camera capture disabled.")
             return False
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             logger.debug("Camera availability probe failed: %s", exc)
             return False
@@ -302,7 +304,7 @@ class HearingSystem:
         except ImportError:
             logger.debug("sounddevice is unavailable; microphone capture disabled.")
             return False
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             logger.debug("Microphone availability probe failed: %s", exc)
             return False
@@ -486,7 +488,8 @@ class AVProductionSystem:
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sensory_integration", exc)
             manifest = path.with_suffix(".txt")
-            manifest.write_text(
+            atomic_write_text(
+                manifest,
                 f"Aura local image request\nstyle: {style}\ndescription: {description}\n",
                 encoding="utf-8",
             )
@@ -519,8 +522,6 @@ class AVProductionSystem:
         import shutil
         if not shutil.which("ffmpeg"):
             return {"error": "ffmpeg_not_installed"}
-
-        import subprocess
         try:
             # Basic trim operation as baseline
             for edit in edits:
@@ -532,12 +533,15 @@ class AVProductionSystem:
                     if end:
                         cmd.extend(["-to", str(end)])
                     cmd.extend(["-c", "copy", output])
-                    proc = await asyncio.to_thread(
-                        subprocess.run, cmd, capture_output=True, timeout=60
+                    proc = await get_subprocess_gateway().run_async(
+                        cmd,
+                        capture_output=True,
+                        timeout=60,
+                        source="core.sensory_integration.edit_video",
                     )
                     if proc.returncode == 0:
                         return {"path": output, "edits_applied": len(edits)}
-                    return {"error": proc.stderr.decode()[:200]}
+                    return {"error": proc.stderr[:200]}
             return {"error": "no_supported_edits", "supported": ["trim"]}
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('sensory_integration', e)

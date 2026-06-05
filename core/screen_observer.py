@@ -18,16 +18,17 @@ Limitations (current):
 Dependencies: mss, sounddevice, scipy (install via pip if missing)
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import json
 import logging
-import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ScreenObserver")
 
@@ -43,8 +44,8 @@ class ScreenObserver:
     """
     
     def __init__(self):
-        self._vision_proc: Optional[subprocess.Popen] = None
-        self._audio_proc: Optional[subprocess.Popen] = None
+        self._vision_proc: subprocess.Popen | None = None
+        self._audio_proc: subprocess.Popen | None = None
         self._vision_active = False
         self._audio_active = False
         self._last_vision_check = 0
@@ -67,7 +68,7 @@ class ScreenObserver:
         self._audio_active = False
         return False
     
-    async def start_vision(self) -> Dict[str, Any]:
+    async def start_vision(self) -> dict[str, Any]:
         """Start screen capture service (Async)."""
         if await self.vision_active():
             return {"ok": True, "message": "Vision already active", "pid": self._vision_proc.pid}
@@ -77,14 +78,12 @@ class ScreenObserver:
             return {"ok": False, "error": f"Vision service not found at {script}"}
         
         try:
-            # Popen is fast but technically synchronous; we can wrap it or just use it.
-            # Using create_subprocess_exec would be even better but Popen gives more control for background procs.
-            self._vision_proc = await asyncio.to_thread(
-                subprocess.Popen,
+            self._vision_proc = get_subprocess_gateway().spawn(
                 [sys.executable, str(script)],
                 cwd=str(_BASE),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
+                source="core.screen_observer.start_vision",
             )
             self._vision_active = True
             logger.info("👁️ Vision service started (PID: %s)", self._vision_proc.pid)
@@ -94,7 +93,7 @@ class ScreenObserver:
             logger.error("Failed to start vision: %s", e)
             return {"ok": False, "error": str(e)}
     
-    async def start_audio(self) -> Dict[str, Any]:
+    async def start_audio(self) -> dict[str, Any]:
         """Start audio capture service (Async)."""
         if await self.audio_active():
             return {"ok": True, "message": "Audio already active", "pid": self._audio_proc.pid}
@@ -104,12 +103,12 @@ class ScreenObserver:
             return {"ok": False, "error": f"Audio service not found at {script}"}
         
         try:
-            self._audio_proc = await asyncio.to_thread(
-                subprocess.Popen,
+            self._audio_proc = get_subprocess_gateway().spawn(
                 [sys.executable, str(script)],
                 cwd=str(_BASE),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
+                source="core.screen_observer.start_audio",
             )
             self._audio_active = True
             logger.info("👂 Audio service started (PID: %s)", self._audio_proc.pid)
@@ -119,7 +118,7 @@ class ScreenObserver:
             logger.error("Failed to start audio: %s", e)
             return {"ok": False, "error": str(e)}
     
-    async def stop_vision(self) -> Dict[str, Any]:
+    async def stop_vision(self) -> dict[str, Any]:
         """Stop screen capture (Async)."""
         if self._vision_proc and await asyncio.to_thread(self._vision_proc.poll) is None:
             self._vision_proc.terminate()
@@ -132,7 +131,7 @@ class ScreenObserver:
         self._vision_active = False
         return {"ok": True, "message": "Vision stopped"}
     
-    async def stop_audio(self) -> Dict[str, Any]:
+    async def stop_audio(self) -> dict[str, Any]:
         """Stop audio capture (Async)."""
         if self._audio_proc and await asyncio.to_thread(self._audio_proc.poll) is None:
             self._audio_proc.terminate()
@@ -150,7 +149,7 @@ class ScreenObserver:
         await self.stop_vision()
         await self.stop_audio()
     
-    def read_vision(self) -> Optional[Dict]:
+    def read_vision(self) -> dict | None:
         """Read latest screen capture data."""
         path = _BASE / "sensory_vision.json"
         try:
@@ -171,7 +170,7 @@ class ScreenObserver:
             logger.debug("Vision read error: %s", e)
         return None
     
-    def read_audio(self) -> Optional[Dict]:
+    def read_audio(self) -> dict | None:
         """Read latest audio data with transcript."""
         path = _BASE / "sensory_audio.json"
         try:
@@ -264,7 +263,7 @@ class ScreenObserver:
 
                 return self._kg
     
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get full status of all sensory systems."""
         vision_data = self.read_vision()
         audio_data = self.read_audio()
@@ -303,7 +302,7 @@ class ScreenObserver:
 
 
 # Singleton
-_instance: Optional[ScreenObserver] = None
+_instance: ScreenObserver | None = None
 
 def get_screen_observer() -> ScreenObserver:
     global _instance

@@ -1,39 +1,39 @@
-from core.runtime.errors import record_degradation
+import asyncio
 import logging
 import subprocess
-import asyncio
-from typing import Dict, List, Optional, Tuple
 
 import requests
+
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Kernel.Capabilities")
 
 class Shell:
-    def __init__(self, cwd: str, allowed_commands: Optional[List[str]] = None, timeout: int = 30):
+    def __init__(self, cwd: str, allowed_commands: list[str] | None = None, timeout: int = 30):
         self.cwd = cwd
         self.allowed_commands = allowed_commands or []
         self.timeout = timeout
 
-    def _is_allowed(self, cmd: List[str]) -> bool:
+    def _is_allowed(self, cmd: list[str]) -> bool:
         if not self.allowed_commands:
             return True # No restrictions if list is empty
         base_cmd = cmd[0]
         return any(base_cmd == allowed or base_cmd.endswith("/" + allowed) for allowed in self.allowed_commands)
 
-    async def run(self, cmd: List[str]) -> Tuple[bool, str]:
+    async def run(self, cmd: list[str]) -> tuple[bool, str]:
         if not self._is_allowed(cmd):
             logger.warning("Blocked unauthorized shell command: %s", cmd)
             return False, f"Command {cmd[0]} not in allowlist"
         
         logger.info("Shell.run: %s", ' '.join(cmd[:5]))
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 cmd,
                 cwd=self.cwd,
                 capture_output=True,
-                text=True,
                 timeout=self.timeout,
+                source="core.capabilities.shell",
             )
             out = (result.stdout + "\n" + result.stderr).strip()
             return result.returncode == 0, out
@@ -44,7 +44,7 @@ class Shell:
 
 
 class WebClient:
-    def __init__(self, allowed_domains: Optional[List[str]] = None, timeout: int = 10):
+    def __init__(self, allowed_domains: list[str] | None = None, timeout: int = 10):
         self.allowed_domains = allowed_domains or []
         self.timeout = timeout
 
@@ -55,7 +55,7 @@ class WebClient:
         domain = urlparse(url).netloc
         return any(domain == d or domain.endswith("." + d) for d in self.allowed_domains)
 
-    async def get(self, url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    async def get(self, url: str, headers: dict[str, str] | None = None) -> tuple[bool, str]:
         if not self._is_allowed(url):
             logger.warning("Blocked unauthorized domain access: %s", url)
             return False, f"Domain not in allowlist: {url}"
@@ -68,4 +68,3 @@ class WebClient:
             record_degradation('capabilities', e)
             logger.error("Web error: %s", e)
             return False, str(e)
-

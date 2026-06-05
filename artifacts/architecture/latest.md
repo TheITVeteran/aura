@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1780641915.057434`
+Generated: `1780642824.376558`
 
 ## Summary
 
 - Subsystems: 141
 - Python files: 1734
-- Python lines: 488631
+- Python lines: 488679
 - Dependency edges: 734
 - ServiceContainer `.get()` calls: 1490
 - ServiceContainer registrations: 358
@@ -18,7 +18,7 @@ Generated: `1780641915.057434`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>102 files, 23176 lines"]
+    runtime["runtime<br/>102 files, 23205 lines"]
     utils["utils<br/>42 files, 5210 lines"]
     brain["brain<br/>116 files, 43920 lines"]
     memory["memory<br/>77 files, 19061 lines"]
@@ -29,7 +29,7 @@ graph TD
     adaptation["adaptation<br/>26 files, 12051 lines"]
     affect["affect<br/>6 files, 2935 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
-    self_modification["self_modification<br/>29 files, 10906 lines"]
+    self_modification["self_modification<br/>29 files, 10905 lines"]
     senses["senses<br/>23 files, 5144 lines"]
     state["state<br/>6 files, 3468 lines"]
     governance["governance<br/>8 files, 2827 lines"]
@@ -94,7 +94,7 @@ graph TD
     perception["perception<br/>15 files, 3264 lines"]
     persistence["persistence<br/>2 files, 617 lines"]
     predictive["predictive<br/>2 files, 186 lines"]
-    self_improvement["self_improvement<br/>12 files, 2285 lines"]
+    self_improvement["self_improvement<br/>12 files, 2287 lines"]
     sensors["sensors<br/>1 files, 151 lines"]
     services["services<br/>2 files, 31 lines"]
     simulation["simulation<br/>3 files, 393 lines"]
@@ -130,7 +130,7 @@ graph TD
     audits["audits<br/>2 files, 267 lines"]
     body["body<br/>1 files, 139 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>178 files, 54979 lines"]
+    core_root["core_root<br/>178 files, 54997 lines"]
     council["council<br/>5 files, 466 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     evals["evals<br/>1 files, 143 lines"]
@@ -900,17 +900,17 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 128 | 59758 | 2514202 | 38 | 29 |
-| core_root | 178 | 54979 | 2235767 | 99 | 0 |
+| core_root | 178 | 54997 | 2236455 | 99 | 0 |
 | brain | 116 | 43920 | 1894429 | 42 | 39 |
-| runtime | 102 | 23176 | 818507 | 41 | 117 |
+| runtime | 102 | 23205 | 819406 | 41 | 117 |
 | memory | 77 | 19061 | 769495 | 18 | 32 |
 | orchestrator | 42 | 18872 | 832854 | 124 | 9 |
 | phases | 29 | 17310 | 783345 | 33 | 8 |
 | skills | 77 | 16646 | 672690 | 29 | 6 |
-| agency | 28 | 14386 | 583381 | 28 | 17 |
+| agency | 28 | 14386 | 583488 | 28 | 17 |
 | adaptation | 26 | 12051 | 482023 | 19 | 14 |
 | resilience | 53 | 11331 | 456372 | 16 | 25 |
-| self_modification | 29 | 10906 | 433249 | 12 | 14 |
+| self_modification | 29 | 10905 | 434070 | 12 | 14 |
 | environment | 82 | 8309 | 322052 | 10 | 2 |
 | cognitive | 11 | 8103 | 330009 | 9 | 4 |
 | autonomy | 22 | 7714 | 316858 | 17 | 6 |
@@ -940,7 +940,7 @@ graph TD
 | somatic | 5 | 2383 | 90349 | 8 | 3 |
 | ops | 11 | 2355 | 91027 | 15 | 5 |
 | executive | 4 | 2342 | 98871 | 14 | 8 |
-| self_improvement | 12 | 2285 | 86875 | 3 | 2 |
+| self_improvement | 12 | 2287 | 87032 | 3 | 2 |
 | conversational | 4 | 2239 | 95619 | 4 | 3 |
 | identity | 11 | 2138 | 90683 | 9 | 9 |
 | actuators | 9 | 2123 | 83231 | 12 | 6 |
@@ -984,7 +984,7 @@ graph TD
 | research_core | 5 | 580 | 22543 | 8 | 1 |
 | discovery | 4 | 579 | 20581 | 2 | 2 |
 | observability | 3 | 575 | 20634 | 4 | 11 |
-| sovereign | 4 | 549 | 19093 | 1 | 2 |
+| sovereign | 4 | 549 | 19278 | 1 | 2 |
 | audit | 6 | 537 | 20846 | 4 | 1 |
 | supervisor | 3 | 527 | 19236 | 1 | 5 |
 | data | 2 | 514 | 19319 | 2 | 3 |
@@ -1148,10 +1148,10 @@ graph TD
 | UnifiedWill decisions | 55 | 29 | 2 | 53 |
 | Memory writes | 281 | 113 | 48 | 233 |
 | State mutation | 376 | 145 | 5 | 371 |
-| Tool execution | 94 | 49 | 6 | 88 |
+| Tool execution | 93 | 48 | 6 | 87 |
 | Self-modification and patching | 13 | 10 | 2 | 11 |
 | LLM inference | 253 | 150 | 67 | 186 |
-| External I/O | 92 | 43 | 10 | 82 |
+| External I/O | 91 | 42 | 10 | 81 |
 
 ### UnifiedWill decisions
 
@@ -1255,7 +1255,7 @@ Review candidates:
 - `core/actuators/code_execution_actuator.py:98` [actuators] `operator.execute_synthesized_tool` - res = operator.execute_synthesized_tool(code, timeout_s=timeout_s)
 - `core/actuators/web_actuators.py:114` [actuators] `skill.execute` - return await skill.execute({"mode": "browse", "url": url}, {})
 - `core/agency/agency_core.py:447` [agency] `self._execute_shard_tool` - tasks.append(self._execute_shard_tool(name, payload))
-- `core/agency/agency_orchestrator.py:366` [agency] `execute` - await execute(proposal, state_snapshot, receipt.capability_token or "")
+- `core/agency/agency_orchestrator.py:367` [agency] `execute` - await execute(proposal, state_snapshot, receipt.capability_token or "")
 - `core/agency/autonomous_task_engine.py:515` [agency] `orchestrator.execute_tool` - return await orchestrator.execute_tool(tool_name, args, **kwargs)
 - `core/agency/autonomous_task_engine.py:2844` [agency] `orch.execute_tool` - return await orch.execute_tool(
 - `core/agency/autonomous_task_engine.py:2847` [agency] `orch.execute_tool` - return await orch.execute_tool("web_search", {"query": query})

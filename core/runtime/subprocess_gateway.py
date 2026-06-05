@@ -152,6 +152,7 @@ class SubprocessGateway:
         offline_tooling: bool = False,
         capture_output: bool = True,
         input: str | None = None,
+        check: bool = False,
         source: str = "unknown",
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
@@ -172,8 +173,36 @@ class SubprocessGateway:
             capture_output=bool(capture_output),
             input=input,
             text=True,
-            check=False,
+            check=bool(check),
             shell=False,
+        )
+
+    async def run_async(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float = 30.0,  # noqa: ASYNC109 - forwarded to subprocess.run.
+        read_only: bool = False,
+        offline_tooling: bool = False,
+        capture_output: bool = True,
+        input: str | None = None,
+        check: bool = False,
+        source: str = "unknown",
+    ) -> subprocess.CompletedProcess[str]:
+        return await asyncio.to_thread(
+            self.run,
+            argv,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            read_only=read_only,
+            offline_tooling=offline_tooling,
+            capture_output=capture_output,
+            input=input,
+            check=check,
+            source=source,
         )
 
     def spawn(

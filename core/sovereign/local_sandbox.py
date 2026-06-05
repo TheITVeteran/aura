@@ -2,8 +2,6 @@
 Executes Python code and shell commands in an isolated temporary directory
 using subprocess with timeouts and resource limits.
 """
-from core.runtime.errors import record_degradation
-import asyncio
 import logging
 import os
 import shlex
@@ -14,6 +12,8 @@ import time
 from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .sandbox import ExecutionResult, Sandbox
 
@@ -132,14 +132,14 @@ class LocalSandbox(Sandbox):
 
         start = time.monotonic()
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 [sys.executable, script_path.name],
                 capture_output=True,
-                text=True,
                 timeout=timeout,
                 cwd=str(self.work_path),
                 env=_sandbox_env(),
+                offline_tooling=True,
+                source="maintenance_tooling:local_sandbox.run_code",
             )
             duration = time.monotonic() - start
             return ExecutionResult(
@@ -185,14 +185,14 @@ class LocalSandbox(Sandbox):
         start = time.monotonic()
         try:
             argv = _parse_command(command)
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 argv,
                 capture_output=True,
-                text=True,
                 timeout=timeout,
                 cwd=str(self.work_path),
                 env=_sandbox_env(),
+                offline_tooling=True,
+                source="maintenance_tooling:local_sandbox.run_command",
             )
             duration = time.monotonic() - start
             return ExecutionResult(

@@ -15,6 +15,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .ast_analyzer import ASTAnalyzer
 
@@ -658,13 +659,12 @@ class SandboxTester:
                 results["commands"].append(
                     "python -m pytest " + " ".join(results["tests_run"])
                 )
-                result = await asyncio.to_thread(
-                    subprocess.run,
+                result = await get_subprocess_gateway().run_async(
                     ["python", "-m", "pytest", str(test_files[0])],
                     capture_output=True,
-                    text=True,
                     timeout=30,
-                    cwd=sandbox_path
+                    cwd=sandbox_path,
+                    source="core.self_modification.code_repair.validate_unit_tests",
                 )
                 
                 if result.returncode == 0:
@@ -731,13 +731,12 @@ class SandboxTester:
             
             # 3. Run Probe
             try:
-                result = await asyncio.to_thread(
-                    subprocess.run,
+                result = await get_subprocess_gateway().run_async(
                     ["python3", "weakness_probe.py"],
                     capture_output=True,
-                    text=True,
                     timeout=15,
-                    cwd=temp_path
+                    cwd=temp_path,
+                    source="core.self_modification.code_repair.weakness_probe",
                 )
                 
                 is_pass = (result.returncode == 0)
@@ -860,13 +859,12 @@ class AutonomousCodeRepair:
             # If it's a simple syntax or style issue, ruff might fix it
             ruff_bin = shutil.which("ruff") or "ruff"
             cmd = [ruff_bin, "check", "--fix", file_path]
-            await asyncio.to_thread(
-                subprocess.run,
+            await get_subprocess_gateway().run_async(
                 cmd,
                 capture_output=True,
-                text=True,
                 cwd=self.generator.code_base,
                 timeout=30,
+                source="core.self_modification.code_repair.ruff_fix",
             )
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('code_repair', e)

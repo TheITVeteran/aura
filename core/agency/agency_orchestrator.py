@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.AgencyOrchestrator")
 
@@ -439,14 +440,13 @@ class AgencyOrchestrator:
                 }
             timeout = float(proposal.payload.get("timeout") or 30.0)
             cwd = proposal.payload.get("cwd")
-            proc = await asyncio.to_thread(
-                subprocess.run,
+            proc = await get_subprocess_gateway().run_async(
                 argv,
                 cwd=cwd if isinstance(cwd, str) else None,
                 timeout=timeout,
                 capture_output=True,
-                text=True,
                 check=False,
+                source="core.agency.agency_orchestrator.default_shell_execution",
             )
             return {
                 "executed": True,

@@ -10,20 +10,21 @@ from __future__ import annotations
 
 import ast
 import logging
+import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.self_improvement.blinded_workspace import BlindedWorkspace
 from core.self_improvement.interface_contract import (
     CandidateModule,
     ComparisonReport,
     ModuleSpec,
     TestVerdict,
 )
-from core.self_improvement.blinded_workspace import BlindedWorkspace
 
 logger = logging.getLogger("Aura.DeterministicComparator")
 
@@ -78,7 +79,7 @@ class DeterministicComparator:
         # 4. Write candidate to workspace and run tests
         candidate_path = workspace.workspace_dir / spec.module_path
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        candidate_path.write_text(candidate.source_code, encoding="utf-8")
+        atomic_write_text(candidate_path, candidate.source_code, encoding="utf-8")
 
         # 5. Run tests
         test_verdicts = self._run_tests(spec, workspace)
@@ -146,9 +147,9 @@ class DeterministicComparator:
                     return False
         return True
 
-    def _run_tests(self, spec: ModuleSpec, workspace: BlindedWorkspace) -> List[TestVerdict]:
+    def _run_tests(self, spec: ModuleSpec, workspace: BlindedWorkspace) -> list[TestVerdict]:
         """Run the spec's test cases in an isolated subprocess."""
-        verdicts: List[TestVerdict] = []
+        verdicts: list[TestVerdict] = []
 
         if not spec.test_cases:
             return verdicts
@@ -167,20 +168,21 @@ class DeterministicComparator:
         # Run pytest in subprocess with the workspace on sys.path
         for test_file in test_files:
             try:
-                result = subprocess.run(
+                result = get_subprocess_gateway().run(
                     [
                         sys.executable, "-m", "pytest", test_file,
                         "-v", "--tb=short", "--no-header", "-q",
                         f"--rootdir={workspace.workspace_dir}",
                     ],
-                    capture_output=True, text=True,
+                    capture_output=True,
                     timeout=self.timeout,
                     cwd=str(workspace.workspace_dir),
                     env={
-                        **dict(__import__("os").environ),
+                        **dict(os.environ),
                         "PYTHONPATH": str(workspace.workspace_dir),
                         "PYTHONDONTWRITEBYTECODE": "1",
                     },
+                    source="core.self_improvement.deterministic_comparator.run_tests",
                 )
 
                 # Parse pytest output for individual test results
@@ -202,9 +204,9 @@ class DeterministicComparator:
 
     def _parse_pytest_output(
         self, stdout: str, stderr: str, returncode: int
-    ) -> List[TestVerdict]:
+    ) -> list[TestVerdict]:
         """Parse pytest verbose output into TestVerdicts."""
-        verdicts: List[TestVerdict] = []
+        verdicts: list[TestVerdict] = []
         for line in stdout.splitlines():
             line = line.strip()
             if " PASSED" in line:

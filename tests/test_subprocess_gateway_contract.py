@@ -90,6 +90,37 @@ def test_read_only_spawn_async_allows_named_source(
     assert asyncio.run(_attempt()) == "named-async"
 
 
+def test_read_only_run_async_requires_attributable_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+
+    async def _attempt() -> None:
+        await subprocess_gateway.SubprocessGateway().run_async(
+            [sys.executable, "-c", "print('anonymous')"],
+            read_only=True,
+        )
+
+    with pytest.raises(ValueError, match="read-only subprocess probes require"):
+        asyncio.run(_attempt())
+
+
+def test_read_only_run_async_allows_named_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+
+    async def _attempt() -> str:
+        result = await subprocess_gateway.SubprocessGateway().run_async(
+            [sys.executable, "-c", "print('named-run-async')"],
+            read_only=True,
+            source="test.subprocess_gateway.read_only_run_async",
+        )
+        return result.stdout.strip()
+
+    assert asyncio.run(_attempt()) == "named-run-async"
+
+
 def test_spawn_shell_async_denied_when_live_governance_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

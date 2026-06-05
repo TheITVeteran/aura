@@ -1,10 +1,10 @@
-import asyncio
 import logging
 import re
 import subprocess
 import sys
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Optimizer.PatchLibrary")
 
@@ -28,12 +28,26 @@ class GitInitPatch(PatchStrategy):
     async def apply(self, failure_reason: str) -> bool:
         logger.warning("⚙️ Autonomic Core engaging 'git init' self-repair...")
         try:
-            await asyncio.to_thread(subprocess.run, ["git", "init"], check=True, capture_output=True)
-            await asyncio.to_thread(subprocess.run, ["git", "add", "."], check=True, capture_output=True)
-            await asyncio.to_thread(
-                subprocess.run,
+            await get_subprocess_gateway().run_async(
+                ["git", "init"],
+                check=True,
+                capture_output=True,
+                offline_tooling=True,
+                source="maintenance_tooling:patch_library.git_init",
+            )
+            await get_subprocess_gateway().run_async(
+                ["git", "add", "."],
+                check=True,
+                capture_output=True,
+                offline_tooling=True,
+                source="maintenance_tooling:patch_library.git_add",
+            )
+            await get_subprocess_gateway().run_async(
                 ["git", "commit", "-m", "Auto-Healer: Re-init corrupted repository"],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
+                offline_tooling=True,
+                source="maintenance_tooling:patch_library.git_commit",
             )
             logger.info("✅ Autonomic Core successfully repaired local Git repository.")
             return True
@@ -53,7 +67,7 @@ class PipInstallPatch(PatchStrategy):
         if match:
             module = match.group(1)
             
-            IMPORT_TO_PIP: Dict[str, str] = {
+            import_to_pip: dict[str, str] = {
                 "aiohttp": "aiohttp",
                 "google": "google-generativeai",
                 "pydantic": "pydantic",
@@ -64,17 +78,19 @@ class PipInstallPatch(PatchStrategy):
                 "numpy": "numpy",
             }
             
-            if module not in IMPORT_TO_PIP:
+            if module not in import_to_pip:
                 logger.error("🛑 SECURITY: Blocked autonomous installation of '%s'", module)
                 return False
             
-            pip_package = IMPORT_TO_PIP[module]
+            pip_package = import_to_pip[module]
             logger.warning("⚙️ Autonomic Core attempting to install missing module: %s (as %s)", module, pip_package)
             try:
-                result = await asyncio.to_thread(
-                    subprocess.run,
+                await get_subprocess_gateway().run_async(
                     [sys.executable, "-m", "pip", "install", pip_package],
-                    check=True, capture_output=True,
+                    check=True,
+                    capture_output=True,
+                    offline_tooling=True,
+                    source="maintenance_tooling:patch_library.pip_install",
                 )
                 logger.info("✅ Autonomic Core successfully installed missing package '%s'", pip_package)
                 return True
@@ -84,5 +100,5 @@ class PipInstallPatch(PatchStrategy):
         return False
 
 # Registry
-def get_patches() -> List[PatchStrategy]:
+def get_patches() -> list[PatchStrategy]:
     return [GitInitPatch(), PipInstallPatch()]
