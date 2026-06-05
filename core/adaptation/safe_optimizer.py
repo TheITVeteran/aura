@@ -2,13 +2,16 @@
 import asyncio
 import json
 import logging
-import time
 import os
-import shutil
+import shlex
+import time
 from pathlib import Path
-from typing import Dict, List, Optional
+
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SafeOptimizer")
+_MAX_CAPTURE_BYTES = 200_000
 
 class SafeSelfOptimizer:
     """
@@ -58,10 +61,9 @@ class SafeSelfOptimizer:
 
     async def _validate_dataset(self, path: str) -> bool:
         """ZENITH Fix: Ensure dataset reflects current personality and isn't poisoned."""
-        p = Path(path)
-        if not p.exists() or p.stat().st_size <= 1024:
+        sample = await asyncio.to_thread(self._read_dataset_sample, Path(path))
+        if sample is None:
             return False
-        sample = p.read_text(encoding="utf-8", errors="ignore")[:200_000]
         lines = [line.strip() for line in sample.splitlines() if line.strip()]
         if len(lines) < 16:
             return False
@@ -71,9 +73,11 @@ class SafeSelfOptimizer:
 
     async def _run_training_command(self, dataset_path: str, base_model: str) -> bool:
         command = os.environ.get("AURA_LORA_TRAIN_CMD", "").strip()
+        file_gateway = get_file_write_gateway()
         if not command:
             manifest = self.lora_dir / "training_gate_manifest.json"
-            manifest.write_text(
+            file_gateway.write_text(
+                manifest,
                 json.dumps(
                     {
                         "dataset_path": dataset_path,
@@ -85,17 +89,43 @@ class SafeSelfOptimizer:
                     sort_keys=True,
                 ),
                 encoding="utf-8",
+                source="core.adaptation.safe_optimizer.training_gate_manifest",
             )
             return False
-        proc = await asyncio.create_subprocess_shell(
-            command,
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            logger.error("LoRA training command could not be parsed: %s", exc)
+            return False
+        if not argv:
+            logger.error("LoRA training command parsed to an empty argv.")
+            return False
+        proc = await get_subprocess_gateway().spawn_async(
+            argv,
             env={**os.environ, "AURA_LORA_DATASET": dataset_path, "AURA_LORA_BASE_MODEL": base_model},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            source="core.adaptation.safe_optimizer.training_command",
         )
-        stdout, stderr = await proc.communicate()
-        (self.lora_dir / "last_train_stdout.log").write_bytes(stdout[-200_000:])
-        (self.lora_dir / "last_train_stderr.log").write_bytes(stderr[-200_000:])
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self._training_timeout_seconds(),
+            )
+        except TimeoutError:
+            proc.kill()
+            stdout, stderr = await proc.communicate()
+            stderr = (stderr or b"") + b"\nAURA_LORA_TRAIN_TIMEOUT\n"
+        file_gateway.write_bytes(
+            self.lora_dir / "last_train_stdout.log",
+            stdout[-_MAX_CAPTURE_BYTES:],
+            source="core.adaptation.safe_optimizer.training_stdout",
+        )
+        file_gateway.write_bytes(
+            self.lora_dir / "last_train_stderr.log",
+            stderr[-_MAX_CAPTURE_BYTES:],
+            source="core.adaptation.safe_optimizer.training_stderr",
+        )
         return proc.returncode == 0
 
     async def _backup_current_weights(self):
@@ -103,7 +133,11 @@ class SafeSelfOptimizer:
         ts = int(time.time())
         current_weights = self.lora_dir / "adapter_model.bin"
         if current_weights.exists():
-            shutil.copy(current_weights, self.backup_dir / f"adapter_{ts}.bin")
+            get_file_write_gateway().write_bytes(
+                self.backup_dir / f"adapter_{ts}.bin",
+                current_weights.read_bytes(),
+                source="core.adaptation.safe_optimizer.backup_weights",
+            )
 
     async def _run_eval_benchmarks(self) -> bool:
         """Run target benchmarks (e.g. MMLU, GSM8K subset) to ensure no regression."""
@@ -111,8 +145,9 @@ class SafeSelfOptimizer:
         if not report_path:
             return True
         try:
-            report = json.loads(Path(report_path).read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raw_report = await asyncio.to_thread(Path(report_path).read_text, encoding="utf-8")
+            report = json.loads(raw_report)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             logger.error("LoRA eval report unreadable: %s", exc)
             return False
         max_regression = float(report.get("max_regression", 0.0))
@@ -124,8 +159,33 @@ class SafeSelfOptimizer:
         backups = sorted(self.backup_dir.glob("adapter_*.bin"))
         if backups:
             latest = backups[-1]
-            shutil.copy(latest, self.lora_dir / "adapter_model.bin")
+            get_file_write_gateway().write_bytes(
+                self.lora_dir / "adapter_model.bin",
+                latest.read_bytes(),
+                source="core.adaptation.safe_optimizer.rollback_weights",
+            )
             logger.info("⏪ Rollback complete: Restored from %s", latest.name)
+
+    @staticmethod
+    def _training_timeout_seconds() -> float:
+        raw = os.environ.get("AURA_LORA_TRAIN_TIMEOUT", "").strip()
+        if not raw:
+            return 1800.0
+        try:
+            value = float(raw)
+        except ValueError:
+            logger.warning("Invalid AURA_LORA_TRAIN_TIMEOUT=%r; using default.", raw)
+            return 1800.0
+        return min(max(value, 1.0), 86400.0)
+
+    @staticmethod
+    def _read_dataset_sample(path: Path) -> str | None:
+        try:
+            if not path.exists() or path.stat().st_size <= 1024:
+                return None
+            return path.read_text(encoding="utf-8", errors="ignore")[:200_000]
+        except OSError:
+            return None
 
 # Singleton
 _optimizer = None

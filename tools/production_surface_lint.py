@@ -136,10 +136,6 @@ EXEMPT_FILES = {
         "justification": "Builds hash-chained governance ledger files.",
         "compensating_tests": "tests/test_audit_chain.py"
     },
-    "core/adaptation/safe_optimizer.py": {
-        "justification": "Applies safe parameter adjustments to plastic network layers.",
-        "compensating_tests": "tests/test_safe_optimizer.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"
