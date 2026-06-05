@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -43,12 +42,22 @@ async def test_shell_and_webclient_require_authority(monkeypatch):
 
     gateway = _Gateway()
     monkeypatch.setattr(authority, "get_authority_gateway", lambda: gateway)
-    monkeypatch.setattr(
-        cap.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
-    )
-    monkeypatch.setattr(cap.requests, "get", lambda *args, **kwargs: SimpleNamespace(text="body"))
+
+    class ShellGateway:
+        async def run_async(self, argv, **kwargs):
+            assert argv == ["echo", "hi"]
+            assert kwargs["source"] == "capability_engine.shell"
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    class NetworkGateway:
+        async def request_async(self, method, url, **kwargs):
+            assert method == "GET"
+            assert url == "https://example.com"
+            assert kwargs["source"] == "core.capability_engine.web_client"
+            return {"ok": True, "content": b"body"}
+
+    monkeypatch.setattr(cap, "get_subprocess_gateway", lambda: ShellGateway())
+    monkeypatch.setattr(cap, "get_network_gateway", lambda: NetworkGateway())
 
     shell = cap.Shell(cwd="/tmp", allowed_commands=["echo"])
     ok, output = await shell.run(["echo", "hi"])

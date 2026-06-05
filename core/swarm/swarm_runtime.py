@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from core.swarm.worker_pool import LocalWorkerPool, WorkerProposal, WorkerType
 
@@ -21,8 +21,8 @@ class SwarmRuntime:
 
     async def dispatch_mission_tasks(
         self,
-        task_specs: List[Dict[str, Any]],
-    ) -> List[WorkerProposal]:
+        task_specs: list[dict[str, Any]],
+    ) -> list[WorkerProposal]:
         """Distribute objective tasks to specialized workers."""
         logger.info("🐝 SwarmRuntime: dispatching %d tasks to workers", len(task_specs))
 
@@ -38,3 +38,7 @@ class SwarmRuntime:
 
         results = await asyncio.gather(*jobs)
         return list(results)
+
+    @property
+    def active_workers(self) -> dict[str, Any]:
+        return self.pool.active_workers

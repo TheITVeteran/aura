@@ -4,12 +4,13 @@ Reads currency rates, inflation index, package downloads, and dataset APIs.
 """
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
-from core.runtime.action_executor import ActionExecutor
 from core.governance.will import ActionDomain
 from core.governance_context import GovernanceViolation
+from core.runtime.action_executor import ActionExecutor
 
 logger = logging.getLogger("Aura.DataConnector")
 
@@ -17,7 +18,7 @@ logger = logging.getLogger("Aura.DataConnector")
 class DataConnector:
     """Reads financial market indices, package telemetry, and public stats."""
 
-    async def fetch_financial_indicators(self, query: str) -> Dict[str, Any]:
+    async def fetch_financial_indicators(self, query: str) -> dict[str, Any]:
         logger.info("📡 DataConnector: fetching financial metrics for '%s'", query)
 
         try:
@@ -28,7 +29,21 @@ class DataConnector:
                 source="data_connector",
             )
             if res.get("ok"):
-                return {"USD_EUR": 0.92, "inflation_indexed": False}
+                content_bytes = res.get("content")
+                if content_bytes:
+                    try:
+                        data = json.loads(content_bytes.decode("utf-8", errors="ignore"))
+                        rates = data.get("rates", {})
+                        eur_rate = rates.get("EUR", 0.92)
+                        gbp_rate = rates.get("GBP", 0.81)
+                        return {
+                            "USD_EUR": eur_rate,
+                            "USD_GBP": gbp_rate,
+                            "rates": rates,
+                            "inflation_indexed": False,
+                        }
+                    except (json.JSONDecodeError, AttributeError, TypeError, ValueError) as parse_err:
+                        logger.warning("Failed to parse exchange rates JSON: %s", parse_err)
         except GovernanceViolation:
             raise
         except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as e:

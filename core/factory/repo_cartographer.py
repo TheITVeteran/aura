@@ -9,7 +9,7 @@ import ast
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any
 
 logger = logging.getLogger("Aura.RepoCartographer")
 
@@ -17,17 +17,17 @@ logger = logging.getLogger("Aura.RepoCartographer")
 class RepoCartographer:
     """Maps repository structure, dependencies, and quality signals."""
 
-    async def map_repo(self, repo_path: str) -> Dict[str, Any]:
+    async def map_repo(self, repo_path: str) -> dict[str, Any]:
         """Produce a structural map of the repository."""
         root = Path(repo_path).resolve()
         if not root.exists():
             return {"error": "repo_not_found", "file_count": 0, "module_count": 0}
 
-        py_files: List[str] = []
-        test_files: List[str] = []
-        modules: Set[str] = set()
+        py_files: list[str] = []
+        test_files: list[str] = []
+        modules: set[str] = set()
         total_lines = 0
-        syntax_errors: List[str] = []
+        syntax_errors: list[str] = []
 
         skip_dirs = {".git", ".venv", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache", "dist", "build"}
 
@@ -63,13 +63,14 @@ class RepoCartographer:
             "test_file_count": len(test_files),
             "module_count": len(modules),
             "modules": sorted(modules),
+            "files": py_files,
             "total_lines": total_lines,
             "syntax_errors": syntax_errors,
             "has_tests": len(test_files) > 0,
             "test_coverage_ratio": len(test_files) / max(1, len(py_files)),
         }
 
-    async def find_weaknesses(self, repo_map: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def find_weaknesses(self, repo_map: dict[str, Any]) -> list[dict[str, Any]]:
         """Identify weaknesses: modules without tests, syntax errors, low coverage."""
         weaknesses = []
         if repo_map.get("syntax_errors"):

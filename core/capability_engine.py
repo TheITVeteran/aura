@@ -15,8 +15,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("core.capability_engine")
@@ -609,13 +611,12 @@ class Shell:
             )
             return False, f"Authority unavailable for shell command: {e}"
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await get_subprocess_gateway().run_async(
                 cmd,
                 cwd=self.cwd,
-                capture_output=True,
-                text=True,
                 timeout=self.timeout,
+                capture_output=True,
+                source="capability_engine.shell",
             )
             try:
                 from core.executive.authority_gateway import get_authority_gateway
@@ -794,7 +795,12 @@ class Sandbox2:
         try:
             byte_code = compile_restricted(code, filename="<aura_skill>", mode="exec")
             locs = {}
-            exec(byte_code, self.safe_globals, locs)  # nosec
+            get_dynamic_execution_gateway().execute_code_object(
+                byte_code,
+                globals_dict=self.safe_globals,
+                locals_dict=locs,
+                source="capability_engine.sandbox2",
+            )
 
             if func_name not in locs:
                 raise NameError(f"Function {func_name} not found in forged code.")

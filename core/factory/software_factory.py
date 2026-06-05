@@ -10,16 +10,16 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from core.factory.repo_cartographer import RepoCartographer
-from core.factory.patch_planner import PatchPlanner
+from core.config import config
 from core.factory.code_writer import CodeWriter
-from core.factory.test_runner import TestRunner
-from core.factory.regression_guard import RegressionGuard
+from core.factory.patch_planner import PatchPlanner
 from core.factory.pr_builder import PRBuilder
+from core.factory.regression_guard import RegressionGuard
+from core.factory.repo_cartographer import RepoCartographer
 from core.factory.rollback_manager import RollbackManager
-from core.runtime.action_executor import ActionExecutor
+from core.factory.test_runner import TestRunner
 
 logger = logging.getLogger("Aura.SoftwareFactory")
 
@@ -47,15 +47,15 @@ class FactoryJob:
     stage: PipelineStage = PipelineStage.MAPPING
     started_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
-    repo_map: Optional[Dict[str, Any]] = None
-    plan: Optional[Dict[str, Any]] = None
+    repo_map: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
     branch_name: str = ""
-    patches: List[Dict[str, Any]] = field(default_factory=list)
-    test_results: Optional[Dict[str, Any]] = None
-    guard_results: Optional[Dict[str, Any]] = None
+    patches: list[dict[str, Any]] = field(default_factory=list)
+    test_results: dict[str, Any] | None = None
+    guard_results: dict[str, Any] | None = None
     diff_summary: str = ""
     rollback_id: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class SoftwareFactory:
@@ -72,7 +72,7 @@ class SoftwareFactory:
         self.guard = RegressionGuard()
         self.pr_builder = PRBuilder()
         self.rollback = RollbackManager()
-        self.jobs: Dict[str, FactoryJob] = {}
+        self.jobs: dict[str, FactoryJob] = {}
         self._job_counter = 0
 
     async def run_pipeline(
@@ -81,7 +81,7 @@ class SoftwareFactory:
         objective: str,
         *,
         auto_approve: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute the full software factory pipeline."""
         self._job_counter += 1
         job = FactoryJob(
@@ -151,7 +151,7 @@ class SoftwareFactory:
 
         return self._finalize(job)
 
-    def _finalize(self, job: FactoryJob) -> Dict[str, Any]:
+    def _finalize(self, job: FactoryJob) -> dict[str, Any]:
         job.completed_at = time.time()
         return {
             "ok": job.stage == PipelineStage.COMPLETED,
@@ -166,5 +166,15 @@ class SoftwareFactory:
             "error": job.error,
         }
 
-    def get_job(self, job_id: str) -> Optional[FactoryJob]:
+    async def run_mission(
+        self,
+        plan_steps: list[str],
+        constraints: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Runs the software factory pipeline as a mission engine step."""
+        repo_path = str(config.paths.project_root)
+        objective = " ".join(plan_steps)
+        return await self.run_pipeline(repo_path, objective)
+
+    def get_job(self, job_id: str) -> FactoryJob | None:
         return self.jobs.get(job_id)

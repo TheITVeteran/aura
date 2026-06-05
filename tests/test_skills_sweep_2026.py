@@ -9,9 +9,7 @@ Validates that 2026 code-quality standards are met across /skills.
 
 import ast
 import asyncio
-import inspect
 import re
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -34,18 +32,21 @@ def test_manifest_uses_network_gateway():
     assert "get_network_gateway" in src, "network gateway not used"
 
 
-# ── Fix 2: sovereign_network must not call sync subprocess in async ────
+# ── Fix 2: sovereign_network must route subprocesses through gateways ────
 def test_sovereign_network_no_sync_subprocess():
-    """sovereign_network.py should not call subprocess.run / check_output synchronously."""
+    """sovereign_network.py should not bypass subprocess or task gateways."""
     src = (SKILLS_DIR / "sovereign_network.py").read_text()
-    # Must not have a bare subprocess.run(...) call — only asyncio.to_thread(subprocess.run, ...)
+    assert "get_subprocess_gateway().run_async" in src
+    assert "get_subprocess_gateway().spawn_async" in src
+    assert "create_tracked_task(" in src
+
+    # Must not have bare subprocess.run/check_output calls.
     lines = src.splitlines()
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         # Skip comments and string literals
         if stripped.startswith("#") or stripped.startswith('"') or stripped.startswith("'"):
             continue
-        # Detect bare subprocess.run( or subprocess.check_output( NOT preceded by to_thread
         if re.search(r"(?<!to_thread\()subprocess\.(run|check_output)\(", stripped):
             if "to_thread" not in line and "import" not in line:
                 pytest.fail(f"L{i}: sync subprocess call: {stripped}")
@@ -115,10 +116,6 @@ async def test_sovereign_network_discovery_falls_back_without_nmap(monkeypatch):
     """Peer discovery should remain useful when Homebrew nmap is unavailable."""
     skill = SovereignNetworkSkill()
 
-    async def missing_nmap(*_args, **_kwargs):
-        command = "nmap"
-        raise FileNotFoundError(command)
-
     class FakeWriter:
         def __init__(self):
             self.closed = False
@@ -135,7 +132,7 @@ async def test_sovereign_network_discovery_falls_back_without_nmap(monkeypatch):
             return object(), FakeWriter()
         raise OSError("closed")
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", missing_nmap)
+    monkeypatch.setattr("core.skills.sovereign_network.shutil.which", lambda name: None)
     monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
 
     result = await skill.execute(
@@ -155,10 +152,6 @@ async def test_sovereign_network_discovery_batches_tcp_fallback(monkeypatch):
     active = 0
     peak = 0
 
-    async def missing_nmap(*_args, **_kwargs):
-        command = "nmap"
-        raise FileNotFoundError(command)
-
     async def fake_open_connection(_host, _port):
         nonlocal active, peak
         active += 1
@@ -169,7 +162,7 @@ async def test_sovereign_network_discovery_batches_tcp_fallback(monkeypatch):
         finally:
             active -= 1
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", missing_nmap)
+    monkeypatch.setattr("core.skills.sovereign_network.shutil.which", lambda name: None)
     monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
 
     result = await skill.execute(

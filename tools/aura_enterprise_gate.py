@@ -65,8 +65,8 @@ DEFAULT_PRODUCTION_FILES = {"aura_main.py"}
 ALLOW_DYNAMIC_CODE = {
     "core/agency/repl_daemon.py",
     "core/brain/react_loop.py",
-    "core/capability_engine.py",
     "core/kernel/shadow_kernel.py",
+    "core/runtime/dynamic_execution_gateway.py",
     "core/runtime/self_repair_ladder.py",
     "core/sandbox/bash_daemon.py",
     "core/sandbox/runner.py",

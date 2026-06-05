@@ -64,14 +64,6 @@ ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 
 # Production files that have audited and approved exceptions
 EXEMPT_FILES = {
-    "core/skills/sovereign_network.py": {
-        "justification": "Manages secure socket layers for sovereign network operations.",
-        "compensating_tests": "tests/test_sovereign_network.py"
-    },
-    "core/capability_engine.py": {
-        "justification": "Dynamic discovery and registration of all available skills.",
-        "compensating_tests": "tests/test_capability_engine.py"
-    },
     "core/agency/repl_daemon.py": {
         "justification": "Provides a local Python REPL for direct shell interactions.",
         "compensating_tests": "tests/test_repl_daemon.py"
@@ -141,6 +133,9 @@ APPROVED_FILE_WRITE_SINKS = {
     "core/runtime/file_write_gateway.py",
     "core/runtime/post_action_receipt.py",
 }
+APPROVED_DYNAMIC_CODE_SINKS = {
+    "core/runtime/dynamic_execution_gateway.py",
+}
 
 
 def is_approved_direct_surface(rel_path: str, kind: str) -> bool:
@@ -150,6 +145,8 @@ def is_approved_direct_surface(rel_path: str, kind: str) -> bool:
         return rel_path in APPROVED_NETWORK_SINKS
     if kind == "unapproved_direct_file_write":
         return rel_path in APPROVED_FILE_WRITE_SINKS
+    if kind == "raw_dynamic_code":
+        return rel_path in APPROVED_DYNAMIC_CODE_SINKS
     return False
 
 
@@ -166,7 +163,7 @@ class AstLinter(ast.NodeVisitor):
     def add(self, severity: str, kind: str, node: ast.AST, message: str) -> None:
         if self.rel in EXEMPT_FILES:
             return  # Audited and exempted from strict lints
-        if kind in {"unapproved_direct_subprocess", "unapproved_direct_network", "unapproved_direct_file_write"}:
+        if kind in {"unapproved_direct_subprocess", "unapproved_direct_network", "unapproved_direct_file_write", "raw_dynamic_code"}:
             if is_approved_direct_surface(self.rel, kind):
                 return
         self.findings.append(

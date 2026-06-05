@@ -1,15 +1,19 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import ipaddress
 import itertools
 import logging
 import platform
+import re
+import shutil
 import socket
 import subprocess
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.task_ownership import create_tracked_task
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.SovereignNetwork")
@@ -20,9 +24,9 @@ BACKGROUND_NETWORK_MIN_IDLE_S = 1800.0
 
 class NetworkInput(BaseModel):
     mode: str = Field("status", description="Mode: 'status', 'recon', 'scan', 'audit', 'discovery'")
-    target: Optional[str] = Field(None, description="Target IP, subnet, or host (e.g., '192.168.1.0/24' or '8.8.8.8').")
+    target: str | None = Field(None, description="Target IP, subnet, or host (e.g., '192.168.1.0/24' or '8.8.8.8').")
     stealth: bool = Field(True, description="Whether to use stealthy (ARP) discovery in 'recon' mode.")
-    ports: Optional[str] = Field("8000", description="Comma-separated ports for 'audit' or 'discovery' mode.")
+    ports: str | None = Field("8000", description="Comma-separated ports for 'audit' or 'discovery' mode.")
 
 class SovereignNetworkSkill(BaseSkill):
     """The unified network capability for Aura.
@@ -36,7 +40,7 @@ class SovereignNetworkSkill(BaseSkill):
     def __init__(self):
         super().__init__()
     
-    async def execute(self, params: NetworkInput, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: NetworkInput, context: dict[str, Any]) -> dict[str, Any]:
         """Unified entry point for all network activities."""
         context = context or {}
         if isinstance(params, dict):
@@ -103,7 +107,7 @@ class SovereignNetworkSkill(BaseSkill):
             logger.error("Network skill failed: %s", e)
             return {"ok": False, "error": str(e)}
 
-    async def _get_status(self) -> Dict[str, Any]:
+    async def _get_status(self) -> dict[str, Any]:
         """Connectivity and interface status."""
         local_ip = self._get_primary_ip()
         internet = await self._check_internet()
@@ -111,10 +115,20 @@ class SovereignNetworkSkill(BaseSkill):
         system = platform.system()
         interfaces = "Unknown"
         if system == "Darwin":
-            res = await asyncio.to_thread(subprocess.run, ["networksetup", "-listallhardwareports"], capture_output=True, text=True)
+            res = await get_subprocess_gateway().run_async(
+                ["networksetup", "-listallhardwareports"],
+                timeout=10.0,
+                read_only=True,
+                source="skills.sovereign_network.status.interfaces",
+            )
             interfaces = res.stdout[:500]
         elif system == "Linux":
-            res = await asyncio.to_thread(subprocess.run, ["ip", "link", "show"], capture_output=True, text=True)
+            res = await get_subprocess_gateway().run_async(
+                ["ip", "link", "show"],
+                timeout=10.0,
+                read_only=True,
+                source="skills.sovereign_network.status.interfaces",
+            )
             interfaces = res.stdout[:500]
             
         return {
@@ -125,7 +139,7 @@ class SovereignNetworkSkill(BaseSkill):
             "os": system
         }
 
-    async def _perform_recon(self, stealth: bool) -> Dict[str, Any]:
+    async def _perform_recon(self, stealth: bool) -> dict[str, Any]:
         """ARP-based (stealth) or Ping-based discovery."""
         local_ip = self._get_primary_ip()
         if local_ip == "127.0.0.1":
@@ -135,8 +149,14 @@ class SovereignNetworkSkill(BaseSkill):
         # Attempt ARP cache check (Max Stealth)
         try:
             cmd_args = ["arp", "-a"] if platform.system() != "Windows" else ["arp", "-g"]
-            output = await asyncio.to_thread(subprocess.check_output, cmd_args)
-            output = output.decode()
+            result = await get_subprocess_gateway().run_async(
+                cmd_args,
+                timeout=10.0,
+                read_only=True,
+                check=True,
+                source="skills.sovereign_network.recon.arp_cache",
+            )
+            output = result.stdout or ""
             for line in output.split('\n'):
                 match = re.search(r"\(([\d\.]+)\) at ([\w:]+)", line) # macOS/Linux format
                 if match:
@@ -153,16 +173,19 @@ class SovereignNetworkSkill(BaseSkill):
             "mode": "stealth_recon"
         }
 
-    async def _perform_scan(self, target: str) -> Dict[str, Any]:
+    async def _perform_scan(self, target: str) -> dict[str, Any]:
         """Fast Nmap host discovery."""
         target = target or self._guess_subnet()
+        if not shutil.which("nmap"):
+            return {"ok": False, "error": "The 'nmap' utility is not installed on this system. Aura cannot perform deep network scans without it. Please install nmap or use 'recon' mode for basic ARP-based discovery."}
         logger.info("📡 Nmap Scanning: %s", target)
         try:
             # -sn: Ping scan (no port scan)
-            process = await asyncio.create_subprocess_exec(
-                "nmap", "-sn", target,
+            process = await get_subprocess_gateway().spawn_async(
+                ["nmap", "-sn", target],
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="skills.sovereign_network.scan.nmap",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
             return {"ok": True, "output": stdout.decode(), "target": target}
@@ -170,35 +193,42 @@ class SovereignNetworkSkill(BaseSkill):
             return {"ok": False, "error": "The 'nmap' utility is not installed on this system. Aura cannot perform deep network scans without it. Please install nmap or use 'recon' mode for basic ARP-based discovery."}
 
 
-    async def _perform_audit(self, target: str, ports: str) -> Dict[str, Any]:
+    async def _perform_audit(self, target: str, ports: str) -> dict[str, Any]:
         """Nmap port/service audit."""
         if not target:
             return {"ok": False, "error": "Audit mode requires a 'target' IP."}
+        if not shutil.which("nmap"):
+            return {"ok": False, "error": "The 'nmap' utility is required for network auditing. Please install it to enable this capability."}
         logger.info("🔍 Auditing %s on ports %s", target, ports)
         try:
             # -F: Fast, -sV: Version detection
-            process = await asyncio.create_subprocess_exec(
-                "nmap", "-p", ports, "-sV", target,
+            process = await get_subprocess_gateway().spawn_async(
+                ["nmap", "-p", ports, "-sV", target],
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="skills.sovereign_network.audit.nmap",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=90)
             return {"ok": True, "output": stdout.decode()}
         except FileNotFoundError:
             return {"ok": False, "error": "The 'nmap' utility is required for network auditing. Please install it to enable this capability."}
 
-    async def _perform_discovery(self, target: str, ports: str) -> Dict[str, Any]:
+    async def _perform_discovery(self, target: str, ports: str) -> dict[str, Any]:
         """Discover other Aura instances on the network."""
         target = target or self._guess_subnet()
         logger.info("📡 Aura Peer Discovery starting on %s:%s", target, ports)
-        
+        if not shutil.which("nmap"):
+            logger.info("nmap unavailable; falling back to bounded TCP peer discovery.")
+            return await self._perform_tcp_peer_discovery(target, ports)
+
         peers = []
         try:
             # -p: port, --open: only show open, -oG -: grepable output
-            process = await asyncio.create_subprocess_exec(
-                "nmap", "-p", ports, "--open", "-oG", "-", target,
+            process = await get_subprocess_gateway().spawn_async(
+                ["nmap", "-p", ports, "--open", "-oG", "-", target],
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="skills.sovereign_network.discovery.nmap",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=120)
             output = stdout.decode()
@@ -219,7 +249,7 @@ class SovereignNetworkSkill(BaseSkill):
 
         return {"ok": True, "peers": peers, "count": len(peers)}
 
-    async def _perform_tcp_peer_discovery(self, target: str, ports: str) -> Dict[str, Any]:
+    async def _perform_tcp_peer_discovery(self, target: str, ports: str) -> dict[str, Any]:
         """Best-effort peer discovery that avoids hard dependency on Homebrew nmap."""
         first_port = self._first_port(ports)
         hosts = self._candidate_hosts(target)
@@ -232,7 +262,7 @@ class SovereignNetworkSkill(BaseSkill):
 
         semaphore = asyncio.Semaphore(TCP_DISCOVERY_BATCH_SIZE)
 
-        async def probe(host: str) -> Optional[Dict[str, Any]]:
+        async def probe(host: str) -> dict[str, Any] | None:
             async with semaphore:
                 try:
                     reader, writer = await asyncio.wait_for(
@@ -253,24 +283,13 @@ class SovereignNetworkSkill(BaseSkill):
                     logger.debug("TCP peer probe failed for %s:%s: %s", host, first_port, e)
                     return None
 
-        tracker = None
-        try:
-            from core.utils.task_tracker import get_task_tracker
-
-            tracker = get_task_tracker()
-        except (ImportError, AttributeError, RuntimeError):
-            tracker = None
-
-        peers: List[Dict[str, Any]] = []
+        peers: list[dict[str, Any]] = []
         for start in range(0, len(hosts), TCP_DISCOVERY_BATCH_SIZE):
             batch = hosts[start:start + TCP_DISCOVERY_BATCH_SIZE]
-            tasks: List[asyncio.Task] = []
+            tasks: list[asyncio.Task] = []
             for host in batch:
                 task_name = f"sovereign_network.tcp_probe.{host}"
-                if tracker is not None:
-                    tasks.append(tracker.create_task(probe(host), name=task_name))
-                else:
-                    tasks.append(asyncio.create_task(probe(host), name=task_name))
+                tasks.append(create_tracked_task(probe(host), name=task_name))
             try:
                 batch_results = await asyncio.gather(*tasks)
             except asyncio.CancelledError:
@@ -294,7 +313,7 @@ class SovereignNetworkSkill(BaseSkill):
         except (TypeError, ValueError):
             return 8000
 
-    def _candidate_hosts(self, target: str) -> List[str]:
+    def _candidate_hosts(self, target: str) -> list[str]:
         try:
             network = ipaddress.ip_network(target, strict=False)
         except ValueError:
