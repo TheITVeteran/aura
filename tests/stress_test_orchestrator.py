@@ -1,96 +1,113 @@
-################################################################################
-
-
-import sys
-import os
-import time
 import asyncio
 import logging
-import unittest
-from unittest.mock import AsyncMock, patch
+import time
+from types import SimpleNamespace
 
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import pytest
 
-# Configure logging
+from core.orchestrator import RobustOrchestrator
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("StressTest")
 
-from core.orchestrator import RobustOrchestrator
-from core.brain.cognitive_engine import CognitiveEngine, Thought
 
-class StressTestOrchestrator(unittest.IsolatedAsyncioTestCase):
-    
-    async def test_high_throughput(self):
-        """Test sending 50 messages rapidly through the current user pipeline."""
-        logger.info("--- Starting High Throughput Test ---")
+class KernelNotReady:
+    def is_ready(self):
+        return False
 
-        orchestrator = RobustOrchestrator()
-        orchestrator._inference_gate = AsyncMock()
-        orchestrator._inference_gate.generate = AsyncMock(
-            side_effect=lambda message, context=None: f"Fast response: {message}"
-        )
 
-        class _Kernel:
-            def is_ready(self):
-                return False
+class ApprovedWillDecision:
+    outcome = SimpleNamespace(value="approved")
+    reason = ""
+    constraints = None
+    receipt_id = "will_receipt_stress"
 
-        start_time = time.time()
-        with patch(
-            "core.kernel.kernel_interface.KernelInterface.get_instance",
-            return_value=_Kernel(),
-        ):
-            for i in range(50):
-                response = await orchestrator.process_user_input(f"Message {i}")
-                self.assertIn("Fast response", response)
-                if i % 10 == 0:
-                    logger.info(f"Processed {i}/50 messages...")
-                
-        duration = time.time() - start_time
-        logger.info(f"✅ High Throughput Test Passed: 50 messages in {duration:.2f}s")
+    def is_approved(self):
+        return True
 
-    async def test_cognitive_timeout(self):
-        """Test that the Soft Timeout in CognitiveEngine kicks in"""
-        logger.info("\n--- Starting Cognitive Timeout Test ---")
-        
-        # Real Cognitive Engine, Mock Client that sleeps
-        engine = CognitiveEngine()
-        engine.client = AsyncMock()
-        
-        # Mock generate to sleep longer than the 25s timeout
-        # We need to use a side_effect that sleeps asynchronously
-        async def slow_generate(*args, **kwargs):
-            await asyncio.sleep(1) # Sleep 1s instead of 26s to not block test if timeout is lower, wait actually timeout is 25s? 
-            # Oh wait, we should sleep 26s to trigger timeout. But I'll just sleep 26s.
-            await asyncio.sleep(26)
-            return '{"content": "Too late"}'
-            
-        engine.client.generate.side_effect = slow_generate
-        
-        # We need to patch the check_health to always return True so it doesn't fallback
-        engine.client.check_health.return_value = True
-        
-        logger.info("Invoking think() with slow client...")
-        start_time = time.time()
-        
-        # This should trigger the 25s soft timeout
-        thought = await engine.think("Test timeout")
-        
-        duration = time.time() - start_time
-        logger.info(f"Think duration: {duration:.2f}s")
-        
-        logger.info(f"Thought content: {thought.content}")
-        
-        # Check if we got the fallback message
-        if "processing a complex thought pattern" in thought.content:
-            logger.info("✅ Timeout Test Passed: Soft timeout triggered and fallback returned.")
-        elif duration < 25:
-             logger.error("❌ Timeout Test Failed: Returned too early (Mock didn't sleep?)")
-        else:
-             logger.error(f"❌ Timeout Test Failed: Unexpected content: {thought.content}")
+
+class ApprovedWill:
+    _started = True
+
+    def __init__(self):
+        self.decisions = []
+
+    def decide(self, **kwargs):
+        self.decisions.append(kwargs)
+        return ApprovedWillDecision()
+
+
+class RecordingInferenceGate:
+    SILENCE_SENTINEL = "<|SILENCE|>"
+
+    def __init__(self, *, delay_s: float = 0.0):
+        self.delay_s = delay_s
+        self.calls = []
+
+    async def generate(self, message, context=None):
+        self.calls.append({"message": message, "context": dict(context or {})})
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        return f"Fast response: {message}"
+
+
+def install_foreground_probes(monkeypatch):
+    import core.container as container
+    import core.kernel.kernel_interface as kernel_interface
+    import core.will as will_module
+
+    approved_will = ApprovedWill()
+    monkeypatch.setattr(kernel_interface.KernelInterface, "get_instance", lambda: KernelNotReady())
+    monkeypatch.setattr(container.ServiceContainer, "get", lambda *args, **kwargs: None)
+    monkeypatch.setattr(will_module, "get_will", lambda: approved_will)
+    return approved_will
+
+
+@pytest.mark.asyncio
+async def test_high_throughput(monkeypatch):
+    """Send 50 foreground messages through the current user pipeline."""
+    logger.info("--- Starting High Throughput Test ---")
+
+    approved_will = install_foreground_probes(monkeypatch)
+    orchestrator = RobustOrchestrator()
+    gate = RecordingInferenceGate()
+    orchestrator._inference_gate = gate
+
+    start_time = time.time()
+    for i in range(50):
+        response = await orchestrator.process_user_input(f"Message {i}")
+        assert "Fast response" in response
+        if i % 10 == 0:
+            logger.info("Processed %s/50 messages...", i)
+
+    duration = time.time() - start_time
+    assert len(gate.calls) == 50
+    assert len(approved_will.decisions) == 50
+    assert all(call["context"]["prefer_tier"] == "primary" for call in gate.calls)
+    assert duration < 20.0
+
+
+@pytest.mark.asyncio
+async def test_foreground_timeout_returns_honest_live_response(monkeypatch):
+    """A slow foreground model lane returns an honest timeout instead of hanging."""
+    install_foreground_probes(monkeypatch)
+    orchestrator = RobustOrchestrator()
+    gate = RecordingInferenceGate(delay_s=0.05)
+    orchestrator._inference_gate = gate
+
+    start_time = time.time()
+    response = await orchestrator.process_user_input_priority(
+        "Test timeout",
+        origin="user",
+        timeout_sec=0.01,
+    )
+    duration = time.time() - start_time
+
+    assert "Primary Cortex did not return" in response
+    assert duration < 1.0
+    assert orchestrator.status.is_processing is False
+    assert gate.calls
+
 
 if __name__ == "__main__":
-    unittest.main()
-
-
-##
+    raise SystemExit(pytest.main([__file__]))

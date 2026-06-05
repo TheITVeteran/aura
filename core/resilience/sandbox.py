@@ -19,8 +19,43 @@ class ASTGuard:
         '__import__', 'help'
     }
 
+    MAX_LITERAL_ALLOCATION = 100_000_000
+    MAX_REPEAT_MULTIPLIER = 1_000_000
+
     def __init__(self) -> None:
         self.errors: list[str] = []
+
+    def _literal_int(self, node: ast.AST, *, depth: int = 0) -> int | None:
+        """Safely evaluate small integer-only literal expressions."""
+        if depth > 8:
+            return None
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            value = self._literal_int(node.operand, depth=depth + 1)
+            return -value if value is not None else None
+        if not isinstance(node, ast.BinOp):
+            return None
+
+        left = self._literal_int(node.left, depth=depth + 1)
+        right = self._literal_int(node.right, depth=depth + 1)
+        if left is None or right is None:
+            return None
+
+        if isinstance(node.op, ast.Mult):
+            value = left * right
+        elif isinstance(node.op, ast.Add):
+            value = left + right
+        elif isinstance(node.op, ast.Sub):
+            value = left - right
+        elif isinstance(node.op, ast.Pow) and 0 <= right <= 12:
+            value = left ** right
+        else:
+            return None
+
+        if abs(value) > 10_000_000_000:
+            return None
+        return value
 
     def validate(self, code: str) -> bool:
         """Analyzes the code for security violations."""
@@ -76,6 +111,15 @@ class ASTGuard:
                     if node.func.id in self.BANNED_NAMES:
                         # Already caught by Name check, but good to be explicit
                         pass  # no-op: intentional
+                    if node.func.id in {"bytearray", "bytes"} and node.args:
+                        allocation_size = self._literal_int(node.args[0])
+                        if (
+                            allocation_size is not None
+                            and allocation_size > self.MAX_LITERAL_ALLOCATION
+                        ):
+                            self.errors.append(
+                                f"OOM Risk: Large {node.func.id} allocation detected ({allocation_size} bytes)"
+                            )
                 
                 # Check for ServiceContainer.get("mycelial_network", default=None)
                 if isinstance(node.func, ast.Attribute) and node.func.attr == "get":
@@ -86,9 +130,9 @@ class ASTGuard:
             # 5. Check for OOM / Resource Exhaustion (Issue 61)
             if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
                 # Detect large list/string repetitions: [0] * 10**9 or "A" * 10**9
-                if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int):
-                    if node.right.value > 1000000:
-                        self.errors.append(f"OOM Risk: Large allocation detected ({node.right.value} multiplier)")
+                right_value = self._literal_int(node.right)
+                if right_value is not None and right_value > self.MAX_REPEAT_MULTIPLIER:
+                    self.errors.append(f"OOM Risk: Large allocation detected ({right_value} multiplier)")
             
             # 6. Check for recursion (Issue 61)
             if isinstance(node, ast.FunctionDef):
