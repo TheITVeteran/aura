@@ -5,10 +5,12 @@ from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import os
+import struct
 import tempfile
 import threading
 import time
-import wave
+import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,7 @@ except (ImportError, AttributeError, RuntimeError) as exc:  # pragma: no cover -
     _SOUNDDEVICE_IMPORT_ERROR = exc
 
 from core.skills.base_skill import BaseSkill
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Skills.Audio")
 
@@ -105,21 +108,39 @@ def _record_sync(duration: float, fs: int = 16000) -> str:
         )
         sd.wait()
         
-        # Save to temp WAV file
-        fd, temp_path = tempfile.mkstemp(suffix=".wav")
+        # Save to temp WAV file through the canonical write gateway.
+        temp_path = str(Path(tempfile.gettempdir()) / f"aura_listen_{uuid.uuid4().hex}.wav")
         try:
-            with os.fdopen(fd, 'wb') as tmp:
-                with wave.open(tmp, 'wb') as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2) 
-                    wf.setframerate(fs)
-                    wf.writeframes(recording.tobytes())
+            get_file_write_gateway().write_bytes(
+                temp_path,
+                _wav_bytes(recording, fs),
+                source="skills.listen.recording",
+            )
             return temp_path
         except (OSError, IOError) as e:
             record_degradation('listen', e)
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            Path(temp_path).unlink(missing_ok=True)
             raise e
+
+
+def _wav_bytes(recording: np.ndarray, fs: int) -> bytes:
+    """Encode mono int16 PCM samples as a WAV byte stream."""
+    pcm = recording.astype("<i2", copy=False).tobytes()
+    channels = 1
+    sample_width = 2
+    bits_per_sample = sample_width * 8
+    byte_rate = int(fs) * channels * sample_width
+    block_align = channels * sample_width
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(pcm))
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<IHHIIHH", 16, 1, channels, int(fs), byte_rate, block_align, bits_per_sample)
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
 
 # ----------------------------------------------------
 # AudioListenerSkill Implementation

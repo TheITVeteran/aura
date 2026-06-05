@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -34,6 +35,8 @@ logger = logging.getLogger("Aura.AtomicWriter")
 PathLike = Union[str, Path]
 
 DEFAULT_TEMP_PREFIX = ".aura_atomic_"
+_append_locks: dict[Path, threading.Lock] = {}
+_append_locks_guard = threading.Lock()
 
 
 class AtomicWriteError(RuntimeError):
@@ -87,6 +90,24 @@ def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
 
 def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:
     atomic_write_bytes(path, text.encode(encoding))
+
+
+def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:
+    """Atomically append text by replacing the target with old+new content.
+
+    This intentionally favors crash safety and auditability over raw append
+    speed. It prevents partial-line records from interrupted writes and gives
+    callers the same durable-replace semantics as ``atomic_write_text``.
+    """
+    target = Path(path)
+    with _append_locks_guard:
+        lock = _append_locks.setdefault(target.resolve(), threading.Lock())
+    with lock:
+        try:
+            existing = target.read_bytes() if target.exists() else b""
+        except OSError as exc:
+            raise AtomicWriteError(f"cannot read existing append target: {target}") from exc
+        atomic_write_bytes(target, existing + text.encode(encoding))
 
 
 def atomic_write_json(

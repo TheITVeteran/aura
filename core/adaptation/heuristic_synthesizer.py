@@ -10,6 +10,7 @@ Example synthesized heuristics:
   - "Web search results older than 7 days should be re-verified."
 """
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.exceptions import capture_and_log
 import json
 import logging
@@ -47,11 +48,14 @@ class HeuristicSynthesizer:
     def _save(self):
         """Persist heuristics to disk."""
         self.heuristics_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.heuristics_path, "w") as f:
-            json.dump({
+        get_file_write_gateway().write_text(
+            self.heuristics_path,
+            json.dumps({
                 "heuristics": self._active_heuristics,
                 "updated_at": time.time()
-            }, f, indent=2)
+            }, indent=2),
+            source="adaptation.heuristic_synthesizer.state",
+        )
 
     def _trim_heuristics(self) -> None:
         if len(self._active_heuristics) <= MAX_ACTIVE_HEURISTICS:

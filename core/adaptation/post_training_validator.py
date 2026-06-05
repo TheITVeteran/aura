@@ -32,6 +32,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("Aura.PostTrainingValidator")
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -837,12 +839,18 @@ class PostTrainingValidator:
         try:
             # quarantine_dest is a directory (moved adapter dir), write inside it
             if quarantine_dest.is_dir():
-                with open(manifest_path, "w") as f:
-                    json.dump(manifest, f, indent=2)
+                get_file_write_gateway().write_text(
+                    manifest_path,
+                    json.dumps(manifest, indent=2),
+                    source="adaptation.post_training_validator.quarantine_manifest",
+                )
             else:
                 # If the adapter was a single file, write manifest alongside
-                with open(str(quarantine_dest) + "_manifest.json", "w") as f:
-                    json.dump(manifest, f, indent=2)
+                get_file_write_gateway().write_text(
+                    str(quarantine_dest) + "_manifest.json",
+                    json.dumps(manifest, indent=2),
+                    source="adaptation.post_training_validator.quarantine_manifest",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.warning("Could not write quarantine manifest: %s", e)
@@ -950,8 +958,11 @@ class PostTrainingValidator:
         log_file = self.validation_log_dir / f"validation_{date_str}_{status}.json"
 
         try:
-            with open(log_file, "w") as f:
-                json.dump(result.to_dict(), f, indent=2)
+            get_file_write_gateway().write_text(
+                log_file,
+                json.dumps(result.to_dict(), indent=2),
+                source="adaptation.post_training_validator.validation_log",
+            )
             logger.info("Validation log written: %s", log_file)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)

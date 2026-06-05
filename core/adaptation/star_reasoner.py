@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.STaR")
@@ -418,8 +419,11 @@ class STaRReasoner:
 
             # Write to local archive
             try:
-                with open(self._accepted_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(sample) + "\n")
+                get_file_write_gateway().append_text(
+                    self._accepted_path,
+                    json.dumps(sample) + "\n",
+                    source="adaptation.star_reasoner.accepted_trace",
+                )
                 written += 1
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('star_reasoner', e)

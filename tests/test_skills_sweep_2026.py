@@ -25,12 +25,13 @@ from core.skills.sovereign_network import (
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "core" / "skills"
 
 
-# ── Fix 1: manifest_to_device must not import sync requests ────────────
-def test_manifest_no_sync_requests():
-    """manifest_to_device.py should use httpx, not requests."""
+# ── Fix 1: manifest_to_device must use the canonical network gateway ───
+def test_manifest_uses_network_gateway():
+    """manifest_to_device.py should not bypass the network gateway."""
     src = (SKILLS_DIR / "manifest_to_device.py").read_text()
     assert "import requests" not in src, "sync requests still imported"
-    assert "httpx" in src, "httpx not used"
+    assert "httpx" not in src, "raw httpx client still imported"
+    assert "get_network_gateway" in src, "network gateway not used"
 
 
 # ── Fix 2: sovereign_network must not call sync subprocess in async ────
@@ -80,11 +81,12 @@ def test_sovereign_network_no_bare_except():
             pytest.fail(f"L{i}: bare except clause: {stripped}")
 
 
-# ── Fix 1 (extra): manifest uses httpx.AsyncClient ────────────────────
-def test_manifest_uses_async_httpx():
-    """manifest_to_device.py should use httpx.AsyncClient for requests."""
+# ── Fix 1 (extra): manifest uses canonical file write gateway ──────────
+def test_manifest_uses_file_write_gateway():
+    """manifest_to_device.py should not write downloaded assets directly."""
     src = (SKILLS_DIR / "manifest_to_device.py").read_text()
-    assert "AsyncClient" in src, "httpx.AsyncClient not found"
+    assert "AsyncClient" not in src, "raw async HTTP client still present"
+    assert "get_file_write_gateway" in src, "file write gateway not used"
 
 
 # ── Global: all skill execute() methods are async def ──────────────────

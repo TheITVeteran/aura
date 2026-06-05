@@ -12,6 +12,7 @@ are wrong and autonomously adjust your own operating parameters to compensate.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 from collections import Counter
@@ -200,8 +201,11 @@ class EpistemicHumility:
             data = {
                 "heuristics": {k: asdict(v) for k, v in self.heuristics.items()}
             }
-            with open(self.data_path, "w") as f:
-                json.dump(data, f, indent=4)
+            get_file_write_gateway().write_text(
+                self.data_path,
+                json.dumps(data, indent=4),
+                source="adaptation.epistemic_humility.state",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('epistemic_humility', e)
             logger.error("Failed to save epistemic humility state: %s", e)

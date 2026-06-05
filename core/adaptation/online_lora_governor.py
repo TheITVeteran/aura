@@ -18,6 +18,7 @@ import psutil
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 
 @dataclass
@@ -78,8 +79,11 @@ class OnlineLoRAGovernor:
 
     def _record(self, receipt: OnlineLoRAReceipt) -> OnlineLoRAReceipt:
         self.last_receipt = receipt
-        with open(self.receipt_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(receipt.to_dict(), sort_keys=True, default=str) + "\n")
+        get_file_write_gateway().append_text(
+            self.receipt_path,
+            json.dumps(receipt.to_dict(), sort_keys=True, default=str) + "\n",
+            source="adaptation.online_lora.receipt",
+        )
         return receipt
 
     async def maybe_update_from_reflection(

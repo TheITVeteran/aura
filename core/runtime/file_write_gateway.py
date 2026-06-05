@@ -13,6 +13,7 @@ from core.governance_context import (
     require_governance,
 )
 from core.runtime.atomic_writer import (
+    atomic_append_text,
     atomic_write_bytes,
     atomic_write_text,
     atomic_write_json,
@@ -60,6 +61,20 @@ class FileWriteGateway:
                 allowed_domains=self._allowed_domains,
             )
         atomic_write_text(target, text, encoding=encoding)
+
+    def append_text(self, path: PathLike, text: str, *, encoding: str = "utf-8", source: str = "unknown") -> None:
+        target = _coerce_target(path)
+        if not isinstance(text, str):
+            raise TypeError("text payload must be a string")
+        if not isinstance(encoding, str) or not encoding:
+            raise ValueError("encoding must be a non-empty string")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.append_text:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        atomic_append_text(target, text, encoding=encoding)
 
     def write_json(
         self,

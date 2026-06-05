@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.ValueAutopoiesis")
 
@@ -538,8 +539,11 @@ class ValueAutopoiesis:
         """Append shift to the evolution log."""
         try:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with open(_EVOLUTION_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(shift.to_dict(), default=str) + "\n")
+            get_file_write_gateway().append_text(
+                _EVOLUTION_LOG_PATH,
+                json.dumps(shift.to_dict(), default=str) + "\n",
+                source="adaptation.value_autopoiesis.shift_log",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('value_autopoiesis', exc)
             logger.debug("Evolution log write failed: %s", exc)

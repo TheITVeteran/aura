@@ -20,6 +20,7 @@ from typing import Any
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.exceptions import capture_and_log
 
@@ -235,12 +236,12 @@ class DistillationPipe:
                         "teacher_target": self.teacher_target,
                     }
 
-                    def sync_save_entry(path, data):
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(data) + "\n")
-
-                    await asyncio.to_thread(sync_save_entry, self.dataset_path, entry)
+                    await asyncio.to_thread(
+                        get_file_write_gateway().append_text,
+                        self.dataset_path,
+                        json.dumps(entry) + "\n",
+                        source="adaptation.distillation_pipe.dataset",
+                    )
                     distilled_count += 1
 
                     # Mycelial pulse: teacher → lora dataset

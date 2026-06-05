@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.security.audit_trail import get_audit_trail
 from core.security.constitutional_guard import ConstitutionalGuard
 from core.brain.llm_health_router import llm_router
@@ -98,8 +99,11 @@ Draft the Python code for this highly capable new skill now:
                 filename = f"{filename.split('.')[0]}_{str(uuid.uuid4())[:6]}.py"
                 filepath = self.skills_dir / filename
                 
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(code)
+            get_file_write_gateway().write_text(
+                filepath,
+                code,
+                source="skills.skill_evolution.generated_skill",
+            )
                 
             logger.info("✨ Successfully evolved new skill: %s at %s", class_name, filename)
             

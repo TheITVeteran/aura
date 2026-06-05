@@ -1,6 +1,6 @@
 from core.runtime.errors import record_degradation
+import asyncio
 import logging
-import httpx
 import os
 import time
 from pathlib import Path
@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from core.skills.base_skill import BaseSkill
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Skills.ManifestToDevice")
 
@@ -59,14 +61,22 @@ class ManifestToDeviceSkill(BaseSkill):
         logger.info("💾 Manifesting asset from %s to %s", url, filepath)
         
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.get(url)
+            response = await asyncio.to_thread(
+                get_network_gateway().request,
+                "GET",
+                url,
+                timeout=60,
+                source="skills.manifest_to_device.download",
+            )
 
-            if response.status_code != 200:
-                return {"ok": False, "error": f"Asset retrieval failed: {response.status_code}"}
+            if int(response.get("status_code") or 0) != 200:
+                return {"ok": False, "error": f"Asset retrieval failed: {response.get('status_code')}"}
 
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
+            get_file_write_gateway().write_bytes(
+                filepath,
+                bytes(response.get("content") or b""),
+                source="skills.manifest_to_device.asset",
+            )
 
             return {
                 "ok": True,
@@ -75,7 +85,7 @@ class ManifestToDeviceSkill(BaseSkill):
                 "message": f"Asset secured. You can find it at: {filepath}"
             }
 
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except (OSError, ConnectionError, TimeoutError, TypeError, ValueError) as e:
             record_degradation('manifest_to_device', e)
             logger.error("Manifest failed: %s", e)
             return {"ok": False, "error": str(e)}

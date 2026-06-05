@@ -12,6 +12,7 @@ from typing import Any, Dict
 import asyncio
 from core.config import config
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Aura.Training")
@@ -88,10 +89,14 @@ class TrainSelfSkill(BaseSkill):
                         "output": content[:500],
                     })
 
-            with open(self.dataset_path, "a", encoding="utf-8") as f:
-                for entry in examples[-10:]:
-                    f.write(json.dumps(entry) + "\n")
-                    collected += 1
+            payload = "".join(json.dumps(entry) + "\n" for entry in examples[-10:])
+            if payload:
+                get_file_write_gateway().append_text(
+                    self.dataset_path,
+                    payload,
+                    source="skills.train_self.dataset",
+                )
+                collected = len(examples[-10:])
                 
             return {
                 "ok": True,
@@ -170,9 +175,11 @@ class TrainSelfSkill(BaseSkill):
             
             # 3. Append to Knowledge Base
             timestamp = datetime.now().isoformat()
-            with open(knowledge_path, "a") as f:
-                f.write(f"\n\n### Consolidation {timestamp}\n")
-                f.write("\n".join(new_knowledge))
+            get_file_write_gateway().append_text(
+                knowledge_path,
+                f"\n\n### Consolidation {timestamp}\n" + "\n".join(new_knowledge),
+                source="skills.train_self.knowledge_base",
+            )
                 
             # 4. Clear buffer
             atomic_write_text(Path(self.dataset_path), "", encoding="utf-8")

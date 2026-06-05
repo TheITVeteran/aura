@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import uuid
 from typing import Any, Dict, Optional
@@ -19,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from core.skills.base_skill import BaseSkill
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Skills.BranchingFutures")
 
@@ -69,8 +72,9 @@ class BranchingFuturesSkill(BaseSkill):
             # We launch a headless script inside the sandbox that instantiates the 
             # environment, runs the goal, and exits.
             runner_script = os.path.join(sandbox_dir, ".branch_runner.py")
-            with open(runner_script, "w") as f:
-                f.write(f'''
+            get_file_write_gateway().write_text(
+                runner_script,
+                f'''
 import sys
 import time
 
@@ -86,7 +90,9 @@ def run_branch():
 
 if __name__ == "__main__":
     run_branch()
-''')
+''',
+                source="skills.branching_futures.runner",
+            )
                 
             env = os.environ.copy()
             env["AURA_BRANCH_ID"] = branch_id
@@ -94,14 +100,15 @@ if __name__ == "__main__":
             
             logger.info("Launching ghost inference thread in %s...", sandbox_dir)
             
-            cmd = ["python3", ".branch_runner.py"]
+            cmd = [sys.executable, ".branch_runner.py"]
             
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
+            process = await get_subprocess_gateway().spawn_async(
+                cmd,
                 cwd=sandbox_dir,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="skills.branching_futures.runner",
             )
             
             try:
@@ -130,15 +137,16 @@ if __name__ == "__main__":
                     dst = os.path.join(sandbox_dir, f)
                     if os.path.exists(src) and os.path.exists(dst):
                         diff_cmd = ["git", "--no-pager", "diff", "--no-index", src, dst]
-                        diff_process = await asyncio.create_subprocess_exec(
-                            *diff_cmd,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            env={"PAGER": "cat", "GIT_PAGER": "cat"}
+                        diff_process = await asyncio.to_thread(
+                            get_subprocess_gateway().run,
+                            diff_cmd,
+                            env={"PAGER": "cat", "GIT_PAGER": "cat"},
+                            timeout=30,
+                            read_only=True,
+                            source="skills.branching_futures.diff",
                         )
-                        d_stdout, _ = await diff_process.communicate()
-                        if d_stdout:
-                            diff_text += d_stdout.decode() + "\n"
+                        if diff_process.stdout:
+                            diff_text += diff_process.stdout + "\n"
             else:
                 diff_text = "Full repository diff omitted due to size constraints. Check sandbox manually."
                 

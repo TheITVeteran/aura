@@ -16,6 +16,8 @@ from core.thought_stream import get_emitter
 import subprocess
 
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Skills.ToggleSenses")
 
@@ -28,8 +30,11 @@ def _get_pid_file(sense_name: str) -> str:
     return str(_sense_state_dir() / f"{sense_name}.pid")
 
 def _save_pid(sense_name: str, pid: int):
-    with open(_get_pid_file(sense_name), "w") as f:
-        f.write(str(pid))
+    get_file_write_gateway().write_text(
+        _get_pid_file(sense_name),
+        str(pid),
+        source="skills.toggle_senses.pid",
+    )
 
 def _load_pid(sense_name: str) -> Optional[int]:
     path = _get_pid_file(sense_name)
@@ -116,11 +121,12 @@ class ToggleSensesSkill(BaseSkill):
                 if not script_path.exists():
                     return {"ok": False, "error": f"Sense service script not found: {script_path}"}
 
-                process = subprocess.Popen(
+                process = get_subprocess_gateway().spawn(
                     [sys.executable, str(script_path)],
                     cwd=str(config.paths.project_root),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    source=f"skills.toggle_senses.{sense}",
                     start_new_session=True,
                 )
                 pid = int(process.pid)

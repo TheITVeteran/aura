@@ -11,10 +11,14 @@ import os
 import re
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
+from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 from core.runtime.errors import record_degradation
 
@@ -57,8 +61,11 @@ class ManimRendererSkill(BaseSkill):
         script_path = os.path.join(temp_dir, "scene.py")
         media_dir = os.path.join(temp_dir, "media")
 
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(params.python_code)
+        get_file_write_gateway().write_text(
+            script_path,
+            params.python_code,
+            source="skills.manim_renderer.scene",
+        )
 
         # Build the command: manim -q{quality} --media_dir {media_dir} {script} {scene_name}
         cmd = [
@@ -72,10 +79,11 @@ class ManimRendererSkill(BaseSkill):
         logger.info("Rendering Manim scene '%s' in %s...", params.scene_name, temp_dir)
         
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
+            process = await get_subprocess_gateway().spawn_async(
+                cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                source="skills.manim_renderer.render",
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
@@ -119,10 +127,10 @@ class ManimRendererSkill(BaseSkill):
 
             # Move the video to a more permanent scratch pad or artifacts directory
             final_filename = f"{params.scene_name}_{uuid.uuid4().hex[:8]}.mp4"
-            artifacts_dir = os.path.expanduser("~/.gemini/antigravity/artifacts")
-            os.makedirs(artifacts_dir, exist_ok=True)
+            artifacts_dir = Path(config.paths.data_dir) / "artifacts" / "manim"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
             
-            final_path = os.path.join(artifacts_dir, final_filename)
+            final_path = str(artifacts_dir / final_filename)
             import shutil
             shutil.move(output_file, final_path)
             

@@ -6,6 +6,7 @@ This allows Aura to generate her own active-learning data for future fine-tuning
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 import os
 import json
 import logging
@@ -97,9 +98,12 @@ class FinetunePipe:
             try:
                 # Offload synchronous file append to a background thread
                 def _write_batch(batch, path):
-                    with open(path, "a", encoding="utf-8") as f:
-                        for entry in batch:
-                            f.write(json.dumps(entry) + "\n")
+                    payload = "".join(json.dumps(entry) + "\n" for entry in batch)
+                    get_file_write_gateway().append_text(
+                        path,
+                        payload,
+                        source="adaptation.finetune_pipe.dataset",
+                    )
                             
                 await asyncio.to_thread(_write_batch, self._batch.copy(), self.dataset_path)
                 
@@ -109,8 +113,7 @@ class FinetunePipe:
                 # AUDIT-FIX: Quality-score-based rotation — keep highest-quality 1000 samples,
                 # not the most recent 1000 (chronological rotation discards good old samples).
                 def _rotate_dataset(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
+                    lines = path.read_text(encoding="utf-8").splitlines()
                     if len(lines) <= 1000:
                         return
                     logger.info("FinetunePipe: Dataset exceeds 1000 samples. Quality-rotating...")
@@ -127,9 +130,11 @@ class FinetunePipe:
                         except (json.JSONDecodeError, TypeError, ValueError):
                             entries.append((0.5, line))
                     entries.sort(key=lambda x: x[0], reverse=True)
-                    with open(path, "w", encoding="utf-8") as f:
-                        for _, line in entries[:1000]:
-                            f.write(line + "\n")
+                    get_file_write_gateway().write_text(
+                        path,
+                        "".join(line + "\n" for _, line in entries[:1000]),
+                        source="adaptation.finetune_pipe.rotate_dataset",
+                    )
                             
                 try:
                     await asyncio.to_thread(_rotate_dataset, self.dataset_path)

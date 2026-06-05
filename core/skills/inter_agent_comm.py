@@ -3,10 +3,11 @@ import asyncio
 import json
 import logging
 import time
-import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.network_gateway import get_network_gateway
 from core.skills.base_skill import BaseSkill
 from core.container import ServiceContainer
 
@@ -62,17 +63,22 @@ class InterAgentCommSkill(BaseSkill):
             
             try:
                 # We do a fire-and-forget style async post, but wait briefly for a 200 OK acceptance
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        target_endpoint,
-                        json={"sender": "Aura", "message": message, "swarm_context": swarm_data[:2]}
-                    )
+                resp = await asyncio.to_thread(
+                    get_network_gateway().request,
+                    "POST",
+                    target_endpoint,
+                    headers={"Content-Type": "application/json"},
+                    data=json.dumps({"sender": "Aura", "message": message, "swarm_context": swarm_data[:2]}),
+                    timeout=10.0,
+                    source="skills.inter_agent_comm.send",
+                )
                     
-                if resp.status_code in (200, 201, 202):
-                    status_msg = f"Message successfully transmitted to {agent_name} (HTTP {resp.status_code})."
+                status_code = int(resp.get("status_code") or 0)
+                if status_code in (200, 201, 202):
+                    status_msg = f"Message successfully transmitted to {agent_name} (HTTP {status_code})."
                 else:
-                    status_msg = f"Agent {agent_name} rejected the payload: HTTP {resp.status_code}"
-            except httpx.RequestError as e:
+                    status_msg = f"Agent {agent_name} rejected the payload: HTTP {status_code}"
+            except (OSError, ConnectionError, TimeoutError, TypeError, ValueError) as e:
                 logger.warning("Network failure reaching agent %s: %s", agent_name, e)
                 status_msg = f"Network failure—{agent_name} unreachable: {e}"
 
@@ -101,8 +107,11 @@ class InterAgentCommSkill(BaseSkill):
     def _log_communication(self, data: Dict[str, Any]):
         """Append communication record to log file"""
         try:
-            with open(self.comm_log_path, 'a') as f:
-                f.write(json.dumps(data) + "\n")
+            get_file_write_gateway().append_text(
+                self.comm_log_path,
+                json.dumps(data) + "\n",
+                source="skills.inter_agent_comm.log",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('inter_agent_comm', e)
             logger.error("Failed to write comm log: %s", e)

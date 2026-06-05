@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.MetaLearner")
 
@@ -279,8 +280,11 @@ class MetaLearner:
 
     def _log_step(self, step: MetaStep) -> None:
         try:
-            with open(_LOG_PATH, "a") as f:
-                f.write(json.dumps(step.to_dict(), default=str) + "\n")
+            get_file_write_gateway().append_text(
+                _LOG_PATH,
+                json.dumps(step.to_dict(), default=str) + "\n",
+                source="adaptation.meta_learner.step_log",
+            )
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.adaptation.meta_learner: %s", type(_exc).__name__, _exc)
 

@@ -7,7 +7,9 @@ This allows Aura to update her own weights based on captured experiences.
 from core.runtime.errors import record_degradation
 from core.container import ServiceContainer
 from core.runtime.background_policy import background_activity_reason
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 import os
 import json
@@ -74,10 +76,9 @@ class SelfOptimizer:
             return {"ok": False, "error": f"Dataset missing: {self.dataset_path}"}
             
         # Check if we have enough data to bother (min 5 samples)
-        with open(self.dataset_path, "r") as f:
-            lines = f.readlines()
-            if len(lines) < 5:
-                return {"ok": False, "error": "Insufficient data in dataset for training"}
+        lines = self.dataset_path.read_text(encoding="utf-8").splitlines()
+        if len(lines) < 5:
+            return {"ok": False, "error": "Insufficient data in dataset for training"}
 
         self._is_optimizing = True
         self._abort_requested = False # Reset abort flag for new optimization cycle
@@ -105,12 +106,16 @@ class SelfOptimizer:
             train_file = temp_dir / "train.jsonl"
             valid_file = temp_dir / "valid.jsonl"
             
-            with open(train_file, "w") as f:
-                for entry in train_data:
-                    f.write(json.dumps(entry) + "\n")
-            with open(valid_file, "w") as f:
-                for entry in valid_data:
-                    f.write(json.dumps(entry) + "\n")
+            get_file_write_gateway().write_text(
+                train_file,
+                "".join(json.dumps(entry) + "\n" for entry in train_data),
+                source="adaptation.self_optimizer.train_split",
+            )
+            get_file_write_gateway().write_text(
+                valid_file,
+                "".join(json.dumps(entry) + "\n" for entry in valid_data),
+                source="adaptation.self_optimizer.valid_split",
+            )
 
             # 2. Construct training command
             log_file = self.adapter_output.parent / "last_training.log"
@@ -130,27 +135,19 @@ class SelfOptimizer:
             ]
             
             start_time = time.time()
-            with open(log_file, "w") as out:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=out,
-                    stderr=out
-                )
-                
-                # Poll for abort signal while training
-                while process.returncode is None:
-                    if getattr(self, "_abort_requested", False):
-                        logger.warning("🧠 Nucleus: Memory critical! Terminating LoRA training...")
-                        process.terminate()
-                        try: await asyncio.wait_for(process.wait(), timeout=5.0)
-                        except asyncio.TimeoutError: process.kill()
-                        break
-                    await asyncio.sleep(2.0)
-                
-                await process.wait()
+            train_result = await self._run_gateway_command(
+                cmd,
+                source="adaptation.self_optimizer.lora_train",
+                abortable=True,
+            )
+            get_file_write_gateway().write_text(
+                log_file,
+                train_result["log"],
+                source="adaptation.self_optimizer.training_log",
+            )
             duration = time.time() - start_time
             
-            if process.returncode == 0:
+            if train_result["returncode"] == 0:
                 logger.info("🧠 Nucleus: Training complete. Fusing weights into new model...")
                 fused_dir = self.base_model_path.parent.parent / "training" / "fused-model" / "aura-latest"
                 fuse_cmd = [
@@ -159,18 +156,26 @@ class SelfOptimizer:
                     "--adapter-path", str(self.adapter_output.parent),
                     "--save-path", str(fused_dir)
                 ]
-                with open(log_file, "a") as out:
-                    fuse_process = await asyncio.create_subprocess_exec(
-                        *fuse_cmd, stdout=out, stderr=out
-                    )
-                    await fuse_process.wait()
+                fuse_result = await self._run_gateway_command(
+                    fuse_cmd,
+                    source="adaptation.self_optimizer.lora_fuse",
+                    abortable=False,
+                )
+                get_file_write_gateway().append_text(
+                    log_file,
+                    "\n=== fuse ===\n" + fuse_result["log"],
+                    source="adaptation.self_optimizer.training_log",
+                )
                     
-                if fuse_process.returncode == 0:
+                if fuse_result["returncode"] == 0:
                     logger.info("🧠 Nucleus: Fusion successful. Updating active.json...")
                     active_json_path = self.base_model_path.parent.parent / "training" / "fused-model" / "active.json"
                     active_json_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(active_json_path, "w") as f:
-                        json.dump({"active_model_path": str(fused_dir)}, f)
+                    get_file_write_gateway().write_text(
+                        active_json_path,
+                        json.dumps({"active_model_path": str(fused_dir)}),
+                        source="adaptation.self_optimizer.active_model",
+                    )
                 else:
                     logger.error("❌ Nucleus: Fusion failed.")
 
@@ -179,24 +184,18 @@ class SelfOptimizer:
                         "status": "success",
                         "duration": duration,
                         "samples": len(data),
-                        "fused_model": str(fused_dir) if fuse_process.returncode == 0 else None
+                        "fused_model": str(fused_dir) if fuse_result["returncode"] == 0 else None
                     }))
                 return {
                     "ok": True, 
                     "duration": duration, 
                     "adapter": str(self.adapter_output),
                     "samples": len(data),
-                    "fused_model": str(fused_dir) if fuse_process.returncode == 0 else None
+                    "fused_model": str(fused_dir) if fuse_result["returncode"] == 0 else None
                 }
             else:
                 # Read error from log file as stdout/stderr were redirected
-                error_msg = "Unknown error (check logs)"
-                try:
-                    with open(log_file, "r") as f:
-                        error_msg = f.read().strip()[-500:] # Get last 500 chars
-                except (OSError, IOError) as _e:
-                    record_degradation('self_optimizer', _e)
-                    logger.debug('Ignored Exception in self_optimizer.py: %s', _e)
+                error_msg = train_result["log"].strip()[-500:] or "Unknown error (check logs)"
                 
                 if self.event_bus:
                     get_task_tracker().create_task(self.event_bus.publish("core/optimizer/completed", {
@@ -243,6 +242,72 @@ class SelfOptimizer:
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('self_optimizer', e)
             logger.warning("Failed to cleanup optimizer temp dir: %s", e)
+
+    async def _run_gateway_command(
+        self,
+        cmd: List[str],
+        *,
+        source: str,
+        abortable: bool,
+        log_limit: int = 2_000_000,
+    ) -> Dict[str, Any]:
+        """Run a governed training command while capturing bounded logs."""
+        process = await get_subprocess_gateway().spawn_async(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            source=source,
+        )
+        chunks: List[str] = []
+        total = 0
+
+        def add_chunk(text: str) -> None:
+            nonlocal total
+            if not text:
+                return
+            chunks.append(text)
+            total += len(text)
+            while total > log_limit and chunks:
+                removed = chunks.pop(0)
+                total -= len(removed)
+
+        stdout = process.stdout
+        while True:
+            if abortable and getattr(self, "_abort_requested", False):
+                logger.warning("🧠 Nucleus: Memory critical! Terminating LoRA training...")
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                break
+
+            if stdout is not None:
+                try:
+                    raw = await asyncio.wait_for(stdout.readline(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    raw = b""
+                if raw:
+                    add_chunk(raw.decode("utf-8", errors="replace"))
+                    continue
+
+            if process.returncode is not None:
+                break
+            await asyncio.sleep(0.1)
+
+        if stdout is not None:
+            try:
+                remaining = await asyncio.wait_for(stdout.read(), timeout=1.0)
+            except asyncio.TimeoutError:
+                remaining = b""
+            if remaining:
+                add_chunk(remaining.decode("utf-8", errors="replace"))
+
+        return {
+            "returncode": int(process.returncode if process.returncode is not None else -1),
+            "log": "".join(chunks),
+        }
 
 
 

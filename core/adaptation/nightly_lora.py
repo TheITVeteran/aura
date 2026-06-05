@@ -1,4 +1,5 @@
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 import asyncio
 import json
 from pathlib import Path
@@ -81,9 +82,11 @@ class NightlyLoRATrainer:
         
         # Write to JSONL for training
         output_file = self.training_data_path / f"training_{datetime.now().date()}.jsonl"
-        with open(output_file, "w") as f:
-            for ex in examples:
-                f.write(json.dumps(ex) + "\n")
+        get_file_write_gateway().write_text(
+            output_file,
+            "".join(json.dumps(ex) + "\n" for ex in examples),
+            source="adaptation.nightly_lora.training_data",
+        )
         
         logger.info("🌙 Nightly LoRA: Generated %s training examples.", len(examples))
         # Trigger LoRA training

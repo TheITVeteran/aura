@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from core.skills.base_skill import BaseSkill
 from core.config import config
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 from pydantic import BaseModel, Field
 
@@ -52,8 +53,11 @@ class SelfEvolutionSkill(BaseSkill):
     def _save_error_registry(self):
         """Save updated error registry."""
         filepath = self._evolution_dir() / "error_registry.json"
-        with open(filepath, "w") as f:
-            json.dump(self.error_registry, f)
+        get_file_write_gateway().write_text(
+            filepath,
+            json.dumps(self.error_registry),
+            source="skills.self_evolution.error_registry",
+        )
 
     def _resolve_brain(self, context: Optional[Dict[str, Any]]) -> Any:
         ctx = context or {}
@@ -327,8 +331,11 @@ class SelfEvolutionSkill(BaseSkill):
         filename = f"evolution_proposal_{timestamp}.md"
         filepath = self._evolution_dir() / filename
         try:
-            with open(filepath, "w") as f:
-                f.write(f"# Self-Evolution Proposal\n\n**Objective**: {objective}\n\n{proposal}")
+            get_file_write_gateway().write_text(
+                filepath,
+                f"# Self-Evolution Proposal\n\n**Objective**: {objective}\n\n{proposal}",
+                source="skills.self_evolution.proposal",
+            )
             self.logger.info("Proposal saved to %s", filepath)
             return {
                 "ok": True,

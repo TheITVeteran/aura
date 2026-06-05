@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from core.dual_memory import DualMemorySystem, Episode
 from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.DreamJournal")
 
@@ -232,5 +233,8 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
             f"================================\n\n"
         )
         
-        with open(self.journal_file, "a", encoding="utf-8") as f:
-            f.write(entry)
+        get_file_write_gateway().append_text(
+            self.journal_file,
+            entry,
+            source="adaptation.dream_journal.journal",
+        )

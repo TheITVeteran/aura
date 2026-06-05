@@ -2,11 +2,9 @@
 Enables memory synchronization between Home and Cloud variants via a private Git repository.
 """
 from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
 import asyncio
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, Literal
@@ -14,6 +12,8 @@ from typing import Any, Dict, Literal
 from pydantic import BaseModel, Field
 
 from core.skills.base_skill import BaseSkill
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Skills.MemorySync")
 
@@ -114,26 +114,30 @@ class MemorySyncSkill(BaseSkill):
     def _initialize_repo(self):
         try:
             cwd = str(self.memory_path)
-            subprocess.run(["git", "init"], cwd=cwd, check=True)
-            subprocess.run(["git", "remote", "add", "origin", self.repo_url], cwd=cwd, check=True)
+            init_res = self._run_git(["git", "init"], cwd=cwd)
+            if init_res.returncode != 0:
+                return {"ok": False, "error": init_res.stderr}
+            remote_res = self._run_git(["git", "remote", "add", "origin", self.repo_url], cwd=cwd)
+            if remote_res.returncode != 0:
+                return {"ok": False, "error": remote_res.stderr}
             # Initial pull
-            subprocess.run(["git", "pull", "origin", "main"], cwd=cwd, check=False)
+            self._run_git(["git", "pull", "origin", "main"], cwd=cwd)
             return {"ok": True, "message": "Memory repository initialized."}
-        except (subprocess.SubprocessError, OSError) as e:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as e:
             record_degradation('memory_sync', e)
             return {"ok": False, "error": f"Init failed: {e}"}
 
     def _pull(self):
         try:
             cwd = str(self.memory_path)
-            res = subprocess.run(["git", "pull", "origin", "main"], cwd=cwd, capture_output=True, text=True)
+            res = self._run_git(["git", "pull", "origin", "main"], cwd=cwd)
             if res.returncode == 0:
                 logger.info("Memory Pulled successfully.")
                 return {"ok": True, "message": "Memory synced from cloud."}
             else:
                 logger.warning("Pull failed: %s", res.stderr)
                 return {"ok": False, "error": res.stderr}
-        except (subprocess.SubprocessError, OSError) as e:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as e:
             record_degradation('memory_sync', e)
             return {"ok": False, "error": f"Pull error: {e}"}
 
@@ -145,14 +149,21 @@ class MemorySyncSkill(BaseSkill):
             # Ensure .gitignore exists to prevent accidental DB commits
             gitignore = self.memory_path / ".gitignore"
             if not gitignore.exists():
-                atomic_write_text(gitignore, "*.db\n*.sqlite3\n*.sqlite\n*.bin\n*.safetensors\n.DS_Store\n")
-                subprocess.run(["git", "add", ".gitignore"], cwd=cwd, check=False)
+                get_file_write_gateway().write_text(
+                    gitignore,
+                    "*.db\n*.sqlite3\n*.sqlite\n*.bin\n*.safetensors\n.DS_Store\n",
+                    source="skills.memory_sync.gitignore",
+                )
+                self._run_git(["git", "add", ".gitignore"], cwd=cwd)
 
-            # Only add specific text-based artifacts (SK-02)
-            subprocess.run(["git", "add", "*.md", "*.json", "*.jsonl"], cwd=cwd, check=False)
+            # Only add specific text-based artifacts (SK-02). Expand globs in
+            # Python because subprocess execution is shell-free by design.
+            allowed_files = self._allowed_memory_artifacts()
+            if allowed_files:
+                self._run_git(["git", "add", *allowed_files], cwd=cwd)
             
-            subprocess.run(["git", "commit", "-m", "Aura Memory Update [SK-02 Hardened]"], cwd=cwd, check=False)
-            res = subprocess.run(["git", "push", "origin", "main"], cwd=cwd, capture_output=True, text=True)
+            self._run_git(["git", "commit", "-m", "Aura Memory Update [SK-02 Hardened]"], cwd=cwd)
+            res = self._run_git(["git", "push", "origin", "main"], cwd=cwd)
             
             if res.returncode == 0:
                 logger.info("Memory Pushed successfully.")
@@ -160,6 +171,24 @@ class MemorySyncSkill(BaseSkill):
             else:
                 logger.warning("Push failed: %s", res.stderr)
                 return {"ok": False, "error": res.stderr}
-        except (subprocess.SubprocessError, OSError) as e:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as e:
             record_degradation('memory_sync', e)
             return {"ok": False, "error": f"Push error: {e}"}
+
+    @staticmethod
+    def _run_git(argv: list[str], *, cwd: str):
+        return get_subprocess_gateway().run(
+            argv,
+            cwd=cwd,
+            timeout=120,
+            source="skills.memory_sync.git",
+        )
+
+    def _allowed_memory_artifacts(self) -> list[str]:
+        allowed: list[str] = []
+        for pattern in ("*.md", "*.json", "*.jsonl"):
+            for path in self.memory_path.rglob(pattern):
+                if ".git" in path.parts or not path.is_file():
+                    continue
+                allowed.append(str(path.relative_to(self.memory_path)))
+        return sorted(set(allowed))

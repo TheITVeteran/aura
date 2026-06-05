@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from core.container import ServiceContainer
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
 # Issue 73: Cognitive Engine will be lazily loaded
@@ -41,8 +42,11 @@ class SelfImprovementSkill(BaseSkill):
         history = self._get_learning_history()
         history.append(entry)
         try:
-            with open(self.learning_log_path, "w") as f:
-                json.dump(history, f, indent=2)
+            get_file_write_gateway().write_text(
+                self.learning_log_path,
+                json.dumps(history, indent=2),
+                source="skills.self_improvement.learning_log",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_improvement', e)
             logger.error("Failed to write learning log: %s", e)

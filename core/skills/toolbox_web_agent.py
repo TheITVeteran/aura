@@ -6,9 +6,12 @@ receipts before external network use.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any
+
+from core.runtime.network_gateway import get_network_gateway
 
 
 @dataclass(frozen=True)
@@ -54,12 +57,23 @@ class BrowserWebAgent:
             return WebAgentResult(url=url, title=title, text=text[:12000], engine="playwright", ok=True)
 
     async def _read_httpx(self, url: str, *, error_prefix: str = "") -> WebAgentResult:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            html = resp.text
+        resp = await asyncio.to_thread(
+            get_network_gateway().request,
+            "GET",
+            url,
+            timeout=15.0,
+            source="skills.toolbox_web_agent.read",
+        )
+        if not resp.get("ok"):
+            return WebAgentResult(
+                url=url,
+                title="",
+                text="",
+                engine="network_gateway",
+                ok=False,
+                error=resp.get("error") or f"HTTP {resp.get('status_code')}",
+            )
+        html = bytes(resp.get("content") or b"").decode("utf-8", errors="replace")
         title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else ""
         text = re.sub(r"<(script|style).*?</\1>", " ", html, flags=re.IGNORECASE | re.DOTALL)
