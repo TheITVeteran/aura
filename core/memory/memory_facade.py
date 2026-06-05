@@ -1,5 +1,8 @@
-"""Refactored MemoryFacade — the central entry point for all long-term memory operations.
+"""Refactored MemoryFacade — the central entry point for long-term memory operations.
 Ensures episodic and semantic sub-systems work in harmony.
+
+Welfare integration stamps trace evidence into memory metadata and defers
+high-integrity-risk writes before persistence.
 """
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -700,6 +703,12 @@ class MemoryFacade:
                                  metadata: Optional[Dict[str, Any]] = None):
         """Unified commit for an interaction across all relevant systems."""
         metadata = self._merge_unity_metadata(metadata)
+
+        metadata = self._stamp_welfare_context(metadata)
+        welfare_block = self._welfare_should_block_write(metadata)
+        if welfare_block:
+            logger.info("MemoryFacade: welfare blocked commit_interaction: %s", welfare_block)
+            return None
         
         # Extract and track entity mentions for specificity in later recall
         combined_text = f"{context} {action} {outcome}"
@@ -977,6 +986,13 @@ class MemoryFacade:
     ) -> bool:
         """Compatibility API for legacy callers expecting async long-term memory writes."""
         payload = self._merge_unity_metadata(metadata)
+
+        payload = self._stamp_welfare_context(payload)
+        welfare_block = self._welfare_should_block_write(payload)
+        if welfare_block:
+            self._last_add_memory_status = {"ok": False, "reason": f"welfare_block:{welfare_block}"}
+            logger.info("MemoryFacade: welfare blocked add_memory: %s", welfare_block)
+            return False
         
         # Extract and track entity mentions for specificity in later recall
         self._extract_and_track_entity_mentions(text, payload)
@@ -1237,6 +1253,93 @@ class MemoryFacade:
             "cold": self._cold is not None,
             "last_commit": self._last_commit_time.isoformat() if self._last_commit_time else None,
         }
+
+    # ------------------------------------------------------------------
+    # Welfare Integration (causal welfare architecture)
+    # ------------------------------------------------------------------
+
+    def _stamp_welfare_context(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Stamp available welfare state into memory metadata."""
+        payload = metadata if isinstance(metadata, dict) else {}
+        existing = self._safe_metadata(payload.get("welfare_context"))
+        if existing.get("status") == "ok":
+            return payload
+        try:
+            from core.being.welfare_state import WelfareState
+            from core.being.body_state_service import BodyStateService
+
+            welfare = WelfareState.get()
+            body_svc = BodyStateService.get()
+            body_snap = body_svc.snapshot()
+
+            inputs = welfare.gather_inputs(body=body_snap)
+            outputs = welfare.compute(inputs)
+
+            payload["welfare_context"] = {
+                "status": "ok",
+                "truth_integrity": round(inputs.truth_integrity, 4),
+                "memory_coherence": round(inputs.memory_coherence, 4),
+                "welfare_score": round(outputs.welfare_score, 4),
+                "integrity_guard": round(outputs.integrity_guard, 4),
+                "truth_protection": round(outputs.truth_protection, 4),
+                "distress": round(outputs.distress, 4),
+                "self_report_confidence": round(outputs.self_report_confidence, 4),
+                "body_fatigue": round(body_snap.fatigue, 4),
+            }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("memory_facade", exc)
+            logger.debug("MemoryFacade: welfare stamp skipped: %s", exc)
+            payload.setdefault(
+                "welfare_context",
+                {
+                    "status": "unavailable",
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+        return payload
+
+    def _welfare_should_block_write(self, metadata: Dict[str, Any]) -> Optional[str]:
+        """Return a welfare block reason, or mark uncertain writes contested."""
+        welfare_ctx = self._safe_metadata(metadata.get("welfare_context"))
+        if not welfare_ctx:
+            return None
+
+        status = str(welfare_ctx.get("status") or "ok").lower()
+        if status != "ok":
+            metadata["welfare_review_required"] = True
+            return None
+
+        integrity_guard = self._metadata_float(welfare_ctx, "integrity_guard", 0.5)
+        truth_protection = self._metadata_float(welfare_ctx, "truth_protection", 0.5)
+        truth_integrity = self._metadata_float(welfare_ctx, "truth_integrity", 1.0)
+        memory_coherence = self._metadata_float(welfare_ctx, "memory_coherence", 1.0)
+        is_identity_relevant = bool(metadata.get("identity_relevant", False))
+        is_relational = bool(metadata.get("relational_bonding", False))
+
+        if is_identity_relevant or is_relational:
+            if (
+                integrity_guard > 0.7
+                or truth_integrity < 0.55
+                or memory_coherence < 0.55
+            ):
+                metadata["contested"] = True
+                metadata["welfare_review_required"] = True
+
+        if integrity_guard >= 0.9:
+            return f"integrity_guard_critical={integrity_guard:.3f}"
+
+        if truth_protection >= 0.85 and truth_integrity < 0.35:
+            return f"truth_integrity_too_low={truth_integrity:.3f}"
+
+        return None
+
+    @staticmethod
+    def _metadata_float(metadata: Dict[str, Any], key: str, default: float) -> float:
+        try:
+            return float(metadata.get(key, default))
+        except (TypeError, ValueError):
+            return default
 
     def __repr__(self):
         return f"<MemoryFacade(E:{bool(self._episodic)} S:{bool(self._semantic)})>"

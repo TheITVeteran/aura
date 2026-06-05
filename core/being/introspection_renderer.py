@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from core.runtime.errors import record_degradation
+
 from .aura_now import AuraNow
 
 _FORBIDDEN_PATTERNS = (
@@ -49,10 +51,27 @@ class IntrospectionVerifier:
 
 
 class IntrospectionRenderer:
-    """Deterministically renders state-grounded introspection for Cortex prompts."""
+    """Deterministically renders state-grounded introspection for Cortex prompts.
+
+    Rendered self-reports are calibrated against trace evidence before output.
+    If calibration rejects the text, the renderer replaces it with a bounded
+    functional report instead of emitting unsupported private-state claims.
+    """
 
     def __init__(self, verifier: IntrospectionVerifier | None = None) -> None:
         self.verifier = verifier or IntrospectionVerifier()
+        self._calibrator = None
+
+    @property
+    def calibrator(self):
+        """Lazy-load the SelfReportCalibrator to avoid circular imports."""
+        if self._calibrator is None:
+            try:
+                from .self_report_calibrator import SelfReportCalibrator
+                self._calibrator = SelfReportCalibrator()
+            except ImportError:
+                self._calibrator = None
+        return self._calibrator
 
     def render(self, now: AuraNow, *, question: str = "") -> str:
         del question
@@ -127,10 +146,37 @@ class IntrospectionRenderer:
                 + "; ".join(observations)
                 + ". Phenomenal status remains an evidence boundary, not a conclusion."
             )
+
+        text = self._calibrate_self_report(text, now)
+
         check = self.verifier.check(text, now)
         if check.ok:
             return text
         return "My current state is reportable only as bounded functional telemetry; stronger feeling claims are not supported."
+
+    def _calibrate_self_report(self, text: str, now: AuraNow) -> str:
+        """Run self-report through the calibrator and fallback on rejection."""
+        cal = self.calibrator
+        if cal is None:
+            return text
+
+        try:
+            result = cal.calibrate(
+                text,
+                distress=now.affect.distress,
+                memory_coherence=1.0 - now.memory_context.memory_conflict,
+                free_energy=now.prediction.free_energy,
+                has_state_trace=True,  # we always have AuraNow trace
+            )
+            if not result.calibrated:
+                return (
+                    "My current state is reportable only as bounded functional "
+                    f"telemetry; {result.suggested_revision}."
+                )
+            return text
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("introspection_renderer", exc)
+            return text
 
     def render_prompt_block(self, now: AuraNow) -> str:
         rendered = self.render(now)

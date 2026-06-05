@@ -1186,6 +1186,56 @@ async def test_memory_facade_commit_interaction_blocks_when_constitutional_gate_
 
 
 @pytest.mark.asyncio
+async def test_memory_facade_blocks_severe_welfare_risk_before_backend(
+    monkeypatch,
+):
+    facade = MemoryFacade()
+    facade._episodic = SimpleNamespace(record_episode_async=AsyncMock(return_value="episode-1"))
+
+    def stamp_welfare(_self, metadata):
+        payload = dict(metadata or {})
+        payload["welfare_context"] = {
+            "status": "ok",
+            "truth_integrity": 0.9,
+            "memory_coherence": 0.9,
+            "integrity_guard": 0.95,
+            "truth_protection": 0.3,
+        }
+        return payload
+
+    monkeypatch.setattr(MemoryFacade, "_stamp_welfare_context", stamp_welfare)
+
+    result = await facade.commit_interaction(
+        context="ctx",
+        action="act",
+        outcome="out",
+        success=True,
+        importance=0.8,
+    )
+
+    assert result is None
+    assert facade._episodic.record_episode_async.await_count == 0
+
+
+def test_memory_facade_marks_identity_memory_contested_under_welfare_uncertainty():
+    facade = MemoryFacade()
+    metadata = {
+        "identity_relevant": True,
+        "welfare_context": {
+            "status": "ok",
+            "truth_integrity": 0.5,
+            "memory_coherence": 0.5,
+            "integrity_guard": 0.72,
+            "truth_protection": 0.4,
+        },
+    }
+
+    assert facade._welfare_should_block_write(metadata) is None
+    assert metadata["contested"] is True
+    assert metadata["welfare_review_required"] is True
+
+
+@pytest.mark.asyncio
 async def test_long_term_memory_store_blocks_when_constitutional_gate_rejects(
     tmp_path, monkeypatch
 ):

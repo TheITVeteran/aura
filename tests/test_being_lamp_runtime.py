@@ -48,6 +48,26 @@ def test_aura_now_reports_boring_stable_state_without_roleplay() -> None:
     assert IntrospectionVerifier().check(rendered, now).ok is True
 
 
+def test_introspection_renderer_uses_safe_fallback_when_calibration_rejects() -> None:
+    class RejectingCalibrator:
+        def calibrate(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                calibrated=False,
+                suggested_revision="claim requires trace evidence",
+            )
+
+    runtime = BeingRuntime()
+    now = runtime.sample(AuraState.default(), objective="self-report status")
+    renderer = IntrospectionRenderer()
+    renderer._calibrator = RejectingCalibrator()
+
+    rendered = renderer.render(now)
+
+    assert "bounded functional telemetry" in rendered
+    assert "claim requires trace evidence" in rendered
+    assert IntrospectionVerifier().check(rendered, now).ok is True
+
+
 def test_blind_perturbation_changes_state_grounded_introspection() -> None:
     runtime = BeingRuntime()
     state = AuraState.default()
