@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 _ENABLED_VALUES = {"1", "true", "yes", "on", "enabled"}
 _DISABLED_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -93,18 +94,14 @@ class AssertionProcess:
         raise TimeoutError(f"process {self.pid} did not exit within {timeout:.1f}s")
 
 
-def _spawn_assertion_process(command: tuple[str, ...]) -> AssertionProcess:
-    devnull_fd = os.open(os.devnull, os.O_RDWR)
-    try:
-        file_actions = (
-            (os.POSIX_SPAWN_DUP2, devnull_fd, 0),
-            (os.POSIX_SPAWN_DUP2, devnull_fd, 1),
-            (os.POSIX_SPAWN_DUP2, devnull_fd, 2),
-        )
-        pid = os.posix_spawnp(command[0], command, os.environ.copy(), file_actions=file_actions, setsid=True)
-    finally:
-        os.close(devnull_fd)
-    return AssertionProcess(pid=pid, args=command)
+def _spawn_assertion_process(command: tuple[str, ...]):
+    return get_subprocess_gateway().spawn(
+        command,
+        stdout_path=os.devnull,
+        stderr_path=os.devnull,
+        start_new_session=True,
+        source="core.runtime.keep_awake.caffeinate_assertion",
+    )
 
 
 class MacKeepAwakeController:

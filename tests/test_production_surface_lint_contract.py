@@ -119,6 +119,32 @@ async def main():
     assert "unapproved_direct_subprocess" in kinds
 
 
+def test_lint_blocks_os_spawn_family() -> None:
+    kinds = _findings(
+        """
+import os
+
+def main():
+    return os.posix_spawnp("python", ["python", "-V"], os.environ.copy())
+"""
+    )
+
+    assert "unapproved_direct_subprocess" in kinds
+
+
+def test_lint_blocks_os_spawn_alias() -> None:
+    kinds = _findings(
+        """
+from os import spawnvp
+
+def main():
+    return spawnvp(0, "python", ["python", "-V"])
+"""
+    )
+
+    assert "unapproved_direct_subprocess" in kinds
+
+
 def test_lint_blocks_path_constructor_write_text() -> None:
     kinds = _findings(
         """

@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("ExternalChat")
@@ -45,12 +47,20 @@ _RECOVERABLE_EXTERNAL_CHAT_ERRORS = (
 _WINDOW_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 
 
-def _spawn_detached(command: list[str]) -> int:
+def _spawn_detached(
+    command: list[str],
+    *,
+    source: str = "core.external_chat.spawn_detached",
+) -> int:
     if not command:
         raise ValueError("external chat launch command cannot be empty")
-    if os.name == "posix":
-        return os.posix_spawnp(command[0], command, os.environ.copy())
-    return os.spawnvp(os.P_NOWAIT, command[0], command)
+    process = get_subprocess_gateway().spawn(
+        command,
+        env=os.environ.copy(),
+        start_new_session=True,
+        source=source,
+    )
+    return int(process.pid)
 
 
 def _escape_applescript_string(value: str) -> str:
@@ -115,7 +125,10 @@ class TerminalChatWindow:
             if system == "Linux":
                 for term_cmd in self._linux_terminal_commands(script_path):
                     if shutil.which(term_cmd[0]):
-                        self.process = _spawn_detached(term_cmd)
+                        self.process = _spawn_detached(
+                            term_cmd,
+                            source="core.external_chat.terminal_linux_launch",
+                        )
                         break
                 if self.process is None:
                     raise FileNotFoundError("no supported Linux terminal emulator found")
@@ -128,11 +141,15 @@ tell application "Terminal"
     activate
 end tell
 """
-                self.process = _spawn_detached(["osascript", "-e", apple_script])
+                self.process = _spawn_detached(
+                    ["osascript", "-e", apple_script],
+                    source="core.external_chat.terminal_macos_launch",
+                )
 
             elif system == "Windows":
                 self.process = _spawn_detached(
-                    ["cmd", "/c", "start", "cmd", "/k", "bash", str(script_path)]
+                    ["cmd", "/c", "start", "cmd", "/k", "bash", str(script_path)],
+                    source="core.external_chat.terminal_windows_launch",
                 )
             else:
                 raise RuntimeError(f"unsupported terminal platform: {system}")
@@ -161,10 +178,13 @@ end tell
         pipe_in = chat_dir / f"{self.window_id}_in"
         pipe_out = chat_dir / f"{self.window_id}_out"
         message_file = chat_dir / f"{self.window_id}_initial.txt"
-        if initial_message:
-            message_file.write_text(initial_message, encoding="utf-8")
-        else:
-            message_file.write_text("", encoding="utf-8")
+        file_gateway = get_file_write_gateway()
+        file_gateway.write_text(
+            message_file,
+            initial_message or "",
+            encoding="utf-8",
+            source="core.external_chat.initial_message",
+        )
 
         script = f'''#!/bin/bash
 set -u
@@ -224,7 +244,12 @@ rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
 '''
 
         script_path = chat_dir / f"{self.window_id}.sh"
-        script_path.write_text(script, encoding="utf-8")
+        file_gateway.write_text(
+            script_path,
+            script,
+            encoding="utf-8",
+            source="core.external_chat.chat_script",
+        )
         script_path.chmod(0o700)
 
         return script_path

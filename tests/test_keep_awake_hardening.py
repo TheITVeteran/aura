@@ -1,3 +1,6 @@
+import os
+
+import core.runtime.keep_awake as keep_awake_mod
 from core.runtime.keep_awake import MacKeepAwakeController
 
 
@@ -54,6 +57,36 @@ def test_keep_awake_start_uses_injected_launcher():
     assert status.reason == "continuous runtime"
     assert status.command == ("caffeinate", "-i", "-m", "-s", "-d")
     assert launched == [status.command]
+
+
+def test_keep_awake_default_launcher_uses_subprocess_gateway(monkeypatch):
+    calls = []
+
+    class _GatewayProcess(_Process):
+        pass
+
+    class _Gateway:
+        def spawn(self, argv, **kwargs):
+            calls.append((tuple(argv), kwargs))
+            return _GatewayProcess(tuple(argv))
+
+    monkeypatch.setattr(keep_awake_mod, "get_subprocess_gateway", lambda: _Gateway())
+
+    proc = keep_awake_mod._spawn_assertion_process(("caffeinate", "-i", "-m"))
+
+    assert proc.pid == 4242
+    assert proc.args == ("caffeinate", "-i", "-m")
+    assert calls == [
+        (
+            ("caffeinate", "-i", "-m"),
+            {
+                "stdout_path": os.devnull,
+                "stderr_path": os.devnull,
+                "start_new_session": True,
+                "source": "core.runtime.keep_awake.caffeinate_assertion",
+            },
+        )
+    ]
 
 
 def test_keep_awake_stop_terminates_active_assertion():

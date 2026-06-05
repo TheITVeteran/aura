@@ -156,10 +156,6 @@ EXEMPT_FILES = {
         "justification": "Runs isolated subprocess tests for code changes.",
         "compensating_tests": "tests/test_safe_modification_harness.py"
     },
-    "core/external_chat.py": {
-        "justification": "Exposes standard external network messaging interfaces.",
-        "compensating_tests": "tests/test_external_chat.py"
-    },
     "core/capability_engine.py": {
         "justification": "Dynamic discovery and registration of all available skills.",
         "compensating_tests": "tests/test_capability_engine.py"
@@ -366,6 +362,16 @@ class AstLinter(ast.NodeVisitor):
             "subprocess.check_call",
             "os.system",
             "os.popen",
+            "os.posix_spawn",
+            "os.posix_spawnp",
+            "os.spawnl",
+            "os.spawnle",
+            "os.spawnlp",
+            "os.spawnlpe",
+            "os.spawnv",
+            "os.spawnve",
+            "os.spawnvp",
+            "os.spawnvpe",
         } or name.endswith((
             ".create_subprocess_exec",
             ".create_subprocess_shell",
@@ -460,6 +466,16 @@ class AstLinter(ast.NodeVisitor):
             "subprocess.check_output",
             "asyncio.create_subprocess_exec",
             "asyncio.create_subprocess_shell",
+            "os.posix_spawn",
+            "os.posix_spawnp",
+            "os.spawnl",
+            "os.spawnle",
+            "os.spawnlp",
+            "os.spawnlpe",
+            "os.spawnv",
+            "os.spawnve",
+            "os.spawnvp",
+            "os.spawnvpe",
         }
         for arg in node.args:
             if self._canonical_call_name(AstLinter._call_name_from_func(arg)) in forbidden:

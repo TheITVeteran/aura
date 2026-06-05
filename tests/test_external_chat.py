@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +37,9 @@ def test_linux_terminal_launch_uses_argument_vector(monkeypatch):
         external_chat.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "xterm" else None
     )
     monkeypatch.setattr(
-        external_chat, "_spawn_detached", lambda command: launched.append(command) or 1234
+        external_chat,
+        "_spawn_detached",
+        lambda command, **kwargs: launched.append((command, kwargs)) or 1234,
     )
     monkeypatch.setattr(window, "_start_message_handler", lambda: None)
 
@@ -44,10 +47,41 @@ def test_linux_terminal_launch_uses_argument_vector(monkeypatch):
 
     assert window.active is True
     assert window.process == 1234
-    assert launched[0][0:3] == ["xterm", "-e", "bash"]
-    assert launched[0][3].endswith("chat_launch.sh")
+    assert launched[0][0][0:3] == ["xterm", "-e", "bash"]
+    assert launched[0][0][3].endswith("chat_launch.sh")
+    assert launched[0][1] == {"source": "core.external_chat.terminal_linux_launch"}
 
     window.close()
+
+
+def test_terminal_script_uses_file_write_gateway(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeFileWriteGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
+            calls.append((Path(path).name, text, encoding, source))
+            Path(path).write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(
+        external_chat.tempfile,
+        "gettempdir",
+        lambda: str(tmp_path),
+    )
+    monkeypatch.setattr(
+        external_chat,
+        "get_file_write_gateway",
+        lambda: FakeFileWriteGateway(),
+    )
+
+    window = external_chat.TerminalChatWindow("chat_gateway", SimpleNamespace())
+    script_path = window._create_chat_script("hello")
+
+    assert script_path.name == "chat_gateway.sh"
+    assert [call[3] for call in calls] == [
+        "core.external_chat.initial_message",
+        "core.external_chat.chat_script",
+    ]
+    assert script_path.stat().st_mode & 0o700 == 0o700
 
 
 def test_pipe_helpers_read_and_write_regular_files(tmp_path):
