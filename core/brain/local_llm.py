@@ -5,10 +5,9 @@ import os
 import time
 from typing import Any
 
-import httpx
-
 from core.config import config
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.LocalLLM")
 
@@ -20,7 +19,6 @@ _LOCAL_LLM_RECOVERABLE_ERRORS = (
     RuntimeError,
     TypeError,
     ValueError,
-    httpx.HTTPError,
     OSError,
     ConnectionError,
     TimeoutError,
@@ -80,9 +78,7 @@ def _resolve_default_model() -> str:
 # Configurable timeouts (Increased for Llama 3.1 8b)
 _CONNECT_TIMEOUT = 10.0
 _READ_TIMEOUT = 300.0  # 5 minutes to allow slow model loading
-_DEFAULT_TIMEOUT = httpx.Timeout(
-    connect=_CONNECT_TIMEOUT, read=_READ_TIMEOUT, write=30.0, pool=10.0
-)
+_DEFAULT_REQUEST_TIMEOUT = _READ_TIMEOUT
 
 # ── Model Tier Defaults (v27: Upgraded for M5/64GB) ─────────────────────────
 # Old values (v26): num_ctx=4096, num_predict=512 — cripplingly low
@@ -165,24 +161,45 @@ class LocalBrain:
         self.base_url = _resolve_ollama_base_url()
         self.model = model_name or _resolve_default_model()
         self.timeout = getattr(config.llm, "timeout", config.llm_request_timeout_s)
-        self._client = None
         self._warmed = False
         self._consecutive_failures = 0
         self._circuit_open = False
         self._circuit_open_until = 0.0
 
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=_DEFAULT_TIMEOUT)
-        return self._client
-
     # --- Lifecycle ---
     async def close(self):
-        """Close the underlying httpx client to release connections."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return None
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> tuple[int, dict[str, Any], str]:
+        url = f"{self.base_url}{path}"
+        response = await asyncio.to_thread(
+            get_network_gateway().request,
+            method,
+            url,
+            headers={"Content-Type": "application/json"} if payload is not None else None,
+            data=json.dumps(payload) if payload is not None else None,
+            timeout=timeout or _DEFAULT_REQUEST_TIMEOUT,
+            source=f"llm_provider:local_ollama:{self.model}",
+            read_only=True,
+        )
+        body = response.get("content") or b""
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+        data: dict[str, Any] = {}
+        if text.strip():
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {}
+        return int(response.get("status_code") or 0), data, text
 
     async def __aenter__(self):
         return self
@@ -192,21 +209,22 @@ class LocalBrain:
 
     # --- Health Checks ---
     def check_health(self) -> bool:
-        """Sovereign health check (Synchronous — uses httpx sync client)."""
+        """Sovereign health check through the canonical network gateway."""
         try:
-            with httpx.Client(base_url=self.base_url, timeout=3) as client:
-                response = client.get("/api/tags")
-                return response.status_code == 200
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
+            response = get_network_gateway().request(
+                "GET",
+                f"{self.base_url}/api/tags",
+                timeout=3,
+                source=f"llm_provider:local_ollama_health:{self.model}",
+                read_only=True,
+            )
+            return int(response.get("status_code") or 0) == 200
+        except (OSError, RuntimeError, TypeError, ValueError, ConnectionError, TimeoutError):
             return False
 
     async def check_health_async(self) -> bool:
         """Sovereign health check (Async)."""
-        try:
-            response = await self.client.get("/api/tags", timeout=3)
-            return response.status_code == 200
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
-            return False
+        return await asyncio.to_thread(self.check_health)
 
     async def warmup(self) -> bool:
         """v6.0: Pre-warm the model by sending a minimal generate request.
@@ -216,9 +234,10 @@ class LocalBrain:
             return True
         try:
             logger.info("🔥 Warming up model: %s", self.model)
-            response = await self.client.post(
+            status_code, _data, text = await self._request_json(
+                "POST",
                 "/api/generate",
-                json={
+                payload={
                     "model": self.model,
                     "prompt": "Hello",
                     "stream": False,
@@ -226,11 +245,12 @@ class LocalBrain:
                 },
                 timeout=120,
             )
-            response.raise_for_status()
+            if status_code != 200:
+                raise RuntimeError(f"warmup_http_{status_code}:{text[:160]}")
             self._warmed = True
             logger.info("🔥 Model %s warmed up successfully", self.model)
             return True
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+        except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
             _record_llm_degradation(
                 "local_llm",
                 e,
@@ -386,9 +406,14 @@ class LocalBrain:
                     attempt + 1,
                     max_retries,
                 )
-                response = await self.client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
+                status_code, data, text = await self._request_json(
+                    "POST",
+                    url,
+                    payload=payload,
+                    timeout=float(self.timeout or _DEFAULT_REQUEST_TIMEOUT),
+                )
+                if status_code != 200:
+                    raise RuntimeError(f"ollama_generate_http_{status_code}:{text[:160]}")
                 self._record_success()
 
                 # Extract thinking segments
@@ -396,7 +421,7 @@ class LocalBrain:
                 cleaned, thought = self._extract_think_segments(raw_response)
                 return {"response": cleaned, "thought": thought}
 
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            except (OSError, TimeoutError, ConnectionError) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     backoff = min(2**attempt, 8)  # 1s, 2s, 4s, 8s
@@ -405,7 +430,7 @@ class LocalBrain:
                     )
                     await asyncio.sleep(backoff)
                     continue
-            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+            except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
                 _record_llm_degradation(
                     "local_llm",
                     e,
@@ -634,9 +659,14 @@ class LocalBrain:
         max_retries = 4
         for attempt in range(max_retries):
             try:
-                response = await self.client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
+                status_code, data, text = await self._request_json(
+                    "POST",
+                    url,
+                    payload=payload,
+                    timeout=float(self.timeout or _DEFAULT_REQUEST_TIMEOUT),
+                )
+                if status_code != 200:
+                    raise RuntimeError(f"ollama_chat_http_{status_code}:{text[:160]}")
                 self._record_success()
 
                 # Extract thinking segments
@@ -644,7 +674,7 @@ class LocalBrain:
                 cleaned, thought = self._extract_think_segments(raw_response)
                 return {"response": cleaned, "thought": thought}
 
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            except (OSError, TimeoutError, ConnectionError) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     backoff = min(2**attempt, 8)
@@ -653,7 +683,7 @@ class LocalBrain:
                     )
                     await asyncio.sleep(backoff)
                     continue
-            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as e:
+            except _LOCAL_LLM_RECOVERABLE_ERRORS as e:
                 _record_llm_degradation(
                     "local_llm",
                     e,

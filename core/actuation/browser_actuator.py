@@ -34,5 +34,5 @@ class BrowserActuator:
             action_name="post_publicly" if "post" in url else "submit_form",
             params={"url": url, "method": "POST", "data": data},
             source=source,
-            require_approval=True,
+            high_risk_flag=True,
         )

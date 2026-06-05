@@ -25,5 +25,5 @@ class CloudActuator:
             action_name="change_cloud_infra",
             params={"service": service, "desired_state": state},
             source=source,
-            require_approval=True,
+            high_risk_flag=True,
         )

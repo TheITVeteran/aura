@@ -55,13 +55,13 @@ class WorldActuator:
         action_name: str,
         params: Dict[str, Any],
         source: str = "world_actuator",
-        require_approval: Optional[bool] = None,
+        high_risk_flag: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Main entry point to perform any external actuation.
+        """Main entry point to perform any external external actuation.
         
         Routes the request to the correct ActionDomain, verifying risk level first.
         """
-        is_high_risk = action_name in HIGH_RISK_ACTIONS or require_approval is True
+        is_high_risk = action_name in HIGH_RISK_ACTIONS or high_risk_flag is True
         
         logger.info(
             "Actuation request: category=%s action=%s (high_risk=%s) source=%s",

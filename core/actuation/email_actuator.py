@@ -25,5 +25,5 @@ class EmailActuator:
             action_name="send_message",
             params={"to": to, "subject": subject, "body": body},
             source=source,
-            require_approval=True,
+            high_risk_flag=True,
         )

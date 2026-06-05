@@ -25,5 +25,5 @@ class FileActuator:
             action_name="modify_repo",
             params=act_params,
             source=source,
-            require_approval=action in ("publish_code", "push"),
+            high_risk_flag=action in ("publish_code", "push"),
         )
