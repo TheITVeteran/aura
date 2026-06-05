@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import asyncio
+import json
+
+
+class RecordingFileGateway:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def write_text(self, path, text, *, source, encoding="utf-8") -> None:
+        self.calls.append((str(path), encoding, source))
+        path.write_text(text, encoding=encoding)
+
+
+def test_feature_flags_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.governance.feature_flags as feature_flags
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "feature_flags.json"
+    monkeypatch.setattr(feature_flags, "get_file_write_gateway", lambda: gateway)
+
+    flags = feature_flags.FeatureFlags(config_path=target)
+    flags.set_flag("memory_dedup_on_write", False, reason="test")
+    flags.save()
+
+    assert json.loads(target.read_text(encoding="utf-8"))["memory_dedup_on_write"] is False
+    assert gateway.calls == [(str(target), "utf-8", "core.governance.feature_flags.save")]
+
+
+def test_outcome_ledger_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.environment.outcome.ledger as outcome_ledger
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "outcomes.json"
+    monkeypatch.setattr(outcome_ledger, "get_file_write_gateway", lambda: gateway)
+
+    ledger = outcome_ledger.OutcomeLedger(target)
+    ledger.record_outcome("inspect", "env", "ctx", True, 1.0, ["door_opened"])
+    ledger.save()
+
+    assert "env::ctx::inspect" in json.loads(target.read_text(encoding="utf-8"))
+    assert gateway.calls == [(str(target), "utf-8", "core.environment.outcome.ledger.save")]
+
+
+def test_belief_graph_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.environment.belief_graph as belief_graph
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "belief.json"
+    monkeypatch.setattr(belief_graph, "get_file_write_gateway", lambda: gateway)
+
+    graph = belief_graph.EnvironmentBeliefGraph()
+    graph.save(target)
+
+    assert "nodes" in json.loads(target.read_text(encoding="utf-8"))
+    assert gateway.calls == [(str(target), "utf-8", "core.environment.belief_graph.save")]
+
+
+def test_semiotic_network_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.grounding.semiotic_network as semiotic_network
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "semiotic.json"
+    monkeypatch.setattr(semiotic_network, "get_file_write_gateway", lambda: gateway)
+
+    network = semiotic_network.SemioticNetwork(target)
+    network.save()
+
+    assert "methods" in json.loads(target.read_text(encoding="utf-8"))
+    assert gateway.calls == [(str(target), "utf-8", "core.grounding.semiotic_network.save")]
+
+
+def test_unity_receipts_artifact_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.unity.unity_receipts as unity_receipts
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "unity.json"
+    monkeypatch.setattr(unity_receipts, "get_file_write_gateway", lambda: gateway)
+
+    assert unity_receipts.write_unity_results_artifact(target, {"ok": True}) == target
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
+    assert gateway.calls == [
+        (str(target), "utf-8", "core.unity.unity_receipts.write_results_artifact")
+    ]
+
+
+def test_proof_obligations_bytecode_check_uses_file_write_gateway(monkeypatch) -> None:
+    import core.learning.proof_obligations as proof_obligations
+
+    gateway = RecordingFileGateway()
+    monkeypatch.setattr(proof_obligations, "get_file_write_gateway", lambda: gateway)
+
+    ok, diagnostics = proof_obligations.ProofObligationEngine._bytecode_compiles(
+        "x = 1\n",
+        "candidate.py",
+    )
+
+    assert ok is True
+    assert diagnostics == {"ok": True}
+    assert gateway.calls
+    assert gateway.calls[0][2] == "core.learning.proof_obligations.bytecode_compiles"
+
+
+def test_plugin_allowlist_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.security.plugin_allowlist as plugin_allowlist
+
+    gateway = RecordingFileGateway()
+    allowlist_path = tmp_path / "allow.json"
+    plugin_path = tmp_path / "plugin.py"
+    plugin_path.write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.setattr(plugin_allowlist, "get_file_write_gateway", lambda: gateway)
+
+    allowlist = plugin_allowlist.PluginAllowlist(allowlist_path)
+    allowlist.record(plugin_path, approved_by="test", reason="unit")
+
+    assert "entries" in json.loads(allowlist_path.read_text(encoding="utf-8"))
+    assert gateway.calls == [(str(allowlist_path), "utf-8", "core.security.plugin_allowlist.save")]
+
+
+def test_reddit_session_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
+    import core.skills.reddit_adapter as reddit_adapter
+
+    gateway = RecordingFileGateway()
+    target = tmp_path / "reddit_state.json"
+    monkeypatch.setattr(reddit_adapter, "_STORAGE_STATE_FILE", target)
+    monkeypatch.setattr(reddit_adapter, "get_file_write_gateway", lambda: gateway)
+
+    class Context:
+        async def cookies(self):
+            return [{"name": "session", "value": "abc"}]
+
+    class Browser:
+        context = Context()
+
+    skill = reddit_adapter.RedditAdapterSkill()
+    asyncio.run(skill._save_session(Browser()))
+
+    assert json.loads(target.read_text(encoding="utf-8"))["cookies"][0]["name"] == "session"
+    assert gateway.calls == [(str(target), "utf-8", "core.skills.reddit_adapter.save_session")]

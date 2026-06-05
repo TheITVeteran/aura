@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.self_modification.formal_verifier import verify_mutation
 
 logger = logging.getLogger("Aura.ProofObligations")
@@ -150,10 +151,15 @@ class ProofObligationEngine:
             ast.parse(source, filename=file_path)
             with tempfile.TemporaryDirectory(prefix="aura-proof-") as tmp:
                 target = Path(tmp) / Path(file_path).name
-                target.write_text(source, encoding="utf-8")
+                get_file_write_gateway().write_text(
+                    target,
+                    source,
+                    encoding="utf-8",
+                    source="core.learning.proof_obligations.bytecode_compiles",
+                )
                 py_compile.compile(str(target), doraise=True)
             return True, {"ok": True}
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             record_degradation("proof_obligations", exc)
             logger.debug("Bytecode proof obligation failed for %s: %s", file_path, exc)
             return False, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 SCHEMA_VERSION = 1
 logger = logging.getLogger("Aura.PluginAllowlist")
@@ -131,9 +132,12 @@ class PluginAllowlist:
                 for sha, e in self._entries.items()
             },
         }
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(self.path)
+        get_file_write_gateway().write_text(
+            self.path,
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+            source="core.security.plugin_allowlist.save",
+        )
 
     # ------------------------------------------------------------------
     # operator interface

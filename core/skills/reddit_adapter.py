@@ -37,10 +37,8 @@ from pydantic import BaseModel, Field
 
 from core.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
-
-from core.runtime.action_executor import ActionExecutor
-from core.governance.will import ActionDomain
 
 logger = logging.getLogger("Skills.Reddit")
 
@@ -285,13 +283,15 @@ class RedditAdapterSkill(BaseSkill):
         try:
             if browser.context:
                 cookies = await browser.context.cookies()
-                _STORAGE_STATE_FILE.write_text(
+                get_file_write_gateway().write_text(
+                    _STORAGE_STATE_FILE,
                     json.dumps(
                         {
                             "cookies": cookies,
                             "saved_at": time.time(),
                         }
-                    )
+                    ),
+                    source="core.skills.reddit_adapter.save_session",
                 )
                 logger.info("💾 Reddit session saved (%d cookies)", len(cookies))
         except _REDDIT_RECOVERABLE_ERRORS as e:

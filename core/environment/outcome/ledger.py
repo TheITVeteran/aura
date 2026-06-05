@@ -5,6 +5,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 
 @dataclass
 class OutcomeRecord:
@@ -49,9 +51,11 @@ class OutcomeLedger:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
+        get_file_write_gateway().write_text(
+            self.path,
             json.dumps({k: asdict(v) for k, v in self.records.items()}, indent=2, sort_keys=True),
             encoding="utf-8",
+            source="core.environment.outcome.ledger.save",
         )
 
     def load(self) -> None:

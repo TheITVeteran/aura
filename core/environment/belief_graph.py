@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import json
+import logging
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 from .parsed_state import ParsedState
 
@@ -458,7 +460,12 @@ class EnvironmentBeliefGraph:
         }
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        get_file_write_gateway().write_text(
+            p,
+            json.dumps(payload, indent=2, default=str),
+            encoding="utf-8",
+            source="core.environment.belief_graph.save",
+        )
 
     def load(self, path: str | Path) -> None:
         """Deserialize belief graph from JSON file."""

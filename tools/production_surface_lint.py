@@ -132,22 +132,6 @@ EXEMPT_FILES = {
         "justification": "Tracks the historical agentic narrative flow across memory frames.",
         "compensating_tests": "tests/test_narrative_thread.py"
     },
-    "core/unity/unity_receipts.py": {
-        "justification": "Signs secure receipt cryptograms for unified consciousness states.",
-        "compensating_tests": "tests/test_unity_receipts.py"
-    },
-    "core/grounding/semiotic_network.py": {
-        "justification": "Implements symbolic and semiotic knowledge map link resolutions.",
-        "compensating_tests": "tests/test_semiotic_network.py"
-    },
-    "core/security/plugin_allowlist.py": {
-        "justification": "Enforces strict limits on external plugins by checking allowed signatures.",
-        "compensating_tests": "tests/test_plugin_allowlist.py"
-    },
-    "core/learning/proof_obligations.py": {
-        "justification": "Tracks and stores verified mathematical proof constraints.",
-        "compensating_tests": "tests/test_proof_obligations.py"
-    },
     "core/runtime/tenant_boundary.py": {
         "justification": "Maintains multi-tenant isolation boundaries in cloud environments.",
         "compensating_tests": "tests/test_tenant_boundary.py"
@@ -164,21 +148,9 @@ EXEMPT_FILES = {
         "justification": "Provides isolated filesystem scopes for un-mocked self-debug runs.",
         "compensating_tests": "tests/test_blinded_workspace.py"
     },
-    "core/governance/feature_flags.py": {
-        "justification": "Loads and caches global capability toggle parameters.",
-        "compensating_tests": "tests/test_feature_flags.py"
-    },
-    "core/environment/belief_graph.py": {
-        "justification": "Updates and serializes local belief assertions.",
-        "compensating_tests": "tests/test_belief_graph.py"
-    },
     "core/adaptation/safe_optimizer.py": {
         "justification": "Applies safe parameter adjustments to plastic network layers.",
         "compensating_tests": "tests/test_safe_optimizer.py"
-    },
-    "core/skills/reddit_adapter.py": {
-        "justification": "Interacts with external social API frameworks.",
-        "compensating_tests": "tests/test_reddit_adapter.py"
     },
     "core/self_modification/mutation_safety.py": {
         "justification": "Statically analyzes patch syntax before self-repair actions.",
@@ -187,10 +159,6 @@ EXEMPT_FILES = {
     "core/self_modification/safe_modification_harness.py": {
         "justification": "Runs isolated subprocess tests for code changes.",
         "compensating_tests": "tests/test_safe_modification_harness.py"
-    },
-    "core/environment/outcome/ledger.py": {
-        "justification": "Maintains persistent action outcome ledgers.",
-        "compensating_tests": "tests/test_outcome_ledger.py"
     },
     "core/external_chat.py": {
         "justification": "Exposes standard external network messaging interfaces.",

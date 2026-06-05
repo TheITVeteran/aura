@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 from .unity_state import FragmentationReport, UnityRepairPlan, UnityState
 
@@ -11,7 +13,7 @@ def unity_summary_payload(
     unity_state: UnityState | None,
     report: FragmentationReport | None = None,
     repair_plan: UnityRepairPlan | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if unity_state is None:
         return {
             "status": "unavailable",
@@ -19,7 +21,7 @@ def unity_summary_payload(
             "fragmentation_score": 1.0,
             "level": "unknown",
         }
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "unity_id": unity_state.unity_id,
         "level": unity_state.level,
         "unity_score": unity_state.unity_score,
@@ -47,8 +49,13 @@ def unity_summary_payload(
     return payload
 
 
-def write_unity_results_artifact(path: str | Path, payload: Dict[str, Any]) -> Path:
+def write_unity_results_artifact(path: str | Path, payload: dict[str, Any]) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    get_file_write_gateway().write_text(
+        target,
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+        source="core.unity.unity_receipts.write_results_artifact",
+    )
     return target

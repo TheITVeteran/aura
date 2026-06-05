@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -22,9 +21,10 @@ from core.grounding.types import (
     SymbolLink,
     new_id,
 )
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 
-def cosine_similarity(a: List[float], b: List[float]) -> float:
+def cosine_similarity(a: list[float], b: list[float]) -> float:
     av = np.asarray(a, dtype=np.float32)
     bv = np.asarray(b, dtype=np.float32)
     denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
@@ -37,11 +37,11 @@ class SemioticNetwork:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.methods: Dict[str, GroundingMethod] = {}
-        self.evidence: Dict[str, PerceptualEvidence] = {}
-        self.concepts: Dict[str, GroundedConcept] = {}
-        self.links: Dict[str, SymbolLink] = {}
-        self.events: List[GroundingEvent] = []
+        self.methods: dict[str, GroundingMethod] = {}
+        self.evidence: dict[str, PerceptualEvidence] = {}
+        self.concepts: dict[str, GroundedConcept] = {}
+        self.links: dict[str, SymbolLink] = {}
+        self.events: list[GroundingEvent] = []
         self.load()
 
     # ------------------------------------------------------------------
@@ -60,7 +60,7 @@ class SemioticNetwork:
         *,
         label: str,
         kind: str,
-        features: List[float],
+        features: list[float],
         method_id: str,
         positive: bool = True,
     ) -> GroundedConcept:
@@ -142,16 +142,16 @@ class SemioticNetwork:
     # ------------------------------------------------------------------
     # read paths
     # ------------------------------------------------------------------
-    def find_concept(self, label: str) -> Optional[GroundedConcept]:
+    def find_concept(self, label: str) -> GroundedConcept | None:
         target = label.strip().lower()
         for c in self.concepts.values():
             if c.label.strip().lower() == target:
                 return c
         return None
 
-    def concepts_for_symbol(self, symbol: str) -> List[Tuple[GroundedConcept, SymbolLink]]:
+    def concepts_for_symbol(self, symbol: str) -> list[tuple[GroundedConcept, SymbolLink]]:
         target = symbol.strip().lower()
-        out: List[Tuple[GroundedConcept, SymbolLink]] = []
+        out: list[tuple[GroundedConcept, SymbolLink]] = []
         for link in self.links.values():
             if link.symbol == target and link.concept_id in self.concepts:
                 out.append((self.concepts[link.concept_id], link))
@@ -176,9 +176,12 @@ class SemioticNetwork:
             "links": {k: v.__dict__ for k, v in self.links.items()},
             "events": [e.__dict__ for e in self.events],
         }
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-        tmp.replace(self.path)
+        get_file_write_gateway().write_text(
+            self.path,
+            json.dumps(payload, indent=2, default=str),
+            encoding="utf-8",
+            source="core.grounding.semiotic_network.save",
+        )
 
     def load(self) -> None:
         if not self.path.exists():

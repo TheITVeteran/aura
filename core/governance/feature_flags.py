@@ -19,13 +19,15 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Governance.FeatureFlags")
 
 
 # Default flag definitions with descriptions
-_DEFAULT_FLAGS: Dict[str, Dict[str, Any]] = {
+_DEFAULT_FLAGS: dict[str, dict[str, Any]] = {
     "boring_mode_auto_enter": {
         "default": True,
         "description": "Auto-enter Boring Mode on critical substrate/model failures",
@@ -92,11 +94,11 @@ _DEFAULT_FLAGS: Dict[str, Dict[str, Any]] = {
 class FeatureFlags:
     """Centralized feature flag manager."""
 
-    def __init__(self, config_path: Optional[Path] = None) -> None:
-        self._flags: Dict[str, bool] = {}
-        self._overrides: Dict[str, bool] = {}
+    def __init__(self, config_path: Path | None = None) -> None:
+        self._flags: dict[str, bool] = {}
+        self._overrides: dict[str, bool] = {}
         self._config_path = config_path or (Path.home() / ".aura" / "feature_flags.json")
-        self._change_log: list[Dict[str, Any]] = []
+        self._change_log: list[dict[str, Any]] = []
         self._load()
 
     def _load(self) -> None:
@@ -154,13 +156,13 @@ class FeatureFlags:
             flag_name, old, value, reason or "programmatic",
         )
 
-    def get_all(self) -> Dict[str, bool]:
+    def get_all(self) -> dict[str, bool]:
         """Get all flag states."""
         result = dict(self._flags)
         result.update(self._overrides)
         return result
 
-    def get_descriptions(self) -> Dict[str, str]:
+    def get_descriptions(self) -> dict[str, str]:
         """Get flag descriptions."""
         return {
             name: spec["description"]
@@ -172,20 +174,22 @@ class FeatureFlags:
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
             current = self.get_all()
-            self._config_path.write_text(
-                json.dumps(current, indent=2, sort_keys=True) + "\n"
+            get_file_write_gateway().write_text(
+                self._config_path,
+                json.dumps(current, indent=2, sort_keys=True) + "\n",
+                source="core.governance.feature_flags.save",
             )
             logger.info("Feature flags saved to %s", self._config_path)
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             logger.warning("Failed to save feature flags: %s", e)
 
-    def get_change_log(self, n: int = 20) -> list[Dict[str, Any]]:
+    def get_change_log(self, n: int = 20) -> list[dict[str, Any]]:
         """Get recent flag changes."""
         return self._change_log[-n:]
 
 
 # Singleton
-_flags_instance: Optional[FeatureFlags] = None
+_flags_instance: FeatureFlags | None = None
 
 
 def get_feature_flags() -> FeatureFlags:
