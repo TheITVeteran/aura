@@ -263,13 +263,14 @@ def record_degradation(
             with ServiceContainer._lock:
                 desc = ServiceContainer._services.get(resolved)
             if desc and getattr(desc, "failure_policy", "") == "fail-closed":
-                failure_policy_violation = True
-                failure_policy_error = (
-                    f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
-                    f"Original error: {type(error).__name__}: {error}"
-                )
-                if severity != "critical":
-                    severity = "critical"
+                if severity in ("critical", "degraded"):
+                    failure_policy_violation = True
+                    failure_policy_error = (
+                        f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
+                        f"Original error: {type(error).__name__}: {error}"
+                    )
+                    if severity != "critical":
+                        severity = "critical"
     except (ImportError, RuntimeError) as _exc:
         logger.debug("Suppressed %s in core.runtime.errors: %s", type(_exc).__name__, _exc)
 
