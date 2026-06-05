@@ -263,7 +263,7 @@ def record_degradation(
             with ServiceContainer._lock:
                 desc = ServiceContainer._services.get(resolved)
             if desc and getattr(desc, "failure_policy", "") == "fail-closed":
-                if severity in ("critical", "degraded"):
+                if severity in ("critical", "degraded", "warning"):
                     failure_policy_violation = True
                     failure_policy_error = (
                         f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "

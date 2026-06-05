@@ -25,6 +25,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.StructuralImprover")
 
@@ -361,12 +363,14 @@ class StructuralImprover:
 
     def _validate_files(self, files: List[Path]) -> Dict[str, Any]:
         try:
-            result = subprocess.run(
+            result = get_subprocess_gateway().run(
                 [sys.executable, "-m", "py_compile", *[str(path) for path in files]],
                 capture_output=True,
                 text=True,
                 timeout=self.validation_timeout_s,
                 cwd=str(self.root),
+                read_only=True,
+                source="self_modification.structural_improver.py_compile",
             )
             return {
                 "ok": result.returncode == 0,
@@ -374,14 +378,17 @@ class StructuralImprover:
                 "stderr": result.stderr[-2000:],
                 "files": [str(path.relative_to(self.root)) for path in files],
             }
-        except (subprocess.SubprocessError, OSError) as exc:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
             record_degradation("structural_improver", exc)
             return {"ok": False, "stderr": str(exc)}
 
     def _append_ledger(self, summary: Dict[str, Any]) -> None:
         payload = {"timestamp": time.time(), **summary}
-        with open(self.ledger_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+        get_file_write_gateway().append_text(
+            self.ledger_path,
+            json.dumps(payload, sort_keys=True, default=str) + "\n",
+            source="self_modification.structural_improver.ledger",
+        )
 
     def _is_within_root(self, path: Path) -> bool:
         try:

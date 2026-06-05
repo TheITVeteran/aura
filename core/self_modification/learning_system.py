@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.runtime.file_write_gateway import get_file_write_gateway
+
 logger = logging.getLogger("SelfModification.Learning")
 
 
@@ -352,8 +354,11 @@ class SelfImprovementLearning:
                 "last_updated": time.time()
             }
             
-            with open(self.db_path, 'w') as f:
-                json.dump(data, f, indent=2)
+            get_file_write_gateway().write_text(
+                self.db_path,
+                json.dumps(data, indent=2),
+                source="self_modification.learning_system.knowledge",
+            )
             
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('learning_system', e)
