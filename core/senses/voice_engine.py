@@ -38,6 +38,7 @@ import numpy as np
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import RobustLock
 from core.utils.exceptions import capture_and_log
 
@@ -1034,16 +1035,25 @@ class SovereignVoiceEngine:
         def _play():
             try:
                 temp_wav = self.data_dir / "tts_play_cache.wav"
-                with open(temp_wav, "wb") as f:
-                    f.write(audio_data)
-                
-                self._current_afplay = subprocess.Popen(["afplay", str(temp_wav)])
+                get_file_write_gateway().write_bytes(
+                    temp_wav,
+                    audio_data,
+                    source="core.senses.voice_engine.play_locally",
+                )
+
+                self._current_afplay = get_subprocess_gateway().spawn(
+                    ["afplay", str(temp_wav)],
+                    source="core.senses.voice_engine.play_locally",
+                )
                 while self._current_afplay.poll() is None:
                     if hasattr(self, 'interrupt_flag') and self.interrupt_flag.is_set():
                         self._current_afplay.terminate()
                         break
-                    time.sleep(0.05)
-            except (subprocess.SubprocessError, OSError) as e:
+                    try:
+                        self._current_afplay.wait(timeout=0.05)
+                    except subprocess.TimeoutExpired:
+                        continue
+            except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("Local playback failed: %s", e)
 

@@ -196,6 +196,61 @@ def test_voice_engine_status_reports_missing_capture_backend(monkeypatch, tmp_pa
     assert status["capture_backend"] == "unavailable"
 
 
+@pytest.mark.asyncio
+async def test_voice_local_playback_uses_gateways(monkeypatch, tmp_path) -> None:
+    import core.senses.voice_engine as voice_module
+
+    writes: list[tuple[str, bytes, str]] = []
+    spawns: list[tuple[tuple[str, ...], str]] = []
+
+    class FileGateway:
+        def write_bytes(self, path, payload, *, source):
+            writes.append((str(path), payload, source))
+            path.write_bytes(payload)
+
+    class Proc:
+        def __init__(self):
+            self.done = False
+            self.terminated = False
+
+        def poll(self):
+            return 0 if self.done else None
+
+        def wait(self, timeout=None):
+            self.done = True
+            return 0
+
+        def terminate(self):
+            self.terminated = True
+            self.done = True
+
+    class SubprocessGateway:
+        def spawn(self, argv, *, source, **_):
+            spawns.append((tuple(argv), source))
+            return Proc()
+
+    monkeypatch.setattr(voice_module, "get_file_write_gateway", lambda: FileGateway())
+    monkeypatch.setattr(voice_module, "get_subprocess_gateway", lambda: SubprocessGateway())
+
+    engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+
+    await engine._play_locally(b"RIFF-audio")
+
+    assert writes == [
+        (
+            str(tmp_path / "tts_play_cache.wav"),
+            b"RIFF-audio",
+            "core.senses.voice_engine.play_locally",
+        )
+    ]
+    assert spawns == [
+        (
+            ("afplay", str(tmp_path / "tts_play_cache.wav")),
+            "core.senses.voice_engine.play_locally",
+        )
+    ]
+
+
 def test_sensory_capabilities_require_capture_and_stt() -> None:
     from core.senses.sensory_registry import SensoryCapabilityFlags
 

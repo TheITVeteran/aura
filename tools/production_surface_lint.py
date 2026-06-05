@@ -228,10 +228,6 @@ EXEMPT_FILES = {
         "justification": "Implements core execution constraints and security filters.",
         "compensating_tests": "tests/test_sandbox.py"
     },
-    "core/senses/voice_engine.py": {
-        "justification": "Wraps native audio capture and speech synthesis libraries.",
-        "compensating_tests": "tests/test_voice_engine.py"
-    },
     "core/environments/terminal_grid/state_compiler.py": {
         "justification": "Compiles and serializes the terminal grid environment state.",
         "compensating_tests": "tests/test_terminal_grid_state.py"
@@ -304,6 +300,7 @@ class AstLinter(ast.NodeVisitor):
         self.async_depth = 0
         self.func_depth = 0
         self.file_gateway_vars: set[str] = set()
+        self.in_memory_binary_vars: set[str] = set()
         self.import_aliases: dict[str, str] = {}
 
     def add(self, severity: str, kind: str, node: ast.AST, message: str) -> None:
@@ -348,6 +345,10 @@ class AstLinter(ast.NodeVisitor):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     self.file_gateway_vars.add(target.id)
+        if isinstance(node.value, ast.Call) and self._call_name(node.value) == "io.BytesIO":
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.in_memory_binary_vars.add(target.id)
         self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
@@ -430,6 +431,9 @@ class AstLinter(ast.NodeVisitor):
 
         # Check direct file writes
         elif name == "open" or name.endswith(".open"):
+            if self._is_in_memory_binary_write_call(node, name):
+                self.generic_visit(node)
+                return
             mode = "r"
             if len(node.args) > 1:
                 if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
@@ -533,6 +537,12 @@ class AstLinter(ast.NodeVisitor):
         if isinstance(receiver, ast.Call):
             return self._call_name(receiver) == "get_file_write_gateway"
         return False
+
+    def _is_in_memory_binary_write_call(self, node: ast.Call, name: str) -> bool:
+        if name != "wave.open" or not node.args:
+            return False
+        target = node.args[0]
+        return isinstance(target, ast.Name) and target.id in self.in_memory_binary_vars
 
 
 def scan_file(path: Path) -> list[LintFinding]:

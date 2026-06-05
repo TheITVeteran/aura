@@ -132,6 +132,22 @@ def save():
     assert "unapproved_direct_file_write" in kinds
 
 
+def test_lint_allows_wave_open_on_bytesio_buffer() -> None:
+    kinds = _findings(
+        """
+import io
+import wave
+
+def synthesize():
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+"""
+    )
+
+    assert "unapproved_direct_file_write" not in kinds
+
+
 def test_lint_allows_file_write_gateway_factory_write_text() -> None:
     kinds = _findings(
         """
