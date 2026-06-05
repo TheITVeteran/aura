@@ -107,6 +107,8 @@ class ActorBus:
             "running": self._is_running,
             "actors": sorted(self._transports),
             "healthy": self.is_alive(),
+            "telemetry_task": self._task_status(self._telemetry_broadcaster_task),
+            "telemetry_task_alive": self._telemetry_task_alive(),
             "transports": transport_status,
             "telemetry_queue_size": queue_size,
             "telemetry_drops": self._telemetry_drops,
@@ -119,7 +121,46 @@ class ActorBus:
 
         if not self._is_running:
             return False
+        if self._telemetry_queue is None or not self._telemetry_task_alive():
+            return False
         return all(self._transport_alive(transport) for transport in self._transports.values())
+
+    @staticmethod
+    def _task_status(task: asyncio.Task | None) -> dict[str, Any]:
+        if task is None:
+            return {
+                "present": False,
+                "done": None,
+                "cancelled": None,
+                "failed": None,
+                "exception": None,
+            }
+        done = bool(task.done())
+        cancelled = bool(task.cancelled()) if done else False
+        exception: str | None = None
+        failed = False
+        if done and not cancelled:
+            try:
+                exc = task.exception()
+            except asyncio.CancelledError:
+                cancelled = True
+                exc = None
+            except (RuntimeError, AttributeError, TypeError, ValueError) as status_exc:
+                exc = status_exc
+            if exc is not None:
+                failed = True
+                exception = f"{type(exc).__name__}: {exc}"
+        return {
+            "present": True,
+            "done": done,
+            "cancelled": cancelled,
+            "failed": failed,
+            "exception": exception,
+        }
+
+    def _telemetry_task_alive(self) -> bool:
+        status = self._task_status(self._telemetry_broadcaster_task)
+        return bool(status["present"]) and not bool(status["done"])
 
     @staticmethod
     def _transport_alive(transport: Any) -> bool:

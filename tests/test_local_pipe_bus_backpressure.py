@@ -32,6 +32,7 @@ def test_fire_and_forget_pipe_send_drops_during_backpressure():
         read_conn = _FakeConnection()
         write_conn = _FakeConnection()
         bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._is_running = True
 
         lock = bus._get_write_lock()
         await lock.acquire()
@@ -43,6 +44,8 @@ def test_fire_and_forget_pipe_send_drops_during_backpressure():
 
         assert write_conn.sent == []
         assert bus._write_backpressure_drops == 1
+        assert bus.is_alive() is False
+        assert bus.get_status()["degraded"] is True
 
     asyncio.run(scenario())
 
@@ -52,6 +55,7 @@ def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
         read_conn = _FakeConnection()
         write_conn = _FakeConnection(delay_s=0.5)
         bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._is_running = True
         monkeypatch.setenv("AURA_PIPE_FF_WRITE_TIMEOUT_S", "0.25")
         monkeypatch.setenv("AURA_PIPE_SUPPRESS_AFTER_TIMEOUT_S", "1.0")
 
@@ -73,6 +77,71 @@ def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
             bus._shutdown_executor()
 
     asyncio.run(scenario())
+
+
+def test_local_pipe_bus_health_requires_running_transport():
+    read_conn = _FakeConnection()
+    write_conn = _FakeConnection()
+    bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+
+    try:
+        status = bus.get_status()
+
+        assert bus.is_alive() is False
+        assert status["alive"] is False
+        assert status["running"] is False
+    finally:
+        bus._shutdown_executor()
+
+
+def test_local_pipe_bus_reader_mode_health_requires_background_tasks():
+    class DoneTask:
+        def done(self):
+            return True
+
+        def cancelled(self):
+            return False
+
+        def exception(self):
+            return RuntimeError("reader crashed")
+
+    read_conn = _FakeConnection()
+    write_conn = _FakeConnection()
+    bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+    bus._is_running = True
+    bus._dispatch_queue = asyncio.Queue(maxsize=1)
+    bus._reader_task = DoneTask()  # type: ignore[assignment]
+    bus._dispatcher_task = DoneTask()  # type: ignore[assignment]
+
+    try:
+        status = bus.get_status()
+
+        assert bus.is_alive() is False
+        assert status["background_tasks_alive"] is False
+        assert status["reader_task"]["failed"] is True
+        assert "reader crashed" in str(status["reader_task"]["exception"])
+    finally:
+        bus._shutdown_executor()
+
+
+def test_local_pipe_bus_health_fails_on_saturated_pending_requests():
+    read_conn = _FakeConnection()
+    write_conn = _FakeConnection()
+    bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+    bus._is_running = True
+    loop = asyncio.new_event_loop()
+    try:
+        for idx in range(bus._max_pending_requests):
+            bus._pending_requests[str(idx)] = loop.create_future()
+
+        status = bus.get_status()
+
+        assert bus.is_alive() is False
+        assert status["pending_requests_saturated"] is True
+        assert status["pending_requests"] == status["pending_request_limit"]
+    finally:
+        loop.close()
+        bus._shutdown_executor()
 
 
 def test_stop_treats_task_cancellation_as_normal_shutdown(monkeypatch):
@@ -151,8 +220,11 @@ def test_actor_bus_reports_transport_health():
         read_conn = _FakeConnection()
         write_conn = _FakeConnection()
         pipe = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        pipe._is_running = True
         bus = ActorBus()
         bus._is_running = True
+        bus._telemetry_queue = asyncio.Queue(maxsize=1)
+        bus._telemetry_broadcaster_task = asyncio.create_task(asyncio.sleep(10))
         bus._transports["gui"] = pipe
 
         try:
@@ -170,6 +242,11 @@ def test_actor_bus_reports_transport_health():
             assert status["transports"]["gui"]["alive"] is False
             assert "pipe saturated" in str(status["transports"]["gui"]["last_error"])
         finally:
+            bus._telemetry_broadcaster_task.cancel()
+            try:
+                await bus._telemetry_broadcaster_task
+            except asyncio.CancelledError:
+                pass
             pipe._shutdown_executor()
             await ActorBus.reset_singleton()
 

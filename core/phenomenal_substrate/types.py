@@ -23,6 +23,11 @@ class RuntimeBody:
     compute_pressure: float = 0.20
     memory_pressure: float = 0.20
     error_pressure: float = 0.20
+    # ── Perceptual grounding fields (fed by PerceptualPump) ──────────
+    screen_novelty: float = 0.0       # how much the screen changed since last frame
+    audio_energy: float = 0.0         # microphone RMS level 0-1
+    voice_present: bool = False       # speech detected by VAD
+    foreground_app_familiar: float = 0.5  # how familiar the current app is
     timestamp: float = field(default_factory=time)
 
     def observed_vector(self) -> Dict[str, float]:
@@ -37,6 +42,11 @@ class RuntimeBody:
             "low_compute_pressure": clamp(1.0 - self.compute_pressure),
             "low_memory_pressure": clamp(1.0 - self.memory_pressure),
             "low_error_pressure": clamp(1.0 - self.error_pressure),
+            # Perceptual grounding — causally tied to reality
+            "screen_novelty": clamp(self.screen_novelty),
+            "audio_energy": clamp(self.audio_energy),
+            "voice_present": 1.0 if self.voice_present else 0.0,
+            "app_familiarity": clamp(self.foreground_app_familiar),
         }
 
 @dataclass

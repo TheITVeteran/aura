@@ -129,17 +129,84 @@ class LocalPipeBus:
             self._write_lock = asyncio.Lock()
         return self._write_lock
 
+    @staticmethod
+    def _task_status(task: asyncio.Task | None) -> dict[str, Any]:
+        if task is None:
+            return {
+                "present": False,
+                "done": None,
+                "cancelled": None,
+                "failed": None,
+                "exception": None,
+            }
+        done = bool(task.done())
+        cancelled = bool(task.cancelled()) if done else False
+        exception: str | None = None
+        failed = False
+        if done and not cancelled:
+            try:
+                exc = task.exception()
+            except asyncio.CancelledError:
+                cancelled = True
+                exc = None
+            except (RuntimeError, AttributeError, TypeError, ValueError) as status_exc:
+                exc = status_exc
+            if exc is not None:
+                failed = True
+                exception = f"{type(exc).__name__}: {exc}"
+        return {
+            "present": True,
+            "done": done,
+            "cancelled": cancelled,
+            "failed": failed,
+            "exception": exception,
+        }
+
+    @classmethod
+    def _task_alive(cls, task: asyncio.Task | None) -> bool:
+        status = cls._task_status(task)
+        return bool(status["present"]) and not bool(status["done"])
+
+    def _background_tasks_alive(self) -> bool:
+        if not self.start_reader:
+            return True
+        return (
+            self._dispatch_queue is not None
+            and self._task_alive(self._reader_task)
+            and self._task_alive(self._dispatcher_task)
+        )
+
+    def _dispatch_queue_saturated(self) -> bool:
+        queue = self._dispatch_queue
+        if queue is None:
+            return False
+        maxsize = int(getattr(queue, "maxsize", 0) or 0)
+        return maxsize > 0 and queue.qsize() >= maxsize
+
+    def _pending_requests_saturated(self) -> bool:
+        return len(self._pending_requests) >= self._max_pending_requests
+
     def is_alive(self) -> bool:
-        """Return true only when the pipe transport is writable and not degraded."""
+        """Return true only when the pipe transport and its workers are live."""
 
         now = time.monotonic()
         read_closed = bool(getattr(self.read_conn, "closed", False))
         write_closed = bool(getattr(self.write_conn, "closed", False))
+        loop_closed = bool(self._loop is not None and self._loop.is_closed())
+        executor_shutdown = bool(
+            self._executor is not None and getattr(self._executor, "_shutdown", False)
+        )
         return bool(
-            not read_closed
+            self._is_running
+            and not read_closed
             and not write_closed
             and not self._pipe_broken
             and not self._degraded
+            and not loop_closed
+            and not executor_shutdown
+            and self._background_tasks_alive()
+            and not self._dispatch_queue_saturated()
+            and not self._pending_requests_saturated()
             and now >= self._write_suppressed_until
         )
 
@@ -147,16 +214,32 @@ class LocalPipeBus:
         """Return a machine-readable health report for this transport."""
 
         now = time.monotonic()
+        queue_size = self._dispatch_queue.qsize() if self._dispatch_queue is not None else 0
+        queue_maxsize = int(getattr(self._dispatch_queue, "maxsize", 0) or 0)
+        loop_closed = bool(self._loop is not None and self._loop.is_closed())
+        executor_shutdown = bool(
+            self._executor is not None and getattr(self._executor, "_shutdown", False)
+        )
         return {
             "alive": self.is_alive(),
             "running": bool(self._is_running),
             "start_reader": bool(self.start_reader),
             "is_child": bool(self.is_child),
+            "background_tasks_alive": self._background_tasks_alive(),
+            "reader_task": self._task_status(self._reader_task),
+            "dispatcher_task": self._task_status(self._dispatcher_task),
+            "loop_closed": loop_closed,
+            "executor_shutdown": executor_shutdown,
+            "dispatch_queue_size": queue_size,
+            "dispatch_queue_maxsize": queue_maxsize,
+            "dispatch_queue_saturated": self._dispatch_queue_saturated(),
             "pipe_broken": bool(self._pipe_broken),
             "degraded": bool(self._degraded),
             "read_closed": bool(getattr(self.read_conn, "closed", False)),
             "write_closed": bool(getattr(self.write_conn, "closed", False)),
             "pending_requests": len(self._pending_requests),
+            "pending_request_limit": int(self._max_pending_requests),
+            "pending_requests_saturated": self._pending_requests_saturated(),
             "write_timeout_count": int(self._write_timeout_count),
             "write_backpressure_drops": int(self._write_backpressure_drops),
             "write_suppressed_for_s": round(max(0.0, self._write_suppressed_until - now), 3),
@@ -465,6 +548,10 @@ class LocalPipeBus:
             if write_lock.locked():
                 self._write_backpressure_drops += 1
                 if self._should_log_backpressure_drop():
+                    self._mark_transport_degraded(
+                        TimeoutError(f"fire-and-forget pipe write blocked for {msg_type}"),
+                        "fire-and-forget send dropped by write backpressure",
+                    )
                     logger.warning(
                         "📡 Pipe write backpressure: dropped fire-and-forget message "
                         "(drops=%d, msg_type=%s).",

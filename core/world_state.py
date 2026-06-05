@@ -122,6 +122,22 @@ class WorldState:
         self.is_user_coding: bool = False
         self.active_app_context: str = ""
 
+        # ── Perceptual grounding (fed by PerceptualPump at 10 Hz) ────
+        self.active_foreground_app: str = ""       # currently focused application
+        self.active_window_title: str = ""         # window title of focused app
+        self.screen_content_hash: str = ""         # hash of OCR text (change detection)
+        self.ambient_audio_level: float = 0.0      # 0-1 mic RMS energy
+        self.voice_activity_detected: bool = False  # VAD flag
+        self.last_voice_transcript: str = ""       # most recent speech snippet
+        self.installed_apps: List[str] = []        # discovered installed applications
+        self.automation_permissions: Dict[str, bool] = {
+            "accessibility": False,
+            "screen_recording": False,
+            "microphone": False,
+            "camera": False,
+            "full_disk_access": False,
+        }
+
         # Event queue (salient changes)
         self._events: Deque[SalientEvent] = deque(maxlen=self._MAX_EVENTS)
 

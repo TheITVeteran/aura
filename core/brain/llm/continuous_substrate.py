@@ -211,6 +211,87 @@ class ContinuousSubstrate:
             err = observed["curiosity"] - pred
             self._curiosity_proj += lr * err * s * (1 - pred**2)
 
+    def inject_perceptual_frame(self, frame_data: Dict[str, Any]) -> None:
+        """Inject structured perceptual data into specific substrate dimensions.
+
+        Unlike inject_observation (which hash-maps text into generic dimensions),
+        this method maps semantic modalities to specific dimension ranges with
+        meaningful coupling:
+
+            Dims  0–15:  System telemetry (CPU → arousal, thermal → stress)
+            Dims 16–31:  User state (idle → seeking, interaction → social)
+            Dims 32–47:  Screen/visual state (novelty, app switches)
+            Dims 48–63:  Audio state (speech → social, ambient → arousal)
+
+        For substrates with >64 neurons, the higher dimensions receive
+        cross-modal interaction terms (screen×audio, user×system, etc.).
+
+        This is the PRIMARY perceptual grounding path — called 5× per second
+        by PerceptualPump. The ODE state is perturbed by reality before the
+        LLM sees anything.
+        """
+        n = min(NEURONS, 64)
+        delta = np.zeros(NEURONS, dtype=np.float32)
+
+        # ── System telemetry → dims 0-15 ──
+        cpu = float(frame_data.get("cpu_percent", 0)) / 100.0
+        mem = float(frame_data.get("memory_percent", 0)) / 100.0
+        thermal = float(frame_data.get("thermal", 0))
+        delta[0] = cpu * 0.3                    # CPU drives general arousal
+        delta[1] = thermal * 0.4                # Thermal drives stress
+        delta[2] = mem * 0.25                   # Memory pressure
+        delta[3] = max(0, cpu - 0.7) * 0.5      # CPU spike alarm
+        if n > 8:
+            delta[4] = min(1.0, cpu + mem) * 0.2  # Combined load
+            delta[5] = -thermal * 0.1              # Thermal discomfort (negative valence)
+
+        # ── User state → dims 16-31 ──
+        user_presence = float(frame_data.get("user_presence", 0.5))
+        voice_active = float(frame_data.get("voice_activity", False))
+        if n > 16:
+            delta[16] = user_presence * 0.35         # Social drive satisfaction
+            delta[17] = voice_active * 0.5           # Direct social engagement
+            delta[18] = max(0, 0.5 - user_presence) * 0.2  # Loneliness/seeking when absent
+            delta[19] = min(1.0, user_presence + voice_active) * 0.15  # Combined social
+
+        # ── Screen/visual state → dims 32-47 ──
+        screen_changed = float(frame_data.get("screen_changed", False))
+        novelty = float(frame_data.get("novelty", 0))
+        valence = float(frame_data.get("valence", 0))
+        arousal = float(frame_data.get("arousal", 0))
+        if n > 32:
+            delta[32] = screen_changed * 0.3         # Screen novelty → curiosity
+            delta[33] = novelty * 0.25               # General novelty
+            delta[34] = valence * 0.2                # Affect valence from phenomenal engine
+            delta[35] = arousal * 0.3                # Affect arousal from phenomenal engine
+
+        # ── Audio state → dims 48-63 ──
+        social_signal = float(frame_data.get("social", 0))
+        threat_signal = float(frame_data.get("threat", 0))
+        if n > 48:
+            delta[48] = social_signal * 0.35         # Social from audio/voice
+            delta[49] = voice_active * 0.4           # Voice presence → engagement
+            delta[50] = threat_signal * 0.3          # Threat signal → defensive arousal
+            delta[51] = -threat_signal * 0.15        # Threat → negative valence
+
+        # ── Cross-modal interaction terms → dims 64+ ──
+        if NEURONS > 64:
+            # Screen change WHILE voice active = high engagement
+            delta[64] = screen_changed * voice_active * 0.3
+            # System stress WHILE user present = heightened urgency
+            if NEURONS > 65:
+                delta[65] = thermal * user_presence * 0.2
+            # Novelty WHILE low CPU = exploration opportunity
+            if NEURONS > 66:
+                delta[66] = novelty * max(0, 1.0 - cpu) * 0.15
+
+        # Apply as weighted perturbation (stronger than generic observations)
+        weight = 0.25  # Perceptual frames are the PRIMARY input
+        self._input_signal = self._input_signal * (1.0 - weight) + delta * weight
+
+        # Store for telemetry
+        self._last_observation = frame_data
+
     def get_state_vector(self) -> np.ndarray:
         """Returns the live configured-dimension state vector (copy)."""
         return self._state.copy()

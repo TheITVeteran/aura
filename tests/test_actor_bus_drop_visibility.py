@@ -77,3 +77,28 @@ async def test_actor_bus_transport_send_failure_is_visible_drop() -> None:
     finally:
         bus._is_running = False
         await ActorBus.reset_singleton()
+
+
+@pytest.mark.asyncio
+async def test_actor_bus_health_fails_when_telemetry_task_dies() -> None:
+    await ActorBus.reset_singleton()
+    bus = ActorBus()
+    bus.start()
+    task = bus._telemetry_broadcaster_task
+    assert task is not None
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    try:
+        status = bus.get_status()
+
+        assert bus.is_alive() is False
+        assert status["healthy"] is False
+        assert status["telemetry_task_alive"] is False
+        assert status["telemetry_task"]["done"] is True
+    finally:
+        await bus.stop()
+        await ActorBus.reset_singleton()
