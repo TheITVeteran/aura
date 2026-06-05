@@ -132,10 +132,6 @@ EXEMPT_FILES = {
         "justification": "Tracks the historical agentic narrative flow across memory frames.",
         "compensating_tests": "tests/test_narrative_thread.py"
     },
-    "core/runtime/diagnostics_bundle.py": {
-        "justification": "Packages and serializes runtime logs and SQLite database traces.",
-        "compensating_tests": "tests/test_diagnostics_bundle.py"
-    },
     "core/runtime/audit_chain.py": {
         "justification": "Builds hash-chained governance ledger files.",
         "compensating_tests": "tests/test_audit_chain.py"
@@ -519,10 +515,18 @@ class AstLinter(ast.NodeVisitor):
         return False
 
     def _is_in_memory_binary_write_call(self, node: ast.Call, name: str) -> bool:
-        if name != "wave.open" or not node.args:
-            return False
-        target = node.args[0]
-        return isinstance(target, ast.Name) and target.id in self.in_memory_binary_vars
+        if name == "wave.open" and node.args:
+            target = node.args[0]
+            return isinstance(target, ast.Name) and target.id in self.in_memory_binary_vars
+        if name == "tarfile.open":
+            for kw in node.keywords:
+                if (
+                    kw.arg == "fileobj"
+                    and isinstance(kw.value, ast.Name)
+                    and kw.value.id in self.in_memory_binary_vars
+                ):
+                    return True
+        return False
 
 
 def scan_file(path: Path) -> list[LintFinding]:

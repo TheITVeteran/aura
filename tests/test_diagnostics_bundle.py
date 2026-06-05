@@ -5,12 +5,8 @@ import json
 import tarfile
 from pathlib import Path
 
-import pytest
-
 from core.runtime.diagnostics_bundle import (
     REDACTED,
-    SENSITIVE_KEY_PATTERNS,
-    SENSITIVE_VALUE_PATTERNS,
     build_bundle,
     redact_value,
 )

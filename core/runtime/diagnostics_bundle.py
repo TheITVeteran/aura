@@ -33,20 +33,23 @@ is replaced with ``"[REDACTED]"`` before being written.
 """
 from __future__ import annotations
 
-import logging
-logger = logging.getLogger("core.runtime.diagnostics_bundle")
 import datetime
-import heapq
 import hashlib
+import heapq
+import io
 import json
+import logging
 import os
 import re
-import shutil
 import tarfile
 import tempfile
-import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
+
+logger = logging.getLogger("core.runtime.diagnostics_bundle")
 
 
 SENSITIVE_KEY_PATTERNS = [
@@ -89,7 +92,7 @@ _DIAGNOSTICS_RECOVERABLE_ERRORS = (
 def redact_value(value: Any) -> Any:
     """Recursively scrub sensitive fields and high-entropy values."""
     if isinstance(value, dict):
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for k, v in value.items():
             if any(p.search(str(k)) for p in SENSITIVE_KEY_PATTERNS):
                 out[k] = REDACTED
@@ -109,7 +112,7 @@ def redact_value(value: Any) -> Any:
 # ---------------------------------------------------------------------------
 # collectors
 # ---------------------------------------------------------------------------
-def _safe_call(label: str, fn: Callable[[], Any]) -> Tuple[Any, Optional[str]]:
+def _safe_call(label: str, fn: Callable[[], Any]) -> tuple[Any, str | None]:
     try:
         return fn(), None
     except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001 - last-resort safety net
@@ -117,7 +120,7 @@ def _safe_call(label: str, fn: Callable[[], Any]) -> Tuple[Any, Optional[str]]:
         return None, f"{type(e).__name__}: {e}"
 
 
-def collect_health() -> Dict[str, Any]:
+def collect_health() -> dict[str, Any]:
     try:
         from core.health_endpoint import HealthAggregator
         agg = HealthAggregator()
@@ -133,7 +136,7 @@ def collect_health() -> Dict[str, Any]:
         }
 
 
-def _basic_system_metrics() -> Dict[str, Any]:
+def _basic_system_metrics() -> dict[str, Any]:
     try:
         import psutil  # type: ignore
 
@@ -150,7 +153,7 @@ def _basic_system_metrics() -> Dict[str, Any]:
         return {"available": False}
 
 
-def collect_config_redacted() -> Dict[str, Any]:
+def collect_config_redacted() -> dict[str, Any]:
     try:
         from core.config import config
 
@@ -166,11 +169,11 @@ def collect_config_redacted() -> Dict[str, Any]:
     return redact_value(raw)
 
 
-def collect_metrics() -> Dict[str, Any]:
+def collect_metrics() -> dict[str, Any]:
     try:
         from core.container import ServiceContainer
 
-        out: Dict[str, Any] = {"system": _basic_system_metrics()}
+        out: dict[str, Any] = {"system": _basic_system_metrics()}
         for name in ("metrics_collector", "telemetry", "metrics"):
             svc = ServiceContainer.get(name, default=None)
             if svc is not None and hasattr(svc, "snapshot"):
@@ -184,7 +187,7 @@ def collect_metrics() -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_tasks() -> Dict[str, Any]:
+def collect_tasks() -> dict[str, Any]:
     try:
         from core.utils.task_tracker import get_task_tracker
 
@@ -204,11 +207,11 @@ def collect_tasks() -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_models() -> Dict[str, Any]:
+def collect_models() -> dict[str, Any]:
     try:
         from core.container import ServiceContainer
 
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for name in ("model_loader", "model_runtime", "llm_router", "model_index"):
             svc = ServiceContainer.get(name, default=None)
             if svc is None:
@@ -226,11 +229,11 @@ def collect_models() -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_memory() -> Dict[str, Any]:
+def collect_memory() -> dict[str, Any]:
     try:
         from core.container import ServiceContainer
 
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for name in ("memory", "memory_facade"):
             svc = ServiceContainer.get(name, default=None)
             if svc is None:
@@ -248,11 +251,11 @@ def collect_memory() -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_gateway() -> Dict[str, Any]:
+def collect_gateway() -> dict[str, Any]:
     try:
         from core.container import ServiceContainer
 
-        out: Dict[str, Any] = {"registered": []}
+        out: dict[str, Any] = {"registered": []}
         services = getattr(ServiceContainer, "_services", {}) or {}
         for name, desc in services.items():
             instance = getattr(desc, "instance", None)
@@ -264,7 +267,7 @@ def collect_gateway() -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_research_core() -> Dict[str, Any]:
+def collect_research_core() -> dict[str, Any]:
     """Snapshot the SelfImprovingResearchCore via its dedicated collector."""
     try:
         from core.research_core.doctor import collect_research_core_status
@@ -275,13 +278,13 @@ def collect_research_core() -> Dict[str, Any]:
         return {"available": False, "_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_recent_receipts(per_kind_limit: int = 20) -> Dict[str, Any]:
+def collect_recent_receipts(per_kind_limit: int = 20) -> dict[str, Any]:
     try:
         from core.runtime.receipts import _RECEIPT_CLASSES, get_receipt_store
 
         store = get_receipt_store()
-        kinds: Dict[str, List[Dict[str, Any]]] = {}
-        counts: Dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
+        kinds: dict[str, list[dict[str, Any]]] = {}
+        counts: dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
         for kind in _RECEIPT_CLASSES:
             kind_dir = store.root / kind
             if not kind_dir.exists():
@@ -296,7 +299,7 @@ def collect_recent_receipts(per_kind_limit: int = 20) -> Dict[str, Any]:
                 counts[kind] += 1
                 files.append((stat.st_mtime, path))
             recent_files = heapq.nlargest(max(0, int(per_kind_limit)), files, key=lambda item: item[0])
-            recent_payloads: List[Dict[str, Any]] = []
+            recent_payloads: list[dict[str, Any]] = []
             for _mtime, path in sorted(recent_files, key=lambda item: item[0]):
                 try:
                     from core.runtime.atomic_writer import read_json_envelope
@@ -317,7 +320,7 @@ def collect_recent_receipts(per_kind_limit: int = 20) -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
+def collect_audit_chain(dest_dir: Path) -> dict[str, Any]:
     try:
         from core.runtime.receipts import get_receipt_store
 
@@ -343,11 +346,15 @@ def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
                     from collections import deque
 
                     tail = deque(maxlen=tail_entries)
-                    with open(chain_src, "r", encoding="utf-8") as fh:
+                    with chain_src.open(encoding="utf-8") as fh:
                         for line in fh:
                             if line.strip():
                                 tail.append(line)
-                    chain_tail.write_text("".join(tail), encoding="utf-8")
+                    _write_text(
+                        chain_tail,
+                        "".join(tail),
+                        source="core.runtime.diagnostics_bundle.audit_chain_tail",
+                    )
                     copied_entries = len(tail)
                 manifest = (
                     "audit_chain_export\n"
@@ -358,7 +365,11 @@ def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
                     "note=Set AURA_DOCTOR_FULL_AUDIT=1 for full chain export and body verification.\n"
                 )
                 manifest_path = dest_dir / "MANIFEST.txt"
-                manifest_path.write_text(manifest, encoding="utf-8")
+                _write_text(
+                    manifest_path,
+                    manifest,
+                    source="core.runtime.diagnostics_bundle.audit_manifest",
+                )
                 info = {
                     "chain_path": str(chain_tail),
                     "manifest_path": str(manifest_path),
@@ -399,7 +410,7 @@ def collect_audit_chain(dest_dir: Path) -> Dict[str, Any]:
         return {"_collector_error": f"{type(e).__name__}: {e}"}
 
 
-def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> Dict[str, Any]:
+def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> dict[str, Any]:
     """Copy the most recent log files up to a total byte cap.
 
     Logs commonly live under ``~/.aura_runtime/logs/`` or ``logs/``.  We
@@ -419,7 +430,7 @@ def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> Dict[str,
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-    copied: List[Dict[str, Any]] = []
+    copied: list[dict[str, Any]] = []
     total = 0
     for f in files:
         size = f.stat().st_size
@@ -431,15 +442,26 @@ def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> Dict[str,
         dst.parent.mkdir(parents=True, exist_ok=True)
         if size > remaining:
             try:
-                with open(f, "rb") as in_fh, open(dst, "wb") as out_fh:
+                with f.open("rb") as in_fh:
                     in_fh.seek(max(0, size - remaining))
-                    out_fh.write(in_fh.read(remaining))
+                    _write_bytes(
+                        dst,
+                        in_fh.read(remaining),
+                        source="core.runtime.diagnostics_bundle.log_tail",
+                    )
                 copied.append({"src": str(rel), "size": remaining, "truncated_tail": True, "original_size": size})
                 total += remaining
             except OSError:
                 continue
             break
-        shutil.copy2(f, dst)
+        try:
+            _write_bytes(
+                dst,
+                f.read_bytes(),
+                source="core.runtime.diagnostics_bundle.log_copy",
+            )
+        except OSError:
+            continue
         copied.append({"src": str(rel), "size": size, "truncated_tail": False})
         total += size
     return {"available": True, "source": str(src), "copied": copied, "bytes": total}
@@ -448,25 +470,48 @@ def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> Dict[str,
 # ---------------------------------------------------------------------------
 # bundle assembly
 # ---------------------------------------------------------------------------
-def _write_json(path: Path, payload: Any) -> None:
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+def _write_text(path: Path, text: str, *, source: str) -> None:
+    get_file_write_gateway().write_text(
+        path,
+        text,
         encoding="utf-8",
+        source=source,
+    )
+
+
+def _write_bytes(path: Path, payload: bytes, *, source: str) -> None:
+    get_file_write_gateway().write_bytes(
+        path,
+        payload,
+        source=source,
+    )
+
+
+def _write_json(
+    path: Path,
+    payload: Any,
+    *,
+    source: str = "core.runtime.diagnostics_bundle.json",
+) -> None:
+    _write_text(
+        path,
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+        source=source,
     )
 
 
 def build_bundle(
     *,
-    output_path: Optional[Path] = None,
-    workspace: Optional[Path] = None,
-) -> Dict[str, Any]:
+    output_path: Path | None = None,
+    workspace: Path | None = None,
+) -> dict[str, Any]:
     """Build a diagnostics tarball.
 
     ``output_path`` defaults to ``~/.aura/diagnostics/aura-bundle-<ts>.tar.gz``.
     Returns a dict describing the bundle (path, byte size, sha256,
     included files, per-collector errors).
     """
-    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     output_path = (
         Path(output_path)
         if output_path is not None
@@ -483,15 +528,19 @@ def build_bundle(
     bundle_dir = workspace / f"aura-bundle-{ts}"
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
-    errors: Dict[str, str] = {}
+    errors: dict[str, str] = {}
 
     def _step(name: str, fn: Callable[[], Any], target: Path) -> None:
         payload, err = _safe_call(name, fn)
         if err is not None:
             errors[name] = err
-            (target.with_suffix(".error.txt")).write_text(err, encoding="utf-8")
+            _write_text(
+                target.with_suffix(".error.txt"),
+                err,
+                source=f"core.runtime.diagnostics_bundle.{name}_error",
+            )
             return
-        _write_json(target, payload)
+        _write_json(target, payload, source=f"core.runtime.diagnostics_bundle.{name}")
 
     _step("health", collect_health, bundle_dir / "health.json")
     _step("config", collect_config_redacted, bundle_dir / "config.json")
@@ -508,17 +557,33 @@ def build_bundle(
     audit_info, audit_err = _safe_call("audit_chain", lambda: collect_audit_chain(audit_dir))
     if audit_err is not None:
         errors["audit_chain"] = audit_err
-        (audit_dir / "_error.txt").write_text(audit_err, encoding="utf-8")
+        _write_text(
+            audit_dir / "_error.txt",
+            audit_err,
+            source="core.runtime.diagnostics_bundle.audit_chain_error",
+        )
     else:
-        _write_json(audit_dir / "info.json", audit_info)
+        _write_json(
+            audit_dir / "info.json",
+            audit_info,
+            source="core.runtime.diagnostics_bundle.audit_chain_info",
+        )
 
     logs_dir = bundle_dir / "logs"
     log_info, log_err = _safe_call("logs", lambda: collect_logs(logs_dir))
     if log_err is not None:
         errors["logs"] = log_err
-        (bundle_dir / "logs.error.txt").write_text(log_err, encoding="utf-8")
+        _write_text(
+            bundle_dir / "logs.error.txt",
+            log_err,
+            source="core.runtime.diagnostics_bundle.logs_error",
+        )
     else:
-        _write_json(bundle_dir / "logs.json", log_info)
+        _write_json(
+            bundle_dir / "logs.json",
+            log_info,
+            source="core.runtime.diagnostics_bundle.logs",
+        )
 
     files_list = sorted(
         str(p.relative_to(bundle_dir))
@@ -537,11 +602,21 @@ def build_bundle(
         "errors": errors,
         "files": files_list,
     }
-    _write_json(bundle_dir / "bundle_manifest.json", manifest)
+    _write_json(
+        bundle_dir / "bundle_manifest.json",
+        manifest,
+        source="core.runtime.diagnostics_bundle.manifest",
+    )
 
     # Tar it up.
-    with tarfile.open(output_path, "w:gz") as tar:
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w:gz") as tar:
         tar.add(bundle_dir, arcname=bundle_dir.name)
+    _write_bytes(
+        output_path,
+        tar_buffer.getvalue(),
+        source="core.runtime.diagnostics_bundle.tarball",
+    )
 
     sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
     return {
@@ -555,7 +630,7 @@ def build_bundle(
     }
 
 
-def _platform_info() -> Dict[str, Any]:
+def _platform_info() -> dict[str, Any]:
     import platform
     import sys
 
