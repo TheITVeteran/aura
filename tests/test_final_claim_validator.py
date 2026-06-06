@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tools import final_claim_validator
@@ -74,3 +75,33 @@ def test_final_claim_validator_rejects_production_sealed_as_active_claim(tmp_pat
     result = final_claim_validator.main(["--claims", str(claims_path), "--artifacts", str(tmp_path / "artifacts")])
 
     assert result == 1
+
+
+def test_runtime_kernel_language_avoids_agi_asi_overclaim_labels():
+    root = Path(__file__).resolve().parents[1]
+    runtime_paths = [
+        root / "core" / "kernel" / "aura_kernel.py",
+        root / "core" / "kernel" / "upgrades_10x.py",
+        root / "core" / "kernel" / "self_review.py",
+        root / "core" / "autonomy" / "research_cycle.py",
+        root / "core" / "moral_reasoning.py",
+    ]
+    forbidden = [
+        re.compile(r"\bASI\b"),
+        re.compile(r"\bAGI\b"),
+        re.compile(r"\bGENESIS\b"),
+        re.compile(r"superintelligence", re.IGNORECASE),
+        re.compile(r"true digital life", re.IGNORECASE),
+        re.compile(r"never forgets", re.IGNORECASE),
+        re.compile(r"never hallucinates", re.IGNORECASE),
+        re.compile(r"autonomous self-optimization", re.IGNORECASE),
+    ]
+
+    violations = []
+    for path in runtime_paths:
+        text = path.read_text(encoding="utf-8")
+        for pattern in forbidden:
+            if pattern.search(text):
+                violations.append(f"{path.relative_to(root)}: {pattern.pattern}")
+
+    assert violations == []

@@ -14,8 +14,8 @@ logger = logging.getLogger("Aura.SelfReview")
 
 class SelfReviewPhase(Phase):
     """
-    [ASI Genesis] The Mirror Phase.
-    Aura analyzes her own performance, technical debt, and code health.
+    Evidence-bounded self-review phase.
+    Aura analyzes runtime performance, technical debt, and code health.
     """
 
     def __init__(self, kernel: "AuraKernel"):
@@ -34,7 +34,7 @@ class SelfReviewPhase(Phase):
             return state
 
         # [TUNNELING] Analyze code debt & logic bottlenecks
-        logger.info("🧠 [ASI] Initiating Recursive Self-Review...")
+        logger.info("🧠 [SELF-REVIEW] Initiating bounded self-review.")
         
         # Guard against kernel not having loop_state() yet (early boot calls)
         loop_state_fn = getattr(self.kernel, "loop_state", None)
@@ -54,7 +54,7 @@ class SelfReviewPhase(Phase):
 
         # 2. If entropy is high, trigger optimization intent
         if entropy > 0.7 or phi < 0.2:
-            logger.warning("📉 [ASI] High entropy/Low Phi detected. Proposing architectural refinement.")
+            logger.warning("📉 [SELF-REVIEW] High entropy/Low Phi detected. Proposing architectural refinement.")
             # Injecting intent for the AutonomousSelfModificationEngine
             state.cognition.pending_intents.append({
                 "type": "architectural_review",
@@ -62,7 +62,7 @@ class SelfReviewPhase(Phase):
                 "context": {
                     "phi": phi,
                     "entropy": entropy,
-                    "cause": "Recursive Self-Review trigger"
+                    "cause": "bounded self-review trigger"
                 }
             })
 

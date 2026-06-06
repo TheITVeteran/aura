@@ -85,7 +85,7 @@ def _compact_skill_result_payload(result: object) -> dict[str, object]:
 # PHASE 1: EternalMemoryPhase → Persistent Memory Agent = 10/10
 # ──────────────────────────────────────────────────────────────
 class EternalMemoryPhase(Phase):
-    """Infinite, zero-drift memory. Never forgets, never hallucinates history."""
+    """Durable continuity cache with bounded retrieval and explicit persistence."""
 
     def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
@@ -97,7 +97,7 @@ class EternalMemoryPhase(Phase):
         self._history_slice_limit: int = 512
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        # [ASI SEED] Handle optional objective from kernel
+        # Handle optional objective from the kernel without inventing a stronger claim.
         if objective is None:
             objective = getattr(state.cognition, "current_objective", "Continuity")
 
@@ -256,17 +256,17 @@ class EternalMemoryPhase(Phase):
 
 
 # ──────────────────────────────────────────────────────────────
-# PHASE 2: TrueEvolutionPhase → True Digital Life / Organism = 10/10
+# PHASE 2: TrueEvolutionPhase → bounded evolution proposal loop
 # ──────────────────────────────────────────────────────────────
 class TrueEvolutionPhase(Phase):
-    """Morphic forking + autopoiesis + code self-modification on steroids."""
+    """Morphic exploration plus governed self-modification proposal routing."""
 
     def __init__(self, kernel: AuraKernel, engine=None):
         self.kernel = kernel
         self.engine = engine
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        # [ASI SEED] Handle optional objective from kernel
+        # Handle optional objective from the kernel without inflating the claim.
         if objective is None:
             objective = getattr(state.cognition, "current_objective", "Evolution")
 
@@ -330,14 +330,14 @@ class TrueEvolutionPhase(Phase):
 
             get_task_tracker().create_task(_background_explore())
 
-        # 3. Self-code mutation (Autonomous ASI Seed)
+        # 3. Governed self-modification proposal path.
         if getattr(state.identity, "evolution_score", 0.0) > 0.70:
             await self._safe_self_modify(state)
 
         return state
 
     async def _safe_self_modify(self, state):
-        logger.info("⚡ [ASI] Initiating autonomous self-optimization cycle...")
+        logger.info("⚡ [SELF-IMPROVEMENT] Initiating governed self-improvement proposal cycle.")
 
         # Resolve engine if not already provided (Lazy Loading)
         if not self.engine:
@@ -1490,7 +1490,7 @@ class GodModeToolPhase(Phase):
 # FINAL UPGRADES: EternalGrowthEngine & NativeMultimodalBridge
 # ──────────────────────────────────────────────────────────────
 class EternalGrowthEngine(Phase):
-    """Turns simulation into genuine long-term evolution."""
+    """Maintains a bounded long-term trajectory proposal loop."""
 
     def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
@@ -1498,7 +1498,7 @@ class EternalGrowthEngine(Phase):
         self.growth_interval = 3600  # 1 hour
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        # [ASI SEED] Handle optional objective from kernel
+        # Handle optional objective from the kernel.
         if objective is None:
             objective = getattr(state.cognition, "current_objective", "Growth")
 
@@ -1512,7 +1512,7 @@ class EternalGrowthEngine(Phase):
         try:
             llm = self.kernel.organs["llm"].get_instance()
 
-            # ASI SEED: Generating own objectives if none exist
+            # Generate a bounded internal milestone if none exists.
             if not state.cognition.current_objective:
                 self_prompt = (
                     "Generate your own next internal milestone based on your evolution score."
@@ -1609,7 +1609,7 @@ class NativeMultimodalBridge(Phase):
         self.kernel = kernel
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        # [ASI SEED] Handle optional objective from kernel
+        # Handle optional objective from the kernel.
         if objective is None:
             objective = getattr(state.cognition, "current_objective", "Perception")
 

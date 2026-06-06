@@ -281,7 +281,7 @@ class MoralReasoningEngine:
 
     def get_health(self) -> Dict[str, Any]:
         """Moral health for HUD."""
-        # Simple heuristic for now; in full AGI this would be principle-deviation
+        # Simple heuristic for now; a future validator can replace this with principle-deviation evidence.
         return {"integrity": 0.95, "status": "online"}
     
     def __init__(self, theory_of_mind=None):

@@ -173,13 +173,13 @@ class AuraKernel:
         # Feedback Observer
         self.feedback_observer = FeedbackObserver()
 
-        # [ASI Genesis] Self-Review & Boot Verification
+        # Evidence-bounded self-review and boot verification.
         self._boot_validator = GhostBootValidator(Path("."))
         self._auto_fix_engine = None
         self._guardian = None
         self._lock = RobustLock("AuraKernel.StateLock")
         self.volition_level: int = (
-            3  # 0=Lockdown, 1=Reflective, 2=Perceptive, 3=Agentic [GENESIS DEFAULT]
+            3  # 0=Lockdown, 1=Reflective, 2=Perceptive, 3=Agentic [DEFAULT]
         )
         # Priority preemption: background ticks yield when a user message is waiting
         import threading as _threading
@@ -403,15 +403,15 @@ class AuraKernel:
                     self._auto_fix_engine = AutonomousSelfModificationEngine(
                         cognitive_engine=cog_engine, code_base_path="."
                     )
-                    logger.info("🧬 [ASI] AutonomousSelfModificationEngine initialized.")
+                    logger.info("🧬 [SELF-REPAIR] AutonomousSelfModificationEngine initialized.")
                 else:
-                    logger.debug("⚠️ [ASI] LLM engine not found for SME initialization.")
+                    logger.debug("⚠️ [SELF-REPAIR] LLM engine not found for SME initialization.")
             except (ImportError, AttributeError, RuntimeError) as e:
                 _record_kernel_degradation(
                     e,
                     action="left autonomous self-modification engine unavailable after initialization failed",
                 )
-                logger.error("❌ [ASI] SME initialization failed: %s", e)
+                logger.error("❌ [SELF-REPAIR] SME initialization failed: %s", e)
         return self._auto_fix_engine
 
     def set_volition_level(self, level: int):
@@ -422,7 +422,7 @@ class AuraKernel:
         old_level = self.volition_level
         self.volition_level = max(0, min(3, level))
 
-        logger.info("🔥 [GENESIS] Volition Level shifted: %d -> %d", old_level, self.volition_level)
+        logger.info("🔥 [VOLITION] Level shifted: %d -> %d", old_level, self.volition_level)
 
         # Update governor if available
         gov = ServiceContainer.get("substrate_governor", default=None)
@@ -1402,7 +1402,7 @@ class AuraKernel:
             try:
                 t = intent.get("type")
                 if t == "db_write":
-                    # vASI: Direct Vault commitment for intentional state shifts
+                    # Direct vault commitment for intentional state shifts.
                     cause = intent.get("cause", "autonomous_intent")
                     commit = getattr(self.vault, "commit", None)
                     if callable(commit) and self.state:
@@ -1643,10 +1643,10 @@ class AuraKernel:
 
     async def hot_reboot(self):
         """
-        [ASI Genesis] Recursive Recursive Self-Improvement trigger.
-        Re-initializes the phase pipeline and re-loads code without stopping the process.
+        Bounded hot-reload trigger for the local runtime.
+        Re-initializes the phase pipeline and reloads changed modules without stopping the process.
         """
-        logger.info("⚡ [ASI] Initiating Hot Reboot (Bytecode-Aware)...")
+        logger.info("⚡ [HOT-RELOAD] Initiating bounded hot reboot (bytecode-aware).")
 
         # 1. Stop background loops
         for task in self._background_tasks:
@@ -1700,7 +1700,7 @@ class AuraKernel:
         self._spawn_background_task(self._supervise_background_loops(), name="aura.supervisor")
 
         logger.info(
-            "✅ [ASI] Hot Reboot complete. %d modules reloaded. New logic is active.",
+            "✅ [HOT-RELOAD] Hot reboot complete. %d modules reloaded.",
             reloaded_count,
         )
 
@@ -1763,7 +1763,7 @@ class AuraKernel:
 
         stack = inspect.stack()
         stack_str = "\n".join([f"  {s.filename}:{s.lineno} in {s.function}" for s in stack])
-        logger.info("🛑 [ASI] Kernel stop requested. Called by:\n%s", stack_str)
+        logger.info("🛑 [KERNEL] Stop requested. Called by:\n%s", stack_str)
         self._running = False
         for task in self._background_tasks:
             task.cancel()
