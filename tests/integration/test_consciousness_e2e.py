@@ -4,7 +4,8 @@ test_consciousness_e2e.py
 End-to-end integration test verifying consciousness modules affect the
 system during a simulated conversation flow.
 
-No live LLM required -- all external dependencies are mocked.
+No live LLM required -- external dependencies are exercised through local
+deterministic modules.
 
 Covers:
   1. ServiceContainer registration of all consciousness modules
@@ -20,7 +21,6 @@ import asyncio
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
