@@ -6664,6 +6664,44 @@ async def api_chat(
         return JSONResponse(response_data)
     except TimeoutError:
         lane = _mark_conversation_lane_timeout()
+        if desktop_requires_cognitive_engine:
+            lane = _mark_conversation_lane_state(
+                "desktop_cognitive_engine_timeout",
+                state="failed",
+            )
+            timeout_reply = (
+                "The desktop chat path required CognitiveEngine, but the live cognitive turn "
+                "timed out before producing an acceptable reply, so Aura refused the direct "
+                "inference fallback. status=desktop_cognitive_engine_timeout"
+            )
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    timeout_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            await _emit_chat_output_receipt(
+                timeout_reply,
+                cause="chat_timeout",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "desktop_cognitive_engine",
+                    "status": "desktop_cognitive_engine_timeout",
+                    "reason": "desktop_cognitive_engine_timeout",
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": timeout_reply,
+                    "status": "desktop_cognitive_engine_unavailable",
+                    "reason": "desktop_cognitive_engine_timeout",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+            )
         if is_benchmark:
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
             if pending_exchange_id:

@@ -671,6 +671,97 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_surface_outer_timeout_refuses_direct_gate_fallback(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    gate_calls = []
+    cognitive_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _ForbiddenGate:
+        async def generate(self, *_args, **_kwargs):
+            gate_calls.append("generate")
+            raise AssertionError("desktop UI timeout must not use the direct inference gate fallback")
+
+    async def _timeout_cognitive_turn(*_args, **_kwargs):
+        cognitive_calls.append("desktop_cognitive_engine")
+        raise TimeoutError("desktop cognitive turn exceeded foreground budget")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-timeout"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "inference_gate":
+            return _ForbiddenGate()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _timeout_cognitive_turn)
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Use the desktop path to reason through this request."),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_cognitive_engine_unavailable" in response.body
+    assert b"desktop_cognitive_engine_timeout" in response.body
+    assert cognitive_calls == ["desktop_cognitive_engine"]
+    assert gate_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert len(output_receipts) == 1
+    assert output_receipts[0][1]["cause"] == "chat_timeout"
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_reply(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
