@@ -1,6 +1,7 @@
 import asyncio
 import errno
 import gc
+import inspect
 import importlib
 import json
 import multiprocessing
@@ -14,7 +15,6 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -47,11 +47,68 @@ from core.utils.concurrency import RobustLock
 from core.utils.task_tracker import TaskTracker
 
 
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None, *, return_value=None, side_effect=None):
+        self.return_value = result if return_value is None else return_value
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    @property
+    def called(self):
+        return bool(self.await_args_list)
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        self.assert_awaited_once()
+        call = self.await_args_list[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_not_awaited(self):
+        assert not self.await_args_list
+
+
 @pytest.mark.asyncio
-async def test_memory_facade_add_and_query_memory_compat():
+async def test_memory_facade_add_and_query_memory_compat(service_container, monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     records = []
 
-    class VectorStub:
+    class VectorStore:
         def __init__(self):
             self._store = records
 
@@ -65,8 +122,10 @@ async def test_memory_facade_add_and_query_memory_compat():
             )
             return True
 
+    vector_store = VectorStore()
+    service_container.register_instance("vector_memory", vector_store, required=False)
     facade = MemoryFacade()
-    facade._vector = VectorStub()
+    facade._vector = vector_store
 
     assert (
         await facade.add_memory("Journal line", {"type": "narrative_journal", "timestamp": 10.0})
@@ -987,7 +1046,7 @@ async def test_state_repository_uses_overflow_marker_when_state_exceeds_shm_capa
 async def test_state_repository_fetches_from_vault_when_shm_reports_overflow():
     repo = StateRepository(is_vault_owner=False)
     repo._shm = SimpleNamespace(
-        read=AsyncMock(return_value={"_state_overflow": True, "version": 9})
+        read=_AsyncCallRecorder(return_value={"_state_overflow": True, "version": 9})
     )
     repo._current = AuraState()
     repo._current.version = 4
@@ -1015,7 +1074,7 @@ async def test_state_repository_accepts_hot_transport_snapshot_from_shm():
     state.cold.long_term_memory = ["x" * 4096 for _ in range(8)]
 
     snapshot_payload = json.loads(owner._serialize_transport_snapshot(state))
-    proxy._shm = SimpleNamespace(read=AsyncMock(return_value=snapshot_payload))
+    proxy._shm = SimpleNamespace(read=_AsyncCallRecorder(return_value=snapshot_payload))
 
     result = await proxy.get_state()
 
@@ -1505,11 +1564,11 @@ async def test_state_repository_process_commit_writes_inline_without_spawning_ba
     repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
     repo._current = AuraState()
     repo._shm = object()
-    repo._commit_to_db = AsyncMock()
-    repo._sync_to_shm = AsyncMock()
+    repo._commit_to_db = _AsyncCallRecorder()
+    repo._sync_to_shm = _AsyncCallRecorder()
 
     allowed_gate = SimpleNamespace(
-        approve_state_mutation=AsyncMock(return_value=(True, "approved_by_test"))
+        approve_state_mutation=_AsyncCallRecorder(return_value=(True, "approved_by_test"))
     )
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core", lambda *args, **kwargs: allowed_gate
@@ -1534,11 +1593,11 @@ async def test_state_repository_background_commit_prefers_bounded_snapshot_seria
     repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
     repo._current = AuraState()
     repo._shm = object()
-    repo._commit_to_db = AsyncMock()
-    repo._sync_to_shm = AsyncMock()
+    repo._commit_to_db = _AsyncCallRecorder()
+    repo._sync_to_shm = _AsyncCallRecorder()
 
     allowed_gate = SimpleNamespace(
-        approve_state_mutation=AsyncMock(return_value=(True, "approved_by_test"))
+        approve_state_mutation=_AsyncCallRecorder(return_value=(True, "approved_by_test"))
     )
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core", lambda *args, **kwargs: allowed_gate
@@ -1747,15 +1806,15 @@ async def test_state_repository_initialize_tracks_owner_consumer_task(monkeypatc
         def close(self):
             return None
 
-    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), close=AsyncMock())
+    db = SimpleNamespace(execute=_AsyncCallRecorder(), commit=_AsyncCallRecorder(), close=_AsyncCallRecorder())
 
     @asynccontextmanager
     async def _governed_scope(_decision):
         yield
 
-    repo._ensure_db = AsyncMock(return_value=db)
-    repo._load_latest_state = AsyncMock()
-    repo._sync_to_shm = AsyncMock(return_value="full")
+    repo._ensure_db = _AsyncCallRecorder(return_value=db)
+    repo._load_latest_state = _AsyncCallRecorder()
+    repo._sync_to_shm = _AsyncCallRecorder(return_value="full")
     repo._mutation_consumer_loop = _hold_consumer
     monkeypatch.setattr("core.state.state_repository.SharedMemoryTransport", _Shm)
     monkeypatch.setattr("core.state.state_repository.get_task_tracker", lambda: _Tracker())
@@ -1799,7 +1858,7 @@ async def test_state_repository_repair_runtime_restarts_consumer_and_coalesces_q
             return task
 
     repo._mutation_consumer_loop = _hold_consumer
-    repo._ensure_db = AsyncMock(return_value=object())
+    repo._ensure_db = _AsyncCallRecorder(return_value=object())
     monkeypatch.setattr("core.state.state_repository.get_task_tracker", lambda: _Tracker())
 
     threshold = max(1, int(repo._mutation_queue_maxsize * 0.75))
@@ -1842,7 +1901,7 @@ async def test_mind_tick_background_task_is_supervised(monkeypatch):
     monkeypatch.setattr("infrastructure.watchdog.get_watchdog", lambda: _Watchdog())
 
     tick = MindTick(
-        SimpleNamespace(state_repo=SimpleNamespace(get_current=AsyncMock(return_value=None)))
+        SimpleNamespace(state_repo=SimpleNamespace(get_current=_AsyncCallRecorder(return_value=None)))
     )
     release = asyncio.Event()
 
@@ -1874,7 +1933,7 @@ async def test_mind_tick_missing_state_uses_single_backoff_path(monkeypatch, cap
 
     tick = MindTick(
         SimpleNamespace(
-            state_repo=SimpleNamespace(get_current=AsyncMock(return_value=None)),
+            state_repo=SimpleNamespace(get_current=_AsyncCallRecorder(return_value=None)),
             status=SimpleNamespace(cycle_count=0),
         )
     )
@@ -1904,9 +1963,9 @@ async def test_mind_tick_missing_state_uses_single_backoff_path(monkeypatch, cap
 async def test_state_repository_proxy_reads_from_shm():
     repo = StateRepository(is_vault_owner=False)
     expected = AuraState()
-    repo._shm = SimpleNamespace(read=AsyncMock(return_value={"state_id": "from-shm"}))
+    repo._shm = SimpleNamespace(read=_AsyncCallRecorder(return_value={"state_id": "from-shm"}))
     repo._deserialize = lambda _payload: expected
-    repo._fetch_state_from_vault = AsyncMock()
+    repo._fetch_state_from_vault = _AsyncCallRecorder()
 
     state = await repo.get_state()
 
@@ -1919,12 +1978,12 @@ async def test_state_repository_proxy_reads_from_shm():
 async def test_state_repository_proxy_falls_back_to_vault_when_shm_empty():
     repo = StateRepository(is_vault_owner=False)
     expected = AuraState()
-    repo._shm = SimpleNamespace(read=AsyncMock(return_value=None))
+    repo._shm = SimpleNamespace(read=_AsyncCallRecorder(return_value=None))
 
     async def _fetch():
         repo._current = expected
 
-    repo._fetch_state_from_vault = AsyncMock(side_effect=_fetch)
+    repo._fetch_state_from_vault = _AsyncCallRecorder(side_effect=_fetch)
 
     state = await repo.get_state()
 
@@ -2127,8 +2186,8 @@ async def test_motivation_engine_tracks_autonomous_intention(monkeypatch):
 async def test_motivation_engine_queues_governed_initiative_when_cognitive_sink_missing(
     monkeypatch,
 ):
-    queued = AsyncMock(return_value={"action": "queued", "reason": "initiative_queued"})
-    release_expression = AsyncMock()
+    queued = _AsyncCallRecorder(return_value={"action": "queued", "reason": "initiative_queued"})
+    release_expression = _AsyncCallRecorder()
 
     engine = MotivationEngine(orchestrator=SimpleNamespace(stats={}))
     engine.cognitive = None
@@ -2161,7 +2220,7 @@ async def test_motivation_update_recovers_social_drive_during_high_energy_conver
     state.motivation.last_tick = time.time() - 300.0
 
     authority = SimpleNamespace(
-        propose_initiative_to_state=AsyncMock(return_value=(state, {"reason": "noop"}))
+        propose_initiative_to_state=_AsyncCallRecorder(return_value=(state, {"reason": "noop"}))
     )
     monkeypatch.setattr(
         "core.phases.motivation_update.ServiceContainer.has", lambda *_args, **_kwargs: False
@@ -2235,7 +2294,7 @@ async def test_memory_governor_skips_repeated_prune_on_stable_high_rss(monkeypat
     current_rss_mb = governor.threshold_prune + 256.0
     governor._last_prune_action_time = time.monotonic() - governor.prune_cooldown_s - 1.0
     governor._last_prune_rss_mb = current_rss_mb
-    governor._prune_memory = AsyncMock()
+    governor._prune_memory = _AsyncCallRecorder()
 
     monkeypatch.setattr(
         governor,
@@ -2260,7 +2319,7 @@ async def test_memory_governor_prunes_when_rss_growth_crosses_hysteresis(monkeyp
     current_rss_mb = governor.threshold_prune + governor.prune_hysteresis_mb + 256.0
     governor._last_prune_action_time = time.monotonic() - governor.prune_cooldown_s - 1.0
     governor._last_prune_rss_mb = governor.threshold_prune
-    governor._prune_memory = AsyncMock()
+    governor._prune_memory = _AsyncCallRecorder()
 
     monkeypatch.setattr(
         governor,
@@ -2369,9 +2428,9 @@ async def test_memory_governor_prune_failure_does_not_block_vector_prune(monkeyp
 async def test_memory_governor_unload_lanes_continue_after_router_failure(monkeypatch):
     from core.resilience.memory_governor import MemoryGovernor
 
-    gate = SimpleNamespace(_shed_background_workers_for_memory_pressure=AsyncMock())
-    nucleus = SimpleNamespace(unload_models=AsyncMock())
-    router = SimpleNamespace(unload_models=AsyncMock(side_effect=RuntimeError("router stuck")))
+    gate = SimpleNamespace(_shed_background_workers_for_memory_pressure=_AsyncCallRecorder())
+    nucleus = SimpleNamespace(unload_models=_AsyncCallRecorder())
+    router = SimpleNamespace(unload_models=_AsyncCallRecorder(side_effect=RuntimeError("router stuck")))
     governor = MemoryGovernor(
         SimpleNamespace(
             llm_router=router,
@@ -2666,7 +2725,7 @@ async def test_conversation_loop_reflection_task_is_tracked(monkeypatch):
     async def _reflect():
         await release.wait()
 
-    brain = SimpleNamespace(generate=AsyncMock(return_value="ok"))
+    brain = SimpleNamespace(generate=_AsyncCallRecorder(return_value="ok"))
     loop = AutonomousConversationLoop(
         planner=SimpleNamespace(),
         executor=SimpleNamespace(),
@@ -2674,7 +2733,7 @@ async def test_conversation_loop_reflection_task_is_tracked(monkeypatch):
         memory=SimpleNamespace(),
         brain=brain,
     )
-    loop.hierarchical_orch = SimpleNamespace(maybe_compact=AsyncMock(return_value=None))
+    loop.hierarchical_orch = SimpleNamespace(maybe_compact=_AsyncCallRecorder(return_value=None))
     loop.conversation_reflector = SimpleNamespace(
         maybe_reflect=lambda *_args, **_kwargs: _reflect()
     )
@@ -2703,7 +2762,7 @@ async def test_message_coordinator_acquire_next_message_tracks_liquid_state_upda
     queue_obj.put_nowait("hello")
     orch = SimpleNamespace(
         message_queue=queue_obj,
-        liquid_state=SimpleNamespace(update=AsyncMock(return_value=None)),
+        liquid_state=SimpleNamespace(update=_AsyncCallRecorder(return_value=None)),
         _last_thought_time=0.0,
     )
 
@@ -2734,7 +2793,7 @@ async def test_message_coordinator_dispatch_uses_task_tracker(monkeypatch):
     callbacks = []
     orch = SimpleNamespace()
     coord = MessageCoordinator(orch)
-    coord.handle_incoming_message = AsyncMock(return_value=None)
+    coord.handle_incoming_message = _AsyncCallRecorder(return_value=None)
 
     class _Tracker:
         def create_task(self, coro, name=None):
@@ -2764,11 +2823,11 @@ async def test_message_coordinator_handle_incoming_message_tracks_reply_task(mon
 
     created = {}
     orch = SimpleNamespace(
-        hooks=SimpleNamespace(trigger=AsyncMock(return_value=None)),
+        hooks=SimpleNamespace(trigger=_AsyncCallRecorder(return_value=None)),
         _current_thought_task=None,
         status=SimpleNamespace(is_processing=False),
-        intent_router=SimpleNamespace(classify=AsyncMock(return_value={"kind": "test"})),
-        state_machine=SimpleNamespace(execute=AsyncMock(return_value="reply text")),
+        intent_router=SimpleNamespace(classify=_AsyncCallRecorder(return_value={"kind": "test"})),
+        state_machine=SimpleNamespace(execute=_AsyncCallRecorder(return_value="reply text")),
         conversation_history=[],
         AI_ROLE="Aura",
         reply_queue=asyncio.Queue(),
@@ -2905,7 +2964,7 @@ async def test_metabolic_coordinator_autonomous_thought_is_task_tracked(monkeypa
         singularity_monitor=None,
         kernel=SimpleNamespace(volition_level=2),
         boredom=0,
-        _perform_autonomous_thought=AsyncMock(return_value=None),
+        _perform_autonomous_thought=_AsyncCallRecorder(return_value=None),
     )
     coord = MetabolicCoordinator(orch=orch)
 
@@ -2993,24 +3052,25 @@ async def test_metabolic_coordinator_process_cycle_tracks_bootstrap_and_drive_ta
     orch = SimpleNamespace(
         status=SimpleNamespace(
             cycle_count=500,
+            acceleration_factor=1.0,
             is_processing=False,
             singularity_threshold=False,
             state="idle",
             last_user_interaction_time=0.0,
         ),
-        hooks=SimpleNamespace(trigger=AsyncMock(return_value=None)),
-        _save_state_async=AsyncMock(return_value=None),
+        hooks=SimpleNamespace(trigger=_AsyncCallRecorder(return_value=None)),
+        _save_state_async=_AsyncCallRecorder(return_value=None),
         drive_controller=SimpleNamespace(
             name="drive_controller",
-            update=AsyncMock(return_value=None),
+            update=_AsyncCallRecorder(return_value=None),
         ),
-        drives=SimpleNamespace(update=AsyncMock(return_value=None)),
+        drives=SimpleNamespace(update=_AsyncCallRecorder(return_value=None)),
         latent_core=None,
         predictive_model=None,
         kernel=None,
         state=None,
         message_queue=SimpleNamespace(_queue=[]),
-        _acquire_next_message=AsyncMock(return_value=None),
+        _acquire_next_message=_AsyncCallRecorder(return_value=None),
         _dispatch_message=lambda _message: None,
         memory_manager=None,
         swarm=None,
@@ -3020,10 +3080,10 @@ async def test_metabolic_coordinator_process_cycle_tracks_bootstrap_and_drive_ta
     coord = MetabolicCoordinator(orch=orch)
     coord._consume_energy = lambda _cost: False
     coord.manage_memory_hygiene = lambda: None
-    coord.process_world_decay = AsyncMock(return_value=None)
+    coord.process_world_decay = _AsyncCallRecorder(return_value=None)
     coord.update_liquid_pacing = lambda: None
-    coord.trigger_autonomous_thought = AsyncMock(return_value=None)
-    coord.run_terminal_self_heal = AsyncMock(return_value=None)
+    coord.trigger_autonomous_thought = _AsyncCallRecorder(return_value=None)
+    coord.run_terminal_self_heal = _AsyncCallRecorder(return_value=None)
 
     monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: tracker)
     monkeypatch.setattr("core.event_bus.get_event_bus", lambda: _EventBus())
@@ -3066,9 +3126,9 @@ async def test_metabolic_coordinator_process_cycle_tracks_kernel_background_task
             return task
 
     tracker = _Tracker()
-    cookie = SimpleNamespace(instance=SimpleNamespace(reflect=AsyncMock(return_value=None)))
-    tricorder = SimpleNamespace(instance=SimpleNamespace(scan=AsyncMock(return_value=None)))
-    continuity = SimpleNamespace(instance=SimpleNamespace(distill=AsyncMock(return_value=None)))
+    cookie = SimpleNamespace(instance=SimpleNamespace(reflect=_AsyncCallRecorder(return_value=None)))
+    tricorder = SimpleNamespace(instance=SimpleNamespace(scan=_AsyncCallRecorder(return_value=None)))
+    continuity = SimpleNamespace(instance=SimpleNamespace(distill=_AsyncCallRecorder(return_value=None)))
     state = SimpleNamespace(
         cognition=SimpleNamespace(
             active_goals=[{"description": "System Integrity"}],
@@ -3079,13 +3139,14 @@ async def test_metabolic_coordinator_process_cycle_tracks_kernel_background_task
     orch = SimpleNamespace(
         status=SimpleNamespace(
             cycle_count=5,
+            acceleration_factor=1.0,
             is_processing=False,
             singularity_threshold=False,
             state="idle",
             last_user_interaction_time=0.0,
         ),
-        hooks=SimpleNamespace(trigger=AsyncMock(return_value=None)),
-        _save_state_async=AsyncMock(return_value=None),
+        hooks=SimpleNamespace(trigger=_AsyncCallRecorder(return_value=None)),
+        _save_state_async=_AsyncCallRecorder(return_value=None),
         drive_controller=None,
         drives=None,
         latent_core=None,
@@ -3100,7 +3161,7 @@ async def test_metabolic_coordinator_process_cycle_tracks_kernel_background_task
         ),
         state=state,
         message_queue=SimpleNamespace(_queue=[]),
-        _acquire_next_message=AsyncMock(return_value=None),
+        _acquire_next_message=_AsyncCallRecorder(return_value=None),
         _dispatch_message=lambda _message: None,
         memory_manager=None,
         swarm=None,
@@ -3111,10 +3172,10 @@ async def test_metabolic_coordinator_process_cycle_tracks_kernel_background_task
     coord._event_bus = object()
     coord._consume_energy = lambda _cost: False
     coord.manage_memory_hygiene = lambda: None
-    coord.process_world_decay = AsyncMock(return_value=None)
+    coord.process_world_decay = _AsyncCallRecorder(return_value=None)
     coord.update_liquid_pacing = lambda: None
-    coord.trigger_autonomous_thought = AsyncMock(return_value=None)
-    coord.run_terminal_self_heal = AsyncMock(return_value=None)
+    coord.trigger_autonomous_thought = _AsyncCallRecorder(return_value=None)
+    coord.run_terminal_self_heal = _AsyncCallRecorder(return_value=None)
 
     monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: tracker)
 
@@ -3151,7 +3212,7 @@ async def test_metabolic_coordinator_update_liquid_pacing_tracks_liquid_state_up
 
     orch = SimpleNamespace(
         liquid_state=SimpleNamespace(
-            update=AsyncMock(return_value=None),
+            update=_AsyncCallRecorder(return_value=None),
             current=SimpleNamespace(curiosity=0.3, frustration=0.1, energy=0.7),
             get_mood=lambda: "Stable",
             get_status=lambda: {
@@ -3231,7 +3292,7 @@ async def test_metabolic_coordinator_emit_telemetry_pulse_tracks_recovery(monkey
         _recover_from_stall=True,
     )
     coord = MetabolicCoordinator(orch=orch)
-    coord.recover_from_stall = AsyncMock(return_value=None)
+    coord.recover_from_stall = _AsyncCallRecorder(return_value=None)
 
     monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: _Tracker())
 
@@ -3247,7 +3308,7 @@ async def test_metabolic_coordinator_impulses_are_task_tracked(monkeypatch):
     import core.coordinators.metabolic_coordinator as metabolic_module
 
     created = []
-    impulse = AsyncMock(return_value=None)
+    impulse = _AsyncCallRecorder(return_value=None)
 
     class _Tracker:
         def create_task(self, coro, name=None):
@@ -3299,7 +3360,7 @@ async def test_metabolic_coordinator_memory_hygiene_tracks_maintenance_tasks(mon
         report_failure=lambda *_args, **_kwargs: None,
         heartbeat=lambda *_args, **_kwargs: None,
     )
-    fake_db_coordinator = SimpleNamespace(execute_write=AsyncMock(return_value=None))
+    fake_db_coordinator = SimpleNamespace(execute_write=_AsyncCallRecorder(return_value=None))
     orch = SimpleNamespace(
         conversation_history=[{"role": "user", "content": f"msg-{idx}"} for idx in range(151)],
         status=SimpleNamespace(cycle_count=1000),
@@ -3307,8 +3368,8 @@ async def test_metabolic_coordinator_memory_hygiene_tracks_maintenance_tasks(mon
         memory=None,
     )
     coord = MetabolicCoordinator(orch=orch)
-    coord.prune_history_async = AsyncMock(return_value=None)
-    coord.consolidate_long_term_memory = AsyncMock(return_value=None)
+    coord.prune_history_async = _AsyncCallRecorder(return_value=None)
+    coord.consolidate_long_term_memory = _AsyncCallRecorder(return_value=None)
 
     monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: tracker)
     monkeypatch.setattr(
@@ -3348,8 +3409,8 @@ async def test_metabolic_coordinator_process_world_decay_tracks_archive_and_evol
             return task
 
     tracker = _Tracker()
-    archive_engine = SimpleNamespace(archive_vital_logs=AsyncMock(return_value=None))
-    evolution_runner = AsyncMock(return_value=None)
+    archive_engine = SimpleNamespace(archive_vital_logs=_AsyncCallRecorder(return_value=None))
+    evolution_runner = _AsyncCallRecorder(return_value=None)
     orch = SimpleNamespace(
         status=SimpleNamespace(cycle_count=3600),
         metabolic_monitor=SimpleNamespace(
@@ -3402,8 +3463,8 @@ async def test_cognitive_coordinator_voice_tts_is_task_tracked(monkeypatch):
             return task
 
     trace = SimpleNamespace(record_step=lambda *args, **kwargs: None, save=lambda: None)
-    drives = SimpleNamespace(satisfy=AsyncMock(return_value=None))
-    ears_engine = SimpleNamespace(synthesize_speech=AsyncMock(return_value=None))
+    drives = SimpleNamespace(satisfy=_AsyncCallRecorder(return_value=None))
+    ears_engine = SimpleNamespace(synthesize_speech=_AsyncCallRecorder(return_value=None))
     orch = SimpleNamespace(
         meta_learning=None,
         social=None,
@@ -3424,8 +3485,8 @@ async def test_cognitive_coordinator_voice_tts_is_task_tracked(monkeypatch):
     )
     coord = CognitiveCoordinator.__new__(CognitiveCoordinator)
     coord.orch = orch
-    coord.apply_constitutional_guard = AsyncMock(side_effect=lambda response: response)
-    coord.generate_fallback = AsyncMock(return_value="fallback")
+    coord.apply_constitutional_guard = _AsyncCallRecorder(side_effect=lambda response: response)
+    coord.generate_fallback = _AsyncCallRecorder(return_value="fallback")
 
     monkeypatch.setattr("core.utils.task_tracker.task_tracker", _Tracker())
 
@@ -3508,7 +3569,7 @@ async def test_cognitive_coordinator_dream_liquid_state_update_is_task_tracked(m
         goal_hierarchy=None,
         liquid_state=SimpleNamespace(
             current=SimpleNamespace(curiosity=0.1),
-            update=AsyncMock(return_value=None),
+            update=_AsyncCallRecorder(return_value=None),
         ),
         knowledge_graph=None,
         cognitive_engine=SimpleNamespace(),
@@ -3552,9 +3613,9 @@ async def test_lifecycle_coordinator_start_tracks_background_boot_loops(monkeypa
 
     orch = SimpleNamespace(
         status=SimpleNamespace(initialized=True, running=False, start_time=0.0),
-        _async_init_subsystems=AsyncMock(return_value=None),
+        _async_init_subsystems=_AsyncCallRecorder(return_value=None),
         _async_init_threading=lambda: None,
-        _start_sensory_systems=AsyncMock(return_value=None),
+        _start_sensory_systems=_AsyncCallRecorder(return_value=None),
         belief_sync=None,
         attention_summarizer=None,
         probe_manager=SimpleNamespace(auto_cleanup_loop=_hold),
@@ -3573,7 +3634,7 @@ async def test_lifecycle_coordinator_start_tracks_background_boot_loops(monkeypa
         autonomic_core=None,
     )
     coord = LifecycleCoordinator(orch)
-    coord._boot_barrier = AsyncMock(return_value=None)
+    coord._boot_barrier = _AsyncCallRecorder(return_value=None)
 
     started = await coord.start()
     await asyncio.sleep(0)
@@ -3605,7 +3666,7 @@ async def test_lifecycle_coordinator_handle_signal_uses_task_tracker(monkeypatch
         status=SimpleNamespace(running=True),
     )
     coord = LifecycleCoordinator(orch)
-    coord.stop = AsyncMock(return_value=None)
+    coord.stop = _AsyncCallRecorder(return_value=None)
 
     class _Tracker:
         def create_task(self, coro, name=None):
