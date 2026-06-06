@@ -26,7 +26,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -315,8 +315,21 @@ def run_torture(out_path: Path | str | None = None) -> Dict[str, Any]:
     return report
 
 
-def main() -> int:
-    report = run_torture()
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run Aura continuity torture checks and write a JSON report."
+    )
+    parser.add_argument(
+        "--out",
+        default=str(ROOT / "tests" / "CONTINUITY_TORTURE_RESULTS.json"),
+        help="Report path. Use a temp path for smoke runs that must not touch tracked artifacts.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    report = run_torture(args.out)
     print(json.dumps({"passed": report["passed"], "failures": report["failures"]}, indent=2))
     return 0 if report["passed"] else 1
 
