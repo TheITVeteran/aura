@@ -15,6 +15,7 @@ from core.senses.sensory_client import SensoryLocalClient
 
 TMP_ROOT = Path(tempfile.gettempdir())
 TEST_MODEL = str(TMP_ROOT / "test-model")
+QWEN32_TEST_MODEL = str(TMP_ROOT / "Qwen2.5-32B-Instruct-8bit")
 
 
 _MISSING = object()
@@ -288,6 +289,19 @@ swap = _Swap()
 
 
 class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
+    def _ready_client(self, model_path: str) -> MLXLocalClient:
+        client = MLXLocalClient(model_path=model_path)
+        now = time.time()
+        client._init_done = True
+        client._lane_state = "ready"
+        client._lane_error = ""
+        client._last_heartbeat = now
+        client._last_progress_at = now
+        client._last_token_progress_at = now
+        client._last_ready_at = now
+        client._last_generation_completed_at = now
+        return client
+
     async def test_warm_up_alias_delegates_to_warmup(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         client.warmup = _AsyncCallRecorder(return_value="ok")
@@ -296,6 +310,72 @@ class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "ok")
         client.warmup.assert_awaited_once()
+
+    async def test_32b_lane_status_rejects_missing_required_recurrent_depth(self):
+        client = self._ready_client(QWEN32_TEST_MODEL)
+        client._recurrent_depth_status = {
+            "active": False,
+            "config": None,
+            "expected_loops": 2,
+            "required": True,
+        }
+
+        with swap.object(client, "is_alive", new=lambda: True):
+            status = client.get_lane_status()
+
+        self.assertFalse(status["conversation_ready"])
+        self.assertEqual(status["state"], "recovering")
+        self.assertIn("recurrent_depth_inactive", status["readiness_blockers"])
+        self.assertTrue(status["recurrent_depth"]["required"])
+        self.assertEqual(status["recurrent_depth"]["expected_loops"], 2)
+
+    async def test_32b_lane_status_accepts_active_recurrent_depth(self):
+        client = self._ready_client(QWEN32_TEST_MODEL)
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
+
+        with swap.object(client, "is_alive", new=lambda: True):
+            status = client.get_lane_status()
+
+        self.assertTrue(status["conversation_ready"])
+        self.assertNotIn("recurrent_depth_inactive", status["readiness_blockers"])
+        self.assertNotIn("recurrent_depth_loop_mismatch", status["readiness_blockers"])
+
+    async def test_32b_lane_status_rejects_recurrent_depth_loop_mismatch(self):
+        client = self._ready_client(QWEN32_TEST_MODEL)
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 1},
+            "expected_loops": 2,
+            "required": True,
+        }
+
+        with swap.object(client, "is_alive", new=lambda: True):
+            status = client.get_lane_status()
+
+        self.assertFalse(status["conversation_ready"])
+        self.assertEqual(status["state"], "recovering")
+        self.assertIn("recurrent_depth_loop_mismatch", status["readiness_blockers"])
+
+    async def test_operator_disabled_recurrent_depth_does_not_block_32b_readiness(self):
+        client = self._ready_client(QWEN32_TEST_MODEL)
+        client._recurrent_depth_status = {
+            "active": False,
+            "config": None,
+            "reason": "standard_or_operator_disabled",
+        }
+
+        with swap.dict(os.environ, {"AURA_RECURRENT_LOOPS": "0"}, clear=False), \
+             swap.object(client, "is_alive", new=lambda: True):
+            status = client.get_lane_status()
+
+        self.assertTrue(status["conversation_ready"])
+        self.assertFalse(status["recurrent_depth"]["required"])
+        self.assertEqual(status["recurrent_depth"]["expected_loops"], 0)
 
 
 class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):

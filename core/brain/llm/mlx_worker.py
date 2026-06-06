@@ -1457,16 +1457,48 @@ def _mlx_worker_loop(
         # This changes HOW the model processes: middle layers loop N times,
         # letting the model "think" in latent space before committing to output.
         # Active by default for 32B+ models. Set AURA_RECURRENT_LOOPS=0 to disable.
-        recurrent_depth_status = {"active": False, "config": None}
+        recurrent_depth_status = {
+            "active": False,
+            "config": None,
+            "expected_loops": None,
+            "required": False,
+            "reason": "",
+            "error": "",
+        }
         try:
-            from core.brain.llm.recurrent_depth import apply_for_model, get_recurrent_config
-            if apply_for_model(model):
+            from core.brain.llm.recurrent_depth import (
+                apply_for_model,
+                get_recurrent_config,
+                resolve_loops_for_model,
+            )
+
+            expected_loops = resolve_loops_for_model(model)
+            recurrent_depth_status["expected_loops"] = expected_loops
+            recurrent_depth_status["required"] = expected_loops > 1
+            if expected_loops <= 1:
+                recurrent_depth_status["reason"] = "standard_or_operator_disabled"
+            elif apply_for_model(model):
                 recurrent_depth_status = {
                     "active": True,
                     "config": get_recurrent_config(model),
+                    "expected_loops": expected_loops,
+                    "required": expected_loops > 1,
+                    "reason": "",
+                    "error": "",
                 }
                 logger.info("🧠 Recurrent Depth ACTIVE — model now thinks before answering.")
+            else:
+                recurrent_depth_status["reason"] = "patch_not_applied"
         except (ImportError, AttributeError, RuntimeError) as rd_exc:
+            explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
+            size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
+            recurrent_depth_status["required"] = (
+                any(token in str(model_path).lower() for token in ("32b", "cortex", "zenith"))
+                and not explicit_disable
+                and not size_disable
+            )
+            recurrent_depth_status["reason"] = "recurrent_depth_error"
+            recurrent_depth_status["error"] = f"{type(rd_exc).__name__}: {rd_exc}"
             _record_mlx_degradation(
                 rd_exc,
                 action="continued inference with recurrent depth disabled",

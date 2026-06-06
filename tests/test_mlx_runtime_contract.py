@@ -80,7 +80,7 @@ def test_mlx_degradation_records_have_explicit_runtime_actions():
 
 
 def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
-    """The MLX probe subprocess is allowed only as a bounded crash-isolation probe."""
+    """The MLX probe subprocess must stay governed and bounded."""
     import inspect
 
     from core.brain.llm import mlx_client
@@ -88,9 +88,10 @@ def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
 
     source = inspect.getsource(mlx_client._probe_mlx_runtime)
     assert "core/brain/llm/mlx_client.py" in ALLOW_SUBPROCESS
-    assert "subprocess.run(" in source
+    assert "get_subprocess_gateway().run(" in source
     assert "timeout=25.0" in source
-    assert "check=False" in source
+    assert "source=\"certification_tooling:mlx_runtime_probe\"" in source
+    assert "offline_tooling=True" in source
     assert "shell=True" not in source
 
 

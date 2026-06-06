@@ -1034,6 +1034,12 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._warmup_in_flight = True
         client._process = ProcessProbe(alive=True)
         client._init_done = True
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
 
         with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "ready"])):
             await client._run_warmup_precompile(
@@ -1280,7 +1286,18 @@ class TestMLXRuntimeProbeFailure(unittest.IsolatedAsyncioTestCase):
         proc = ProcessProbe(alive=True)
 
         async def _spawn():
-            client._init_future.set_result({"status": "ok", "action": "init"})
+            client._init_future.set_result(
+                {
+                    "status": "ok",
+                    "action": "init",
+                    "recurrent_depth": {
+                        "active": True,
+                        "config": {"n_loops": 2},
+                        "expected_loops": 2,
+                        "required": True,
+                    },
+                }
+            )
             return proc
 
         spawn_probe = AsyncCallProbe(side_effect=_spawn)

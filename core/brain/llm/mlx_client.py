@@ -80,6 +80,77 @@ _MLX_RUNTIME_PROBE: dict[str, Any] = {
 }
 _MLX_RUNTIME_PROBE_CACHE_PATH = Path.home() / ".aura" / "data" / "mlx_runtime_probe.json"
 SharedFuture = asyncio.Future | cfutures.Future
+
+
+def _read_recurrent_loop_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
+    """Return the expected recurrent-depth loop count for a local MLX lane.
+
+    This is a parent-process health mirror of the worker-side policy. The
+    worker remains the source of truth for whether the patch actually applied;
+    the client uses this only to keep readiness honest before or after worker
+    status is received.
+    """
+    explicit = os.environ.get("AURA_RECURRENT_LOOPS")
+    if explicit is not None:
+        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS", 1)
+
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
+        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_72B", 1)
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_32B", 2)
+    if any(token in lowered for token in ("14b", "24b", "40b")):
+        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_14B", 1)
+    return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
+
+
+def _normalize_recurrent_depth_status(status: Any, *, model_path: str) -> dict[str, Any]:
+    payload = dict(status) if isinstance(status, dict) else {}
+    expected_loops = payload.get("expected_loops")
+    try:
+        expected = int(expected_loops)
+    except (TypeError, ValueError):
+        expected = _expected_recurrent_loops_from_model_path(model_path)
+    expected = max(0, expected)
+    payload["expected_loops"] = expected
+    payload["required"] = bool(payload.get("required", False)) or expected > 1
+    payload.setdefault("active", False)
+    payload.setdefault("config", None)
+    payload.setdefault("reason", "")
+    payload.setdefault("error", "")
+    return payload
+
+
+def _recurrent_depth_readiness_blocker(status: dict[str, Any]) -> str | None:
+    if not bool(status.get("required", False)):
+        return None
+    if bool(status.get("active", False)) is not True:
+        return "recurrent_depth_inactive"
+    config = status.get("config")
+    config_payload = config if isinstance(config, dict) else {}
+    try:
+        configured_loops = int(config_payload.get("n_loops") or 0)
+    except (TypeError, ValueError):
+        configured_loops = 0
+    try:
+        expected_loops = int(status.get("expected_loops") or 0)
+    except (TypeError, ValueError):
+        expected_loops = 0
+    if expected_loops > 1 and configured_loops < expected_loops:
+        return "recurrent_depth_loop_mismatch"
+    return None
+
+
 _USER_FACING_ORIGINS = frozenset(
     {
         "user",
@@ -1125,6 +1196,18 @@ class MLXLocalClient:
             self._set_lane_state(lane_state, lane_error)
             if f"lane_{lane_state}" not in readiness_blockers:
                 readiness_blockers.append(f"lane_{lane_state}")
+        recurrent_depth_status = _normalize_recurrent_depth_status(
+            self._recurrent_depth_status,
+            model_path=self.model_path,
+        )
+        recurrent_depth_blocker = _recurrent_depth_readiness_blocker(recurrent_depth_status)
+        if recurrent_depth_blocker and recurrent_depth_blocker not in readiness_blockers:
+            readiness_blockers.append(recurrent_depth_blocker)
+            if lane_state == "ready":
+                lane_state = "recovering"
+                lane_error = recurrent_depth_blocker
+                self._set_lane_state(lane_state, lane_error)
+
         conversation_ready = not readiness_blockers
         return {
             "model_path": self.model_path,
@@ -1150,7 +1233,7 @@ class MLXLocalClient:
             "current_request_started_at": self._current_request_started_at,
             "current_first_token_at": self._current_first_token_at,
             "current_request_prompt_chars": self._current_request_prompt_chars,
-            "recurrent_depth": self._recurrent_depth_status,
+            "recurrent_depth": recurrent_depth_status,
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
