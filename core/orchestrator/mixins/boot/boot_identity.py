@@ -111,7 +111,7 @@ class BootIdentityMixin:
                 logger.info(
                     "🧬 Self-Modification Engine registered in proposal-only mode; "
                     "source promotion requires quarantine validation, a clean git branch, "
-                    "and explicit supervised override for no-branch repair."
+                    "and an explicit repair-lab or supervised operator profile."
                 )
         except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with disabled self-modification engine", severity="error")

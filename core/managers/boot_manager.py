@@ -267,7 +267,8 @@ class BootManager:
             elif config.security.auto_fix_enabled:
                 self.logger.info(
                     "Self-modification engine registered in proposal-only mode; "
-                    "runtime promotion requires explicit operator opt-in."
+                    "source promotion requires an explicit repair-lab or supervised "
+                    "operator profile."
                 )
         except (ImportError, AttributeError, RuntimeError) as e:
             self._record_degradation(

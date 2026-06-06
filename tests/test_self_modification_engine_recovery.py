@@ -67,6 +67,18 @@ async def test_runtime_self_modification_promotion_requires_operator_opt_in(monk
     ServiceContainer.clear()
 
 
+def test_runtime_patch_promotion_requires_repair_lab_profile(monkeypatch):
+    monkeypatch.setenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", "1")
+    monkeypatch.setenv("AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION", "1")
+    monkeypatch.delenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", raising=False)
+
+    assert sm_mod._runtime_patch_promotion_enabled() is False
+
+    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
+
+    assert sm_mod._runtime_patch_promotion_enabled() is True
+
+
 @pytest.mark.asyncio
 async def test_apply_fix_refuses_unsupervised_promotion_without_opt_in(monkeypatch, tmp_path):
     monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
@@ -298,7 +310,10 @@ def test_safe_modification_stats_expose_report_fields():
 
 
 @pytest.mark.asyncio
-async def test_safe_modification_commits_after_quarantine_promotion(tmp_path):
+async def test_safe_modification_commits_after_repair_lab_quarantine_promotion(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
     target = tmp_path / "core" / "example.py"
     target.parent.mkdir(parents=True)
     target.write_text("value = 1\n", encoding="utf-8")
@@ -397,6 +412,74 @@ async def test_safe_modification_commits_after_quarantine_promotion(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_safe_modification_blocks_branch_promotion_outside_repair_lab(tmp_path):
+    target = tmp_path / "core" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    events = []
+
+    class Backup:
+        def create_backup(self, _path):
+            events.append("backup")
+            return "backup-id"
+
+    class Git:
+        async def create_branch(self, _branch_name):
+            events.append("branch")
+            return True
+
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+    safe_mod.staging_dir = tmp_path / ".aura-staging"
+    safe_mod.staging_dir.mkdir()
+    safe_mod.stats = {
+        "total_attempts": 0,
+        "successful": 0,
+        "failed": 0,
+        "rolled_back": 0,
+        "blocked_by_policy": 0,
+    }
+    safe_mod.event_bus = None
+    safe_mod.backup = Backup()
+    safe_mod.git = Git()
+    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_full_test_suite = AsyncMock(
+        side_effect=AssertionError("promotion policy must block before suite execution")
+    )
+
+    fix = SimpleNamespace(
+        target_file="core/example.py",
+        target_line=1,
+        original_code="value = 1\n",
+        fixed_code="value = 2\n",
+        explanation="raise value",
+        risk_level=1,
+        lines_changed=1,
+    )
+
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {
+            "success": True,
+            "validation": "safe_modification_harness",
+            "command": "pytest tests/test_example.py",
+            "validated_files": ["core/example.py"],
+            "syntax_test": True,
+            "import_test": True,
+            "integrity_check": True,
+            "unit_tests": True,
+        },
+    )
+
+    assert success is False
+    assert "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION=1" in message
+    assert events == []
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+@pytest.mark.asyncio
 async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_path):
     target = tmp_path / "core" / "example.py"
     target.parent.mkdir(parents=True)
@@ -452,7 +535,10 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_safe_modification_blocks_no_branch_promotion_without_supervision(tmp_path):
+async def test_safe_modification_blocks_no_branch_promotion_without_supervision(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
     target = tmp_path / "core" / "example.py"
     target.parent.mkdir(parents=True)
     target.write_text("value = 1\n", encoding="utf-8")

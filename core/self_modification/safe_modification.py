@@ -30,6 +30,7 @@ from .mutation_tiers import MutationTier, classify_mutation_path
 logger = logging.getLogger("SelfModification.SafeModification")
 
 _SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
+_REPAIR_LAB_SOURCE_PROMOTION_ENV = "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"
 
 
 @dataclass
@@ -743,6 +744,34 @@ class SafeSelfModification:
         return raw.strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
+    def _source_promotion_allowed(supervised: bool) -> tuple[bool, str]:
+        """Gate all writes from quarantine into the live source tree.
+
+        Self-modification may validate patches in normal Aura runtime, but
+        promotion into source is a separate operator-controlled action. A
+        branch-backed autonomous promotion requires the repair-lab switch; a
+        force/supervised promotion requires the supervised switch. This keeps
+        desktop/server sessions from rewriting code under the interpreter that
+        is currently serving the user.
+        """
+        if supervised:
+            raw = os.getenv(_SUPERVISED_SELF_MODIFICATION_ENV, "")
+            if raw.strip().lower() in {"1", "true", "yes", "on"}:
+                return True, "supervised source promotion enabled"
+            return (
+                False,
+                f"{_SUPERVISED_SELF_MODIFICATION_ENV}=1 is required for supervised source promotion",
+            )
+
+        raw = os.getenv(_REPAIR_LAB_SOURCE_PROMOTION_ENV, "")
+        if raw.strip().lower() in {"1", "true", "yes", "on"}:
+            return True, "repair-lab source promotion enabled"
+        return (
+            False,
+            f"{_REPAIR_LAB_SOURCE_PROMOTION_ENV}=1 is required for autonomous source promotion",
+        )
+
+    @staticmethod
     def _file_hash(path: Path) -> str:
         """SHA-256 hash of a file for integrity verification."""
         h = hashlib.sha256()
@@ -781,6 +810,13 @@ class SafeSelfModification:
             logger.warning("Modification blocked by validation evidence policy: %s", evidence_reason)
             self._emit_proposal_event(fix, "BLOCKED", evidence_reason)
             return False, f"Blocked: {evidence_reason}"
+
+        promotion_ok, promotion_reason = self._source_promotion_allowed(supervised)
+        if not promotion_ok:
+            self.stats["blocked_by_policy"] += 1
+            logger.warning("Modification blocked by source promotion policy: %s", promotion_reason)
+            self._emit_proposal_event(fix, "BLOCKED", promotion_reason)
+            return False, f"Blocked: {promotion_reason}"
 
         if isinstance(fix, LogicTransplant):
             logger.info("🧬 Initiating Logic Transplantation for %s", fix.target_file)

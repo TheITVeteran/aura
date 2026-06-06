@@ -41,6 +41,7 @@ SELF_MOD_RECOVERABLE_ERRORS = (
 
 _RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
 _AUTONOMOUS_PATCH_PROMOTION_ENV = "AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION"
+_REPAIR_LAB_SOURCE_PROMOTION_ENV = "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"
 _SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
 
 
@@ -52,10 +53,17 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _runtime_patch_promotion_enabled() -> bool:
-    """Autonomous source promotion requires a double operator opt-in."""
-    return _env_flag(_RUNTIME_SELF_MODIFICATION_ENV, False) and _env_flag(
-        _AUTONOMOUS_PATCH_PROMOTION_ENV,
-        False,
+    """Autonomous source promotion requires an isolated repair-lab opt-in.
+
+    Normal desktop/server Aura sessions may diagnose, propose, quarantine, and
+    validate repairs, but they must not overwrite source files from inside the
+    running process. Source promotion is reserved for an explicit repair-lab
+    profile where the operator has intentionally enabled all three switches.
+    """
+    return (
+        _env_flag(_RUNTIME_SELF_MODIFICATION_ENV, False)
+        and _env_flag(_AUTONOMOUS_PATCH_PROMOTION_ENV, False)
+        and _env_flag(_REPAIR_LAB_SOURCE_PROMOTION_ENV, False)
     )
 
 
@@ -205,11 +213,14 @@ class AutonomousSelfModificationEngine:
 
         if auto_fix_enabled and not self.auto_fix_enabled:
             logger.warning(
-                "Runtime self-modification promotion DISABLED. Set both %s=1 and %s=1 "
-                "to allow tested patches to be promoted outside explicit supervised "
-                "force=True calls.",
+                "Runtime self-modification promotion DISABLED. Normal Aura sessions "
+                "run self-repair in proposal/quarantine mode. Set %s=1, %s=1, and "
+                "%s=1 only inside an operator-controlled repair-lab profile to allow "
+                "tested patches to be promoted outside explicit supervised force=True "
+                "calls.",
                 _RUNTIME_SELF_MODIFICATION_ENV,
                 _AUTONOMOUS_PATCH_PROMOTION_ENV,
+                _REPAIR_LAB_SOURCE_PROMOTION_ENV,
             )
         elif not auto_fix_enabled:
             logger.warning("Auto-fix DISABLED - fixes will be proposed but not applied")
@@ -449,10 +460,11 @@ class AutonomousSelfModificationEngine:
 
         if not force and not self.runtime_promotion_enabled():
             logger.warning(
-                "SME: Runtime patch promotion blocked. Set both %s=1 and %s=1 for "
-                "autonomous source promotion.",
+                "SME: Runtime patch promotion blocked. Set %s=1, %s=1, and %s=1 "
+                "inside a repair-lab profile for autonomous source promotion.",
                 _RUNTIME_SELF_MODIFICATION_ENV,
                 _AUTONOMOUS_PATCH_PROMOTION_ENV,
+                _REPAIR_LAB_SOURCE_PROMOTION_ENV,
             )
             return False
 
@@ -1245,6 +1257,7 @@ class AutonomousSelfModificationEngine:
             "auto_fix_enabled": self.auto_fix_enabled,
             "auto_fix_requested": bool(getattr(self, "_auto_fix_requested", False)),
             "runtime_patch_promotion_enabled": self.runtime_promotion_enabled(),
+            "repair_lab_source_promotion_required": _REPAIR_LAB_SOURCE_PROMOTION_ENV,
             "supervised_force_promotion_enabled": self.supervised_force_enabled(),
             "session_duration_hours": session_time / 3600,
             "session_stats": self.session_stats,
@@ -1316,9 +1329,11 @@ TOP FIX STRATEGIES:
             return False
         if not self.runtime_promotion_enabled():
             logger.error(
-                "Attempted to enable auto-fix without both %s=1 and %s=1.",
+                "Attempted to enable auto-fix without %s=1, %s=1, and %s=1 "
+                "in an operator-controlled repair-lab profile.",
                 _RUNTIME_SELF_MODIFICATION_ENV,
                 _AUTONOMOUS_PATCH_PROMOTION_ENV,
+                _REPAIR_LAB_SOURCE_PROMOTION_ENV,
             )
             self._auto_fix_requested = True
             return False
