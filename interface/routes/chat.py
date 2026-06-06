@@ -4723,6 +4723,7 @@ _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "attach",
     "browse",
     "click",
+    "compose",
     "create",
     "download",
     "export",
@@ -4731,7 +4732,9 @@ _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "insert",
     "look up",
     "move",
+    "navigate",
     "open",
+    "paste",
     "pdf",
     "save",
     "search",
@@ -4746,16 +4749,35 @@ _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
     "app",
     "browser",
     "chrome",
+    "computer",
     "desktop",
+    "doc",
+    "document",
+    "drive",
+    "file",
     "finder",
     "folder",
     "google",
     "notes",
+    "pages",
     "pdf",
     "safari",
     "screen",
     "tab",
+    "textedit",
+    "web",
+    "website",
+    "window",
+    "word",
 )
+
+
+def _contains_desktop_objective_term(text: str, terms: tuple[str, ...]) -> bool:
+    for term in terms:
+        escaped = re.escape(term)
+        if re.search(rf"\b{escaped}\b", text):
+            return True
+    return False
 
 
 def _looks_like_desktop_objective(user_message: str) -> bool:
@@ -4763,9 +4785,9 @@ def _looks_like_desktop_objective(user_message: str) -> bool:
     text = str(user_message or "").strip().lower()
     if not text:
         return False
-    if not any(term in text for term in _DESKTOP_OBJECTIVE_ACTION_TERMS):
+    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_ACTION_TERMS):
         return False
-    if not any(term in text for term in _DESKTOP_OBJECTIVE_SURFACE_TERMS):
+    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_SURFACE_TERMS):
         return False
     try:
         from core.phases.action_intent import detect_action_intent

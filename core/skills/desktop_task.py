@@ -102,9 +102,29 @@ class DesktopTaskSkill(BaseSkill):
         )
         if match:
             return str(match.group(1) or match.group(2) or "").strip()[:100]
-        if "journal" in text.lower():
-            return "Aura's Journal"
         return f"Aura Desktop Task {int(time.time())}"
+
+    @staticmethod
+    def _explicit_pdf_requested(objective: str) -> bool:
+        text = str(objective or "").lower()
+        if "pdf" in text or "portable document" in text:
+            return True
+        return bool(re.search(r"\b(?:export|save)\s+(?:it\s+|this\s+|the\s+\w+\s+)?as\s+(?:a\s+)?pdf\b", text))
+
+    @staticmethod
+    def _web_document_url(objective: str) -> str:
+        text = str(objective or "").lower()
+        surfaces = (
+            (("google docs", "google doc", "docs.google", "google document"), "https://docs.google.com/document/u/0/create"),
+            (("google sheets", "google spreadsheet", "sheets.google"), "https://docs.google.com/spreadsheets/u/0/create"),
+            (("google slides", "google presentation", "slides.google"), "https://docs.google.com/presentation/u/0/create"),
+            (("google drive", "drive.google"), "https://drive.google.com/drive/my-drive"),
+            (("notion",), "https://www.notion.so/"),
+        )
+        for markers, url in surfaces:
+            if any(marker in text for marker in markers):
+                return url
+        return ""
 
     @staticmethod
     def _extract_search_query(objective: str) -> str:
@@ -163,6 +183,10 @@ class DesktopTaskSkill(BaseSkill):
             "safari": "Safari",
             "chrome": "Google Chrome",
             "browser": "Safari",
+            "textedit": "TextEdit",
+            "pages": "Pages",
+            "microsoft word": "Microsoft Word",
+            "word": "Microsoft Word",
         }
         for marker, app in app_markers.items():
             if marker in text and app not in apps:
@@ -329,6 +353,26 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(bytes_moved, int) or bytes_moved < 0:
                 return False, "missing moved byte count"
             return True, f"destination={destination};bytes={bytes_moved}"
+        if action == "set_clipboard":
+            chars = result.get("chars")
+            if not isinstance(chars, int) or chars < 0:
+                return False, "missing clipboard character count"
+            return True, f"clipboard_chars={chars}"
+        if action == "hotkey":
+            hotkey = str(result.get("hotkey") or "").strip()
+            return (bool(hotkey), f"hotkey={hotkey}" if hotkey else "missing hotkey evidence")
+        if action == "wait":
+            seconds = result.get("seconds")
+            if not isinstance(seconds, int | float):
+                return False, "missing wait duration evidence"
+            return True, f"seconds={seconds}"
+        if action == "type":
+            verification = str(result.get("verification") or "").strip()
+            typed = str(result.get("typed") or "").strip()
+            return (bool(typed or verification), verification or f"typed_prefix={typed}")
+        if action == "read_screen_text":
+            text = str(result.get("text") or "").strip()
+            return (bool(text), "screen_text_returned" if text else "missing screen text evidence")
         return True, "child action reported ok"
 
     @staticmethod
@@ -365,17 +409,27 @@ class DesktopTaskSkill(BaseSkill):
         steps: list[DesktopTaskStep] = []
         folder_name = self._extract_folder_name(text)
         folder_path = folder_name
-        wants_folder = any(token in lowered for token in ("folder", "directory", "journal"))
+        wants_folder = any(token in lowered for token in ("folder", "directory"))
         wants_document = any(
             token in lowered
             for token in ("write", "summary", "summarize", "note", "document", "pdf", "save", "journal")
-        )
-        wants_pdf = "pdf" in lowered or wants_document
-        wants_search = any(token in lowered for token in ("search", "look up", "google", "news", "article"))
+        ) or any(token in lowered for token in ("draft", "essay", "compose", "type"))
+        wants_pdf = self._explicit_pdf_requested(text)
         image_query = self._extract_image_query(text)
         wants_image = bool(image_query) or any(token in lowered for token in ("image", "picture", "photo", "illustration"))
+        web_document_url = self._web_document_url(text)
+        wants_search = any(token in lowered for token in ("search", "look up", "news", "article")) or (
+            "google" in lowered and not web_document_url
+        )
+        wants_interactive_text_entry = wants_document and (
+            bool(web_document_url)
+            or any(token in lowered for token in ("type", "paste", "start typing", "open notes", "notes app"))
+        )
+        wants_artifact_file = wants_folder or wants_pdf or bool(
+            re.search(r"\b(?:save|export|write|create)\b.*\b(?:file|folder|directory|pdf|artifact)\b", lowered)
+        ) or (wants_document and not wants_interactive_text_entry)
 
-        if wants_folder or wants_document:
+        if wants_folder or wants_artifact_file:
             steps.append(
                 DesktopTaskStep(
                     action="create_folder",
@@ -411,6 +465,15 @@ class DesktopTaskSkill(BaseSkill):
                     expect="Default browser accepts the search URL.",
                 )
             )
+        if web_document_url:
+            steps.append(
+                DesktopTaskStep(
+                    action="open_url",
+                    target=web_document_url,
+                    reason="Open the requested web document surface.",
+                    expect="Default browser accepts the document URL.",
+                )
+            )
         image_search_url = self._search_url(image_query or text, images=True) if wants_image else ""
         if image_search_url and image_search_url != search_url:
             steps.append(
@@ -422,7 +485,50 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
 
-        if wants_document:
+        if wants_interactive_text_entry:
+            body = self._document_body_with_references(
+                text,
+                context,
+                image_query=image_query,
+                image_search_url=image_search_url,
+                search_url=search_url,
+            )
+            steps.append(
+                DesktopTaskStep(
+                    action="set_clipboard",
+                    target=body,
+                    reason="Stage the CognitiveEngine-composed document body for the active writing surface.",
+                    expect="Clipboard contains the composed body.",
+                )
+            )
+            if web_document_url:
+                steps.append(
+                    DesktopTaskStep(
+                        action="wait",
+                        target="2",
+                        reason="Allow the web document surface to finish loading before paste.",
+                        expect="Wait completes within the bounded desktop-task budget.",
+                    )
+                )
+            if "notes" in lowered:
+                steps.append(
+                    DesktopTaskStep(
+                        action="hotkey",
+                        target="command+n",
+                        reason="Create a new editable note or document in the focused app.",
+                        expect="The focused app accepts the new-document shortcut.",
+                    )
+                )
+            steps.append(
+                DesktopTaskStep(
+                    action="hotkey",
+                    target="command+v",
+                    reason="Paste the staged document body into the active writing surface.",
+                    expect="The focused writing surface accepts the paste shortcut.",
+                )
+            )
+
+        if wants_document and wants_artifact_file:
             body = self._document_body_with_references(
                 text,
                 context,

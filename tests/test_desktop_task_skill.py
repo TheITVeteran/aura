@@ -45,6 +45,12 @@ def _fake_computer_use_result(params):
         }
     if action == "set_clipboard":
         return {"ok": True, "action": action, "chars": len(str(target))}
+    if action == "hotkey":
+        return {"ok": True, "action": action, "hotkey": target}
+    if action == "wait":
+        return {"ok": True, "action": action, "seconds": float(target or 1.0)}
+    if action == "type":
+        return {"ok": True, "action": action, "typed": str(target)[:50], "verification": "state shifted"}
     return {"ok": True, "action": action, "summary": f"{action} ok"}
 
 
@@ -264,6 +270,56 @@ def test_desktop_task_extracts_generic_named_app_mentions():
     assert DesktopTaskSkill._generic_open_app_mentions("Open TextEdit application and create a draft.") == [
         "TextEdit"
     ]
+
+
+def test_desktop_task_does_not_invent_aura_journal_folder_name():
+    folder = DesktopTaskSkill._extract_folder_name("Write a private journal entry.")
+
+    assert folder != "Aura's Journal"
+    assert folder.startswith("Aura Desktop Task ")
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_derives_generic_web_document_plan_without_demo_shortcuts(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Open a tab for Google Docs and start typing a coherent essay about climate adaptation.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_task_document_body": "Essay body from CognitiveEngine.",
+        },
+    )
+
+    assert result["ok"] is True
+    actions = [call[1]["action"] for call in calls]
+    assert actions == ["open_url", "set_clipboard", "wait", "hotkey"]
+    assert "create_folder" not in actions
+    assert "write_text_file" not in actions
+    assert "render_text_pdf" not in actions
+    open_urls = [call[1]["target"] for call in calls if call[1]["action"] == "open_url"]
+    assert open_urls == ["https://docs.google.com/document/u/0/create"]
+    assert not any("duckduckgo.com" in url for url in open_urls)
+    clipboard_payload = calls[1][1]["target"]
+    assert "Essay body from CognitiveEngine." in clipboard_payload
+    assert calls[-1][1]["target"] == "command+v"
 
 
 def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypatch):

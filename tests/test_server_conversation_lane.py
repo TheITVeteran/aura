@@ -961,6 +961,18 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
     assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in source
 
 
+def test_desktop_objective_detector_handles_general_document_surfaces():
+    from interface.routes.chat import _looks_like_desktop_objective
+
+    assert _looks_like_desktop_objective(
+        "Could you open a tab for Google Docs and start typing a coherent essay about climate adaptation?"
+    )
+    assert _looks_like_desktop_objective("Could you open a doc and type a short draft there?")
+    assert _looks_like_desktop_objective("Open a document window and paste the summary there.")
+    assert _looks_like_desktop_objective("Create a local file with the draft and save it on my desktop.")
+    assert not _looks_like_desktop_objective("Can you explain Docker Compose documentation?")
+
+
 @pytest.mark.asyncio
 async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch):
     from interface.routes import chat as chat_routes
