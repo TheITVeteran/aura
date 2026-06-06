@@ -574,6 +574,31 @@ class UnifiedWill:
                 outcome = WillOutcome.CONSTRAIN
                 reason = "catatonia_relief: reserved self-repair lane"
 
+        # ── 9c. PERMISSION RISK MODEL GATE ───────────────────────────
+        try:
+            pm = ServiceContainer.get("permission_model", default=None)
+            if pm:
+                pm_decision = pm.check_permission(domain.value, content, context)
+                if not pm_decision.approved:
+                    if pm_decision.requires_confirmation:
+                        outcome = WillOutcome.DEFER
+                        reason = f"permission_model_requires_confirmation: {pm_decision.reason}"
+                        constraints.append("requires_user_confirmation")
+                    else:
+                        outcome = WillOutcome.REFUSE
+                        reason = f"permission_model_blocked: {pm_decision.reason}"
+                        constraints.append("permission_blocked")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as pm_err:
+            record_degradation(
+                "will.permission_model",
+                pm_err,
+                severity="degraded",
+                action="refused decision because permission model check failed",
+            )
+            outcome = WillOutcome.REFUSE
+            reason = "permission_model_check_failed"
+            constraints.append("permission_model_failure")
+
         decision = WillDecision(
             receipt_id=receipt_id,
             outcome=outcome,

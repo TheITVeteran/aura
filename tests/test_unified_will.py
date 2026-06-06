@@ -83,6 +83,36 @@ class TestAllDomains:
         )
         assert decision.outcome == WillOutcome.DEFER
 
+    def test_permission_model_failure_refuses_consequential_decision(self, will):
+        """Permission model failures must fail closed before action."""
+
+        class FailingPermissionModel:
+            def __init__(self) -> None:
+                self.available = False
+
+            def check_permission(self, *_args, **_kwargs):
+                if not self.available:
+                    raise RuntimeError("permission model unavailable")
+                return SimpleNamespace(approved=True)
+
+        with patch("core.will.ServiceContainer.get") as mock_get:
+            mock_get.side_effect = (
+                lambda name, default=None: FailingPermissionModel()
+                if name == "permission_model"
+                else default
+            )
+
+            decision = will.decide(
+                content="type text into desktop app",
+                source="user",
+                domain=ActionDomain.TOOL_EXECUTION,
+                priority=0.9,
+            )
+
+        assert decision.outcome == WillOutcome.REFUSE
+        assert decision.reason == "permission_model_check_failed"
+        assert "permission_model_failure" in decision.constraints
+
 
 # ---------------------------------------------------------------------------
 # 2. Identity feeds into decisions

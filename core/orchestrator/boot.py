@@ -483,6 +483,19 @@ class OrchestratorBootMixin(
                 # --- PHASE 6: Skill System & Mycelium ---
                 await self._init_skill_system()
 
+                # --- PHASE 6.5: Capability Engine & Desktop Agency Boot ---
+                try:
+                    from core.capabilities import boot_capabilities
+                    await boot_capabilities()
+                    logger.info("✅ [BOOT] Desktop agency capabilities booted successfully.")
+                except (ImportError, AttributeError, RuntimeError, TypeError, OSError) as cap_err:
+                    _record_boot_degradation(
+                        cap_err,
+                        action="continued boot with degraded capabilities",
+                        severity="error"
+                    )
+                    logger.error("⚠️ [BOOT] Failed to boot desktop agency capabilities: %s", cap_err, exc_info=True)
+
                 from core.mycelium import MycelialNetwork
 
                 mycelium = ServiceContainer.get("mycelial_network", default=None)

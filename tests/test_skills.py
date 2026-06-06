@@ -108,6 +108,45 @@ async def test_ui_control_skills_fail_cleanly_when_pyautogui_is_unavailable(monk
     assert "Physical execution unavailable" in vision_result["summary"]
 
 
+@pytest.mark.asyncio
+async def test_os_manipulation_prefers_host_automation_without_pyautogui(monkeypatch):
+    import core.skills.os_manipulation as os_manipulation
+    from core.container import ServiceContainer
+
+    class HostAutomation:
+        async def type_text(self, text):
+            return SimpleNamespace(
+                success=True,
+                result=f"typed {text}",
+                error="",
+                receipt_id="host-receipt-1",
+            )
+
+    async def _allowed_accessibility(self, capability):
+        return None
+
+    monkeypatch.setattr(os_manipulation, "get_pyautogui", lambda: (None, RuntimeError("no display")))
+    monkeypatch.setattr(
+        os_manipulation.DesktopControlSkill,
+        "_require_accessibility",
+        _allowed_accessibility,
+    )
+    ServiceContainer.register_instance("host_automation", HostAutomation(), required=False)
+    try:
+        result = await os_manipulation.DesktopControlSkill().execute(
+            {"action": "type", "text": "hello"},
+            {},
+        )
+    finally:
+        ServiceContainer.clear()
+
+    assert result == {
+        "ok": True,
+        "result": "typed hello",
+        "receipt_id": "host-receipt-1",
+    }
+
+
 def test_legacy_skill_shims_resolve_to_core_implementations():
     from skills.computer_use import ComputerUseSkill as legacy_computer_use
     from skills.os_manipulation import DesktopControlSkill as legacy_os_manipulation
@@ -284,6 +323,62 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
 
     assert result["ok"] is True
     assert captured == {"task_name": "slow_skill", "timeout_seconds": 57.0}
+
+
+@pytest.mark.asyncio
+async def test_capability_engine_blocks_when_permission_model_check_fails(monkeypatch):
+    class _Skill:
+        timeout_seconds = 5.0
+
+    class _Governor:
+        async def execute_safely(self, task_name, coroutine, *args, timeout_seconds=30.0, **kwargs):
+            return await coroutine(*args, **kwargs)
+
+    class _FailingPermissionModel:
+        def __init__(self) -> None:
+            self.available = False
+
+        def check_permission(self, *_args, **_kwargs):
+            if not self.available:
+                raise RuntimeError("permission service unavailable")
+            return SimpleNamespace(approved=True)
+
+    engine = CapabilityEngine()
+    engine.skills = {
+        "typed_action": SkillMetadata(
+            name="typed_action",
+            description="permission failure probe",
+            skill_class=_Skill,
+            requirements=SkillRequirements(),
+            timeout_seconds=5,
+        )
+    }
+    engine.instances = {}
+    engine._cognitive_governor = _Governor()
+    engine._execute_with_retry = AsyncMock(return_value={"ok": True})
+
+    def _get_service(name, default=None):
+        if name == "permission_model":
+            return _FailingPermissionModel()
+        return default
+
+    monkeypatch.setattr(
+        "core.capability_engine.ServiceContainer.get",
+        staticmethod(_get_service),
+    )
+    monkeypatch.setattr(
+        "core.capability_engine.ServiceContainer.has",
+        staticmethod(lambda *_args, **_kwargs: False),
+    )
+    monkeypatch.setattr("core.capability_engine.resolve_metabolic_monitor", lambda default=None: None)
+    monkeypatch.setattr("core.capability_engine.resolve_state_repository", lambda default=None: None)
+    monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
+
+    result = await engine.execute("typed_action", {}, {})
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked_by_permission_model_failure"
+    engine._execute_with_retry.assert_not_called()
 
 
 @pytest.mark.asyncio

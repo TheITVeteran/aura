@@ -20,6 +20,12 @@ def register_consciousness_services(container):
     container.register('liquid_state', lambda: container.get("conscious_substrate"), lifetime=ServiceLifetime.SINGLETON, required=True)
     container.register('liquid_neural_network', lambda: container.get("conscious_substrate"), lifetime=ServiceLifetime.SINGLETON, required=False)
 
+    # 0.2 Phenomenal Engine (Experience/Affect computation)
+    def create_phenomenal_engine():
+        from core.phenomenal_substrate.experience_engine import PhenomenalEngine
+        return PhenomenalEngine()
+    container.register('phenomenal_engine', create_phenomenal_engine, lifetime=ServiceLifetime.SINGLETON, required=True)
+
     # 21. Metacognition
     def create_metacognition():
         from core.consciousness.metacognition import MetaCognitionEngine

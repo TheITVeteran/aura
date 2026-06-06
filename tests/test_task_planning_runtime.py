@@ -42,6 +42,17 @@ def test_task_graph_dependency_readiness_and_completion() -> None:
     assert graph.is_successful is True
 
 
+def test_task_graph_mark_retrying_does_not_own_retry_counter() -> None:
+    graph = TaskGraph("mission-1", "retry accounting")
+    node = TaskNode(task_id="retry", action="open_url", retries_used=1)
+    graph.add_node(node)
+
+    graph.mark_retrying("retry")
+
+    assert node.status == TaskStatus.RETRYING
+    assert node.retries_used == 1
+
+
 def test_task_graph_persist_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
     from core.planning import task_graph as module
 

@@ -357,6 +357,47 @@ class InitiativeSynthesizer:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: planner gather failed: %s", e)
 
+        # 10. MissionState - active missions next ready steps
+        try:
+            mission_state = ServiceContainer.get("mission_state", default=None)
+            if mission_state:
+                from core.planning.mission_state import MissionStatus
+                active_missions = mission_state.list_active_missions()
+                for m in active_missions:
+                    if m.graph and m.status == MissionStatus.ACTIVE:
+                        next_node = m.graph.get_next_node()
+                        if next_node:
+                            self.submit(
+                                content=f"Advance mission '{m.objective[:60]}' step: {next_node.description or next_node.action}",
+                                source="mission_state",
+                                urgency=max(0.75, m.priority),
+                                drive="competence",
+                                mission_id=m.mission_id,
+                                task_id=next_node.task_id,
+                            )
+        except (ImportError, AttributeError, RuntimeError) as e:
+            record_degradation('initiative_synthesis', e)
+            logger.debug("Synth: MissionState gather failed: %s", e)
+
+        # 11. VoiceSessionManager - processing active voice session commands
+        try:
+            voice_session = ServiceContainer.get("voice_session", default=None)
+            if voice_session and voice_session.is_active:
+                session = voice_session._current_session
+                from core.voice.voice_session import SessionState
+                if session and session.state == SessionState.PROCESSING:
+                    self.submit(
+                        content=f"Process voice command: {session.command}",
+                        source="voice_session",
+                        urgency=0.9,
+                        drive="social",
+                        session_id=session.session_id,
+                    )
+        except (ImportError, AttributeError, RuntimeError) as e:
+            record_degradation('initiative_synthesis', e)
+            logger.debug("Synth: VoiceSessionManager gather failed: %s", e)
+
+
     # ------------------------------------------------------------------
     # Boredom-driven exploration
     # ------------------------------------------------------------------

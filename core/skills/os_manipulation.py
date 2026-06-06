@@ -1,9 +1,10 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
-from typing import List, Optional, Union, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
+from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 from core.skills._pyautogui_runtime import get_pyautogui
 
@@ -63,7 +64,67 @@ class DesktopControlSkill(BaseSkill):
                 record_degradation('os_manipulation', e)
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
+        blocked = await self._require_accessibility("desktop mouse and keyboard control")
+        if blocked:
+            return blocked
+
         action = params.action
+        from core.container import ServiceContainer
+        host_auto = ServiceContainer.get("host_automation", default=None)
+        if host_auto:
+            logger.warning("🖐️ OS MANIPULATION (Governed HostAutomation): %s %s", action, params)
+            if action == "type":
+                text = params.text
+                if not text:
+                    return {"ok": False, "error": "No text provided to type."}
+                res = await host_auto.type_text(text)
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            elif action == "click":
+                x = params.x
+                y = params.y
+                button = params.button or "left"
+                if x is not None and y is not None:
+                    res = await host_auto.click_at(x, y, button=button)
+                else:
+                    pyautogui, pyautogui_error = get_pyautogui()
+                    if pyautogui:
+                        cx, cy = pyautogui.position()
+                        res = await host_auto.click_at(cx, cy, button=button)
+                    else:
+                        detail = f": {pyautogui_error}" if pyautogui_error else ""
+                        return {
+                            "ok": False,
+                            "error": (
+                                "Coordinates not specified and cursor position "
+                                f"unavailable{detail}"
+                            ),
+                            "status": "unavailable",
+                        }
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            elif action == "scroll":
+                amount = params.amount or 0
+                res = await host_auto.scroll(dy=amount)
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            elif action == "open_app":
+                app_name = params.app_name
+                if not app_name:
+                    return {"ok": False, "error": "No app name provided."}
+                res = await host_auto.launch_app(app_name)
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            elif action == "press":
+                key = params.key
+                if not key:
+                    return {"ok": False, "error": "No key provided."}
+                res = await host_auto.hotkey(key)
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            elif action == "hotkey":
+                keys = params.keys or []
+                if not keys:
+                    return {"ok": False, "error": "No keys provided for hotkey."}
+                res = await host_auto.hotkey(*keys)
+                return {"ok": res.success, "result": res.result or res.error, "receipt_id": res.receipt_id}
+            return {"ok": False, "error": f"Action '{action}' not recognized."}
+
         pyautogui, pyautogui_error = get_pyautogui()
         if pyautogui is None:
             detail = f": {pyautogui_error}" if pyautogui_error else ""
@@ -73,11 +134,7 @@ class DesktopControlSkill(BaseSkill):
                 "status": "unavailable",
             }
 
-        blocked = await self._require_accessibility("desktop mouse and keyboard control")
-        if blocked:
-            return blocked
-        
-        logger.warning("🖐️ OS MANIPULATION: %s %s", action, params)
+        logger.warning("🖐️ OS MANIPULATION (Direct PyAutoGUI): %s %s", action, params)
 
         if action == "type":
             text = params.text

@@ -234,7 +234,6 @@ class TaskGraph:
     def mark_retrying(self, task_id: str) -> None:
         node = self.nodes[task_id]
         node.status = TaskStatus.RETRYING
-        node.retries_used += 1
         self.updated_at = time.time()
 
     def mark_rolled_back(self, task_id: str) -> None:

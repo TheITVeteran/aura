@@ -1043,6 +1043,101 @@ class LiquidSubstrate:
         # Track tasks if needed (e.g. if we were launching something here)
         # For now, this is just to ensure Issue 73 logic has a place to live
 
+    def inject_perceptual_frame(self, frame_data: dict[str, Any]) -> None:
+        """Inject structured perceptual data into specific substrate dimensions.
+        Maps telemetry (dims 0-15), user state (dims 16-31), screen state (dims 32-47),
+        and audio state (dims 48-63) to activations self.x under self.sync_lock.
+        """
+        n = self.config.neuron_count
+        delta = np.zeros(n, dtype=np.float64)
+
+        # ── System telemetry → dims 0-15 ──
+        cpu = float(frame_data.get("cpu_percent", 0)) / 100.0
+        mem = float(frame_data.get("memory_percent", 0)) / 100.0
+        thermal = float(frame_data.get("thermal", 0))
+        if n > 0:
+            delta[0] = cpu * 0.3
+        if n > 1:
+            delta[1] = thermal * 0.4
+        if n > 2:
+            delta[2] = mem * 0.25
+        if n > 3:
+            delta[3] = max(0.0, cpu - 0.7) * 0.5
+        if n > 4:
+            delta[4] = min(1.0, cpu + mem) * 0.2
+        if n > 5:
+            delta[5] = -thermal * 0.1
+
+        # ── User state → dims 16-31 ──
+        user_presence = float(frame_data.get("user_presence", 0.5))
+        voice_active = float(frame_data.get("voice_activity", False))
+        if n > 16:
+            delta[16] = user_presence * 0.35
+        if n > 17:
+            delta[17] = voice_active * 0.5
+        if n > 18:
+            delta[18] = max(0.0, 0.5 - user_presence) * 0.2
+        if n > 19:
+            delta[19] = min(1.0, user_presence + voice_active) * 0.15
+
+        # ── Screen/visual state → dims 32-47 ──
+        screen_changed = float(frame_data.get("screen_changed", False))
+        novelty = float(frame_data.get("novelty", 0))
+        valence = float(frame_data.get("valence", 0))
+        arousal = float(frame_data.get("arousal", 0))
+        if n > 32:
+            delta[32] = screen_changed * 0.3
+        if n > 33:
+            delta[33] = novelty * 0.25
+        if n > 34:
+            delta[34] = valence * 0.2
+        if n > 35:
+            delta[35] = arousal * 0.3
+
+        # ── Audio state → dims 48-63 ──
+        social_signal = float(frame_data.get("social", 0))
+        threat_signal = float(frame_data.get("threat", 0))
+        if n > 48:
+            delta[48] = social_signal * 0.35
+        if n > 49:
+            delta[49] = voice_active * 0.4
+        if n > 50:
+            delta[50] = threat_signal * 0.3
+        if n > 51:
+            delta[51] = -threat_signal * 0.15
+
+        # ── Cross-modal interaction terms → dims 64+ ──
+        if n > 64:
+            delta[64] = screen_changed * voice_active * 0.3
+        if n > 65:
+            delta[65] = thermal * user_presence * 0.2
+        if n > 66:
+            delta[66] = novelty * max(0.0, 1.0 - cpu) * 0.15
+
+        # Apply as weighted perturbation under self.sync_lock
+        # Perceptual frames are the PRIMARY input
+        weight = 0.25
+        with self.sync_lock:
+            self.x = np.clip(self.x * (1.0 - weight) + delta * weight, -1.0, 1.0)
+            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+
+    def inject_observation(self, observation: dict[str, Any]) -> None:
+        """Project a grounded sensor observation into the substrate input bus."""
+        try:
+            from core.brain.llm.sensorimotor_grounding import observation_to_vector
+            n = self.config.neuron_count
+            vec = observation_to_vector(observation, dim=n)
+            with self.sync_lock:
+                self.x = np.clip(self.x + vec * 0.1, -1.0, 1.0)
+                self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            record_degradation(
+                "liquid_substrate.observation_injection",
+                e,
+                severity="warning",
+                action="skipped malformed perceptual observation injection",
+            )
+
     async def get_state_summary(self) -> dict[str, Any]:
         """Return high-level emotional/cognitive state"""
         with self.sync_lock:

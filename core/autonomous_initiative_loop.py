@@ -32,6 +32,7 @@ _INITIATIVE_RECOVERABLE_ERRORS = (
     asyncio.TimeoutError,
 )
 _STOP_TIMEOUT_S = 5.0
+_MAX_MISSION_ADVANCES_PER_CYCLE = 3
 
 
 def _record_initiative_degradation(
@@ -127,6 +128,7 @@ class AutonomousInitiativeLoop:
         self._event_task = None
         self._self_dev_task = None
         self._social_task = None
+        self._mission_task = None
         self._last_self_dev = 0.0
         self._last_email_check = 0.0
         self._last_reddit_check = 0.0
@@ -163,6 +165,10 @@ class AutonomousInitiativeLoop:
             self._social_task = task_tracker.create_task(
                 self._social_interaction_loop(),
                 name="SocialInteractionLoop",
+            )
+            self._mission_task = task_tracker.create_task(
+                self._mission_watcher_loop(),
+                name="MissionWatcherLoop",
             )
 
             status = {
@@ -223,7 +229,7 @@ class AutonomousInitiativeLoop:
             logger.info("AutonomousInitiativeLoop stopped.")
 
     def _core_tasks(self) -> tuple[Any, ...]:
-        return (self._world_task, self._knowledge_task, self._self_dev_task, self._social_task)
+        return (self._world_task, self._knowledge_task, self._self_dev_task, self._social_task, self._mission_task)
 
     def _all_tasks(self) -> tuple[Any, ...]:
         return (*self._core_tasks(), self._event_task)
@@ -245,7 +251,77 @@ class AutonomousInitiativeLoop:
             "knowledge": self._task_alive(self._knowledge_task),
             "self_development": self._task_alive(self._self_dev_task),
             "social": self._task_alive(self._social_task),
+            "mission": self._task_alive(self._mission_task),
         }
+
+    async def _mission_watcher_loop(self):
+        """Watcher loop to poll MissionState for active missions and autonomously advance them."""
+        while self.running:
+            try:
+                if not _background_initiative_allowed(self.orchestrator):
+                    await asyncio.sleep(10)
+                    continue
+
+                await self._advance_active_missions_once()
+            except asyncio.CancelledError:
+                break
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                _record_initiative_degradation(
+                    e,
+                    action="continued mission watcher loop after transient advance failure",
+                    severity="warning",
+                )
+                logger.debug("Mission watcher loop transient error: %s", e)
+
+            await asyncio.sleep(5)
+
+    async def _advance_active_missions_once(self) -> int:
+        """Advance a bounded number of ready mission nodes.
+
+        The watcher is a continuity mechanism, not an executor that should drain
+        every mission in one cycle. Bound the cycle so live desktop autonomy stays
+        responsive and inspectable.
+        """
+        mission_state = ServiceContainer.get("mission_state", default=None)
+        if not mission_state:
+            return 0
+
+        from core.planning.mission_state import MissionStatus
+
+        active = mission_state.list_active_missions()
+        advanced = 0
+        voice_session = ServiceContainer.get("voice_session", default=None)
+        for mission in active:
+            if advanced >= _MAX_MISSION_ADVANCES_PER_CYCLE:
+                break
+            if not (
+                mission.status == MissionStatus.ACTIVE
+                and mission.graph
+                and not mission.graph.is_complete
+            ):
+                continue
+
+            node = await mission_state.advance_mission(mission.mission_id)
+            if not node:
+                continue
+            advanced += 1
+            step_label = node.description or node.action
+            logger.info(
+                "🎯 [MissionWatcher] Advanced mission %s step: %s",
+                mission.mission_id, step_label,
+            )
+            self._emit_feed(
+                "Mission Advance",
+                (
+                    f"Autonomously advanced mission '{mission.objective[:50]}' "
+                    f"step: {step_label}"
+                ),
+                category="Mission",
+            )
+            if voice_session and voice_session.is_active:
+                await voice_session.narrate_progress(step_label)
+        return advanced
+
 
     @staticmethod
     def _emit_feed(title: str, content: str, *, category: str) -> None:

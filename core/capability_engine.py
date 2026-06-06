@@ -2809,6 +2809,34 @@ class CapabilityEngine(AuraBaseModule):
                         "status": "blocked_by_self_preservation_guard_unavailable",
                     }
 
+            # ── PERMISSION RISK MODEL GATE ──────────────────────────────
+            try:
+                pm = ServiceContainer.get("permission_model", default=None)
+                if pm:
+                    target_str = str(params)
+                    pm_decision = pm.check_permission(skill_name, target_str, ctx)
+                    if not pm_decision.approved:
+                        self.logger.warning(
+                            "🚫 CapabilityEngine: Tool execution '%s' blocked by Permission Model: %s",
+                            skill_name, pm_decision.reason
+                        )
+                        return {
+                            "ok": False,
+                            "error": f"Permission denied: {pm_decision.reason}",
+                            "status": "blocked_by_permission_model"
+                        }
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as pm_err:
+                _record_capability_degradation(
+                    pm_err,
+                    action="blocked tool execution because permission model check failed",
+                    severity="degraded",
+                )
+                return {
+                    "ok": False,
+                    "error": "Permission model check failed; refusing tool execution",
+                    "status": "blocked_by_permission_model_failure",
+                }
+
             # ── CONSTITUTIONAL CLOSURE: Will + AuthorityGateway gated tools ──
             constitutional_runtime_live = False
             try:

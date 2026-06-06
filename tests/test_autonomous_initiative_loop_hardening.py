@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+from core.autonomous_initiative_loop import (
+    _MAX_MISSION_ADVANCES_PER_CYCLE,
+    AutonomousInitiativeLoop,
+)
+from core.container import ServiceContainer
 
 
 async def _hold_until_cancelled(marker: list[str], name: str) -> None:
@@ -20,6 +24,7 @@ def _install_held_loops(loop: AutonomousInitiativeLoop, marker: list[str]) -> No
     loop._knowledge_gap_monitor_loop = lambda: _hold_until_cancelled(marker, "knowledge")
     loop._self_development_loop = lambda: _hold_until_cancelled(marker, "self_development")
     loop._social_interaction_loop = lambda: _hold_until_cancelled(marker, "social")
+    loop._mission_watcher_loop = lambda: _hold_until_cancelled(marker, "mission")
 
 
 @pytest.mark.asyncio
@@ -50,13 +55,14 @@ async def test_start_keeps_core_loops_when_event_subscription_fails(monkeypatch)
             "knowledge": True,
             "self_development": True,
             "social": True,
+            "mission": True,
         },
         "event_subscription": False,
     }
     assert all(getattr(task, "_aura_supervised", False) for task in loop._core_tasks())
 
     await loop.stop()
-    assert set(marker) == {"world", "knowledge", "self_development", "social"}
+    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
 
 
 @pytest.mark.asyncio
@@ -79,7 +85,7 @@ async def test_start_is_idempotent_while_core_tasks_are_alive(monkeypatch):
     assert loop._world_task is first_world_task
 
     await loop.stop()
-    assert set(marker) == {"world", "knowledge", "self_development", "social"}
+    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
 
 
 @pytest.mark.asyncio
@@ -98,7 +104,7 @@ async def test_stop_awaits_background_task_cancellation(monkeypatch):
 
     assert loop.running is False
     assert all(task.done() for task in loop._core_tasks())
-    assert set(marker) == {"world", "knowledge", "self_development", "social"}
+    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
 
 
 @pytest.mark.asyncio
@@ -174,3 +180,46 @@ async def test_event_listener_survives_malformed_envelope_then_processes_next(mo
     loop.running = False
     listener.cancel()
     await asyncio.wait_for(listener, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_mission_watcher_advances_bounded_ready_missions(monkeypatch):
+    from core.planning.mission_state import MissionStatus
+
+    class MissionState:
+        def __init__(self) -> None:
+            self.advanced: list[str] = []
+            self.missions = [
+                SimpleNamespace(
+                    mission_id=f"mission-{idx}",
+                    objective=f"objective {idx}",
+                    status=MissionStatus.ACTIVE,
+                    graph=SimpleNamespace(is_complete=False),
+                )
+                for idx in range(_MAX_MISSION_ADVANCES_PER_CYCLE + 2)
+            ]
+
+        def list_active_missions(self):
+            return self.missions
+
+        async def advance_mission(self, mission_id):
+            self.advanced.append(mission_id)
+            return SimpleNamespace(description="next step", action="open_app")
+
+    mission_state = MissionState()
+    ServiceContainer.register_instance("mission_state", mission_state, required=False)
+    try:
+        monkeypatch.setattr(
+            AutonomousInitiativeLoop,
+            "_emit_feed",
+            staticmethod(lambda *_args, **_kwargs: None),
+        )
+
+        advanced = await AutonomousInitiativeLoop(orchestrator=SimpleNamespace())._advance_active_missions_once()
+    finally:
+        ServiceContainer.clear()
+
+    assert advanced == _MAX_MISSION_ADVANCES_PER_CYCLE
+    assert mission_state.advanced == [
+        f"mission-{idx}" for idx in range(_MAX_MISSION_ADVANCES_PER_CYCLE)
+    ]
